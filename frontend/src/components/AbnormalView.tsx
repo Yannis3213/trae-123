@@ -1,15 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { api, type User, type DictItem } from '../lib/api';
+import { api, type User } from '../lib/api';
+import type { DictData } from './App';
 
 interface Props {
   user: User;
-  dict: {
-    roles: DictItem[];
-    statuses: DictItem[];
-    abnormalTypes: DictItem[];
-    warningLevels: DictItem[];
-    transitions: Record<string, string[]>;
-  } | null;
+  dict: DictData | null;
 }
 
 const formatTime = (iso: string) => {

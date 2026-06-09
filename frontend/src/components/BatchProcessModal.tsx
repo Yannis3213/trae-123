@@ -1,17 +1,12 @@
 import React, { useState, useMemo } from 'react';
-import { api, type User, type DictItem, type PrescriptionOrder, type BatchResult } from '../lib/api';
+import { api, type User, type PrescriptionOrder, type BatchResult } from '../lib/api';
+import type { DictData } from './App';
 
 interface Props {
   selectedIds: string[];
   orders: PrescriptionOrder[];
   user: User;
-  dict: {
-    roles: DictItem[];
-    statuses: DictItem[];
-    abnormalTypes: DictItem[];
-    warningLevels: DictItem[];
-    transitions: Record<string, string[]>;
-  } | null;
+  dict: DictData | null;
   onClose: () => void;
   onDone: () => void;
   onMessage: (type: string, text: string) => void;

@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
-import { api, type User, type DictItem } from '../lib/api';
+import { api, type User } from '../lib/api';
+import type { DictData } from './App';
 
 interface Props {
   onLogin: (u: User) => void;
-  dict: {
-    roles: DictItem[];
-    statuses: DictItem[];
-  } | null;
+  dict: DictData | null;
 }
 
 const DEMO_USERS: { username: string; name: string; role: string }[] = [

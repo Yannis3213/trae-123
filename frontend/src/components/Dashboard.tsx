@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { api, type User, type DictItem } from '../lib/api';
+import { api, type User } from '../lib/api';
+import type { DictData } from './App';
 import OrderList from './OrderList';
 import StatisticsView from './StatisticsView';
 import AuditView from './AuditView';
@@ -7,13 +8,7 @@ import AbnormalView from './AbnormalView';
 
 interface Props {
   user: User;
-  dict: {
-    roles: DictItem[];
-    statuses: DictItem[];
-    abnormalTypes: DictItem[];
-    warningLevels: DictItem[];
-    transitions: Record<string, string[]>;
-  } | null;
+  dict: DictData | null;
   onLogout: () => void;
 }
 

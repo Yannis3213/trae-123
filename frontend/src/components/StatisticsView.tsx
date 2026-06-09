@@ -1,16 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { api, type User, type DictItem, type PrescriptionOrder } from '../lib/api';
+import { api, type User, type PrescriptionOrder } from '../lib/api';
+import type { DictData } from './App';
 import OrderDetail from './OrderDetail';
 
 interface Props {
   user: User;
-  dict: {
-    roles: DictItem[];
-    statuses: DictItem[];
-    abnormalTypes: DictItem[];
-    warningLevels: DictItem[];
-    transitions: Record<string, string[]>;
-  } | null;
+  dict: DictData | null;
   onChanged: () => void;
 }
 

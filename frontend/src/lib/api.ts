@@ -128,6 +128,31 @@ export interface DictItem {
   key: string;
 }
 
+export interface StatusPermission {
+  status: string;
+  status_name: string;
+  allowed_targets: string[];
+  allowed_target_names: string[];
+  forbidden_targets: string[];
+  forbidden_target_names: string[];
+  description: string;
+}
+
+export interface WarningQueueMeta {
+  level: string;
+  levelName: string;
+  color: string;
+  desc: string;
+}
+
+export interface DictCurrentUser {
+  id: string;
+  username: string;
+  name: string;
+  role: string;
+  roleName: string;
+}
+
 export interface ApiResponse<T> {
   code: number;
   message?: string;
@@ -225,10 +250,13 @@ export const api = {
     return request<AbnormalReason[]>(`/audit/abnormal${qs}`);
   },
   getDict: () => request<{
+    currentUser: DictCurrentUser | null;
     roles: DictItem[];
     statuses: DictItem[];
     abnormalTypes: DictItem[];
     warningLevels: DictItem[];
+    warningQueueMeta: WarningQueueMeta[];
     transitions: Record<string, string[]>;
+    statusPermissions: Record<string, StatusPermission>;
   }>('/dict')
 };

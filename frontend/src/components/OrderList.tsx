@@ -1,18 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { api, type User, type DictItem, type PrescriptionOrder } from '../lib/api';
+import { api, type User, type PrescriptionOrder } from '../lib/api';
+import type { DictData } from './App';
 import OrderDetail from './OrderDetail';
 import CreateOrderModal from './CreateOrderModal';
 import BatchProcessModal from './BatchProcessModal';
 
 interface Props {
   user: User;
-  dict: {
-    roles: DictItem[];
-    statuses: DictItem[];
-    abnormalTypes: DictItem[];
-    warningLevels: DictItem[];
-    transitions: Record<string, string[]>;
-  } | null;
+  dict: DictData | null;
   onChanged: () => void;
   refreshKey: number;
 }
