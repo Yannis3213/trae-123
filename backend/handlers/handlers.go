@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"net/http"
+	"strconv"
 	"time"
 	"vocational-school/database"
 	"vocational-school/middleware"
@@ -68,7 +69,7 @@ func GetCurrentUser(c *gin.Context) {
 }
 
 func checkAccess(app *models.StudentApplication, userID string, role models.Role) bool {
-	return app.CurrentHandler == userID || app.CurrentHandlerRole == role
+	return app.CurrentHandler == userID && app.CurrentHandlerRole == role
 }
 
 func ListApplications(c *gin.Context) {
@@ -124,6 +125,7 @@ func ListApplications(c *gin.Context) {
 func GetApplication(c *gin.Context) {
 	id := c.Param("id")
 	userID, _, _, role := middleware.GetCurrentUser(c)
+	clientVersionStr := c.Query("client_version")
 
 	query := `SELECT id, student_name, id_card, phone, program, status,
 		current_handler, current_handler_name, current_handler_role,
@@ -145,8 +147,27 @@ func GetApplication(c *gin.Context) {
 	}
 
 	if !checkAccess(app, userID, role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足，您无权查看该报名单"})
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":              "权限不足，您不是该报名单的当前处理人或角色不匹配",
+			"server_version":     app.Version,
+			"server_status":      app.Status,
+			"server_handler":     app.CurrentHandlerName,
+			"server_handler_role": app.CurrentHandlerRole,
+			"client_user_id":     userID,
+			"client_role":        role,
+		})
 		return
+	}
+
+	versionMismatch := false
+	var clientVersion int
+	if clientVersionStr != "" {
+		if cv, err := strconv.Atoi(clientVersionStr); err == nil {
+			clientVersion = cv
+			if cv != app.Version {
+				versionMismatch = true
+			}
+		}
 	}
 
 	attachments := make([]*models.Attachment, 0)
@@ -226,7 +247,7 @@ func GetApplication(c *gin.Context) {
 	evidenceSummary.PaymentOK = app.PaymentConfirmed
 	evidenceSummary.AllComplete = evidenceSummary.MaterialsOK && evidenceSummary.ClassOK && evidenceSummary.PaymentOK
 
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"application":      app,
 		"attachments":      attachments,
 		"records":          records,
@@ -234,7 +255,18 @@ func GetApplication(c *gin.Context) {
 		"exceptions":       exceptions,
 		"evidence_summary": evidenceSummary,
 		"current_role":     role,
-	})
+		"server_version":   app.Version,
+		"server_status":    app.Status,
+		"server_handler":   app.CurrentHandlerName,
+	}
+	if clientVersionStr != "" {
+		response["client_version"] = clientVersion
+		response["version_mismatch"] = versionMismatch
+		if versionMismatch {
+			response["version_warning"] = "客户端版本 v" + clientVersionStr + " 与服务端版本 v" + strconv.Itoa(app.Version) + " 不一致，建议刷新后重试"
+		}
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 type ProcessRequest struct {
@@ -570,9 +602,10 @@ func BatchProcess(c *gin.Context) {
 	userID, userName, _, role := middleware.GetCurrentUser(c)
 
 	var req struct {
-		IDs    []string `json:"ids" binding:"required"`
-		Action string   `json:"action" binding:"required"`
-		Remark string   `json:"remark"`
+		IDs      []string          `json:"ids" binding:"required"`
+		Action   string            `json:"action" binding:"required"`
+		Remark   string            `json:"remark"`
+		Versions map[string]int    `json:"versions"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
@@ -589,6 +622,11 @@ func BatchProcess(c *gin.Context) {
 
 	for _, id := range req.IDs {
 		result := &models.BatchResult{ApplicationID: id}
+		if req.Versions != nil {
+			if cv, ok := req.Versions[id]; ok {
+				result.ClientVersion = cv
+			}
+		}
 
 		var app models.StudentApplication
 		var materialsOK, classOK, paymentOK int
@@ -614,6 +652,10 @@ func BatchProcess(c *gin.Context) {
 
 		result.StudentName = app.StudentName
 		result.CurrVersion = app.Version
+		result.PrevVersion = app.Version
+		result.ServerVersion = app.Version
+		result.PrevStatus = string(app.Status)
+		result.PrevHandler = app.CurrentHandlerName
 
 		if err == sql.ErrNoRows {
 			result.Success = false
@@ -626,6 +668,17 @@ func BatchProcess(c *gin.Context) {
 			result.Success = false
 			result.Reason = "查询失败: " + err.Error()
 			result.ExcType = "query_failed"
+			results = append(results, result)
+			continue
+		}
+
+		if result.ClientVersion > 0 && result.ClientVersion != app.Version {
+			recordExceptionPersistence(id, "version_conflict",
+				"批量处理版本冲突：客户端v"+strconv.Itoa(result.ClientVersion)+"，服务端v"+strconv.Itoa(app.Version),
+				userID, userName)
+			result.Success = false
+			result.Reason = "版本冲突：客户端 v" + strconv.Itoa(result.ClientVersion) + " 与服务端 v" + strconv.Itoa(app.Version) + " 不一致"
+			result.ExcType = "version_conflict"
 			results = append(results, result)
 			continue
 		}
@@ -727,6 +780,7 @@ func BatchProcess(c *gin.Context) {
 
 		result.Success = true
 		result.NewVersion = app.Version + 1
+		result.ServerVersion = app.Version + 1
 		result.NewStatus = string(newStatus)
 		result.NewHandler = newHandlerName
 		if newHandlerName != "" {
@@ -793,6 +847,7 @@ func AddAuditNote(c *gin.Context) {
 
 	var req struct {
 		Content string `json:"content" binding:"required"`
+		Version int    `json:"version"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
@@ -822,16 +877,42 @@ func AddAuditNote(c *gin.Context) {
 	app.PaymentConfirmed = paymentOK == 1
 
 	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "报名单不存在"})
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":        "报名单不存在",
+			"curr_version": 0,
+		})
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":        "查询失败",
+			"curr_version": app.Version,
+		})
 		return
 	}
 
 	if !checkAccess(&app, userID, role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足，您无权操作该报名单"})
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":              "权限不足，您无权操作该报名单",
+			"curr_version":       app.Version,
+			"server_status":      app.Status,
+			"server_handler":     app.CurrentHandlerName,
+			"server_handler_role": app.CurrentHandlerRole,
+		})
+		return
+	}
+
+	if req.Version > 0 && req.Version != app.Version {
+		recordExceptionPersistence(id, "version_conflict",
+			"添加备注版本冲突：客户端v"+strconv.Itoa(req.Version)+"，服务端v"+strconv.Itoa(app.Version),
+			userID, userName)
+		c.JSON(http.StatusConflict, gin.H{
+			"error":        "版本冲突：客户端版本 v" + strconv.Itoa(req.Version) + " 与服务端版本 v" + strconv.Itoa(app.Version) + " 不一致",
+			"exc_type":     "version_conflict",
+			"curr_version": app.Version,
+			"client_version": req.Version,
+			"server_status": app.Status,
+		})
 		return
 	}
 
@@ -840,11 +921,20 @@ func AddAuditNote(c *gin.Context) {
 		uuid.NewString(), id, userID, userName, req.Content, time.Now(),
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "添加备注失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":        "添加备注失败: " + err.Error(),
+			"curr_version": app.Version,
+		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "备注添加成功", "curr_version": app.Version})
+	c.JSON(http.StatusOK, gin.H{
+		"success":      true,
+		"message":      "备注添加成功",
+		"curr_version": app.Version,
+		"server_status": app.Status,
+		"note_version": app.Version,
+	})
 }
 
 func ListUsers(c *gin.Context) {

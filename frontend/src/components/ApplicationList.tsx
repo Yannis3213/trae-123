@@ -108,7 +108,13 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
     if (!batchAction || selectedIds.size === 0) return;
     setBatchLoading(true);
     try {
-      const res = await api.batchProcess([...selectedIds], batchAction, batchRemark);
+      const versions: Record<string, number> = {};
+      applications.forEach((app) => {
+        if (selectedIds.has(app.id)) {
+          versions[app.id] = app.version;
+        }
+      });
+      const res = await api.batchProcess([...selectedIds], batchAction, batchRemark, versions);
       if (res && res.results) {
         setBatchResults(res.results);
       }
@@ -298,16 +304,19 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
                   关闭
                 </button>
               </div>
-              <div style={{ maxHeight: '300px', overflow: 'auto' }}>
-                <table style={{ fontSize: '13px' }}>
+              <div style={{ maxHeight: '340px', overflow: 'auto' }}>
+                <table style={{ fontSize: '12px' }}>
                   <thead>
                     <tr>
                       <th>学员姓名</th>
                       <th>单据ID</th>
                       <th>结果</th>
+                      <th>客户端版本</th>
                       <th>原版本</th>
                       <th>新版本</th>
+                      <th>原状态</th>
                       <th>新状态</th>
+                      <th>原处理人</th>
                       <th>新处理人</th>
                       <th>异常类型</th>
                       <th>说明</th>
@@ -316,8 +325,8 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
                   <tbody>
                     {batchResults.map((r) => (
                       <tr key={r.application_id}>
-                        <td>{r.student_name}</td>
-                        <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>
+                        <td style={{ fontWeight: 500 }}>{r.student_name}</td>
+                        <td style={{ fontFamily: 'monospace', fontSize: '11px' }}>
                           {r.application_id.slice(0, 8)}...
                         </td>
                         <td>
@@ -327,14 +336,21 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
                             <span className="badge badge-overdue">✗ 失败</span>
                           )}
                         </td>
-                        <td style={{ fontSize: '12px', color: '#6b7280' }}>
-                          {r.curr_version ? 'v' + r.curr_version : '-'}
+                        <td style={{ fontSize: '11px', color: '#6b7280' }}>
+                          {r.client_version ? 'v' + r.client_version : '-'}
                         </td>
-                        <td style={{ fontSize: '12px', color: r.success ? '#166534' : '#6b7280' }}>
+                        <td style={{ fontSize: '11px', color: '#6b7280' }}>
+                          {r.prev_version ? 'v' + r.prev_version : r.curr_version ? 'v' + r.curr_version : '-'}
+                        </td>
+                        <td style={{ fontSize: '11px', color: r.success ? '#166534' : '#6b7280', fontWeight: r.success ? 600 : 400 }}>
                           {r.new_version ? 'v' + r.new_version : '-'}
                         </td>
-                        <td>{r.new_status || '-'}</td>
-                        <td>{r.new_handler || '-'}</td>
+                        <td style={{ fontSize: '12px' }}>{r.prev_status || '-'}</td>
+                        <td style={{ fontSize: '12px', fontWeight: 500, color: r.success ? '#1e40af' : '#6b7280' }}>
+                          {r.new_status || '-'}
+                        </td>
+                        <td style={{ fontSize: '12px' }}>{r.prev_handler || '-'}</td>
+                        <td style={{ fontSize: '12px' }}>{r.new_handler || '-'}</td>
                         <td>
                           {r.exc_type ? (
                             <span
@@ -343,7 +359,8 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
                                 background: '#fef2f2',
                                 color: '#991b1b',
                                 borderRadius: '4px',
-                                fontSize: '12px',
+                                fontSize: '11px',
+                                whiteSpace: 'nowrap',
                               }}
                             >
                               {excTypeLabels[r.exc_type] || r.exc_type}
@@ -352,7 +369,7 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
                             '-'
                           )}
                         </td>
-                        <td style={{ color: r.success ? '#166534' : '#991b1b' }}>{r.reason}</td>
+                        <td style={{ color: r.success ? '#166534' : '#991b1b', fontSize: '12px', maxWidth: '200px' }}>{r.reason}</td>
                       </tr>
                     ))}
                   </tbody>

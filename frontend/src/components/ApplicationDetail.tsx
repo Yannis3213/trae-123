@@ -37,12 +37,14 @@ export default function ApplicationDetail({
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState('');
   const [lastError, setLastError] = useState<string | null>(null);
+  const [versionWarning, setVersionWarning] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (clientVersion?: number) => {
     setLoading(true);
     setLastError(null);
+    setVersionWarning(null);
     try {
-      const data = await api.getApplication(applicationId);
+      const data = await api.getApplication(applicationId, clientVersion);
       if (data && data.error) {
         setLastError(data.error);
         setApplication(null);
@@ -53,6 +55,9 @@ export default function ApplicationDetail({
         setNotes(data.notes);
         setExceptions(data.exceptions);
         setEvidenceSummary(data.evidence_summary);
+        if (data.version_mismatch && data.version_warning) {
+          setVersionWarning(data.version_warning);
+        }
       }
     } catch (e: any) {
       setLastError(e.message || '加载失败');
@@ -69,31 +74,40 @@ export default function ApplicationDetail({
 
   const handleAction = async (action: string) => {
     if (!application) return;
+    const clientVer = application.version;
     setActionLoading(action);
     setLastError(null);
+    setVersionWarning(null);
     try {
       const res: ProcessResponse = await api.processApplication(
         application.id,
         action,
         actionRemark,
-        application.version,
+        clientVer,
       );
       if (res && res.success) {
         const msg = res.message || '操作成功';
-        const versionInfo = res.new_version ? `（新版本 v${res.new_version}）` : '';
-        const handlerInfo = res.new_handler ? ` → ${res.new_handler}` : '';
-        alert('✅ 操作成功：' + msg + versionInfo + handlerInfo);
+        const prevVer = res.prev_version ?? clientVer;
+        const newVer = res.new_version ?? clientVer + 1;
+        const prevStatus = res.prev_status ? `[${res.prev_status}]` : '';
+        const newStatus = res.new_status ? ` → [${res.new_status}]` : '';
+        const handlerInfo = res.new_handler ? ` 处理人：${res.new_handler}` : '';
+        const versionInfo = `v${prevVer}→v${newVer}`;
+        alert(`✅ 操作成功：${msg}\n状态：${prevStatus}${newStatus}\n版本：${versionInfo}${handlerInfo}`);
         setActionRemark('');
-        await loadData();
+        await loadData(newVer);
         onProcessed();
         onRefresh();
       } else {
         const err = res?.error || '未知错误';
-        const excType = res?.exc_type ? ` [${res.exc_type}]` : '';
-        const verInfo = res?.curr_version ? `（当前版本 v${res.curr_version}）` : '';
-        setLastError(err + excType + verInfo);
-        alert('❌ 操作失败：' + err + excType + verInfo);
-        await loadData();
+        const excType = res?.exc_type ? ` [${excTypeLabels[res.exc_type] || res.exc_type}]` : '';
+        const clientVerInfo = clientVer ? `（客户端 v${clientVer}）` : '';
+        const currVerInfo = res?.curr_version ? `（服务端 v${res.curr_version}）` : '';
+        const statusInfo = res?.prev_status ? ` 状态：${res.prev_status}` : '';
+        const fullErr = err + excType + clientVerInfo + currVerInfo + statusInfo;
+        setLastError(fullErr);
+        alert('❌ 操作失败：\n' + fullErr);
+        await loadData(res?.curr_version);
       }
     } catch (e: any) {
       setLastError(e.message);
@@ -105,14 +119,20 @@ export default function ApplicationDetail({
   };
 
   const handleAddNote = async () => {
-    if (!newNote.trim()) return;
+    if (!newNote.trim() || !application) return;
+    const clientVer = application.version;
     try {
-      const res = await api.addNote(applicationId, newNote);
+      const res = await api.addNote(applicationId, newNote, clientVer);
       if (res && res.error) {
-        alert('❌ 添加备注失败：' + res.error);
+        const excType = res.exc_type ? ` [${excTypeLabels[res.exc_type] || res.exc_type}]` : '';
+        const verInfo = res.curr_version ? `（服务端 v${res.curr_version}，客户端 v${clientVer}）` : '';
+        alert('❌ 添加备注失败：' + res.error + excType + verInfo);
       } else {
+        const verInfo = res?.note_version ? `（版本 v${res.note_version}）` : '';
+        const statusInfo = res?.server_status ? ` [${res.server_status}]` : '';
+        alert('✅ 备注添加成功' + verInfo + statusInfo);
         setNewNote('');
-        await loadData();
+        await loadData(res?.curr_version);
       }
     } catch (e: any) {
       alert(e.message);
@@ -259,6 +279,29 @@ export default function ApplicationDetail({
           }}
         >
           ⚠ {lastError}
+        </div>
+      )}
+
+      {versionWarning && (
+        <div
+          className="card"
+          style={{
+            marginBottom: '20px',
+            background: '#fffbeb',
+            border: '1px solid #fde68a',
+            padding: '12px 16px',
+            color: '#92400e',
+            fontSize: '14px',
+          }}
+        >
+          🔔 {versionWarning}
+          <button
+            className="btn btn-secondary"
+            style={{ marginLeft: '12px', fontSize: '12px', padding: '2px 10px' }}
+            onClick={() => loadData()}
+          >
+            立即刷新
+          </button>
         </div>
       )}
 

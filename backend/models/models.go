@@ -113,15 +113,20 @@ type ExceptionRecord struct {
 }
 
 type BatchResult struct {
-	ApplicationID   string `json:"application_id"`
-	StudentName     string `json:"student_name"`
-	Success         bool   `json:"success"`
-	Reason          string `json:"reason"`
-	ExcType         string `json:"exc_type,omitempty"`
-	CurrVersion     int    `json:"curr_version,omitempty"`
-	NewVersion      int    `json:"new_version,omitempty"`
-	NewStatus       string `json:"new_status,omitempty"`
-	NewHandler      string `json:"new_handler,omitempty"`
+	ApplicationID string `json:"application_id"`
+	StudentName   string `json:"student_name"`
+	Success       bool   `json:"success"`
+	Reason        string `json:"reason"`
+	ExcType       string `json:"exc_type,omitempty"`
+	CurrVersion   int    `json:"curr_version,omitempty"`
+	PrevVersion   int    `json:"prev_version,omitempty"`
+	ClientVersion int    `json:"client_version,omitempty"`
+	ServerVersion int    `json:"server_version,omitempty"`
+	NewVersion    int    `json:"new_version,omitempty"`
+	PrevStatus    string `json:"prev_status,omitempty"`
+	NewStatus     string `json:"new_status,omitempty"`
+	PrevHandler   string `json:"prev_handler,omitempty"`
+	NewHandler    string `json:"new_handler,omitempty"`
 }
 
 type EvidenceSummary struct {

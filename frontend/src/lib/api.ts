@@ -98,8 +98,13 @@ export interface BatchResult {
   reason: string;
   exc_type?: string;
   curr_version?: number;
+  prev_version?: number;
+  client_version?: number;
+  server_version?: number;
   new_version?: number;
+  prev_status?: string;
   new_status?: string;
+  prev_handler?: string;
   new_handler?: string;
 }
 
@@ -108,13 +113,20 @@ export interface ProcessResponse {
   error?: string;
   exc_type?: string;
   curr_version?: number;
+  prev_version?: number;
+  client_version?: number;
+  server_version?: number;
   new_version?: number;
+  prev_status?: string;
   new_status?: string;
+  prev_handler?: string;
   new_handler?: string;
   next_handler?: string;
   application_id?: string;
   student_name?: string;
   message?: string;
+  version_mismatch?: boolean;
+  version_warning?: string;
 }
 
 function getToken(): string {
@@ -206,7 +218,8 @@ export const api = {
     return request<StudentApplication[]>(`/api/applications${q ? '?' + q : ''}`);
   },
 
-  async getApplication(id: string) {
+  async getApplication(id: string, clientVersion?: number) {
+    const qs = clientVersion ? `?client_version=${clientVersion}` : '';
     return request<{
       application: StudentApplication;
       attachments: Attachment[];
@@ -215,8 +228,14 @@ export const api = {
       exceptions: ExceptionRecord[];
       evidence_summary: EvidenceSummary;
       current_role: string;
+      server_version?: number;
+      server_status?: string;
+      server_handler?: string;
+      client_version?: number;
+      version_mismatch?: boolean;
+      version_warning?: string;
       error?: string;
-    }>(`/api/applications/${id}`);
+    }>(`/api/applications/${id}${qs}`);
   },
 
   async processApplication(id: string, action: string, remark: string, version: number) {
@@ -226,7 +245,7 @@ export const api = {
     });
   },
 
-  async batchProcess(ids: string[], action: string, remark: string) {
+  async batchProcess(ids: string[], action: string, remark: string, versions?: Record<string, number>) {
     return request<{
       results: BatchResult[];
       total: number;
@@ -234,14 +253,23 @@ export const api = {
       fail_count: number;
     }>('/api/applications/batch', {
       method: 'POST',
-      body: JSON.stringify({ ids, action, remark }),
+      body: JSON.stringify({ ids, action, remark, versions }),
     });
   },
 
-  async addNote(id: string, content: string) {
-    return request<{ success: boolean; message: string; curr_version?: number; error?: string }>(`/api/applications/${id}/notes`, {
+  async addNote(id: string, content: string, version?: number) {
+    return request<{
+      success: boolean;
+      message: string;
+      curr_version?: number;
+      server_status?: string;
+      note_version?: number;
+      exc_type?: string;
+      client_version?: number;
+      error?: string;
+    }>(`/api/applications/${id}/notes`, {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, version }),
     });
   },
 
