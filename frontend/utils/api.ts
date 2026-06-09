@@ -87,21 +87,27 @@ export interface ActionOption {
 }
 
 export function getAvailableActions(
-  status: PrescriptionStatus
+  status: PrescriptionStatus,
+  abnormalReason?: string | null,
+  isMaterialComplete?: boolean | null
 ): ActionOption[] {
+  const hasAbnormal = !!abnormalReason && abnormalReason.trim() !== "";
+  const materialMissing = isMaterialComplete === false || (hasAbnormal && abnormalReason!.includes("资料"));
+
   switch (status) {
     case "draft":
-      return [{ action: "submit", label: "提交审核", type: "primary" }];
+      const draftActions: ActionOption[] = [];
+      if (materialMissing) {
+        draftActions.push({ action: "correct", label: "补正资料", type: "success" });
+      }
+      draftActions.push({ action: "submit", label: "提交审核", type: "primary" });
+      return draftActions;
     case "returned":
-      return [
-        { action: "resubmit", label: "补正后重新提交", type: "primary" },
+      const retActions: ActionOption[] = [
         { action: "correct", label: "仅补正资料", type: "success" },
       ];
-    case "abnormal":
-      return [
-        { action: "correct", label: "补正资料", type: "primary" },
-        { action: "submit", label: "补正后提交审核", type: "primary" },
-      ];
+      retActions.push({ action: "resubmit", label: "补正后重新提交", type: "primary" });
+      return retActions;
     case "to_confirm":
       return [
         { action: "approve", label: "审批通过", type: "primary" },
@@ -126,7 +132,8 @@ export function canHandleFlow(
   role: string,
   status: PrescriptionStatus,
   currentHandler: string,
-  myUsername: string
+  myUsername: string,
+  abnormalReason?: string | null
 ): boolean {
   if (status === "archived" || status === "completed") return false;
 
@@ -135,7 +142,6 @@ export function canHandleFlow(
   const handlerRoles: Record<PrescriptionStatus, string[]> = {
     draft: ["registrar", "assistant"],
     returned: ["registrar", "assistant"],
-    abnormal: ["assistant", "registrar"],
     to_confirm: ["review_supervisor", "physician"],
     processing: ["physician", "review_supervisor"],
     recheck: ["archivist", "pharmacist"],
@@ -145,7 +151,13 @@ export function canHandleFlow(
   };
 
   const allowed = handlerRoles[status] || [];
-  return allowed.includes(role);
+  if (allowed.includes(role)) return true;
+
+  if (abnormalReason && abnormalReason.trim() !== "") {
+    if (["registrar", "assistant"].includes(role)) return true;
+  }
+
+  return false;
 }
 
 export const ACTION_LABELS: Record<string, string> = {

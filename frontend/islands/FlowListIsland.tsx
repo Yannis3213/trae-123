@@ -177,10 +177,10 @@ export default function FlowListIsland() {
 
   const groupedFlows = {
     to_confirm: flows.value.filter((f) => f.status === "to_confirm"),
-    abnormal: flows.value.filter((f) => f.status === "abnormal"),
+    abnormal: flows.value.filter((f) => f.abnormal_reason && f.abnormal_reason.trim() !== ""),
     recheck: flows.value.filter((f) => f.status === "recheck"),
     others: flows.value.filter(
-      (f) => !["to_confirm", "abnormal", "recheck"].includes(f.status)
+      (f) => !["to_confirm", "recheck"].includes(f.status) && !(f.abnormal_reason && f.abnormal_reason.trim() !== "")
     ),
   };
 
@@ -456,7 +456,7 @@ export default function FlowListIsland() {
                 />
               </div>
               <div class="text-xs text-amber-600 bg-amber-50 p-2 rounded">
-                提示：处方开具、煎药配送信息不齐全时，流转单将停在异常队列
+                提示：处方开具、煎药配送信息不齐全时，流转单将停在原队列
               </div>
             </div>
             <div class="px-6 py-4 border-t flex justify-end gap-3">
@@ -564,7 +564,7 @@ export default function FlowListIsland() {
                     />
                   </div>
                   <div class="text-xs text-amber-600">
-                    提示：处方、煎药、配送信息仍不齐全时，流转单将停在异常队列
+                    提示：处方、煎药、配送信息仍不齐全时，流转单将停在原队列
                   </div>
                 </div>
               )}

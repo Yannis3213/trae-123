@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"prescription-flow/internal/db"
@@ -103,7 +104,7 @@ func (s *FlowService) CreateFlow(req *models.CreateFlowRequest) (*models.Prescri
 	if materialComplete {
 		status = models.StatusToConfirm
 	} else {
-		status = models.StatusAbnormal
+		status = models.StatusDraft
 	}
 
 	flowNo := s.generateFlowNo()
@@ -116,9 +117,6 @@ func (s *FlowService) CreateFlow(req *models.CreateFlowRequest) (*models.Prescri
 	if status == models.StatusToConfirm {
 		nextRole = models.RoleReviewSupervisor
 		nextHandler = "supervisor01"
-	} else if status == models.StatusAbnormal {
-		nextRole = models.RoleAssistant
-		nextHandler = "assistant01"
 	} else {
 		nextRole = req.OperatorRole
 		nextHandler = req.Operator
@@ -132,7 +130,7 @@ func (s *FlowService) CreateFlow(req *models.CreateFlowRequest) (*models.Prescri
 
 	abnormalReasonText := ""
 	if !materialComplete {
-		abnormalReasonText = "处方开具、煎药配送信息不齐全"
+		abnormalReasonText = "处方开具、煎药配送信息不齐全，停留原队列"
 	}
 
 	result, err := tx.Exec(
@@ -230,10 +228,6 @@ func (s *FlowService) ListFlows(statusFilter, urgencyFilter, roleFilter, operato
 		query += " AND status = ?"
 		args = append(args, statusFilter)
 	}
-	if urgencyFilter != "" && urgencyFilter != "all" {
-		query += " AND urgency = ?"
-		args = append(args, urgencyFilter)
-	}
 	if roleFilter != "" && roleFilter != "all" {
 		query += " AND current_role = ?"
 		args = append(args, roleFilter)
@@ -243,7 +237,7 @@ func (s *FlowService) ListFlows(statusFilter, urgencyFilter, roleFilter, operato
 		args = append(args, operator)
 	}
 
-	query += " ORDER BY CASE urgency WHEN 'overdue' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC"
+	query += " ORDER BY created_at DESC"
 
 	rows, err := db.GetDB().Query(query, args...)
 	if err != nil {
@@ -267,8 +261,26 @@ func (s *FlowService) ListFlows(statusFilter, urgencyFilter, roleFilter, operato
 		}
 		f.IsMaterialComplete = matInt == 1
 		f.Urgency = s.calculateUrgency(f.DueAt)
+		if urgencyFilter != "" && urgencyFilter != "all" && string(f.Urgency) != urgencyFilter {
+			continue
+		}
 		flows = append(flows, f)
 	}
+
+	urgencyOrder := map[models.UrgencyLevel]int{
+		models.UrgencyOverdue: 0,
+		models.UrgencyWarning: 1,
+		models.UrgencyNormal:  2,
+	}
+	sort.SliceStable(flows, func(i, j int) bool {
+		oi := urgencyOrder[flows[i].Urgency]
+		oj := urgencyOrder[flows[j].Urgency]
+		if oi != oj {
+			return oi < oj
+		}
+		return flows[i].CreatedAt.After(flows[j].CreatedAt)
+	})
+
 	return flows, nil
 }
 
@@ -409,21 +421,6 @@ func (s *FlowService) validateRequest(flow *models.PrescriptionFlow, req *models
 		if req.Evidence == "" {
 			return errors.New("补正资料操作必须提供补正证据")
 		}
-		prescription := req.PrescriptionInfo
-		if prescription == "" {
-			prescription = flow.PrescriptionInfo
-		}
-		decoction := req.DecoctionInfo
-		if decoction == "" {
-			decoction = flow.DecoctionInfo
-		}
-		delivery := req.DeliveryInfo
-		if delivery == "" {
-			delivery = flow.DeliveryInfo
-		}
-		if !s.checkMaterialComplete(prescription, decoction, delivery) {
-			return errors.New("资料仍不齐全，处方开具、煎药配送信息必须全部填写")
-		}
 	}
 
 	return nil
@@ -511,10 +508,10 @@ func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.Presc
 	switch req.Action {
 	case "submit":
 		if !materialComplete {
-			toStatus = models.StatusAbnormal
-			nextRole = models.RoleAssistant
-			nextHandler = "assistant01"
-			abnormalReason = "处方开具、煎药配送信息不齐全"
+			toStatus = flow.Status
+			nextHandler = flow.CurrentHandler
+			nextRole = flow.CurrentRole
+			abnormalReason = "处方开具、煎药配送信息不齐全，停留原队列"
 		} else {
 			toStatus = models.StatusToConfirm
 			nextRole = models.RoleReviewSupervisor
@@ -523,10 +520,10 @@ func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.Presc
 		}
 	case "resubmit":
 		if !materialComplete {
-			toStatus = models.StatusAbnormal
-			nextRole = models.RoleAssistant
-			nextHandler = "assistant01"
-			abnormalReason = "处方开具、煎药配送信息不齐全"
+			toStatus = flow.Status
+			nextHandler = flow.CurrentHandler
+			nextRole = flow.CurrentRole
+			abnormalReason = "处方开具、煎药配送信息不齐全，停留原队列"
 		} else {
 			toStatus = models.StatusToConfirm
 			nextRole = models.RoleReviewSupervisor
@@ -551,11 +548,18 @@ func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.Presc
 		nextHandler = "registrar01"
 		returnReason = req.ReturnReason
 	case "correct", "supplement":
-		toStatus = models.StatusToConfirm
-		nextRole = models.RoleReviewSupervisor
-		nextHandler = "supervisor01"
-		abnormalReason = ""
-		dueAt = time.Now().Add(24 * time.Hour)
+		if !materialComplete {
+			toStatus = flow.Status
+			nextHandler = flow.CurrentHandler
+			nextRole = flow.CurrentRole
+			abnormalReason = "处方开具、煎药配送信息不齐全，停留原队列"
+		} else {
+			toStatus = models.StatusToConfirm
+			nextRole = models.RoleReviewSupervisor
+			nextHandler = "supervisor01"
+			abnormalReason = ""
+			dueAt = time.Now().Add(24 * time.Hour)
+		}
 	case "archive", "complete":
 		toStatus = models.StatusArchived
 		nextHandler = ""
@@ -742,22 +746,23 @@ func (s *FlowService) BatchProcess(req *models.BatchProcessRequest) ([]models.Ba
 func (s *FlowService) GetStatistics() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
-	groups := []struct {
-		key    string
-		status string
-	}{
-		{"to_confirm", "to_confirm"},
-		{"abnormal", "abnormal"},
-		{"recheck", "recheck"},
-	}
+	var toConfirmCount int
+	db.GetDB().QueryRow(
+		"SELECT COUNT(*) FROM prescription_flows WHERE status = ?", "to_confirm",
+	).Scan(&toConfirmCount)
+	stats["to_confirm"] = toConfirmCount
 
-	for _, g := range groups {
-		var count int
-		db.GetDB().QueryRow(
-			"SELECT COUNT(*) FROM prescription_flows WHERE status = ?", g.status,
-		).Scan(&count)
-		stats[g.key] = count
-	}
+	var abnormalCount int
+	db.GetDB().QueryRow(
+		"SELECT COUNT(*) FROM prescription_flows WHERE abnormal_reason IS NOT NULL AND abnormal_reason <> ''",
+	).Scan(&abnormalCount)
+	stats["abnormal"] = abnormalCount
+
+	var recheckCount int
+	db.GetDB().QueryRow(
+		"SELECT COUNT(*) FROM prescription_flows WHERE status = ?", "recheck",
+	).Scan(&recheckCount)
+	stats["recheck"] = recheckCount
 
 	urgencyStats := map[string]int{"normal": 0, "warning": 0, "overdue": 0}
 	rows, err := db.GetDB().Query("SELECT due_at FROM prescription_flows")

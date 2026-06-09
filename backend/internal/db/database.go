@@ -181,7 +181,7 @@ func seedData() error {
 		},
 		{
 			"PF20260601002", "李四", "调理方：人参、黄芪、白术各15g", "", "",
-			"abnormal", "warning", "assistant01", "assistant", "registrar01",
+			"draft", "warning", "registrar01", "registrar", "registrar01",
 			now.Add(4 * time.Hour), false,
 		},
 		{
@@ -283,13 +283,13 @@ func seedData() error {
 		if !f.materialComplete {
 			_, err := tx.Exec(
 				`INSERT INTO abnormal_reasons (flow_id, reason, type, operator, responsible_person, attempt_count, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`,
-				flowID, "处方开具、煎药配送信息不齐全", "material_missing", "registrar01", f.currentHandler, now,
+				flowID, "处方开具、煎药配送信息不齐全，停留原队列", "material_missing", "registrar01", f.currentHandler, now,
 			)
 			if err != nil {
 				return err
 			}
 			note2 := fmt.Sprintf(
-				"系统自动标记异常：处方开具、煎药配送信息不齐全，流转单停留在异常队列，操作人[%s]，责任人[%s]",
+				"系统自动标记异常：处方开具、煎药配送信息不齐全，流转单停留在原队列，操作人[%s]，责任人[%s]",
 				"registrar01", f.currentHandler,
 			)
 			_, err = tx.Exec(

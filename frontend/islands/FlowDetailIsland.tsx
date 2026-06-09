@@ -93,13 +93,18 @@ export default function FlowDetailIsland({ id }: Props) {
       currentUser.value.role,
       flow.value.status,
       flow.value.current_handler,
-      currentUser.value.username
+      currentUser.value.username,
+      flow.value.abnormal_reason
     );
   }
 
   function availableActions() {
     if (!flow.value || !isHandler()) return [];
-    return getAvailableActions(flow.value.status);
+    return getAvailableActions(
+      flow.value.status,
+      flow.value.abnormal_reason,
+      flow.value.is_material_complete
+    );
   }
 
   function openActionModal(action: string) {
@@ -687,7 +692,7 @@ export default function FlowDetailIsland({ id }: Props) {
                     />
                   </div>
                   <div class="text-xs text-amber-600 bg-amber-50 p-2.5 rounded">
-                    ⚠ 处方开具、煎药配送信息必须全部齐全才能流转到下一环节，否则将停在异常队列
+                    ⚠ 处方开具、煎药配送信息必须全部齐全才能流转到下一环节，否则将停在原队列
                   </div>
                 </>
               )}
