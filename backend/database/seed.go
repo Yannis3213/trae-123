@@ -32,6 +32,22 @@ func Seed() error {
 		{ID: uuid.NewString(), Username: "reviewer", Password: "123456", Name: "张复核校长", Role: models.RoleReviewer},
 	}
 
+	var registrarID, auditorID, reviewerID string
+	var registrarName, auditorName, reviewerName string
+	for _, u := range users {
+		switch u.Role {
+		case models.RoleRegistrar:
+			registrarID = u.ID
+			registrarName = u.Name
+		case models.RoleAuditor:
+			auditorID = u.ID
+			auditorName = u.Name
+		case models.RoleReviewer:
+			reviewerID = u.ID
+			reviewerName = u.Name
+		}
+	}
+
 	userStmt, _ := tx.Prepare("INSERT INTO users (id, username, password, name, role) VALUES (?, ?, ?, ?, ?)")
 	defer userStmt.Close()
 	for _, u := range users {
@@ -39,12 +55,6 @@ func Seed() error {
 			return err
 		}
 	}
-
-	var registrarID, auditorID, reviewerID string
-	var registrarName, auditorName, reviewerName string
-	DB.QueryRow("SELECT id, name FROM users WHERE role = 'registrar'").Scan(&registrarID, &registrarName)
-	DB.QueryRow("SELECT id, name FROM users WHERE role = 'auditor'").Scan(&auditorID, &auditorName)
-	DB.QueryRow("SELECT id, name FROM users WHERE role = 'reviewer'").Scan(&reviewerID, &reviewerName)
 
 	now := time.Now()
 	applications := []struct {

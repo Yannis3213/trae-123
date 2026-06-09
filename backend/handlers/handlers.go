@@ -49,10 +49,10 @@ func Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
 		"user": gin.H{
-			"id":   user.ID,
+			"id":       user.ID,
 			"username": user.Username,
-			"name": user.Name,
-			"role": user.Role,
+			"name":     user.Name,
+			"role":     user.Role,
 		},
 	})
 }
@@ -83,8 +83,8 @@ func ListApplications(c *gin.Context) {
 	args := []interface{}{}
 
 	if role == models.RoleRegistrar || role == models.RoleAuditor || role == models.RoleReviewer {
-		query += " AND (current_handler = ? OR current_handler_role = ? OR ? = '')"
-		args = append(args, userID, string(role), "")
+		query += " AND (current_handler = ? OR current_handler_role = ?)"
+		args = append(args, userID, string(role))
 	}
 
 	if status != "" {
@@ -193,8 +193,9 @@ func GetApplication(c *gin.Context) {
 
 	exceptions := make([]*models.ExceptionRecord, 0)
 	excRows, err := database.DB.Query(
-		`SELECT id, application_id, type, reason, triggered_by, triggered_by_name, triggered_at, resolved, COALESCE(resolved_at, ''), COALESCE(resolution_note, '')
-		 FROM exception_records WHERE application_id = ? ORDER BY triggered_at`,
+		`SELECT id, application_id, type, reason, triggered_by, triggered_by_name, triggered_at, resolved, 
+		 COALESCE(resolved_at, '0001-01-01 00:00:00'), COALESCE(resolution_note, '')
+		 FROM exception_records WHERE application_id = ? ORDER BY triggered_at DESC`,
 		id,
 	)
 	if err == nil {
@@ -217,13 +218,13 @@ func GetApplication(c *gin.Context) {
 	evidenceSummary.AllComplete = evidenceSummary.MaterialsOK && evidenceSummary.ClassOK && evidenceSummary.PaymentOK
 
 	c.JSON(http.StatusOK, gin.H{
-		"application":     app,
-		"attachments":     attachments,
-		"records":         records,
-		"notes":           notes,
-		"exceptions":      exceptions,
+		"application":      app,
+		"attachments":      attachments,
+		"records":          records,
+		"notes":            notes,
+		"exceptions":       exceptions,
 		"evidence_summary": evidenceSummary,
-		"current_role":    role,
+		"current_role":     role,
 	})
 }
 
@@ -265,26 +266,155 @@ func checkDeadline(app *models.StudentApplication, role models.Role) (bool, stri
 	return true, ""
 }
 
+type ValidationResult struct {
+	Pass     bool
+	HTTPStatus int
+	ErrorMsg string
+	ExcType  string
+}
+
+type ActionConfig struct {
+	RequiredRole          models.Role
+	RequiredStatus        models.ApplicationStatus
+	NeedsEvidence         bool
+	NeedsDeadline         bool
+	IsCorrection          bool
+	TargetStatus          models.ApplicationStatus
+	TargetHandlerRole     models.Role
+	NextHandlerRole       models.Role
+	UpdateResponsible     bool
+}
+
+var actionConfigs = map[string]ActionConfig{
+	"assign": {
+		RequiredRole:      models.RoleRegistrar,
+		RequiredStatus:    models.StatusPending,
+		NeedsEvidence:     true,
+		NeedsDeadline:     true,
+		IsCorrection:      false,
+		TargetStatus:      models.StatusTransferred,
+		TargetHandlerRole: models.RoleAuditor,
+		NextHandlerRole:   models.RoleReviewer,
+		UpdateResponsible: true,
+	},
+	"audit_pass": {
+		RequiredRole:      models.RoleAuditor,
+		RequiredStatus:    models.StatusTransferred,
+		NeedsEvidence:     true,
+		NeedsDeadline:     true,
+		IsCorrection:      false,
+		TargetStatus:      models.StatusVisited,
+		TargetHandlerRole: models.RoleReviewer,
+		NextHandlerRole:   "",
+		UpdateResponsible: true,
+	},
+	"audit_reject": {
+		RequiredRole:      models.RoleAuditor,
+		RequiredStatus:    models.StatusTransferred,
+		NeedsEvidence:     false,
+		NeedsDeadline:     false,
+		IsCorrection:      true,
+		TargetStatus:      models.StatusPending,
+		TargetHandlerRole: models.RoleRegistrar,
+		NextHandlerRole:   models.RoleAuditor,
+		UpdateResponsible: true,
+	},
+	"review_archive": {
+		RequiredRole:      models.RoleReviewer,
+		RequiredStatus:    models.StatusVisited,
+		NeedsEvidence:     true,
+		NeedsDeadline:     true,
+		IsCorrection:      false,
+		TargetStatus:      models.StatusVisited,
+		TargetHandlerRole: "",
+		NextHandlerRole:   "",
+		UpdateResponsible: false,
+	},
+	"supplement": {
+		RequiredRole:      models.RoleRegistrar,
+		RequiredStatus:    models.StatusPending,
+		NeedsEvidence:     false,
+		NeedsDeadline:     false,
+		IsCorrection:      true,
+		TargetStatus:      models.StatusPending,
+		TargetHandlerRole: models.RoleRegistrar,
+		NextHandlerRole:   models.RoleAuditor,
+		UpdateResponsible: false,
+	},
+}
+
+func validateAndPrepare(action string, app *models.StudentApplication, userID string, userName string, role models.Role, version int) ValidationResult {
+	cfg, ok := actionConfigs[action]
+	if !ok {
+		return ValidationResult{Pass: false, HTTPStatus: http.StatusBadRequest, ErrorMsg: "未知操作类型", ExcType: "invalid_action"}
+	}
+
+	if version != app.Version {
+		return ValidationResult{Pass: false, HTTPStatus: http.StatusConflict, ErrorMsg: "版本冲突：当前数据已更新，请刷新后重试", ExcType: "version_conflict"}
+	}
+
+	if app.CurrentHandler != userID && app.CurrentHandlerRole != role {
+		return ValidationResult{Pass: false, HTTPStatus: http.StatusForbidden, ErrorMsg: "权限不足，您不是当前处理人", ExcType: "permission_denied"}
+	}
+
+	if role != cfg.RequiredRole {
+		return ValidationResult{Pass: false, HTTPStatus: http.StatusForbidden, ErrorMsg: "角色权限不匹配", ExcType: "permission_denied"}
+	}
+
+	if app.Status != cfg.RequiredStatus {
+		return ValidationResult{Pass: false, HTTPStatus: http.StatusBadRequest, ErrorMsg: "状态冲突：当前状态不是" + string(cfg.RequiredStatus), ExcType: "status_conflict"}
+	}
+
+	if cfg.NeedsEvidence {
+		ok, reason := validateEvidence(app)
+		if !ok {
+			return ValidationResult{Pass: false, HTTPStatus: http.StatusBadRequest, ErrorMsg: reason, ExcType: "missing_evidence"}
+		}
+	}
+
+	if cfg.NeedsDeadline {
+		ok, reason := checkDeadline(app, role)
+		if !ok {
+			return ValidationResult{Pass: false, HTTPStatus: http.StatusBadRequest, ErrorMsg: reason, ExcType: "overdue"}
+		}
+	}
+
+	return ValidationResult{Pass: true}
+}
+
+func getUserByRole(role models.Role) (string, string) {
+	var id, name string
+	database.DB.QueryRow("SELECT id, name FROM users WHERE role = ?", string(role)).Scan(&id, &name)
+	return id, name
+}
+
+func recordExceptionPersistence(appID, excType, reason, userID, userName string) {
+	database.DB.Exec(`INSERT INTO exception_records 
+		(id, application_id, type, reason, triggered_by, triggered_by_name, triggered_at, resolved)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+		uuid.NewString(), appID, excType, reason, userID, userName, time.Now(),
+	)
+}
+
 func ProcessApplication(c *gin.Context) {
 	id := c.Param("id")
 	userID, userName, _, role := middleware.GetCurrentUser(c)
 
 	var req ProcessRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误", "success": false})
 		return
 	}
 
-	tx, err := database.DB.Begin()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "事务启动失败"})
+	cfg, cfgOk := actionConfigs[req.Action]
+	if !cfgOk {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未知操作类型", "success": false})
 		return
 	}
-	defer tx.Rollback()
 
 	var app models.StudentApplication
 	var materialsOK, classOK, paymentOK int
-	err = tx.QueryRow(`SELECT id, student_name, id_card, phone, program, status,
+	err := database.DB.QueryRow(`SELECT id, student_name, id_card, phone, program, status,
 		current_handler, current_handler_name, current_handler_role,
 		next_handler, next_handler_name, next_handler_role,
 		assignment_deadline, audit_deadline, review_deadline,
@@ -308,165 +438,64 @@ func ProcessApplication(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "报名单不存在", "success": false})
 		return
 	}
-
-	if app.Version != req.Version {
-		recordException(tx, id, "version_conflict", "版本冲突：当前数据已更新，请刷新后重试", userID, userName)
-		c.JSON(http.StatusConflict, gin.H{"error": "版本冲突，当前数据已更新，请刷新后重试", "success": false})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败", "success": false})
 		return
 	}
 
-	if app.CurrentHandler != userID && app.CurrentHandlerRole != role {
-		recordException(tx, id, "permission_denied", "越权操作：不是当前处理人", userID, userName)
-		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足，您不是当前处理人", "success": false})
+	vr := validateAndPrepare(req.Action, &app, userID, userName, role, req.Version)
+	if !vr.Pass {
+		recordExceptionPersistence(id, vr.ExcType, vr.ErrorMsg, userID, userName)
+		c.JSON(vr.HTTPStatus, gin.H{"error": vr.ErrorMsg, "success": false})
 		return
 	}
 
-	newStatus := app.Status
-	newHandler := app.CurrentHandler
-	newHandlerName := app.CurrentHandlerName
-	newHandlerRole := app.CurrentHandlerRole
-	nextHandler := app.NextHandler
-	nextHandlerName := app.NextHandlerName
-	nextHandlerRole := app.NextHandlerRole
-	isCorrection := false
+	newStatus := cfg.TargetStatus
+	newHandlerID, newHandlerName := getUserByRole(cfg.TargetHandlerRole)
+	nextHandlerID, nextHandlerName := "", ""
+	if cfg.NextHandlerRole != "" {
+		nextHandlerID, nextHandlerName = getUserByRole(cfg.NextHandlerRole)
+	}
+	isCorrection := cfg.IsCorrection
 
-	switch req.Action {
-	case "assign":
-		if role != models.RoleRegistrar {
-			c.JSON(http.StatusForbidden, gin.H{"error": "只有登记员可以分派", "success": false})
-			return
-		}
-		if app.Status != models.StatusPending {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "状态冲突：当前状态不是待分派", "success": false})
-			return
-		}
-		ok, reason := validateEvidence(&app)
-		if !ok {
-			recordException(tx, id, "missing_evidence", reason, userID, userName)
-			c.JSON(http.StatusBadRequest, gin.H{"error": reason, "success": false})
-			return
-		}
-		ok, reason = checkDeadline(&app, role)
-		if !ok {
-			recordException(tx, id, "overdue", reason, userID, userName)
-			c.JSON(http.StatusBadRequest, gin.H{"error": reason, "success": false})
-			return
-		}
-		newStatus = models.StatusTransferred
-		newHandler = app.NextHandler
-		newHandlerName = app.NextHandlerName
-		newHandlerRole = app.NextHandlerRole
-		nextHandler = ""
-		nextHandlerName = ""
-		nextHandlerRole = ""
+	responsiblePerson := app.ResponsiblePerson
+	responsiblePersonName := app.ResponsiblePersonName
+	if cfg.UpdateResponsible && cfg.TargetHandlerRole != "" {
+		responsiblePerson = newHandlerID
+		responsiblePersonName = newHandlerName
+	}
 
-		var reviewerID, reviewerName string
-		database.DB.QueryRow("SELECT id, name FROM users WHERE role = 'reviewer'").Scan(&reviewerID, &reviewerName)
-		nextHandler = reviewerID
-		nextHandlerName = reviewerName
-		nextHandlerRole = models.RoleReviewer
-
-	case "audit_pass":
-		if role != models.RoleAuditor {
-			c.JSON(http.StatusForbidden, gin.H{"error": "只有审核主管可以审核通过", "success": false})
-			return
-		}
-		if app.Status != models.StatusTransferred {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "状态冲突：当前状态不是已转办", "success": false})
-			return
-		}
-		ok, reason := validateEvidence(&app)
-		if !ok {
-			recordException(tx, id, "missing_evidence", reason, userID, userName)
-			c.JSON(http.StatusBadRequest, gin.H{"error": reason, "success": false})
-			return
-		}
-		ok, reason = checkDeadline(&app, role)
-		if !ok {
-			recordException(tx, id, "overdue", reason, userID, userName)
-			c.JSON(http.StatusBadRequest, gin.H{"error": reason, "success": false})
-			return
-		}
-		newStatus = models.StatusVisited
-		newHandler = app.NextHandler
-		newHandlerName = app.NextHandlerName
-		newHandlerRole = app.NextHandlerRole
-		nextHandler = ""
-		nextHandlerName = ""
-		nextHandlerRole = ""
-
-	case "audit_reject":
-		if role != models.RoleAuditor {
-			c.JSON(http.StatusForbidden, gin.H{"error": "只有审核主管可以退回补正", "success": false})
-			return
-		}
-		if app.Status != models.StatusTransferred {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "状态冲突：当前状态不是已转办", "success": false})
-			return
-		}
-		isCorrection = true
-		newStatus = models.StatusPending
-		var registrarID, registrarName string
-		database.DB.QueryRow("SELECT id, name FROM users WHERE role = 'registrar'").Scan(&registrarID, &registrarName)
-		newHandler = registrarID
-		newHandlerName = registrarName
-		newHandlerRole = models.RoleRegistrar
-		var auditorID, auditorName string
-		database.DB.QueryRow("SELECT id, name FROM users WHERE role = 'auditor'").Scan(&auditorID, &auditorName)
-		nextHandler = auditorID
-		nextHandlerName = auditorName
-		nextHandlerRole = models.RoleAuditor
-		recordException(tx, id, "return_correction", "退回补正: "+req.Remark, userID, userName)
-
-	case "review_archive":
-		if role != models.RoleReviewer {
-			c.JSON(http.StatusForbidden, gin.H{"error": "只有复核负责人可以归档", "success": false})
-			return
-		}
-		if app.Status != models.StatusVisited {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "状态冲突：当前状态不是已回访", "success": false})
-			return
-		}
-		ok, reason := validateEvidence(&app)
-		if !ok {
-			recordException(tx, id, "missing_evidence", reason, userID, userName)
-			c.JSON(http.StatusBadRequest, gin.H{"error": reason, "success": false})
-			return
-		}
-		ok, reason = checkDeadline(&app, role)
-		if !ok {
-			recordException(tx, id, "overdue", reason, userID, userName)
-			c.JSON(http.StatusBadRequest, gin.H{"error": reason, "success": false})
-			return
-		}
-		newHandler = ""
-		newHandlerName = ""
-		newHandlerRole = ""
-
-	case "supplement":
-		if role != models.RoleRegistrar {
-			c.JSON(http.StatusForbidden, gin.H{"error": "只有登记员可以补正", "success": false})
-			return
-		}
-		isCorrection = true
-
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "未知操作类型", "success": false})
-		return
+	if req.Action == "audit_reject" {
+		recordExceptionPersistence(id, "return_correction", "退回补正: "+req.Remark, userID, userName)
 	}
 
 	now := time.Now()
-	_, err = tx.Exec(`UPDATE student_applications SET 
+	tx, err := database.DB.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "事务启动失败", "success": false})
+		return
+	}
+	defer tx.Rollback()
+
+	result, err := tx.Exec(`UPDATE student_applications SET 
 		status = ?, current_handler = ?, current_handler_name = ?, current_handler_role = ?,
 		next_handler = ?, next_handler_name = ?, next_handler_role = ?,
+		responsible_person = ?, responsible_person_name = ?,
 		updated_at = ?, version = version + 1
 		WHERE id = ? AND version = ?`,
-		string(newStatus), newHandler, newHandlerName, string(newHandlerRole),
-		nextHandler, nextHandlerName, string(nextHandlerRole),
+		string(newStatus), newHandlerID, newHandlerName, string(cfg.TargetHandlerRole),
+		nextHandlerID, nextHandlerName, string(cfg.NextHandlerRole),
+		responsiblePerson, responsiblePersonName,
 		now, id, req.Version,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败", "success": false})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败: " + err.Error(), "success": false})
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		recordExceptionPersistence(id, "version_conflict", "版本冲突：更新时数据已变化", userID, userName)
+		c.JSON(http.StatusConflict, gin.H{"error": "版本冲突：数据已被修改，请刷新后重试", "success": false})
 		return
 	}
 
@@ -476,11 +505,11 @@ func ProcessApplication(c *gin.Context) {
 		 remark, created_at, version, is_correction)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		uuid.NewString(), id, req.Action, userID, userName, string(role),
-		string(app.Status), string(newStatus), app.CurrentHandler, newHandler,
+		string(app.Status), string(newStatus), app.CurrentHandler, newHandlerID,
 		req.Remark, now, req.Version+1, isCorrection,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "记录处理日志失败", "success": false})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "记录处理日志失败: " + err.Error(), "success": false})
 		return
 	}
 
@@ -490,51 +519,57 @@ func ProcessApplication(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":      true,
-		"new_status":   newStatus,
-		"new_handler":  newHandlerName,
-		"next_handler": nextHandlerName,
-		"message":      "操作成功",
+		"success":       true,
+		"new_status":    newStatus,
+		"new_handler":   newHandlerName,
+		"next_handler":  nextHandlerName,
+		"new_version":   req.Version + 1,
+		"application_id": id,
+		"message":       "操作成功",
 	})
-}
-
-func recordException(tx *sql.Tx, appID, excType, reason, userID, userName string) {
-	tx.Exec(`INSERT INTO exception_records 
-		(id, application_id, type, reason, triggered_by, triggered_by_name, triggered_at, resolved)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
-		uuid.NewString(), appID, excType, reason, userID, userName, time.Now(),
-	)
 }
 
 func BatchProcess(c *gin.Context) {
 	userID, userName, _, role := middleware.GetCurrentUser(c)
 
 	var req struct {
-		IDs     []string `json:"ids" binding:"required"`
-		Action  string   `json:"action" binding:"required"`
-		Remark  string   `json:"remark"`
+		IDs    []string `json:"ids" binding:"required"`
+		Action string   `json:"action" binding:"required"`
+		Remark string   `json:"remark"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
 		return
 	}
 
+	_, cfgOk := actionConfigs[req.Action]
+	if !cfgOk {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的批量操作: " + req.Action})
+		return
+	}
+
 	results := make([]*models.BatchResult, 0)
 
 	for _, id := range req.IDs {
-		result := &models.BatchResult{
-			ApplicationID: id,
-		}
+		result := &models.BatchResult{ApplicationID: id}
 
 		var app models.StudentApplication
 		var materialsOK, classOK, paymentOK int
-		err := database.DB.QueryRow(`SELECT id, student_name, status, current_handler, current_handler_role,
-			version, materials_complete, class_assigned, payment_confirmed,
-			assignment_deadline, audit_deadline, review_deadline
+		err := database.DB.QueryRow(`SELECT id, student_name, id_card, phone, program, status,
+			current_handler, current_handler_name, current_handler_role,
+			next_handler, next_handler_name, next_handler_role,
+			assignment_deadline, audit_deadline, review_deadline,
+			created_at, updated_at, version, urgency,
+			responsible_person, responsible_person_name,
+			materials_complete, class_assigned, payment_confirmed
 			FROM student_applications WHERE id = ?`, id).Scan(
-			&app.ID, &app.StudentName, &app.Status, &app.CurrentHandler, &app.CurrentHandlerRole,
-			&app.Version, &materialsOK, &classOK, &paymentOK,
+			&app.ID, &app.StudentName, &app.IdCard, &app.Phone, &app.Program,
+			&app.Status, &app.CurrentHandler, &app.CurrentHandlerName, &app.CurrentHandlerRole,
+			&app.NextHandler, &app.NextHandlerName, &app.NextHandlerRole,
 			&app.AssignmentDeadline, &app.AuditDeadline, &app.ReviewDeadline,
+			&app.CreatedAt, &app.UpdatedAt, &app.Version, &app.Urgency,
+			&app.ResponsiblePerson, &app.ResponsiblePersonName,
+			&materialsOK, &classOK, &paymentOK,
 		)
 		app.MaterialsComplete = materialsOK == 1
 		app.ClassAssigned = classOK == 1
@@ -548,114 +583,105 @@ func BatchProcess(c *gin.Context) {
 			results = append(results, result)
 			continue
 		}
-
-		if app.CurrentHandler != userID && app.CurrentHandlerRole != role {
+		if err != nil {
 			result.Success = false
-			result.Reason = "越权操作：不是当前处理人"
-			recordExceptionStandalone(id, "permission_denied", result.Reason, userID, userName)
+			result.Reason = "查询失败: " + err.Error()
 			results = append(results, result)
 			continue
 		}
 
-		ok, reason := validateEvidence(&app)
-		if !ok {
+		vr := validateAndPrepare(req.Action, &app, userID, userName, role, app.Version)
+		if !vr.Pass {
+			recordExceptionPersistence(id, vr.ExcType, vr.ErrorMsg, userID, userName)
 			result.Success = false
-			result.Reason = reason
-			recordExceptionStandalone(id, "missing_evidence", reason, userID, userName)
+			result.Reason = vr.ErrorMsg
 			results = append(results, result)
 			continue
 		}
 
-		ok, reason = checkDeadline(&app, role)
-		if !ok {
-			result.Success = false
-			result.Reason = reason + "，请先处理逾期"
-			recordExceptionStandalone(id, "overdue", reason, userID, userName)
-			results = append(results, result)
-			continue
+		cfg := actionConfigs[req.Action]
+		newStatus := cfg.TargetStatus
+		newHandlerID, newHandlerName := getUserByRole(cfg.TargetHandlerRole)
+		nextHandlerID, nextHandlerName := "", ""
+		if cfg.NextHandlerRole != "" {
+			nextHandlerID, nextHandlerName = getUserByRole(cfg.NextHandlerRole)
 		}
+		isCorrection := cfg.IsCorrection
 
-		switch req.Action {
-		case "assign":
-			if role != models.RoleRegistrar || app.Status != models.StatusPending {
-				result.Success = false
-				result.Reason = "状态或角色不匹配"
-				results = append(results, result)
-				continue
-			}
-		case "audit_pass":
-			if role != models.RoleAuditor || app.Status != models.StatusTransferred {
-				result.Success = false
-				result.Reason = "状态或角色不匹配"
-				results = append(results, result)
-				continue
-			}
-		default:
-			result.Success = false
-			result.Reason = "不支持的批量操作"
-			results = append(results, result)
-			continue
-		}
-
-		processResult := ProcessRequest{Action: req.Action, Remark: req.Remark, Version: app.Version}
-		tx, _ := database.DB.Begin()
-
-		newStatus := app.Status
-		newHandler := app.CurrentHandler
-		newHandlerName := ""
-		newHandlerRole := app.CurrentHandlerRole
-		nextHandler := ""
-		nextHandlerName := ""
-		nextHandlerRole := models.Role("")
-
-		if req.Action == "assign" {
-			newStatus = models.StatusTransferred
-			var auditorID, auditorName string
-			database.DB.QueryRow("SELECT id, name FROM users WHERE role = 'auditor'").Scan(&auditorID, &auditorName)
-			newHandler = auditorID
-			newHandlerName = auditorName
-			newHandlerRole = models.RoleAuditor
-			var reviewerID, reviewerName string
-			database.DB.QueryRow("SELECT id, name FROM users WHERE role = 'reviewer'").Scan(&reviewerID, &reviewerName)
-			nextHandler = reviewerID
-			nextHandlerName = reviewerName
-			nextHandlerRole = models.RoleReviewer
-		} else if req.Action == "audit_pass" {
-			newStatus = models.StatusVisited
-			var reviewerID, reviewerName string
-			database.DB.QueryRow("SELECT id, name FROM users WHERE role = 'reviewer'").Scan(&reviewerID, &reviewerName)
-			newHandler = reviewerID
-			newHandlerName = reviewerName
-			newHandlerRole = models.RoleReviewer
+		responsiblePerson := app.ResponsiblePerson
+		responsiblePersonName := app.ResponsiblePersonName
+		if cfg.UpdateResponsible && cfg.TargetHandlerRole != "" {
+			responsiblePerson = newHandlerID
+			responsiblePersonName = newHandlerName
 		}
 
 		now := time.Now()
-		database.DB.QueryRow("SELECT name FROM users WHERE id = ?", app.CurrentHandler).Scan(&app.CurrentHandlerName)
+		tx, err := database.DB.Begin()
+		if err != nil {
+			result.Success = false
+			result.Reason = "事务启动失败"
+			results = append(results, result)
+			continue
+		}
 
-		tx.Exec(`UPDATE student_applications SET 
+		updateResult, err := tx.Exec(`UPDATE student_applications SET 
 			status = ?, current_handler = ?, current_handler_name = ?, current_handler_role = ?,
 			next_handler = ?, next_handler_name = ?, next_handler_role = ?,
+			responsible_person = ?, responsible_person_name = ?,
 			updated_at = ?, version = version + 1
 			WHERE id = ? AND version = ?`,
-			string(newStatus), newHandler, newHandlerName, string(newHandlerRole),
-			nextHandler, nextHandlerName, string(nextHandlerRole),
+			string(newStatus), newHandlerID, newHandlerName, string(cfg.TargetHandlerRole),
+			nextHandlerID, nextHandlerName, string(cfg.NextHandlerRole),
+			responsiblePerson, responsiblePersonName,
 			now, id, app.Version,
 		)
+		if err != nil {
+			tx.Rollback()
+			result.Success = false
+			result.Reason = "更新失败: " + err.Error()
+			results = append(results, result)
+			continue
+		}
+		affected, _ := updateResult.RowsAffected()
+		if affected == 0 {
+			tx.Rollback()
+			recordExceptionPersistence(id, "version_conflict", "批量处理版本冲突", userID, userName)
+			result.Success = false
+			result.Reason = "版本冲突：数据已被修改"
+			results = append(results, result)
+			continue
+		}
 
-		tx.Exec(`INSERT INTO processing_records 
+		_, err = tx.Exec(`INSERT INTO processing_records 
 			(id, application_id, action, handler_id, handler_name, handler_role,
 			 previous_status, new_status, previous_handler, new_handler,
 			 remark, created_at, version, is_correction)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			uuid.NewString(), id, req.Action, userID, userName, string(role),
-			string(app.Status), string(newStatus), app.CurrentHandler, newHandler,
-			req.Remark, now, app.Version+1, false,
+			string(app.Status), string(newStatus), app.CurrentHandler, newHandlerID,
+			req.Remark, now, app.Version+1, isCorrection,
 		)
+		if err != nil {
+			tx.Rollback()
+			result.Success = false
+			result.Reason = "记录处理日志失败"
+			results = append(results, result)
+			continue
+		}
 
-		tx.Commit()
+		if err := tx.Commit(); err != nil {
+			result.Success = false
+			result.Reason = "提交事务失败"
+			results = append(results, result)
+			continue
+		}
 
 		result.Success = true
-		result.Reason = "处理成功，流转至：" + newHandlerName
+		if newHandlerName != "" {
+			result.Reason = "处理成功，流转至：" + newHandlerName
+		} else {
+			result.Reason = "处理成功，已归档"
+		}
 		results = append(results, result)
 	}
 
@@ -672,14 +698,6 @@ func BatchProcess(c *gin.Context) {
 		"success_count": successCount,
 		"fail_count":    len(results) - successCount,
 	})
-}
-
-func recordExceptionStandalone(appID, excType, reason, userID, userName string) {
-	database.DB.Exec(`INSERT INTO exception_records 
-		(id, application_id, type, reason, triggered_by, triggered_by_name, triggered_at, resolved)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
-		uuid.NewString(), appID, excType, reason, userID, userName, time.Now(),
-	)
 }
 
 func GetStatistics(c *gin.Context) {
@@ -729,12 +747,19 @@ func AddAuditNote(c *gin.Context) {
 		return
 	}
 
+	var exists int
+	database.DB.QueryRow("SELECT COUNT(*) FROM student_applications WHERE id = ?", id).Scan(&exists)
+	if exists == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "报名单不存在"})
+		return
+	}
+
 	_, err := database.DB.Exec(
 		"INSERT INTO audit_notes (id, application_id, user_id, user_name, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		uuid.NewString(), id, userID, userName, req.Content, time.Now(),
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "添加备注失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "添加备注失败: " + err.Error()})
 		return
 	}
 

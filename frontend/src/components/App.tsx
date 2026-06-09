@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api, type User } from '../lib/api';
 import Login from './Login';
 import Header from './Header';
@@ -9,7 +9,11 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [view, setView] = useState<'list' | 'detail'>('list');
   const [detailId, setDetailId] = useState<string>('');
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [globalRefreshCounter, setGlobalRefreshCounter] = useState(0);
+
+  const triggerRefresh = useCallback(() => {
+    setGlobalRefreshCounter((k) => k + 1);
+  }, []);
 
   useEffect(() => {
     const savedUser = api.getCurrentUser();
@@ -24,22 +28,22 @@ export default function App() {
   const handleLogin = (u: User) => {
     setUser(u);
     setView('list');
+    setDetailId('');
+    triggerRefresh();
   };
 
   const handleLogout = () => {
     api.logout();
     setUser(null);
+    setView('list');
+    setDetailId('');
   };
 
   const handleRoleSwitch = (u: User) => {
     setUser(u);
     setView('list');
     setDetailId('');
-    setRefreshKey((k) => k + 1);
-  };
-
-  const handleRefresh = () => {
-    setRefreshKey((k) => k + 1);
+    triggerRefresh();
   };
 
   const handleViewDetail = (id: string) => {
@@ -50,6 +54,11 @@ export default function App() {
   const handleBack = () => {
     setView('list');
     setDetailId('');
+    triggerRefresh();
+  };
+
+  const handleProcessedInDetail = () => {
+    triggerRefresh();
   };
 
   if (!user) {
@@ -62,21 +71,23 @@ export default function App() {
         user={user}
         onLogout={handleLogout}
         onRoleSwitch={handleRoleSwitch}
-        onRefresh={handleRefresh}
+        onRefresh={triggerRefresh}
       />
       {view === 'list' ? (
         <ApplicationList
-          key={refreshKey + '-' + user.id}
+          key={`list-${user.id}-${globalRefreshCounter}`}
           user={user}
           onViewDetail={handleViewDetail}
+          globalRefreshCounter={globalRefreshCounter}
         />
       ) : (
         <ApplicationDetail
-          key={detailId + '-' + refreshKey}
+          key={`detail-${detailId}-${user.id}-${globalRefreshCounter}`}
           applicationId={detailId}
           user={user}
           onBack={handleBack}
-          onRefresh={handleRefresh}
+          onRefresh={triggerRefresh}
+          onProcessed={handleProcessedInDetail}
         />
       )}
     </div>
