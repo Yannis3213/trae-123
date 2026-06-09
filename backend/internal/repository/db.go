@@ -29,7 +29,59 @@ func InitDB() error {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
+	if err = upgradeSchema(); err != nil {
+		return fmt.Errorf("failed to upgrade schema: %w", err)
+	}
+
 	log.Println("Database initialized successfully")
+	return nil
+}
+
+func columnExists(tableName, columnName string) (bool, error) {
+	rows, err := DB.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt_value sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt_value, &pk); err != nil {
+			return false, err
+		}
+		if name == columnName {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func upgradeSchema() error {
+	columns := []struct {
+		table  string
+		column string
+		def    string
+	}{
+		{"consultations", "registrar_id", "TEXT"},
+		{"consultations", "auditor_id", "TEXT"},
+		{"consultations", "reviewer_id", "TEXT"},
+	}
+	for _, col := range columns {
+		exists, err := columnExists(col.table, col.column)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			sql := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", col.table, col.column, col.def)
+			if _, err := DB.Exec(sql); err != nil {
+				log.Printf("Schema upgrade warning: %v (sql=%s)", err, sql)
+			} else {
+				log.Printf("Schema upgraded: added %s.%s", col.table, col.column)
+			}
+		}
+	}
 	return nil
 }
 

@@ -566,47 +566,49 @@ func SeedDemoData() {
 	for i, d := range demos {
 		demoID := "demo-" + fmt.Sprint(i+1)
 		existing, _ := repository.GetConsultationByID(demoID)
-		if existing != nil {
-			continue
-		}
-		d.c.ID = demoID
-		if err := repository.CreateConsultation(&d.c); err != nil {
-			log.Printf("创建演示会诊单失败 [%s]: %v", d.c.PatientName, err)
-			continue
-		}
-		log.Printf("创建演示会诊单: %s (病案号: %s)", d.c.PatientName, d.c.PatientID)
+		if existing == nil {
+			d.c.ID = demoID
+			if err := repository.CreateConsultation(&d.c); err != nil {
+				log.Printf("创建演示会诊单失败 [%s]: %v", d.c.PatientName, err)
+				continue
+			}
+			log.Printf("创建演示会诊单: %s (病案号: %s)", d.c.PatientName, d.c.PatientID)
 
-		for _, pr := range d.processRecords {
-			pr.ConsultationID = d.c.ID
-			if pr.CreatedAt.IsZero() {
-				pr.CreatedAt = now.Add(-time.Duration(10-i) * time.Hour)
+			for _, pr := range d.processRecords {
+				pr.ConsultationID = d.c.ID
+				if pr.CreatedAt.IsZero() {
+					pr.CreatedAt = now.Add(-time.Duration(10-i) * time.Hour)
+				}
+				if err := repository.CreateProcessRecord(&pr); err != nil {
+					log.Printf("创建处理记录失败: %v", err)
+				}
 			}
-			if err := repository.CreateProcessRecord(&pr); err != nil {
-				log.Printf("创建处理记录失败: %v", err)
+			for _, ab := range d.abnormals {
+				ab.ConsultationID = d.c.ID
+				if ab.IsResolved {
+					t := now.Add(-time.Duration(3+i) * time.Hour)
+					ab.ResolvedAt = &t
+				}
+				if err := repository.CreateAbnormalRecord(&ab); err != nil {
+					log.Printf("创建异常记录失败: %v", err)
+				}
+				if ab.IsResolved && ab.ID != "" {
+					_ = repository.ResolveAbnormalRecord(ab.ID, ab.Resolution)
+				}
+			}
+			for _, note := range d.notes {
+				n := &models.AuditNote{
+					ConsultationID: d.c.ID,
+					Note:           note,
+					CreatedBy:      revUser.RealName,
+				}
+				if err := repository.CreateAuditNote(n); err != nil {
+					log.Printf("创建审计备注失败: %v", err)
+				}
 			}
 		}
-		for _, ab := range d.abnormals {
-			ab.ConsultationID = d.c.ID
-			if ab.IsResolved {
-				t := now.Add(-time.Duration(3+i) * time.Hour)
-				ab.ResolvedAt = &t
-			}
-			if err := repository.CreateAbnormalRecord(&ab); err != nil {
-				log.Printf("创建异常记录失败: %v", err)
-			}
-			if ab.IsResolved && ab.ID != "" {
-				_ = repository.ResolveAbnormalRecord(ab.ID, ab.Resolution)
-			}
-		}
-		for _, note := range d.notes {
-			n := &models.AuditNote{
-				ConsultationID: d.c.ID,
-				Note:           note,
-				CreatedBy:      revUser.RealName,
-			}
-			if err := repository.CreateAuditNote(n); err != nil {
-				log.Printf("创建审计备注失败: %v", err)
-			}
+		if _, err := repository.BackfillConsultationOwnership(demoID); err != nil {
+			log.Printf("回填归属字段失败 [%s]: %v", demoID, err)
 		}
 	}
 

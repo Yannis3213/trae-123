@@ -189,6 +189,19 @@ export default function ConsultationDetail({ id, user, onBack, onRefresh }: Prop
           </div>
         )}
 
+        <div style={{ marginBottom: 20, padding: '10px 14px', background: '#fafbff', borderRadius: 6, fontSize: 13, border: '1px solid #e3e8f0' }}>
+          <strong style={{ marginRight: 12 }}>责任链归属：</strong>
+          <span style={{ marginRight: 20 }}>
+            登记秘书：<span style={{ fontWeight: 600 }}>{c.registrar_name || '—'}</span>
+          </span>
+          <span style={{ marginRight: 20 }}>
+            质控医生：<span style={{ fontWeight: 600 }}>{c.auditor_name || (c.current_stage !== 'registration' ? '待认领' : '—')}</span>
+          </span>
+          <span>
+            医务部主任：<span style={{ fontWeight: 600 }}>{c.reviewer_name || (c.current_stage === 'review' || c.is_archived ? '待进入' : '—')}</span>
+          </span>
+        </div>
+
         <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
           {stageOrder.map((s, i) => {
             const done = stageOrder.indexOf(c.current_stage) > i || (c.current_stage === s && c.status !== 'pending');

@@ -43,6 +43,17 @@ export default function LedgerPanel({ user, onOpen }: Props) {
   const handleSearch = () => { setPage(1); load(); };
   const handleReset = () => { setKeyword(''); setPatientId(''); setPage(1); setTimeout(load, 0); };
 
+  const emptyHint = () => {
+    if (user.role === 'registrar') return '您暂无归档的会诊申请单，处理完成后会自动进入归档台账';
+    if (user.role === 'auditor') return '暂无您参与核验并归档的单据，核验通过后请等待医务部主任归档';
+    if (user.role === 'reviewer') return '暂无您复核归档的单据，请先完成复核并归档';
+    return '暂无归档数据';
+  };
+
+  const ownershipHint = (c: Consultation) => {
+    return `登记:${c.registrar_name || '—'} / 核验:${c.auditor_name || '—'} / 复核:${c.reviewer_name || '—'}`;
+  };
+
   return (
     <div>
       <div className="alert info" style={{ marginBottom: 16 }}>
@@ -76,6 +87,7 @@ export default function LedgerPanel({ user, onOpen }: Props) {
               <th>科室</th>
               <th>会诊类型</th>
               <th>最终状态</th>
+              <th>责任链归属</th>
               <th>处理次数</th>
               <th>异常次数</th>
               <th>排班核验</th>
@@ -85,9 +97,9 @@ export default function LedgerPanel({ user, onOpen }: Props) {
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40 }}>加载中...</td></tr>}
+            {loading && <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40 }}>加载中...</td></tr>}
             {!loading && list.length === 0 && (
-              <tr><td colSpan={11} style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>暂无归档数据</td></tr>
+              <tr><td colSpan={12} style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>{emptyHint()}</td></tr>
             )}
             {list.map(item => {
               const c = item.consultation;
@@ -98,6 +110,7 @@ export default function LedgerPanel({ user, onOpen }: Props) {
                   <td>{c.department}</td>
                   <td>{c.consultation_type}</td>
                   <td><span className={`badge ${c.status}`}>{statusLabels[c.status]}</span></td>
+                  <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{ownershipHint(c)}</td>
                   <td>{item.process_count}</td>
                   <td style={{ color: item.abnormal_count > 0 ? 'var(--danger)' : 'inherit' }}>{item.abnormal_count}</td>
                   <td>{item.schedule_verified ? '✓' : '✗'}</td>

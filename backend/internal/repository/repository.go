@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 
 	"consultation-system/internal/config"
@@ -491,6 +492,79 @@ func buildFilterWhere(filter ConsultationFilter) (string, []interface{}) {
 		args = append(args, filter.ReviewerID)
 	}
 	return where, args
+}
+
+func BackfillConsultationOwnership(consultationID string) (bool, error) {
+	c, err := GetConsultationByID(consultationID)
+	if err != nil {
+		return false, err
+	}
+	needsUpdate := false
+
+	if c.RegistrarID == "" && c.CreatedBy != "" {
+		c.RegistrarID = c.CreatedBy
+		needsUpdate = true
+	}
+	if c.AuditorID == "" {
+		row := DB.QueryRow(`SELECT handler_id FROM process_records
+			WHERE consultation_id=? AND handler_role='auditor'
+			ORDER BY created_at DESC LIMIT 1`, consultationID)
+		var hid string
+		if err := row.Scan(&hid); err == nil && hid != "" {
+			c.AuditorID = hid
+			needsUpdate = true
+		}
+	}
+	if c.ReviewerID == "" {
+		row := DB.QueryRow(`SELECT handler_id FROM process_records
+			WHERE consultation_id=? AND handler_role='reviewer'
+			ORDER BY created_at DESC LIMIT 1`, consultationID)
+		var hid string
+		if err := row.Scan(&hid); err == nil && hid != "" {
+			c.ReviewerID = hid
+			needsUpdate = true
+		}
+	}
+	if !needsUpdate {
+		return false, nil
+	}
+	_, err = DB.Exec(`UPDATE consultations SET registrar_id=?, auditor_id=?, reviewer_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		c.RegistrarID, c.AuditorID, c.ReviewerID, consultationID)
+	return err == nil, err
+}
+
+func GetUserNamesByIDs(ids []string) (map[string]string, error) {
+	result := make(map[string]string)
+	idSet := make(map[string]bool)
+	cleanIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" && !idSet[id] {
+			idSet[id] = true
+			cleanIDs = append(cleanIDs, id)
+		}
+	}
+	if len(cleanIDs) == 0 {
+		return result, nil
+	}
+	placeholders := make([]string, len(cleanIDs))
+	args := make([]interface{}, len(cleanIDs))
+	for i, id := range cleanIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	sql := `SELECT id, real_name FROM users WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+	rows, err := DB.Query(sql, args...)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err == nil {
+			result[id] = name
+		}
+	}
+	return result, nil
 }
 
 func GetStatistics(baseFilter ConsultationFilter) (map[string]int, error) {

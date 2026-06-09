@@ -31,6 +31,25 @@ export default function Dashboard({ user, onOpen }: Props) {
 
   if (loading) return <div>加载中...</div>;
 
+  const emptyHint = () => {
+    if (user.role === 'registrar') return '您还没有登记过会诊申请单，切换到"会诊登记"Tab 新建';
+    if (user.role === 'auditor') return '核验池暂无待处理单据，请等待登记秘书提交或退回补正后再次提交';
+    if (user.role === 'reviewer') return '复核池暂无待处理单据，请等待质控医生核验通过后提交';
+    return '暂无数据';
+  };
+
+  const ownershipHint = (c: Consultation) => {
+    const parts: string[] = [];
+    parts.push(`登记:${c.registrar_name || '—'}`);
+    if (c.auditor_name || c.current_stage !== 'registration') {
+      parts.push(`核验:${c.auditor_name || '待认领'}`);
+    }
+    if (c.reviewer_name || c.current_stage === 'review' || c.is_archived) {
+      parts.push(`复核:${c.reviewer_name || '待进入'}`);
+    }
+    return parts.join(' / ');
+  };
+
   const statList = [
     { label: '待确认', key: 'pending', cls: '' },
     { label: '异常', key: 'abnormal', cls: 'danger' },
@@ -70,13 +89,14 @@ export default function Dashboard({ user, onOpen }: Props) {
               <th>会诊类型</th>
               <th>状态</th>
               <th>紧急程度</th>
+              <th>责任链归属</th>
               <th>创建时间</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {recent.length === 0 && (
-              <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>暂无数据</td></tr>
+              <tr><td colSpan={9} style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>{emptyHint()}</td></tr>
             )}
             {recent.map(c => (
               <tr key={c.id}>
@@ -86,6 +106,7 @@ export default function Dashboard({ user, onOpen }: Props) {
                 <td>{c.consultation_type}</td>
                 <td><span className={`badge ${c.status}`}>{statusLabels[c.status]}</span></td>
                 <td><span className={`badge ${c.urgency}`}>{urgencyLabels[c.urgency]}</span></td>
+                <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{ownershipHint(c)}</td>
                 <td>{formatDateTime(c.created_at)}</td>
                 <td><button onClick={() => onOpen(c.id)}>查看</button></td>
               </tr>

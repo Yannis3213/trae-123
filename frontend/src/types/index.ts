@@ -31,6 +31,12 @@ export interface Consultation {
   status: ConsultationStatus;
   current_stage: ProcessStage;
   current_handler: string;
+  registrar_id: string;
+  registrar_name: string;
+  auditor_id: string;
+  auditor_name: string;
+  reviewer_id: string;
+  reviewer_name: string;
   urgency: UrgencyLevel;
   evidence_list: string;
   version: number;

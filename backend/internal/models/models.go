@@ -34,8 +34,11 @@ type Consultation struct {
 	CurrentStage       config.ProcessStage       `json:"current_stage"`
 	CurrentHandler     string                    `json:"current_handler"`
 	RegistrarID        string                    `json:"registrar_id"`
+	RegistrarName      string                    `json:"registrar_name"`
 	AuditorID          string                    `json:"auditor_id"`
+	AuditorName        string                    `json:"auditor_name"`
 	ReviewerID         string                    `json:"reviewer_id"`
+	ReviewerName       string                    `json:"reviewer_name"`
 	Urgency            config.UrgencyLevel       `json:"urgency"`
 	EvidenceList       string                    `json:"evidence_list"`
 	Version            int                       `json:"version"`

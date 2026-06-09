@@ -69,8 +69,6 @@ func applyRoleVisibilityFilter(user *models.User, filter *repository.Consultatio
 	switch user.Role {
 	case config.RoleRegistrar:
 		filter.RegistrarID = user.ID
-		if !isArchived {
-		}
 	case config.RoleAuditor:
 		if isArchived {
 			filter.AuditorID = user.ID
@@ -88,6 +86,53 @@ func applyRoleVisibilityFilter(user *models.User, filter *repository.Consultatio
 			filter.Stage = config.StageReview
 		}
 	}
+}
+
+func enrichOwnershipNames(list []models.Consultation) []models.Consultation {
+	if len(list) == 0 {
+		return list
+	}
+	ids := make([]string, 0, len(list)*3)
+	for _, c := range list {
+		ids = append(ids, c.RegistrarID, c.AuditorID, c.ReviewerID)
+	}
+	nameMap, err := repository.GetUserNamesByIDs(ids)
+	if err != nil || len(nameMap) == 0 {
+		return list
+	}
+	for i := range list {
+		if name, ok := nameMap[list[i].RegistrarID]; ok {
+			list[i].RegistrarName = name
+		}
+		if name, ok := nameMap[list[i].AuditorID]; ok {
+			list[i].AuditorName = name
+		}
+		if name, ok := nameMap[list[i].ReviewerID]; ok {
+			list[i].ReviewerName = name
+		}
+	}
+	return list
+}
+
+func enrichSingleOwnership(c *models.Consultation) *models.Consultation {
+	if c == nil {
+		return c
+	}
+	ids := []string{c.RegistrarID, c.AuditorID, c.ReviewerID}
+	nameMap, err := repository.GetUserNamesByIDs(ids)
+	if err != nil || len(nameMap) == 0 {
+		return c
+	}
+	if name, ok := nameMap[c.RegistrarID]; ok {
+		c.RegistrarName = name
+	}
+	if name, ok := nameMap[c.AuditorID]; ok {
+		c.AuditorName = name
+	}
+	if name, ok := nameMap[c.ReviewerID]; ok {
+		c.ReviewerName = name
+	}
+	return c
 }
 
 func canViewConsultation(user *models.User, c *models.Consultation) bool {
@@ -123,6 +168,8 @@ func GetConsultation(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "无权查看该会诊申请单"})
 	}
 
+	enrichSingleOwnership(consultation)
+
 	records, _ := repository.GetProcessRecords(id)
 	abnormals, _ := repository.GetAbnormalRecords(id)
 	attachments, _ := repository.GetAttachments(id)
@@ -157,7 +204,6 @@ func ListConsultations(c *fiber.Ctx) error {
 		SearchKeyword:  c.Query("keyword"),
 		CurrentHandler: c.Query("current_handler"),
 	}
-	applyRoleVisibilityFilter(user, &filter)
 
 	isArchivedStr := c.Query("is_archived")
 	if isArchivedStr == "true" {
@@ -168,10 +214,13 @@ func ListConsultations(c *fiber.Ctx) error {
 		filter.IsArchived = &b
 	}
 
+	applyRoleVisibilityFilter(user, &filter)
+
 	list, total, err := repository.ListConsultations(filter, page, pageSize)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
+	list = enrichOwnershipNames(list)
 	return c.JSON(fiber.Map{
 		"list":      list,
 		"total":     total,
@@ -444,6 +493,7 @@ func GetLedger(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
+	list = enrichOwnershipNames(list)
 
 	ledgerList := make([]fiber.Map, 0, len(list))
 	for _, item := range list {
@@ -485,6 +535,7 @@ func GetWarningList(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
+	list = enrichOwnershipNames(list)
 
 	normalList := []models.Consultation{}
 	warningList := []models.Consultation{}

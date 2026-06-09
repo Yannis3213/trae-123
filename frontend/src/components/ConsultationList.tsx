@@ -144,11 +144,31 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
     return <span style={{ color: 'var(--text-secondary)' }}>其他处理人</span>;
   };
 
+  const ownershipHint = (c: Consultation) => {
+    const parts: string[] = [];
+    parts.push(`登记:${c.registrar_name || '—'}`);
+    if (c.auditor_name || c.current_stage !== 'registration') {
+      parts.push(`核验:${c.auditor_name || '待认领'}`);
+    }
+    if (c.reviewer_name || c.current_stage === 'review' || c.is_archived) {
+      parts.push(`复核:${c.reviewer_name || '待进入'}`);
+    }
+    return parts.join(' / ');
+  };
+
+  const emptyHint = () => {
+    if (user.role === 'registrar') return '暂无您登记的会诊申请单，点击右上角"新建会诊申请单"开始';
+    if (user.role === 'auditor') return '核验池暂无可处理单据，如有退回补正请等待登记秘书再次提交';
+    if (user.role === 'reviewer') return '复核池暂无可处理单据，请等待质控医生核验通过后提交';
+    return '暂无数据';
+  };
+
   const showStageColumn = !stage;
   const showHandlerColumn = user.role !== 'registrar';
   const showCheckboxCol = actions.length > 0;
+  const showOwnerCol = true;
 
-  const totalCols = 8 + (showStageColumn ? 1 : 0) + (showHandlerColumn ? 1 : 0) + (showCheckboxCol ? 1 : 0);
+  const totalCols = 8 + (showStageColumn ? 1 : 0) + (showHandlerColumn ? 1 : 0) + (showCheckboxCol ? 1 : 0) + (showOwnerCol ? 1 : 0);
 
   return (
     <div>
@@ -284,6 +304,7 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
               <th>状态</th>
               <th>紧急度</th>
               {showHandlerColumn && <th>当前处理人</th>}
+              {showOwnerCol && <th>责任链归属</th>}
               <th>截止时间</th>
               <th>版本</th>
               <th>操作</th>
@@ -295,7 +316,7 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
             )}
             {!loading && list.length === 0 && (
               <tr><td colSpan={totalCols} style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
-                当前角色在该范围内暂无会诊申请单
+                {emptyHint()}
               </td></tr>
             )}
             {list.map(c => (
@@ -319,6 +340,7 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
                 <td><span className={`badge ${c.status}`}>{statusLabels[c.status]}</span></td>
                 <td><span className={`badge ${c.urgency}`}>{urgencyLabels[c.urgency]}</span></td>
                 {showHandlerColumn && <td>{getHandlerLabel(c)}</td>}
+                {showOwnerCol && <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{ownershipHint(c)}</td>}
                 <td>{formatDateTime(c.deadline)}</td>
                 <td>v{c.version}</td>
                 <td>
