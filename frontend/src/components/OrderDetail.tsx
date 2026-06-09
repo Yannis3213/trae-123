@@ -101,7 +101,12 @@ const OrderDetail: React.FC<Props> = ({ orderId, user, dict, onClose, onMessage 
       onClose();
     } else {
       let msg = r.message || '处理失败';
-      if (r.current_status_name) msg += `（当前状态：${r.current_status_name}，版本：v${r.current_version}）`;
+      const detailParts: string[] = [];
+      if (r.current_status_name) detailParts.push(`当前状态：${r.current_status_name}`);
+      if (r.current_version !== undefined) detailParts.push(`版本：v${r.current_version}`);
+      if (r.handler_name) detailParts.push(`当前处理人：${r.handler_name}`);
+      if (detailParts.length > 0) msg += `（${detailParts.join('，')}）`;
+      if (r.correction_note) msg += `\n💡 补正提示：${r.correction_note}`;
       setError(msg);
       if (r.code === 400 || r.code === 409) {
         onMessage('warning', msg);

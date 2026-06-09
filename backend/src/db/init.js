@@ -124,6 +124,24 @@ function seed() {
       1, 'u_clerk_li', '李店员',
       hoursAgo(1), hoursAgo(1), hoursLater(71),
       null, null, null
+    ],
+    [
+      uuidv4(), 'RX20260601009', '郑十一', '110101198707079012',
+      'store_001', '朝阳大药房（总店）', 'area_east', '华东区域',
+      4, 520.00, ORDER_STATUS.PENDING_SIGN,
+      ROLES.PHARMACIST, 'u_pharmacist_zhang', '张药师',
+      1, 'u_clerk_wang', '王店员',
+      hoursAgo(60), hoursAgo(60), hoursLater(12),
+      null, null, null
+    ],
+    [
+      uuidv4(), 'RX20260601010', '冯十二', '110101199303030123',
+      'store_002', '朝阳大药房（分店）', 'area_east', '华东区域',
+      2, 168.00, ORDER_STATUS.RETURNED_CORRECTION,
+      ROLES.STORE_CLERK, 'u_clerk_li', '李店员',
+      3, 'u_clerk_li', '李店员',
+      hoursAgo(100), hoursAgo(20), hoursLater(44),
+      '缺料导致处方无法调剂，区域经理要求门店确认替代药品或联系患者', 'material_shortage', '请门店确认：是否有替代药品？若无请联系患者告知情况并重新开具处方'
     ]
   ];
 
@@ -155,7 +173,9 @@ function seed() {
     [uuidv4(), orderMap['RX20260601005'], '签收确认单_钱七.pdf', 'application/pdf', '/uploads/RX20260601005_sign.pdf', 'sign_off', 'u_pharmacist_zhang', '张药师', hoursAgo(40)],
     [uuidv4(), orderMap['RX20260601006'], '处方_孙八.jpg', 'image/jpeg', '/uploads/RX20260601006_rx.jpg', 'prescription', 'u_clerk_li', '李店员', hoursAgo(4)],
     [uuidv4(), orderMap['RX20260601007'], '处方_周九.jpg', 'image/jpeg', '/uploads/RX20260601007_rx.jpg', 'prescription', 'u_clerk_wang', '王店员', hoursAgo(20)],
-    [uuidv4(), orderMap['RX20260601008'], '处方_吴十.jpg', 'image/jpeg', '/uploads/RX20260601008_rx.jpg', 'prescription', 'u_clerk_li', '李店员', hoursAgo(1)]
+    [uuidv4(), orderMap['RX20260601008'], '处方_吴十.jpg', 'image/jpeg', '/uploads/RX20260601008_rx.jpg', 'prescription', 'u_clerk_li', '李店员', hoursAgo(1)],
+    [uuidv4(), orderMap['RX20260601009'], '处方_郑十一.jpg', 'image/jpeg', '/uploads/RX20260601009_rx.jpg', 'prescription', 'u_clerk_wang', '王店员', hoursAgo(60)],
+    [uuidv4(), orderMap['RX20260601010'], '处方_冯十二.jpg', 'image/jpeg', '/uploads/RX20260601010_rx.jpg', 'prescription', 'u_clerk_li', '李店员', hoursAgo(100)]
   ];
 
   const insertManyAttachments = db.transaction((rows) => {
@@ -185,7 +205,11 @@ function seed() {
     [uuidv4(), orderMap['RX20260601006'], 1, null, ORDER_STATUS.PENDING_SIGN, 'u_clerk_li', '李店员', ROLES.STORE_CLERK, '门店登记处方订单，等待执业药师处理', hoursAgo(4)],
     [uuidv4(), orderMap['RX20260601007'], 1, null, ORDER_STATUS.PENDING_SIGN, 'u_clerk_wang', '王店员', ROLES.STORE_CLERK, '门店登记处方订单', hoursAgo(20)],
     [uuidv4(), orderMap['RX20260601007'], 2, ORDER_STATUS.PENDING_SIGN, ORDER_STATUS.ABNORMAL_RETURN, 'u_pharmacist_zhang', '张药师', ROLES.PHARMACIST, '药品批号异常，标记异常回传', hoursAgo(12)],
-    [uuidv4(), orderMap['RX20260601008'], 1, null, ORDER_STATUS.PENDING_SIGN, 'u_clerk_li', '李店员', ROLES.STORE_CLERK, '门店登记处方订单，等待执业药师处理', hoursAgo(1)]
+    [uuidv4(), orderMap['RX20260601008'], 1, null, ORDER_STATUS.PENDING_SIGN, 'u_clerk_li', '李店员', ROLES.STORE_CLERK, '门店登记处方订单，等待执业药师处理', hoursAgo(1)],
+    [uuidv4(), orderMap['RX20260601009'], 1, null, ORDER_STATUS.PENDING_SIGN, 'u_clerk_wang', '王店员', ROLES.STORE_CLERK, '门店登记处方订单，临期队列（12小时到期），测试逾期打标拦截', hoursAgo(60)],
+    [uuidv4(), orderMap['RX20260601010'], 1, null, ORDER_STATUS.PENDING_SIGN, 'u_clerk_li', '李店员', ROLES.STORE_CLERK, '门店登记处方订单', hoursAgo(100)],
+    [uuidv4(), orderMap['RX20260601010'], 2, ORDER_STATUS.PENDING_SIGN, ORDER_STATUS.MATERIAL_SHORTAGE, 'u_pharmacist_chen', '陈药师', ROLES.PHARMACIST, '核验发现药品库存不足，标记缺料，流转至区域经理', hoursAgo(60)],
+    [uuidv4(), orderMap['RX20260601010'], 3, ORDER_STATUS.MATERIAL_SHORTAGE, ORDER_STATUS.RETURNED_CORRECTION, 'u_manager_zhao', '赵经理', ROLES.AREA_MANAGER, '区域经理复核：缺料需门店确认替代药品或联系患者，退回补正', hoursAgo(20)]
   ];
 
   const insertManyRecords = db.transaction((rows) => {
@@ -207,7 +231,10 @@ function seed() {
     [uuidv4(), orderMap['RX20260601003'], 2, 'u_manager_zhao', '赵经理', ROLES.AREA_MANAGER, 'view', '查看逾期处方订单', hoursAgo(36)],
     [uuidv4(), orderMap['RX20260601004'], 3, 'u_manager_zhao', '赵经理', ROLES.AREA_MANAGER, 'return_correction', '复核不通过，退回门店补正：处方图像模糊、身份证号无法辨认', hoursAgo(30)],
     [uuidv4(), orderMap['RX20260601005'], 2, 'u_manager_zhao', '赵经理', ROLES.AREA_MANAGER, 'review', '复核通过，订单已完成归档', hoursAgo(24)],
-    [uuidv4(), orderMap['RX20260601007'], 2, 'u_pharmacist_zhang', '张药师', ROLES.PHARMACIST, 'update_status', '将状态改为异常回传，备注：药品批号存疑', hoursAgo(12)]
+    [uuidv4(), orderMap['RX20260601007'], 2, 'u_pharmacist_zhang', '张药师', ROLES.PHARMACIST, 'update_status', '将状态改为异常回传，备注：药品批号存疑', hoursAgo(12)],
+    [uuidv4(), orderMap['RX20260601009'], 1, 'u_pharmacist_zhang', '张药师', ROLES.PHARMACIST, 'view', '查看临期处方订单详情（12小时后到期），测试逾期打标拦截', hoursAgo(30)],
+    [uuidv4(), orderMap['RX20260601010'], 2, 'u_pharmacist_chen', '陈药师', ROLES.PHARMACIST, 'update_status', '将状态改为缺料，备注：药品库存不足需区域经理确认', hoursAgo(60)],
+    [uuidv4(), orderMap['RX20260601010'], 3, 'u_manager_zhao', '赵经理', ROLES.AREA_MANAGER, 'return_correction', '区域经理退回补正：缺料需门店确认替代药品或联系患者重新开方', hoursAgo(20)]
   ];
 
   const insertManyAudits = db.transaction((rows) => {
@@ -227,7 +254,8 @@ function seed() {
     [uuidv4(), orderMap['RX20260601002']],
     [uuidv4(), orderMap['RX20260601003']],
     [uuidv4(), orderMap['RX20260601004']],
-    [uuidv4(), orderMap['RX20260601007']]
+    [uuidv4(), orderMap['RX20260601007']],
+    [uuidv4(), orderMap['RX20260601010']]
   ].map(([id, oid]) => {
     const order = db.prepare('SELECT abnormal_type, abnormal_reason, handler_name FROM prescription_orders WHERE id = ?').get(oid);
     const reportedBy = 'u_manager_zhao';

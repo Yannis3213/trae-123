@@ -308,15 +308,32 @@ router.post('/:id/status', authMiddleware, async (ctx) => {
 
   if (to_status === ORDER_STATUS.OVERDUE) {
     const wl = computeWarningLevel(order);
+    const hoursLeft = Math.floor((new Date(order.due_at).getTime() - Date.now()) / (1000 * 60 * 60));
     if (wl === WARNING_LEVELS.NORMAL) {
       ctx.status = 400;
       ctx.body = {
         code: 400,
         error_code: ABNORMAL_TYPES.STATE_CONFLICT,
-        message: `无法标记为逾期：该订单还有 ${Math.max(1, Math.floor((new Date(order.due_at).getTime() - Date.now()) / (1000 * 60 * 60)))} 小时到期，属正常队列，请到期后再处理`,
+        message: `无法标记为逾期：该订单还有 ${Math.max(1, hoursLeft)} 小时到期，属正常队列，需等到期后系统自动或由处理人标记`,
         current_status: order.status,
         current_status_name: STATUS_NAMES[order.status],
-        current_version: order.version
+        current_version: order.version,
+        handler_name: order.handler_name,
+        correction_note: `补正提示：请在到期时间（${new Date(order.due_at).toLocaleString('zh-CN', { hour12: false })}）之后再操作，或选择其他目标状态推进`
+      };
+      return;
+    }
+    if (wl === WARNING_LEVELS.APPROACHING) {
+      ctx.status = 400;
+      ctx.body = {
+        code: 400,
+        error_code: ABNORMAL_TYPES.STATE_CONFLICT,
+        message: `无法标记为逾期：该订单临期（剩余 ${Math.max(1, hoursLeft)} 小时），尚未真正超期，需等到期时间过后再标记`,
+        current_status: order.status,
+        current_status_name: STATUS_NAMES[order.status],
+        current_version: order.version,
+        handler_name: order.handler_name,
+        correction_note: `补正提示：请于到期时间（${new Date(order.due_at).toLocaleString('zh-CN', { hour12: false })}）之后再标记为逾期，或继续核验后直接推进到签收完成/异常回传`
       };
       return;
     }
@@ -455,13 +472,26 @@ router.post('/batch', authMiddleware, async (ctx) => {
 
     if (to_status === ORDER_STATUS.OVERDUE) {
       const wl = computeWarningLevel(order);
+      const hoursLeft = Math.floor((new Date(order.due_at).getTime() - Date.now()) / (1000 * 60 * 60));
       if (wl === WARNING_LEVELS.NORMAL) {
         results.push({
           id, order_no: order.order_no, success: false,
           error_code: ABNORMAL_TYPES.STATE_CONFLICT,
-          message: `无法标记为逾期：该订单还有 ${Math.max(1, Math.floor((new Date(order.due_at).getTime() - Date.now()) / (1000 * 60 * 60)))} 小时到期，属正常队列，请到期后再处理`,
+          message: `无法标记为逾期：该订单还有 ${Math.max(1, hoursLeft)} 小时到期，属正常队列，需等到期后再标记`,
           current_status: order.status, current_status_name: STATUS_NAMES[order.status],
-          current_version: order.version, handler_name: order.handler_name
+          current_version: order.version, handler_name: order.handler_name,
+          correction_note: `补正提示：请在到期时间（${new Date(order.due_at).toLocaleString('zh-CN', { hour12: false })}）之后再操作，或选择其他目标状态推进`
+        });
+        continue;
+      }
+      if (wl === WARNING_LEVELS.APPROACHING) {
+        results.push({
+          id, order_no: order.order_no, success: false,
+          error_code: ABNORMAL_TYPES.STATE_CONFLICT,
+          message: `无法标记为逾期：该订单临期（剩余 ${Math.max(1, hoursLeft)} 小时），尚未真正超期，需等到期时间过后再标记`,
+          current_status: order.status, current_status_name: STATUS_NAMES[order.status],
+          current_version: order.version, handler_name: order.handler_name,
+          correction_note: `补正提示：请于到期时间（${new Date(order.due_at).toLocaleString('zh-CN', { hour12: false })}）之后再标记为逾期，或继续核验后直接推进到签收完成/异常回传`
         });
         continue;
       }

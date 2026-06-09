@@ -116,7 +116,10 @@ export interface BatchResult {
   status?: string;
   status_name?: string;
   current_version?: number;
+  current_status?: string;
+  current_status_name?: string;
   handler_name?: string;
+  correction_note?: string;
 }
 
 export interface DictItem {
@@ -133,6 +136,8 @@ export interface ApiResponse<T> {
   current_status?: string;
   current_status_name?: string;
   current_version?: number;
+  handler_name?: string;
+  correction_note?: string;
   missing?: string[];
 }
 

@@ -194,58 +194,95 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged, refreshKey }) => {
             {(statusFilter || warningFilter || keyword || onlyMine) && <div style={{ marginTop: 6, color: '#6b7280' }}>（当前筛选条件下无结果）</div>}
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                {canBatch && (
-                  <th style={{ width: 40 }}>
-                    <input type="checkbox" checked={selected.length === orders.length && orders.length > 0} onChange={toggleSelectAll} />
-                  </th>
-                )}
-                <th>订单号</th>
-                <th>患者姓名</th>
-                <th>门店</th>
-                <th>药品数</th>
-                <th>金额(元)</th>
-                <th>状态</th>
-                <th>预警</th>
-                <th>到期剩余</th>
-                <th>当前处理人</th>
-                <th>版本</th>
-                <th>创建时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map(o => (
-                <tr key={o.id}>
-                  {canBatch && (
-                    <td>
-                      <input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggleSelect(o.id)} />
-                    </td>
-                  )}
-                  <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{o.order_no}</td>
-                  <td>{o.patient_name}</td>
-                  <td>{o.store_name}</td>
-                  <td>{o.drugs_count}</td>
-                  <td>{o.total_amount.toFixed(2)}</td>
-                  <td><span className={`tag status-${o.status}`}>{o.statusName}</span></td>
-                  <td><span className={`tag warning-${o.warningLevel}`}>{o.warningName}</span></td>
-                  <td>{timeLeft(o.due_at)}</td>
-                  <td>
-                    {o.handler_name
-                      ? <span className={`tag role-${o.handler_role}`}>{o.handler_name}</span>
-                      : <span style={{ color: '#9ca3af' }}>未分配</span>}
-                  </td>
-                  <td>v{o.version}</td>
-                  <td>{formatTime(o.created_at)}</td>
-                  <td>
-                    <button className="link-btn" onClick={() => setDetailId(o.id)}>查看详情</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div>
+            {(['overdue', 'approaching', 'normal'] as const).map(level => {
+              const group = orders.filter(o => o.warningLevel === level);
+              if (group.length === 0) return null;
+              const levelLabel = level === 'overdue' ? '逾期队列' : level === 'approaching' ? '临期队列' : '正常队列';
+              const levelColor = level === 'overdue' ? '#991b1b' : level === 'approaching' ? '#92400e' : '#065f46';
+              return (
+                <div key={level} style={{ marginBottom: level !== 'normal' ? 18 : 0 }}>
+                  <h4 style={{
+                    margin: '0 0 8px 0', padding: '6px 10px',
+                    background: level === 'overdue' ? '#fef2f2' : level === 'approaching' ? '#fffbeb' : '#ecfdf5',
+                    color: levelColor, borderLeft: `4px solid ${levelColor}`, borderRadius: 4,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                  }}>
+                    <span>{levelLabel}（共 {group.length} 条）</span>
+                    {canBatch && (
+                      <span style={{ fontSize: 12, fontWeight: 'normal' }}>
+                        已勾选 {group.filter(o => selected.includes(o.id)).length} / {group.length}
+                      </span>
+                    )}
+                  </h4>
+                  <table className="data-table" style={{ marginTop: 0 }}>
+                    <thead>
+                      <tr>
+                        {canBatch && (
+                          <th style={{ width: 40 }}>
+                            <input
+                              type="checkbox"
+                              checked={group.length > 0 && group.every(o => selected.includes(o.id))}
+                              onChange={() => {
+                                const allSelected = group.every(o => selected.includes(o.id));
+                                if (allSelected) {
+                                  setSelected(sel => sel.filter(id => !group.find(o => o.id === id)));
+                                } else {
+                                  const toAdd = group.filter(o => !selected.includes(o.id)).map(o => o.id);
+                                  setSelected(sel => [...sel, ...toAdd]);
+                                }
+                              }}
+                            />
+                          </th>
+                        )}
+                        <th>订单号</th>
+                        <th>患者姓名</th>
+                        <th>门店</th>
+                        <th>药品数</th>
+                        <th>金额(元)</th>
+                        <th>状态</th>
+                        <th>预警</th>
+                        <th>到期剩余</th>
+                        <th>当前处理人</th>
+                        <th>版本</th>
+                        <th>创建时间</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.map(o => (
+                        <tr key={o.id}>
+                          {canBatch && (
+                            <td>
+                              <input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggleSelect(o.id)} />
+                            </td>
+                          )}
+                          <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{o.order_no}</td>
+                          <td>{o.patient_name}</td>
+                          <td>{o.store_name}</td>
+                          <td>{o.drugs_count}</td>
+                          <td>{o.total_amount.toFixed(2)}</td>
+                          <td><span className={`tag status-${o.status}`}>{o.statusName}</span></td>
+                          <td><span className={`tag warning-${o.warningLevel}`}>{o.warningName}</span></td>
+                          <td>{timeLeft(o.due_at)}</td>
+                          <td>
+                            {o.handler_name
+                              ? <span className={`tag role-${o.handler_role}`}>{o.handler_name}</span>
+                              : <span style={{ color: '#9ca3af' }}>未分配</span>}
+                          </td>
+                          <td>v{o.version}</td>
+                          <td>{formatTime(o.created_at)}</td>
+                          <td>
+                            <button className="link-btn" onClick={() => setDetailId(o.id)}>查看详情</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 

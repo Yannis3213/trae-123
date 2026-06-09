@@ -157,13 +157,18 @@ const BatchProcessModal: React.FC<Props> = ({ selectedIds, orders, user, dict, o
                       </span>
                       <span style={{ color: '#4b5563', flexShrink: 0, textAlign: 'right' }}>{r.message}</span>
                     </div>
-                    {!r.success && (r.handler_name || r.current_version || r.status_name) && (
+                    {!r.success && (r.handler_name || r.current_version || r.current_status_name || r.correction_note) && (
                       <div style={{ fontSize: 12, color: '#6b7280', paddingLeft: 22 }}>
-                        {r.handler_name && <span style={{ marginRight: 12 }}>当前处理人：{r.handler_name}</span>}
-                        {r.current_version !== undefined && <span style={{ marginRight: 12 }}>当前版本：v{r.current_version}</span>}
-                        {r.status_name && <span>当前状态：{r.status_name}</span>}
-                        {r.success && r.new_version !== undefined && <span style={{ marginLeft: 12 }}>新版本：v{r.new_version}</span>}
-                        {r.success && r.status_name && <span>目标状态：{r.status_name}</span>}
+                        <div>
+                          {r.handler_name && <span style={{ marginRight: 12 }}>当前处理人：{r.handler_name}</span>}
+                          {r.current_version !== undefined && <span style={{ marginRight: 12 }}>当前版本：v{r.current_version}</span>}
+                          {r.current_status_name && <span>当前状态：{r.current_status_name}</span>}
+                        </div>
+                        {r.correction_note && (
+                          <div style={{ marginTop: 4, color: '#92400e', background: '#fef3c7', padding: '4px 8px', borderRadius: 4 }}>
+                            💡 {r.correction_note}
+                          </div>
+                        )}
                       </div>
                     )}
                     {r.success && (r.new_version !== undefined || r.handler_name || r.status_name) && (
