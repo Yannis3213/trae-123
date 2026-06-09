@@ -93,18 +93,23 @@ func CreateConsultation(c *models.Consultation) error {
 	if c.UpdatedAt.IsZero() {
 		c.UpdatedAt = time.Now()
 	}
+	if c.RegistrarID == "" {
+		c.RegistrarID = c.CreatedBy
+	}
 
 	_, err := DB.Exec(`INSERT INTO consultations 
 		(id, patient_name, patient_id, age, gender, department, attending_physician, 
 		consultation_type, consultation_reason, consultation_dept, requested_doctor,
-		appointment_time, deadline, status, current_stage, current_handler, urgency,
-		evidence_list, version, is_archived, created_by, created_at, updated_at, updated_by,
+		appointment_time, deadline, status, current_stage, current_handler,
+		registrar_id, auditor_id, reviewer_id,
+		urgency, evidence_list, version, is_archived, created_by, created_at, updated_at, updated_by,
 		result, schedule_verified, feedback_verified)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, c.PatientName, c.PatientID, c.Age, c.Gender, c.Department, c.AttendingPhysician,
 		c.ConsultationType, c.ConsultationReason, c.ConsultationDept, c.RequestedDoctor,
-		c.AppointmentTime, c.Deadline, c.Status, c.CurrentStage, c.CurrentHandler, c.Urgency,
-		c.EvidenceList, c.Version, c.IsArchived, c.CreatedBy, c.CreatedAt, c.UpdatedAt, c.UpdatedBy,
+		c.AppointmentTime, c.Deadline, c.Status, c.CurrentStage, c.CurrentHandler,
+		c.RegistrarID, c.AuditorID, c.ReviewerID,
+		c.Urgency, c.EvidenceList, c.Version, c.IsArchived, c.CreatedBy, c.CreatedAt, c.UpdatedAt, c.UpdatedBy,
 		c.Result, c.ScheduleVerified, c.FeedbackVerified)
 	return err
 }
@@ -112,8 +117,9 @@ func CreateConsultation(c *models.Consultation) error {
 func GetConsultationByID(id string) (*models.Consultation, error) {
 	row := DB.QueryRow(`SELECT id, patient_name, patient_id, age, gender, department, attending_physician,
 		consultation_type, consultation_reason, consultation_dept, requested_doctor,
-		appointment_time, deadline, status, current_stage, current_handler, urgency,
-		evidence_list, version, is_archived, created_by, created_at, updated_at, updated_by,
+		appointment_time, deadline, status, current_stage, current_handler,
+		registrar_id, auditor_id, reviewer_id,
+		urgency, evidence_list, version, is_archived, created_by, created_at, updated_at, updated_by,
 		result, schedule_verified, feedback_verified
 		FROM consultations WHERE id = ?`, id)
 
@@ -121,8 +127,9 @@ func GetConsultationByID(id string) (*models.Consultation, error) {
 	var apptTime, deadline sql.NullTime
 	err := row.Scan(&c.ID, &c.PatientName, &c.PatientID, &c.Age, &c.Gender, &c.Department, &c.AttendingPhysician,
 		&c.ConsultationType, &c.ConsultationReason, &c.ConsultationDept, &c.RequestedDoctor,
-		&apptTime, &deadline, &c.Status, &c.CurrentStage, &c.CurrentHandler, &c.Urgency,
-		&c.EvidenceList, &c.Version, &c.IsArchived, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.UpdatedBy,
+		&apptTime, &deadline, &c.Status, &c.CurrentStage, &c.CurrentHandler,
+		&c.RegistrarID, &c.AuditorID, &c.ReviewerID,
+		&c.Urgency, &c.EvidenceList, &c.Version, &c.IsArchived, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.UpdatedBy,
 		&c.Result, &c.ScheduleVerified, &c.FeedbackVerified)
 	if err != nil {
 		return nil, err
@@ -150,72 +157,70 @@ type ConsultationFilter struct {
 	CurrentHandler string
 	OrHandlerEmpty bool
 	SearchKeyword  string
+	RegistrarID    string
+	AuditorID      string
+	ReviewerID     string
 }
 
 func ListConsultations(filter ConsultationFilter, page, pageSize int) ([]models.Consultation, int, error) {
 	query := `SELECT id, patient_name, patient_id, age, gender, department, attending_physician,
 		consultation_type, consultation_dept, requested_doctor,
-		appointment_time, deadline, status, current_stage, current_handler, urgency,
-		version, is_archived, created_by, created_at, updated_at, updated_by,
+		appointment_time, deadline, status, current_stage, current_handler,
+		registrar_id, auditor_id, reviewer_id,
+		urgency, version, is_archived, created_by, created_at, updated_at, updated_by,
 		schedule_verified, feedback_verified
 		FROM consultations WHERE 1=1`
 	countQuery := `SELECT COUNT(*) FROM consultations WHERE 1=1`
 	args := []interface{}{}
 	countArgs := []interface{}{}
 
+	addFilter := func(sql string, vals ...interface{}) {
+		query += sql
+		countQuery += sql
+		args = append(args, vals...)
+		countArgs = append(countArgs, vals...)
+	}
+
 	if filter.Status != "" {
-		query += ` AND status = ?`
-		countQuery += ` AND status = ?`
-		args = append(args, filter.Status)
-		countArgs = append(countArgs, filter.Status)
+		addFilter(` AND status = ?`, filter.Status)
 	}
 	if filter.Stage != "" {
-		query += ` AND current_stage = ?`
-		countQuery += ` AND current_stage = ?`
-		args = append(args, filter.Stage)
-		countArgs = append(countArgs, filter.Stage)
+		addFilter(` AND current_stage = ?`, filter.Stage)
 	}
 	if filter.Urgency != "" {
-		query += ` AND urgency = ?`
-		countQuery += ` AND urgency = ?`
-		args = append(args, filter.Urgency)
-		countArgs = append(countArgs, filter.Urgency)
+		addFilter(` AND urgency = ?`, filter.Urgency)
 	}
 	if filter.Department != "" {
-		query += ` AND department = ?`
-		countQuery += ` AND department = ?`
-		args = append(args, filter.Department)
-		countArgs = append(countArgs, filter.Department)
+		addFilter(` AND department = ?`, filter.Department)
 	}
 	if filter.PatientID != "" {
-		query += ` AND patient_id = ?`
-		countQuery += ` AND patient_id = ?`
-		args = append(args, filter.PatientID)
-		countArgs = append(countArgs, filter.PatientID)
+		addFilter(` AND patient_id = ?`, filter.PatientID)
 	}
 	if filter.SearchKeyword != "" {
-		query += ` AND (patient_name LIKE ? OR patient_id LIKE ? OR consultation_reason LIKE ?)`
-		countQuery += ` AND (patient_name LIKE ? OR patient_id LIKE ? OR consultation_reason LIKE ?)`
 		kw := "%" + filter.SearchKeyword + "%"
-		args = append(args, kw, kw, kw)
-		countArgs = append(countArgs, kw, kw, kw)
+		addFilter(` AND (patient_name LIKE ? OR patient_id LIKE ? OR consultation_reason LIKE ?)`, kw, kw, kw)
 	}
 	if filter.IsArchived != nil {
-		query += ` AND is_archived = ?`
-		countQuery += ` AND is_archived = ?`
-		args = append(args, *filter.IsArchived)
-		countArgs = append(countArgs, *filter.IsArchived)
+		addFilter(` AND is_archived = ?`, *filter.IsArchived)
 	}
 	if filter.CurrentHandler != "" {
 		if filter.OrHandlerEmpty {
-			query += ` AND (current_handler = ? OR current_handler IS NULL OR current_handler = '')`
-			countQuery += ` AND (current_handler = ? OR current_handler IS NULL OR current_handler = '')`
+			addFilter(` AND (current_handler = ? OR current_handler IS NULL OR current_handler = '')`, filter.CurrentHandler)
 		} else {
-			query += ` AND current_handler = ?`
-			countQuery += ` AND current_handler = ?`
+			addFilter(` AND current_handler = ?`, filter.CurrentHandler)
 		}
-		args = append(args, filter.CurrentHandler)
-		countArgs = append(countArgs, filter.CurrentHandler)
+	}
+	if filter.CreatedBy != "" {
+		addFilter(` AND created_by = ?`, filter.CreatedBy)
+	}
+	if filter.RegistrarID != "" {
+		addFilter(` AND registrar_id = ?`, filter.RegistrarID)
+	}
+	if filter.AuditorID != "" {
+		addFilter(` AND auditor_id = ?`, filter.AuditorID)
+	}
+	if filter.ReviewerID != "" {
+		addFilter(` AND reviewer_id = ?`, filter.ReviewerID)
 	}
 
 	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
@@ -238,8 +243,9 @@ func ListConsultations(filter ConsultationFilter, page, pageSize int) ([]models.
 		var apptTime, deadline sql.NullTime
 		err := rows.Scan(&c.ID, &c.PatientName, &c.PatientID, &c.Age, &c.Gender, &c.Department, &c.AttendingPhysician,
 			&c.ConsultationType, &c.ConsultationDept, &c.RequestedDoctor,
-			&apptTime, &deadline, &c.Status, &c.CurrentStage, &c.CurrentHandler, &c.Urgency,
-			&c.Version, &c.IsArchived, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.UpdatedBy,
+			&apptTime, &deadline, &c.Status, &c.CurrentStage, &c.CurrentHandler,
+			&c.RegistrarID, &c.AuditorID, &c.ReviewerID,
+			&c.Urgency, &c.Version, &c.IsArchived, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.UpdatedBy,
 			&c.ScheduleVerified, &c.FeedbackVerified)
 		if err != nil {
 			return nil, 0, err
@@ -263,14 +269,16 @@ func UpdateConsultation(c *models.Consultation, expectedVersion int) (bool, erro
 	result, err := DB.Exec(`UPDATE consultations SET
 		patient_name=?, patient_id=?, age=?, gender=?, department=?, attending_physician=?,
 		consultation_type=?, consultation_reason=?, consultation_dept=?, requested_doctor=?,
-		appointment_time=?, deadline=?, status=?, current_stage=?, current_handler=?, urgency=?,
-		evidence_list=?, version=?, is_archived=?, updated_at=?, updated_by=?,
+		appointment_time=?, deadline=?, status=?, current_stage=?, current_handler=?,
+		registrar_id=?, auditor_id=?, reviewer_id=?,
+		urgency=?, evidence_list=?, version=?, is_archived=?, updated_at=?, updated_by=?,
 		result=?, schedule_verified=?, feedback_verified=?
 		WHERE id=? AND version=?`,
 		c.PatientName, c.PatientID, c.Age, c.Gender, c.Department, c.AttendingPhysician,
 		c.ConsultationType, c.ConsultationReason, c.ConsultationDept, c.RequestedDoctor,
-		c.AppointmentTime, c.Deadline, c.Status, c.CurrentStage, c.CurrentHandler, c.Urgency,
-		c.EvidenceList, newVersion, c.IsArchived, c.UpdatedAt, c.UpdatedBy,
+		c.AppointmentTime, c.Deadline, c.Status, c.CurrentStage, c.CurrentHandler,
+		c.RegistrarID, c.AuditorID, c.ReviewerID,
+		c.Urgency, c.EvidenceList, newVersion, c.IsArchived, c.UpdatedAt, c.UpdatedBy,
 		c.Result, c.ScheduleVerified, c.FeedbackVerified,
 		c.ID, expectedVersion)
 	if err != nil {
@@ -469,6 +477,18 @@ func buildFilterWhere(filter ConsultationFilter) (string, []interface{}) {
 			where += ` AND current_handler = ?`
 		}
 		args = append(args, filter.CurrentHandler)
+	}
+	if filter.RegistrarID != "" {
+		where += ` AND registrar_id = ?`
+		args = append(args, filter.RegistrarID)
+	}
+	if filter.AuditorID != "" {
+		where += ` AND auditor_id = ?`
+		args = append(args, filter.AuditorID)
+	}
+	if filter.ReviewerID != "" {
+		where += ` AND reviewer_id = ?`
+		args = append(args, filter.ReviewerID)
 	}
 	return where, args
 }

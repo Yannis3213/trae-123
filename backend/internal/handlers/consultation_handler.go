@@ -65,30 +65,47 @@ func CreateConsultation(c *fiber.Ctx) error {
 }
 
 func applyRoleVisibilityFilter(user *models.User, filter *repository.ConsultationFilter) {
+	isArchived := filter.IsArchived != nil && *filter.IsArchived
 	switch user.Role {
 	case config.RoleRegistrar:
-		filter.CreatedBy = user.ID
+		filter.RegistrarID = user.ID
+		if !isArchived {
+		}
 	case config.RoleAuditor:
-		filter.Stage = config.StageVerification
-		if filter.CurrentHandler == "" {
-			filter.CurrentHandler = user.ID
-			filter.OrHandlerEmpty = true
+		if isArchived {
+			filter.AuditorID = user.ID
+		} else {
+			filter.Stage = config.StageVerification
+			if filter.CurrentHandler == "" {
+				filter.CurrentHandler = user.ID
+				filter.OrHandlerEmpty = true
+			}
 		}
 	case config.RoleReviewer:
-		filter.Stage = config.StageReview
+		if isArchived {
+			filter.ReviewerID = user.ID
+		} else {
+			filter.Stage = config.StageReview
+		}
 	}
 }
 
 func canViewConsultation(user *models.User, c *models.Consultation) bool {
 	switch user.Role {
 	case config.RoleRegistrar:
-		return c.CreatedBy == user.ID
+		return c.RegistrarID == user.ID || c.CreatedBy == user.ID
 	case config.RoleAuditor:
+		if c.IsArchived {
+			return c.AuditorID == user.ID
+		}
 		if c.CurrentStage != config.StageVerification {
 			return false
 		}
 		return c.CurrentHandler == "" || c.CurrentHandler == user.ID
 	case config.RoleReviewer:
+		if c.IsArchived {
+			return c.ReviewerID == user.ID
+		}
 		return c.CurrentStage == config.StageReview
 	default:
 		return false

@@ -193,6 +193,7 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		if err := validateEvidence(c, req.EvidenceUsed, config.StageVerification); err != nil {
 			return &ProcessResult{Success: false, Message: err.Error()}, nil
 		}
+		c.AuditorID = req.HandlerID
 		c.Status = config.StatusRechecked
 		c.CurrentStage = config.StageReview
 		c.CurrentHandler = ""
@@ -208,6 +209,7 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		if req.AbnormalReason == "" {
 			return &ProcessResult{Success: false, Message: "标记异常必须填写异常原因"}, nil
 		}
+		c.AuditorID = req.HandlerID
 		c.Status = config.StatusAbnormal
 		c.CurrentHandler = req.HandlerID
 		abnormal := &models.AbnormalRecord{
@@ -229,6 +231,11 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 	case "return":
 		if req.AbnormalReason == "" {
 			return &ProcessResult{Success: false, Message: "退回必须填写退回原因"}, nil
+		}
+		if req.HandlerRole == config.RoleAuditor {
+			c.AuditorID = req.HandlerID
+		} else if req.HandlerRole == config.RoleReviewer {
+			c.ReviewerID = req.HandlerID
 		}
 		c.Status = config.StatusAbnormal
 		c.CurrentStage = config.StageRegistration
@@ -253,6 +260,7 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		if err := validateEvidence(c, req.EvidenceUsed, config.StageReview); err != nil {
 			return &ProcessResult{Success: false, Message: err.Error()}, nil
 		}
+		c.ReviewerID = req.HandlerID
 		c.Status = config.StatusRechecked
 		c.CurrentHandler = req.HandlerID
 		c.FeedbackVerified = true
@@ -270,6 +278,7 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		if req.AbnormalReason == "" {
 			return &ProcessResult{Success: false, Message: "复核不通过必须填写原因"}, nil
 		}
+		c.ReviewerID = req.HandlerID
 		c.Status = config.StatusAbnormal
 		c.CurrentStage = config.StageVerification
 		c.CurrentHandler = ""
@@ -296,6 +305,7 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		if err := validateEvidence(c, req.EvidenceUsed, config.StageReview); err != nil {
 			return &ProcessResult{Success: false, Message: err.Error()}, nil
 		}
+		c.ReviewerID = req.HandlerID
 		c.Status = config.StatusArchived
 		c.IsArchived = true
 		c.FeedbackVerified = true

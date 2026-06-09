@@ -4,8 +4,11 @@ import type { User } from '../types';
 
 const demoAccounts = [
   { username: 'registrar1', password: '123456', label: '会诊申请登记员（张秘书）' },
+  { username: 'registrar2', password: '123456', label: '会诊申请登记员（孙秘书，对照）' },
   { username: 'auditor1', password: '123456', label: '会诊申请审核主管（李质控）' },
+  { username: 'auditor2', password: '123456', label: '会诊申请审核主管（周质控，对照）' },
   { username: 'reviewer1', password: '123456', label: '医务部复核负责人（王主任）' },
+  { username: 'reviewer2', password: '123456', label: '医务部复核负责人（吴主任，对照）' },
 ];
 
 export default function LoginIsland() {
