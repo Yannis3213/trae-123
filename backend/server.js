@@ -492,6 +492,7 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
   const { record_ids, action, remark } = req.body;
   const user = req.user;
   const now = new Date().toISOString();
+  const actionLabel = action === 'accept' ? '批量接单通过' : action === 'verify' ? '批量复核归档' : '批量处理';
 
   if (!record_ids || !Array.isArray(record_ids) || record_ids.length === 0) {
     return res.status(400).json({ error: '请选择要批量处理的记录' });
@@ -509,8 +510,15 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
   const logBatchFailure = db.prepare(`
     INSERT INTO processing_logs
     (id, record_id, action, action_by, action_by_role, action_by_name, previous_status, new_status,
-     remark, reject_reason, evidence_summary, created_at)
-    VALUES (?, ?, 'batch_failed', ?, ?, ?, ?, ?, ?, ?, '批量处理被拦截', ?)
+     remark, correction_reason, reject_reason, evidence_summary, created_at)
+    VALUES (?, ?, 'batch_failed', ?, ?, ?, ?, ?, ?, ?, ?, ?, '批量处理被拦截', ?)
+  `);
+
+  const logBatchSuccess = db.prepare(`
+    INSERT INTO processing_logs
+    (id, record_id, action, action_by, action_by_role, action_by_name, previous_status, new_status,
+     remark, correction_reason, reject_reason, evidence_summary, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const appendAbnormalReason = db.prepare(`
@@ -523,21 +531,71 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
     WHERE id = ?
   `);
 
+  const insertAuditNote = db.prepare(`
+    INSERT INTO audit_notes (id, record_id, note, noted_by, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  const buildBaseResult = (record) => {
+    if (!record) return null;
+    const child = db.prepare('SELECT * FROM children WHERE id = ?').get(record.child_id) || null;
+    return {
+      id: record.id,
+      child_id: record.child_id,
+      child_name: child ? child.name : null,
+      class_name: child ? child.class_name : null,
+      child: child,
+      status: record.status,
+      status_name: STATUS_NAMES[record.status] || record.status,
+      deadline_status: getDeadlineStatus(record.deadline),
+      current_handler: record.current_handler,
+      current_handler_role: record.current_handler_role,
+      current_handler_role_name: record.current_handler_role ? ROLE_NAMES[record.current_handler_role] : null,
+      health_status: record.health_status,
+      abnormal_type: record.abnormal_type,
+      abnormal_reason: record.abnormal_reason,
+      version: record.version
+    };
+  };
+
   const results = [];
 
   const pushFailure = (record, reason) => {
+    const base = buildBaseResult(record);
     try {
       if (record) {
         logBatchFailure.run(
           uuidv4(), record.id, user.username, user.role, user.name,
-          record.status, record.status, remark || '批量处理', reason, now
+          record.status, record.status, remark || actionLabel, null, reason, now
         );
-        appendAbnormalReason.run(`[批量拦截${new Date().toLocaleString('zh-CN')}] ${reason}`, reason, now, record.id);
+        const reasonWithTime = `[批量拦截${new Date().toLocaleString('zh-CN')}] ${reason}`;
+        appendAbnormalReason.run(reasonWithTime, reason, now, record.id);
+        insertAuditNote.run(uuidv4(), record.id, `${actionLabel}失败：${reason}`, user.name, now);
       }
     } catch (e) {
       console.error('写入批量失败流水异常', e);
     }
-    results.push({ id: record ? record.id : 'unknown', success: false, reason });
+    results.push({
+      ...(base || { id: record ? record.id : 'unknown' }),
+      success: false,
+      reason,
+      new_version: record ? record.version : null
+    });
+  };
+
+  const pushSuccess = (record, newStatus, newHandler, newHandlerRole) => {
+    const base = buildBaseResult(record);
+    results.push({
+      ...base,
+      success: true,
+      reason: null,
+      new_status: newStatus,
+      new_status_name: STATUS_NAMES[newStatus],
+      new_handler: newHandler,
+      new_handler_role: newHandlerRole,
+      new_handler_role_name: newHandlerRole ? ROLE_NAMES[newHandlerRole] : null,
+      new_version: record.version + 1
+    });
   };
 
   for (const recordId of record_ids) {
@@ -557,7 +615,6 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
       if (deadlineStatus === 'overdue') {
         const reason = `记录已逾期，当前责任人：${record.current_handler_role ? ROLE_NAMES[record.current_handler_role] : '未知'}(${record.current_handler || '未分配'})，请逐条前往详情处理`;
         pushFailure(record, reason);
-        results[results.length - 1].deadline_status = deadlineStatus;
         continue;
       }
 
@@ -568,7 +625,6 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
 
       if (record.health_status === 'abnormal') {
         pushFailure(record, '异常记录不支持批量处理，请逐条前往详情补正或退回');
-        results[results.length - 1].health_status = record.health_status;
         continue;
       }
 
@@ -623,20 +679,21 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
           WHERE id = ?
         `).run(newStatus, newHandler, newHandlerRole, now, newStatus, newStatus, recordId);
 
-        db.prepare(`
-          INSERT INTO processing_logs
-          (id, record_id, action, action_by, action_by_role, action_by_name, previous_status, new_status,
-           remark, evidence_summary, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
+        logBatchSuccess.run(
           uuidv4(), recordId, action, user.username, user.role, user.name,
-          record.status, newStatus, remark || '批量处理', '批量处理', now
+          record.status, newStatus, remark || actionLabel, null, null, `${actionLabel}成功`, now
+        );
+
+        insertAuditNote.run(
+          uuidv4(), recordId,
+          `${actionLabel}：${STATUS_NAMES[record.status]} → ${STATUS_NAMES[newStatus]}${remark ? '（' + remark + '）' : ''}`,
+          user.name, now
         );
       });
 
       try {
         tx();
-        results.push({ id: recordId, success: true, new_status: newStatus, new_status_name: STATUS_NAMES[newStatus] });
+        pushSuccess(record, newStatus, newHandler, newHandlerRole);
       } catch (err) {
         pushFailure(record, err.message);
       }

@@ -1,6 +1,8 @@
 import { h, useState } from 'preact';
 import api from '../api.js';
 
+const DEADLINE_LABEL = { normal: '正常', warning: '临期', overdue: '逾期' };
+
 export default function BatchModal({ user, selectedIds, records, onClose, onSuccess, showToast }) {
   const [action, setAction] = useState(user.role === 'supervisor' ? 'accept' : 'verify');
   const [remark, setRemark] = useState('');
@@ -36,14 +38,22 @@ export default function BatchModal({ user, selectedIds, records, onClose, onSucc
     }
   };
 
+  const handleClose = () => {
+    if (result) {
+      onSuccess();
+    } else {
+      onClose();
+    }
+  };
+
   const selectedRecords = records.filter(r => selectedIds.includes(r.id));
 
   return (
-    <div class="modal-mask" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class="modal-mask" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
       <div class="modal">
         <div class="modal-header">
           <h3>批量处理晨检记录</h3>
-          <button class="close" onClick={onClose}>×</button>
+          <button class="close" onClick={handleClose}>×</button>
         </div>
         {!result ? (
           <form onSubmit={handleSubmit}>
@@ -71,7 +81,7 @@ export default function BatchModal({ user, selectedIds, records, onClose, onSucc
                     <span class={`badge badge-${r.status}`} style={{ margin: '0 6px' }}>{r.status_name}</span>
                     {r.health_status === 'abnormal' && <span class="tag-abnormal">异常</span>}
                     <span class={`deadline-badge deadline-${r.deadline_status}`} style={{ marginLeft: 4 }}>
-                      {r.deadline_status === 'normal' ? '正常' : r.deadline_status === 'warning' ? '临期' : '逾期'}
+                      {DEADLINE_LABEL[r.deadline_status] || r.deadline_status}
                     </span>
                   </div>
                 ))}
@@ -79,7 +89,7 @@ export default function BatchModal({ user, selectedIds, records, onClose, onSucc
               {error && <div style={{ color: '#f5222d', fontSize: 13, marginTop: 10 }}>{error}</div>}
             </div>
             <div class="modal-footer">
-              <button type="button" class="btn" onClick={onClose} disabled={loading}>取消</button>
+              <button type="button" class="btn" onClick={handleClose} disabled={loading}>取消</button>
               <button type="submit" class="btn btn-primary" disabled={loading}>
                 {loading ? '处理中...' : '确认批量处理'}
               </button>
@@ -96,25 +106,52 @@ export default function BatchModal({ user, selectedIds, records, onClose, onSucc
                   <span style={{ color: '#f5222d', margin: '0 4px' }}>{result.summary.failed}</span>
                   条
                 </div>
-                {result.results.map(r => {
-                  const rec = selectedRecords.find(x => x.id === r.id);
-                  return (
-                    <div key={r.id} class={`item ${r.success ? 'success' : 'failed'}`}>
-                      <div>
-                        <span class="id">{r.id.slice(0, 8)}</span>
-                        {rec && <span style={{ marginLeft: 6 }}>{rec.child_name}（{rec.check_date}）</span>}
-                        {r.success ? (
-                          <span style={{ marginLeft: 8, color: '#52c41a', fontWeight: 500 }}>
-                            ✓ 成功 → {r.new_status_name}
-                          </span>
-                        ) : (
-                          <span style={{ marginLeft: 8, color: '#f5222d', fontWeight: 500 }}>✗ 失败</span>
-                        )}
-                      </div>
-                      {!r.success && <div style={{ fontSize: 11, marginTop: 2 }}>{r.reason}</div>}
+                {result.results.map(r => (
+                  <div key={r.id} class={`item ${r.success ? 'success' : 'failed'}`}>
+                    <div>
+                      <span class="id">{r.id.slice(0, 8)}</span>
+                      <span style={{ marginLeft: 6, fontWeight: 500 }}>
+                        {r.child_name || '未知幼儿'}{r.class_name ? `（${r.class_name}）` : ''}
+                      </span>
+                      <span style={{ marginLeft: 8 }}>
+                        <span class={`badge badge-${r.success ? r.new_status : r.status}`}>
+                          {r.success ? r.new_status_name : r.status_name}
+                        </span>
+                      </span>
+                      <span class={`deadline-badge deadline-${r.deadline_status || 'normal'}`} style={{ marginLeft: 6 }}>
+                        {DEADLINE_LABEL[r.deadline_status] || '正常'}
+                      </span>
+                      <span style={{ marginLeft: 6, fontSize: 11, color: '#888' }}>
+                        v{r.new_version || r.version}
+                      </span>
+                      {r.current_handler && (
+                        <span style={{ marginLeft: 6, fontSize: 11, color: '#666' }}>
+                          责任人：{r.current_handler_role_name || ''}·{r.current_handler}
+                        </span>
+                      )}
+                      {r.success ? (
+                        <span style={{ marginLeft: 8, color: '#52c41a', fontWeight: 500 }}>
+                          ✓ 成功 → {r.new_status_name}
+                          {r.new_handler && <span style={{ fontSize: 11, color: '#888', marginLeft: 4 }}>
+                            （流转给 {r.new_handler_role_name}·{r.new_handler}）
+                          </span>}
+                        </span>
+                      ) : (
+                        <span style={{ marginLeft: 8, color: '#f5222d', fontWeight: 500 }}>✗ 失败</span>
+                      )}
                     </div>
-                  );
-                })}
+                    {!r.success && (
+                      <div style={{ fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
+                        <strong>失败原因：</strong>{r.reason}
+                      </div>
+                    )}
+                    {r.success && (
+                      <div style={{ fontSize: 11, marginTop: 2, color: '#888' }}>
+                        版本号 v{r.version} → v{r.new_version}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
             <div class="modal-footer">

@@ -224,13 +224,13 @@ function initDatabase() {
       temperature: 36.7,
       health_status: 'normal',
       abnormal_type: null,
-      abnormal_reason: null,
+      abnormal_reason: `[批量拦截${yesterday.toLocaleString('zh-CN')}] 记录已逾期，当前责任人：晨检审核主管(supervisor)，请逐条前往详情处理`,
       current_handler: users[1].username,
       current_handler_role: users[1].role,
       version: 1,
       deadline: yesterday.toISOString(),
       created_at: fiveDaysAgo.toISOString(),
-      updated_at: fiveDaysAgo.toISOString(),
+      updated_at: yesterday.toISOString(),
       archived: 0
     },
     {
@@ -241,7 +241,7 @@ function initDatabase() {
       temperature: 36.9,
       health_status: 'abnormal',
       abnormal_type: 'cough',
-      abnormal_reason: '轻微咳嗽，家长已告知',
+      abnormal_reason: `轻微咳嗽，家长已告知；[批量拦截${today.toLocaleString('zh-CN')}] 异常记录不支持批量处理，请逐条前往详情补正或退回`,
       current_handler: users[0].username,
       current_handler_role: users[0].role,
       version: 1,
@@ -410,6 +410,22 @@ function initDatabase() {
       correction_reason: null, reject_reason: null,
       evidence_summary: '复核通过，已归档',
       created_at: yesterday.toISOString()
+    },
+    {
+      id: uuidv4(), record_id: sampleRecords[3].id, action: 'batch_failed',
+      action_by: users[1].username, action_by_role: users[1].role, action_by_name: users[1].name,
+      previous_status: 'pending_review', new_status: 'pending_review', remark: '批量接单通过',
+      correction_reason: null, reject_reason: '记录已逾期，当前责任人：晨检审核主管(supervisor)，请逐条前往详情处理',
+      evidence_summary: '批量处理被拦截',
+      created_at: yesterday.toISOString()
+    },
+    {
+      id: uuidv4(), record_id: sampleRecords[4].id, action: 'batch_failed',
+      action_by: users[1].username, action_by_role: users[1].role, action_by_name: users[1].name,
+      previous_status: 'pending_registration', new_status: 'pending_registration', remark: '批量接单通过',
+      correction_reason: null, reject_reason: '异常记录不支持批量处理，请逐条前往详情补正或退回',
+      evidence_summary: '批量处理被拦截',
+      created_at: today.toISOString()
     }
   ];
 
@@ -426,6 +442,15 @@ function initDatabase() {
   const auditNotes = [
     {
       id: uuidv4(), record_id: sampleRecords[2].id, note: '体温异常记录，需要重点关注', noted_by: users[1].name, created_at: today.toISOString()
+    },
+    {
+      id: uuidv4(), record_id: sampleRecords[5].id, note: '批量复核归档：已接单 → 验收通过', noted_by: users[2].name, created_at: yesterday.toISOString()
+    },
+    {
+      id: uuidv4(), record_id: sampleRecords[3].id, note: '批量接单通过失败：记录已逾期，当前责任人：晨检审核主管(supervisor)，请逐条前往详情处理', noted_by: users[1].name, created_at: yesterday.toISOString()
+    },
+    {
+      id: uuidv4(), record_id: sampleRecords[4].id, note: '批量接单通过失败：异常记录不支持批量处理，请逐条前往详情补正或退回', noted_by: users[1].name, created_at: today.toISOString()
     }
   ];
 
