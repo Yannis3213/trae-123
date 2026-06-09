@@ -105,9 +105,14 @@ class ProcessReq(BaseModel):
     correction_action: Optional[str] = None
 
 
+class BatchOrderItem(BaseModel):
+    id: int
+    version: int
+
+
 class BatchProcessReq(BaseModel):
     action: str
-    orders: list[dict]
+    orders: list[BatchOrderItem]
     handler_id: Optional[int] = None
     remark: Optional[str] = None
     evidence_types: list[str] = Field(default_factory=list)
@@ -276,7 +281,9 @@ def _check_and_transition(conn, order_id, user, client_version, action, target_s
     current_handler = order["current_handler"]
     created_by = order["created_by"]
 
-    if client_version is not None and client_version != current_version:
+    if client_version is None:
+        return None, "请求缺少 version 字段，请携带当前单据版本号"
+    if client_version != current_version:
         return None, f"版本冲突：客户端版本 v{client_version}，当前最新版本 v{current_version}，请刷新后重试"
 
     if action not in ("退回补正", "复核归档"):
@@ -404,7 +411,14 @@ async def process_order(request: Request):
             data.remark, data.evidence_types, data.exception_reason, data.correction_action,
         )
         if err:
-            return JSONResponse({"code": 400, "msg": err}, status_code=400)
+            latest = conn.execute(
+                "SELECT id, status, version, current_handler, completed_at, exception_reason, is_exception FROM service_orders WHERE id=?",
+                (order_id,),
+            ).fetchone()
+            return JSONResponse({
+                "code": 400, "msg": err,
+                "latest": dict(latest) if latest else None,
+            }, status_code=400)
         return JSONResponse({"code": 0, "data": result, "msg": "操作成功"})
 
 
@@ -422,18 +436,22 @@ async def batch_process(request: Request):
     results = []
     with get_db() as conn:
         for item in data.orders:
-            oid = item.get("id")
-            client_version = item.get("version")
-            if not oid:
-                results.append({"id": oid, "success": False, "msg": "缺少单据 id"})
-                continue
+            oid = item.id
+            client_version = item.version
             try:
                 result, err = _check_and_transition(
                     conn, oid, user, client_version, data.action, None, data.handler_id,
                     data.remark, data.evidence_types, data.exception_reason, data.correction_action,
                 )
                 if err:
-                    results.append({"id": oid, "success": False, "msg": err})
+                    latest = conn.execute(
+                        "SELECT id, status, version, current_handler, completed_at, exception_reason, is_exception FROM service_orders WHERE id=?",
+                        (oid,),
+                    ).fetchone()
+                    results.append({
+                        "id": oid, "success": False, "msg": err,
+                        "latest": dict(latest) if latest else None,
+                    })
                 else:
                     results.append({"id": oid, "success": True, "msg": "处理成功", "data": result})
             except Exception as e:

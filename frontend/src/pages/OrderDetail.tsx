@@ -39,13 +39,19 @@ export default function OrderDetail({ user }: { user: User }) {
   const canReturn = (user.role === 'banzhuren' && order.status === '已转办') ||
                    (user.role === 'xiaozhang' && (order.status === '已转办' || order.status === '已回访'));
 
+  const syncLatestFromError = (res: any) => {
+    if (res && res.latest && order) {
+      setOrder(prev => prev ? { ...prev, ...res.latest, is_exception: !!res.latest.is_exception } as ServiceOrder : prev);
+    }
+  };
+
   const doDispatch = async (handlerId: number, remark: string) => {
     const res = await request(`/orders/${order.id}/process`, {
       method: 'POST',
       body: JSON.stringify({ action: '转办班主任', handler_id: handlerId, remark, version: order.version }),
     });
     if (res.code === 0) { showToast('转办成功', 'success'); setShowDispatch(false); load(); }
-    else showToast(res.msg || '操作失败', 'error');
+    else { showToast(res.msg || '操作失败', 'error'); syncLatestFromError(res); }
   };
 
   const doReview = async () => {
@@ -54,7 +60,7 @@ export default function OrderDetail({ user }: { user: User }) {
       body: JSON.stringify({ action: '完成回访转校长', version: order.version }),
     });
     if (res.code === 0) { showToast('已提交校长确认', 'success'); load(); }
-    else showToast(res.msg || '操作失败', 'error');
+    else { showToast(res.msg || '操作失败', 'error'); syncLatestFromError(res); }
   };
 
   const doArchive = async () => {
@@ -63,7 +69,7 @@ export default function OrderDetail({ user }: { user: User }) {
       body: JSON.stringify({ action: '复核归档', version: order.version }),
     });
     if (res.code === 0) { showToast('复核归档完成', 'success'); load(); }
-    else showToast(res.msg || '操作失败', 'error');
+    else { showToast(res.msg || '操作失败', 'error'); syncLatestFromError(res); }
   };
 
   const doReturn = async (action: string, reason: string, remark: string) => {
@@ -72,7 +78,7 @@ export default function OrderDetail({ user }: { user: User }) {
       body: JSON.stringify({ action: '退回补正', correction_action: action, exception_reason: reason, remark, version: order.version }),
     });
     if (res.code === 0) { showToast('已退回补正', 'success'); setShowReturn(false); load(); }
-    else showToast(res.msg || '操作失败', 'error');
+    else { showToast(res.msg || '操作失败', 'error'); syncLatestFromError(res); }
   };
 
   const doUpload = async (formData: FormData) => {

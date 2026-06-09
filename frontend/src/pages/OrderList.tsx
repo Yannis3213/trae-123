@@ -114,10 +114,27 @@ export default function OrderList({ user }: { user: User }) {
       body: JSON.stringify(body),
     });
     if (res.code === 0) {
-      showToast(res.msg, res.data.items.every((x: any) => x.success) ? 'success' : 'info');
-      setBatchResults(res.data.items);
-      setSelected(new Set());
-      load();
+      const items = res.data.items;
+      showToast(res.msg, items.every((x: any) => x.success) ? 'success' : 'info');
+      setBatchResults(items);
+      const latestById = new Map<number, any>();
+      items.forEach((it: any) => {
+        if (!it.success && it.latest) latestById.set(it.id, it.latest);
+      });
+      if (latestById.size > 0) {
+        setOrders(prev => prev.map(o => {
+          const lt = latestById.get(o.id);
+          if (!lt) return o;
+          return { ...o, ...lt, is_exception: !!lt.is_exception } as ServiceOrder;
+        }));
+      }
+      const successIds = new Set(items.filter((x: any) => x.success).map((x: any) => x.id));
+      setSelected(prev => {
+        const next = new Set(prev);
+        successIds.forEach(id => next.delete(id));
+        return next;
+      });
+      if (successIds.size > 0) load();
     } else {
       showToast(res.msg || '批量处理失败', 'error');
     }
