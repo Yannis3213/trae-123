@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { api, statusLabels, stageLabels, roleLabels, urgencyLabels, formatDateTime } from '../lib/api';
-import type { User, Consultation, ProcessRecord, AbnormalRecord, Attachment, AuditNote, ProcessResult, BatchResult } from '../types';
+import { api, roleLabels } from '../lib/api';
+import type { User } from '../types';
 import ConsultationList from './ConsultationList';
 import ConsultationDetail from './ConsultationDetail';
 import ConsultationCreate from './ConsultationCreate';
@@ -10,12 +10,19 @@ import Dashboard from './Dashboard';
 
 type TabType = 'dashboard' | 'list' | 'registration' | 'verification' | 'review' | 'ledger' | 'warnings';
 
+const roleDefaultTab: Record<string, TabType> = {
+  registrar: 'registration',
+  auditor: 'verification',
+  reviewer: 'review',
+};
+
 export default function AppIsland() {
   const [user, setUser] = useState<User | null>(null);
   const [tab, setTab] = useState<TabType>('dashboard');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [viewKey, setViewKey] = useState(0);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -25,12 +32,21 @@ export default function AppIsland() {
       return;
     }
     try {
-      if (saved) setUser(JSON.parse(saved));
+      let initial: User | null = null;
+      if (saved) {
+        initial = JSON.parse(saved);
+        setUser(initial);
+        setTab(roleDefaultTab[initial.role] || 'dashboard');
+      }
       (async () => {
         try {
           const me: any = await api.getMe();
           setUser(me);
           localStorage.setItem('user', JSON.stringify(me));
+          if (!initial) {
+            setTab(roleDefaultTab[me.role] || 'dashboard');
+          }
+          setViewKey(k => k + 1);
         } catch {
           localStorage.removeItem('token');
           localStorage.removeItem('user');
@@ -55,42 +71,87 @@ export default function AppIsland() {
 
   const getTabs: { key: TabType; label: string; roles?: string[] }[] = [
     { key: 'dashboard', label: '工作台' },
-    { key: 'list', label: '会诊申请单', roles: ['registrar', 'auditor', 'reviewer'] },
-    { key: 'registration', label: '会诊申请单登记', roles: ['registrar'] },
-    { key: 'verification', label: '过程核验', roles: ['auditor'] },
-    { key: 'review', label: '复核归档', roles: ['reviewer'] },
+  ];
+  if (user.role === 'registrar') {
+    getTabs.push({ key: 'registration', label: '会诊申请单登记', roles: ['registrar'] });
+  } else if (user.role === 'auditor') {
+    getTabs.push({ key: 'verification', label: '过程核验', roles: ['auditor'] });
+  } else if (user.role === 'reviewer') {
+    getTabs.push({ key: 'review', label: '复核归档', roles: ['reviewer'] });
+  }
+  getTabs.push(
+    { key: 'list', label: '会诊申请单（全部可见）' },
     { key: 'warnings', label: '到期预警' },
     { key: 'ledger', label: '会诊申请单台账' },
-  ];
-
-  const visibleTabs = getTabs.filter(t => !t.roles || t.roles.includes(user.role));
-
-  if (tab === 'registration') {
-    // 登记员直接看登记列表，包含创建和列表
-  }
+  );
 
   const renderMain = () => {
     if (selectedId) {
-      return <ConsultationDetail id={selectedId} user={user} onBack={() => setSelectedId(null)} onRefresh={() => {}} />;
+      return (
+        <ConsultationDetail
+          key={`detail-${selectedId}-${viewKey}`}
+          id={selectedId}
+          user={user}
+          onBack={() => setSelectedId(null)}
+          onRefresh={() => setViewKey(k => k + 1)}
+        />
+      );
     }
     if (showCreate) {
-      return <ConsultationCreate user={user} onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); }} />;
+      return (
+        <ConsultationCreate
+          user={user}
+          onClose={() => setShowCreate(false)}
+          onCreated={() => { setShowCreate(false); setViewKey(k => k + 1); }}
+        />
+      );
     }
     switch (tab) {
       case 'dashboard':
-        return <Dashboard user={user} onOpen={(id) => setSelectedId(id)} />;
+        return <Dashboard key={`dash-${viewKey}`} user={user} onOpen={(id) => setSelectedId(id)} />;
       case 'list':
-        return <ConsultationList user={user} stage={null} onOpen={setSelectedId} onNew={() => setShowCreate(true)} />;
+        return (
+          <ConsultationList
+            key={`list-all-${viewKey}`}
+            user={user}
+            stage={null}
+            onOpen={setSelectedId}
+            onNew={() => setShowCreate(true)}
+            ignoreRoleStage
+          />
+        );
       case 'registration':
-        return <ConsultationList user={user} stage="registration" onOpen={setSelectedId} onNew={() => setShowCreate(true)} />;
+        return (
+          <ConsultationList
+            key={`list-reg-${viewKey}`}
+            user={user}
+            stage="registration"
+            onOpen={setSelectedId}
+            onNew={() => setShowCreate(true)}
+          />
+        );
       case 'verification':
-        return <ConsultationList user={user} stage="verification" onOpen={setSelectedId} />;
+        return (
+          <ConsultationList
+            key={`list-aud-${viewKey}`}
+            user={user}
+            stage="verification"
+            onOpen={setSelectedId}
+          />
+        );
       case 'review':
-        return <ConsultationList user={user} stage="review" onOpen={setSelectedId} />;
+        return (
+          <ConsultationList
+            key={`list-rev-${viewKey}`}
+            user={user}
+            stage="review"
+            onOpen={setSelectedId}
+          />
+        );
       case 'warnings':
-        return <WarningPanel user={user} onOpen={setSelectedId} />;
+        return <WarningPanel key={`warn-${viewKey}`} user={user} onOpen={setSelectedId} />;
       case 'ledger':
-        return <LedgerPanel user={user} onOpen={setSelectedId} />;
+        return <LedgerPanel key={`ledger-${viewKey}`} user={user} onOpen={setSelectedId} />;
       default:
         return null;
     }
@@ -98,13 +159,15 @@ export default function AppIsland() {
 
   const tabTitles: Record<TabType, string> = {
     dashboard: '工作台',
-    list: '会诊申请单',
-    registration: '会诊申请单登记',
-    verification: '过程核验',
-    review: '复核归档',
+    list: '会诊申请单（全部可见）',
+    registration: '会诊申请单登记 - 科室秘书工作台',
+    verification: '过程核验 - 质控医生工作台',
+    review: '复核归档 - 医务部主任工作台',
     warnings: '到期预警',
     ledger: '会诊申请单台账',
   };
+
+  const roleBadgeCls = user.role === 'registrar' ? 'pending' : user.role === 'auditor' ? 'warning' : 'rechecked';
 
   return (
     <div className="layout">
@@ -113,11 +176,11 @@ export default function AppIsland() {
         <div style={{ padding: '0 20px 16px', fontSize: 13, color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', marginBottom: 12 }}>
           会诊申请单月底集中处理系统
         </div>
-        {visibleTabs.map(t => (
+        {getTabs.map(t => (
           <div
             key={t.key}
             className={`nav-item ${tab === t.key ? 'active' : ''}`}
-            onClick={() => { setTab(t.key); setSelectedId(null); setShowCreate(false); }}
+            onClick={() => { setTab(t.key); setSelectedId(null); setShowCreate(false); setViewKey(k => k + 1); }}
           >
             {t.label}
           </div>
@@ -125,13 +188,16 @@ export default function AppIsland() {
       </div>
       <div className="main">
         <div className="topbar">
-          <h1>{selectedId ? '会诊申请单详情' : (showCreate ? '新建会诊申请单' : tabTitles[tab])}</h1>
+          <h1>
+            {selectedId ? '会诊申请单详情' : (showCreate ? '新建会诊申请单' : tabTitles[tab])}
+          </h1>
           <div className="user-info">
-            <span style={{ color: 'var(--text-secondary)' }}>
-              {user.real_name}
+            <span style={{ color: 'var(--text-secondary)' }}>{user.real_name}</span>
+            <span className={`badge ${roleBadgeCls}`}>{roleLabels[user.role]}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              {user.department}
             </span>
-            <span className="badge pending">{roleLabels[user.role]}</span>
-            <button onClick={handleLogout}>退出</button>
+            <button onClick={handleLogout}>切换角色</button>
           </div>
         </div>
         {renderMain()}

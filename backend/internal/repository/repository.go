@@ -138,6 +138,7 @@ type ConsultationFilter struct {
 	IsArchived     *bool
 	CreatedBy      string
 	CurrentHandler string
+	OrHandlerEmpty bool
 	SearchKeyword  string
 }
 
@@ -196,8 +197,13 @@ func ListConsultations(filter ConsultationFilter, page, pageSize int) ([]models.
 		countArgs = append(countArgs, *filter.IsArchived)
 	}
 	if filter.CurrentHandler != "" {
-		query += ` AND current_handler = ?`
-		countQuery += ` AND current_handler = ?`
+		if filter.OrHandlerEmpty {
+			query += ` AND (current_handler = ? OR current_handler IS NULL OR current_handler = '')`
+			countQuery += ` AND (current_handler = ? OR current_handler IS NULL OR current_handler = '')`
+		} else {
+			query += ` AND current_handler = ?`
+			countQuery += ` AND current_handler = ?`
+		}
 		args = append(args, filter.CurrentHandler)
 		countArgs = append(countArgs, filter.CurrentHandler)
 	}
@@ -410,9 +416,62 @@ func GetAuditNotes(consultationID string) ([]models.AuditNote, error) {
 	return list, nil
 }
 
-func GetStatistics() (map[string]int, error) {
+func buildFilterWhere(filter ConsultationFilter) (string, []interface{}) {
+	where := ""
+	args := []interface{}{}
+	if filter.Status != "" {
+		where += ` AND status = ?`
+		args = append(args, filter.Status)
+	}
+	if filter.Stage != "" {
+		where += ` AND current_stage = ?`
+		args = append(args, filter.Stage)
+	}
+	if filter.Urgency != "" {
+		where += ` AND urgency = ?`
+		args = append(args, filter.Urgency)
+	}
+	if filter.Department != "" {
+		where += ` AND department = ?`
+		args = append(args, filter.Department)
+	}
+	if filter.PatientID != "" {
+		where += ` AND patient_id = ?`
+		args = append(args, filter.PatientID)
+	}
+	if filter.SearchKeyword != "" {
+		where += ` AND (patient_name LIKE ? OR patient_id LIKE ? OR consultation_reason LIKE ?)`
+		kw := "%" + filter.SearchKeyword + "%"
+		args = append(args, kw, kw, kw)
+	}
+	if filter.CreatedBy != "" {
+		where += ` AND created_by = ?`
+		args = append(args, filter.CreatedBy)
+	}
+	if filter.IsArchived != nil {
+		where += ` AND is_archived = ?`
+		args = append(args, *filter.IsArchived)
+	}
+	if filter.CurrentHandler != "" {
+		if filter.OrHandlerEmpty {
+			where += ` AND (current_handler = ? OR current_handler IS NULL OR current_handler = '')`
+		} else {
+			where += ` AND current_handler = ?`
+		}
+		args = append(args, filter.CurrentHandler)
+	}
+	return where, args
+}
+
+func GetStatistics(baseFilter ConsultationFilter) (map[string]int, error) {
 	stats := make(map[string]int)
-	rows, err := DB.Query(`SELECT status, COUNT(*) FROM consultations WHERE is_archived=0 GROUP BY status`)
+
+	activeFilter := baseFilter
+	bFalse := false
+	activeFilter.IsArchived = &bFalse
+	whereActive, argsActive := buildFilterWhere(activeFilter)
+	statusSQL := `SELECT status, COUNT(*) FROM consultations WHERE 1=1` + whereActive + ` GROUP BY status`
+	rows, err := DB.Query(statusSQL, argsActive...)
 	if err != nil {
 		return nil, err
 	}
@@ -425,7 +484,9 @@ func GetStatistics() (map[string]int, error) {
 		}
 		stats[status] = count
 	}
-	rows2, err := DB.Query(`SELECT urgency, COUNT(*) FROM consultations WHERE is_archived=0 GROUP BY urgency`)
+
+	urgencySQL := `SELECT urgency, COUNT(*) FROM consultations WHERE 1=1` + whereActive + ` GROUP BY urgency`
+	rows2, err := DB.Query(urgencySQL, argsActive...)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +499,13 @@ func GetStatistics() (map[string]int, error) {
 		}
 		stats["urgency_"+urgency] = count
 	}
-	row := DB.QueryRow(`SELECT COUNT(*) FROM consultations WHERE is_archived=1`)
+
+	archivedFilter := baseFilter
+	bTrue := true
+	archivedFilter.IsArchived = &bTrue
+	whereArchived, argsArchived := buildFilterWhere(archivedFilter)
+	archivedSQL := `SELECT COUNT(*) FROM consultations WHERE 1=1` + whereArchived
+	row := DB.QueryRow(archivedSQL, argsArchived...)
 	var archived int
 	if err := row.Scan(&archived); err != nil {
 		return nil, err

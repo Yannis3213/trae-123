@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -63,11 +64,50 @@ func CreateConsultation(c *fiber.Ctx) error {
 	return c.Status(http.StatusCreated).JSON(body)
 }
 
+func applyRoleVisibilityFilter(user *models.User, filter *repository.ConsultationFilter) {
+	switch user.Role {
+	case config.RoleRegistrar:
+		filter.CreatedBy = user.ID
+	case config.RoleAuditor:
+		if filter.Stage == "" {
+			filter.Stage = config.StageVerification
+		}
+		if filter.CurrentHandler == "" {
+			filter.CurrentHandler = user.ID
+			filter.OrHandlerEmpty = true
+		}
+	case config.RoleReviewer:
+		if filter.Stage == "" {
+			filter.Stage = config.StageReview
+		}
+	}
+}
+
+func canViewConsultation(user *models.User, c *models.Consultation) bool {
+	if user.Role == config.RoleReviewer {
+		return true
+	}
+	if user.Role == config.RoleRegistrar {
+		return c.CreatedBy == user.ID
+	}
+	if user.Role == config.RoleAuditor {
+		if c.CurrentStage != config.StageVerification {
+			return c.CreatedBy == user.ID
+		}
+		return c.CurrentHandler == "" || c.CurrentHandler == user.ID
+	}
+	return false
+}
+
 func GetConsultation(c *fiber.Ctx) error {
+	user := middleware.GetCurrentUser(c)
 	id := c.Params("id")
 	consultation, err := repository.GetConsultationByID(id)
 	if err != nil {
 		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "会诊申请单不存在"})
+	}
+	if !canViewConsultation(user, consultation) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "无权查看该会诊申请单"})
 	}
 
 	records, _ := repository.GetProcessRecords(id)
@@ -96,21 +136,15 @@ func ListConsultations(c *fiber.Ctx) error {
 	}
 
 	filter := repository.ConsultationFilter{
-		Status:        config.ConsultationStatus(c.Query("status")),
-		Stage:         config.ProcessStage(c.Query("stage")),
-		Urgency:       config.UrgencyLevel(c.Query("urgency")),
-		Department:    c.Query("department"),
-		PatientID:     c.Query("patient_id"),
-		SearchKeyword: c.Query("keyword"),
+		Status:         config.ConsultationStatus(c.Query("status")),
+		Stage:          config.ProcessStage(c.Query("stage")),
+		Urgency:        config.UrgencyLevel(c.Query("urgency")),
+		Department:     c.Query("department"),
+		PatientID:      c.Query("patient_id"),
+		SearchKeyword:  c.Query("keyword"),
+		CurrentHandler: c.Query("current_handler"),
 	}
-
-	if user.Role == config.RoleRegistrar {
-		filter.CreatedBy = user.ID
-	} else if user.Role == config.RoleAuditor {
-		if stage := c.Query("stage"); stage == "" {
-			filter.Stage = config.StageVerification
-		}
-	}
+	applyRoleVisibilityFilter(user, &filter)
 
 	isArchivedStr := c.Query("is_archived")
 	if isArchivedStr == "true" {
@@ -195,12 +229,32 @@ func ProcessAction(c *fiber.Ctx) error {
 	user := middleware.GetCurrentUser(c)
 	id := c.Params("id")
 
+	consultation, err := repository.GetConsultationByID(id)
+	if err != nil {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "会诊申请单不存在"})
+	}
+	if !canViewConsultation(user, consultation) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "无权操作该会诊申请单"})
+	}
+	if consultation.IsArchived {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "已归档单据不可操作"})
+	}
+
 	req := &ProcessActionRequest{}
 	if err := c.BodyParser(req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "请求参数错误"})
 	}
 	if req.Action == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "必须指定操作类型"})
+	}
+	if req.ExpectedVersion == 0 {
+		req.ExpectedVersion = consultation.Version
+	}
+	if req.ExpectedVersion != consultation.Version {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"success": false,
+			"message": fmt.Sprintf("版本冲突：后端当前为 v%d，您提交的是 v%d，请刷新后重试", consultation.Version, req.ExpectedVersion),
+		})
 	}
 
 	procReq := service.ProcessRequest{
@@ -238,7 +292,50 @@ func BatchProcess(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "必须指定操作类型"})
 	}
 
-	results := service.BatchProcess(*req, user.ID, user.RealName, user.Role)
+	results := make([]service.ProcessResult, 0, len(req.IDs))
+	for _, id := range req.IDs {
+		consultation, err := repository.GetConsultationByID(id)
+		if err != nil {
+			results = append(results, service.ProcessResult{Success: false, Message: "单据不存在", ID: id})
+			continue
+		}
+		if !canViewConsultation(user, consultation) {
+			results = append(results, service.ProcessResult{Success: false, Message: "无权操作该单据", ID: id})
+			continue
+		}
+		if consultation.IsArchived {
+			results = append(results, service.ProcessResult{Success: false, Message: "已归档，不可操作", ID: id})
+			continue
+		}
+	}
+	if len(results) > 0 {
+		handled := make(map[string]bool)
+		for _, r := range results {
+			if r.ID != "" {
+				handled[r.ID] = true
+			}
+		}
+		remainingIDs := make([]string, 0)
+		remainingVersions := make(map[string]int)
+		for _, id := range req.IDs {
+			if !handled[id] {
+				remainingIDs = append(remainingIDs, id)
+				if v, ok := req.ExpectedVersions[id]; ok {
+					remainingVersions[id] = v
+				}
+			}
+		}
+		if len(remainingIDs) > 0 {
+			remainingReq := *req
+			remainingReq.IDs = remainingIDs
+			remainingReq.ExpectedVersions = remainingVersions
+			subResults := service.BatchProcess(remainingReq, user.ID, user.RealName, user.Role)
+			results = append(results, subResults...)
+		}
+	} else {
+		results = service.BatchProcess(*req, user.ID, user.RealName, user.Role)
+	}
+
 	successCount := 0
 	for _, r := range results {
 		if r.Success {
@@ -300,7 +397,10 @@ func AddAttachment(c *fiber.Ctx) error {
 }
 
 func GetStatistics(c *fiber.Ctx) error {
-	stats, err := repository.GetStatistics()
+	user := middleware.GetCurrentUser(c)
+	filter := repository.ConsultationFilter{}
+	applyRoleVisibilityFilter(user, &filter)
+	stats, err := repository.GetStatistics(filter)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -308,6 +408,7 @@ func GetStatistics(c *fiber.Ctx) error {
 }
 
 func GetLedger(c *fiber.Ctx) error {
+	user := middleware.GetCurrentUser(c)
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	pageSize, _ := strconv.Atoi(c.Query("page_size", "50"))
 
@@ -317,6 +418,7 @@ func GetLedger(c *fiber.Ctx) error {
 		SearchKeyword: c.Query("keyword"),
 		PatientID:     c.Query("patient_id"),
 	}
+	applyRoleVisibilityFilter(user, &filter)
 
 	list, total, err := repository.ListConsultations(filter, page, pageSize)
 	if err != nil {
@@ -345,6 +447,7 @@ func GetLedger(c *fiber.Ctx) error {
 }
 
 func GetWarningList(c *fiber.Ctx) error {
+	user := middleware.GetCurrentUser(c)
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	pageSize, _ := strconv.Atoi(c.Query("page_size", "20"))
 	urgency := c.Query("urgency")
@@ -356,6 +459,7 @@ func GetWarningList(c *fiber.Ctx) error {
 	if urgency != "" {
 		filter.Urgency = config.UrgencyLevel(urgency)
 	}
+	applyRoleVisibilityFilter(user, &filter)
 
 	list, total, err := repository.ListConsultations(filter, page, pageSize)
 	if err != nil {

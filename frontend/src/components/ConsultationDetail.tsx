@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, statusLabels, stageLabels, roleLabels, urgencyLabels, formatDateTime } from '../lib/api';
+import type { Role } from '../types';
 import type { User, Consultation, ProcessRecord, AbnormalRecord, Attachment, AuditNote, ProcessResult } from '../types';
 
 interface Props {
@@ -152,6 +153,13 @@ export default function ConsultationDetail({ id, user, onBack, onRefresh }: Prop
         </div>
       )}
 
+      <div className="alert info" style={{ marginBottom: 12 }}>
+        当前视图按「{roleLabels[user.role]}」角色可见范围展示。
+        {user.role === 'registrar' && ' 仅显示您本人创建的会诊申请单。'}
+        {user.role === 'auditor' && ' 仅显示核验阶段（由您处理或待认领）的会诊申请单。'}
+        {user.role === 'reviewer' && ' 可查看全部会诊申请单，复核阶段单据可操作。'}
+      </div>
+
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
           <div>
@@ -168,6 +176,19 @@ export default function ConsultationDetail({ id, user, onBack, onRefresh }: Prop
             版本 v{c.version} · 创建于 {formatDateTime(c.created_at)}
           </div>
         </div>
+
+        {user.role !== 'registrar' && (
+          <div style={{ marginBottom: 16, padding: '8px 12px', background: '#f8f9fa', borderRadius: 6, fontSize: 14 }}>
+            <strong>当前处理人：</strong>
+            {!c.current_handler ? (
+              <span className="badge pending" style={{ marginLeft: 8 }}>未分配（共享池，可认领）</span>
+            ) : c.current_handler === user.id ? (
+              <span className="badge success" style={{ marginLeft: 8 }}>我处理</span>
+            ) : (
+              <span className="badge warning" style={{ marginLeft: 8 }}>其他处理人处理中（ID: {c.current_handler}）</span>
+            )}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
           {stageOrder.map((s, i) => {

@@ -91,6 +91,21 @@ func validateEvidence(c *models.Consultation, evidenceUsed string, stage config.
 	return nil
 }
 
+func resolveOpenAbnormals(consultationID, handlerID, resolution string) error {
+	records, err := repository.GetAbnormalRecords(consultationID)
+	if err != nil {
+		return err
+	}
+	for _, r := range records {
+		if !r.IsResolved {
+			if err := repository.ResolveAbnormalRecord(r.ID, resolution); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 	c, err := repository.GetConsultationByID(req.ConsultationID)
 	if err != nil {
@@ -133,6 +148,14 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		c.CurrentHandler = ""
 		c.Urgency = calculateUrgency(c.Deadline)
 		record.ToStatus = config.StatusPending
+		if req.Remark != "" {
+			record.Remark = req.Remark
+		} else {
+			record.Remark = "登记员提交审核，材料齐全"
+		}
+		if err := resolveOpenAbnormals(c.ID, req.HandlerID, "登记员提交审核，异常项已补正"); err != nil {
+			return nil, err
+		}
 
 	case "correct":
 		if err := validateEvidence(c, req.EvidenceUsed, config.StageRegistration); err != nil {
@@ -140,6 +163,7 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		}
 		c.Status = config.StatusPending
 		c.CurrentStage = config.StageVerification
+		c.CurrentHandler = ""
 		c.Urgency = calculateUrgency(c.Deadline)
 		record.ToStatus = config.StatusPending
 		if req.AbnormalReason != "" {
@@ -152,6 +176,14 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 			if err := repository.CreateAbnormalRecord(abnormal); err != nil {
 				return nil, err
 			}
+			record.Remark = "补正说明：" + req.AbnormalReason
+		} else if req.Remark != "" {
+			record.Remark = req.Remark
+		} else {
+			record.Remark = "登记员补正后重新提交"
+		}
+		if err := resolveOpenAbnormals(c.ID, req.HandlerID, record.Remark); err != nil {
+			return nil, err
 		}
 
 	case "withdraw":
@@ -166,12 +198,18 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		c.CurrentHandler = ""
 		c.ScheduleVerified = true
 		record.ToStatus = config.StatusRechecked
+		if req.Remark != "" {
+			record.Remark = req.Remark
+		} else {
+			record.Remark = "质控核验通过，排班、证据已核验"
+		}
 
 	case "verify_fail", "mark_abnormal":
 		if req.AbnormalReason == "" {
 			return &ProcessResult{Success: false, Message: "标记异常必须填写异常原因"}, nil
 		}
 		c.Status = config.StatusAbnormal
+		c.CurrentHandler = req.HandlerID
 		abnormal := &models.AbnormalRecord{
 			ConsultationID: c.ID,
 			AbnormalType:   req.AbnormalType,
@@ -182,6 +220,11 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 			return nil, err
 		}
 		record.ToStatus = config.StatusAbnormal
+		if req.Remark != "" {
+			record.Remark = req.Remark + "；异常：" + req.AbnormalReason
+		} else {
+			record.Remark = "核验异常：" + req.AbnormalReason
+		}
 
 	case "return":
 		if req.AbnormalReason == "" {
@@ -189,6 +232,7 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		}
 		c.Status = config.StatusAbnormal
 		c.CurrentStage = config.StageRegistration
+		c.CurrentHandler = c.CreatedBy
 		abnormal := &models.AbnormalRecord{
 			ConsultationID: c.ID,
 			AbnormalType:   "退回补正",
@@ -199,14 +243,28 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 			return nil, err
 		}
 		record.ToStatus = config.StatusAbnormal
+		if req.Remark != "" {
+			record.Remark = req.Remark + "；退回原因：" + req.AbnormalReason
+		} else {
+			record.Remark = "退回补正：" + req.AbnormalReason
+		}
 
 	case "review_pass":
 		if err := validateEvidence(c, req.EvidenceUsed, config.StageReview); err != nil {
 			return &ProcessResult{Success: false, Message: err.Error()}, nil
 		}
 		c.Status = config.StatusRechecked
+		c.CurrentHandler = req.HandlerID
 		c.FeedbackVerified = true
 		record.ToStatus = config.StatusRechecked
+		if req.Remark != "" {
+			record.Remark = req.Remark
+		} else {
+			record.Remark = "医务部复核通过，结果反馈已核验"
+		}
+		if err := resolveOpenAbnormals(c.ID, req.HandlerID, "医务部复核通过"); err != nil {
+			return nil, err
+		}
 
 	case "review_fail":
 		if req.AbnormalReason == "" {
@@ -214,6 +272,7 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		}
 		c.Status = config.StatusAbnormal
 		c.CurrentStage = config.StageVerification
+		c.CurrentHandler = ""
 		abnormal := &models.AbnormalRecord{
 			ConsultationID: c.ID,
 			AbnormalType:   "复核不通过",
@@ -224,6 +283,11 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 			return nil, err
 		}
 		record.ToStatus = config.StatusAbnormal
+		if req.Remark != "" {
+			record.Remark = req.Remark + "；复核不通过：" + req.AbnormalReason
+		} else {
+			record.Remark = "复核不通过：" + req.AbnormalReason
+		}
 
 	case "archive":
 		if c.Status != config.StatusRechecked {
@@ -235,7 +299,16 @@ func ProcessConsultation(req ProcessRequest) (*ProcessResult, error) {
 		c.Status = config.StatusArchived
 		c.IsArchived = true
 		c.FeedbackVerified = true
+		c.CurrentHandler = req.HandlerID
 		record.ToStatus = config.StatusArchived
+		if req.Remark != "" {
+			record.Remark = req.Remark
+		} else {
+			record.Remark = "医务部主任完成最终归档"
+		}
+		if err := resolveOpenAbnormals(c.ID, req.HandlerID, "归档时自动关闭所有未解决异常"); err != nil {
+			return nil, err
+		}
 	}
 
 	c.UpdatedBy = req.HandlerID

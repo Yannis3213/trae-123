@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api, statusLabels, urgencyLabels, formatDateTime } from '../lib/api';
+import { api, statusLabels, urgencyLabels, formatDateTime, roleLabels } from '../lib/api';
 import type { User, Consultation } from '../types';
 
 interface Props {
@@ -45,6 +45,13 @@ export default function WarningPanel({ user, onOpen }: Props) {
 
   return (
     <div>
+      <div className="alert info" style={{ marginBottom: 16 }}>
+        到期预警按「{roleLabels[user.role]}」角色可见范围展示。
+        {user.role === 'registrar' && ' 仅展示您本人创建单据的预警。'}
+        {user.role === 'auditor' && ' 仅展示核验阶段您处理或待认领的预警。'}
+        {user.role === 'reviewer' && ' 展示全部预警。'}
+        逾期责任归属按责任节点责任人计算。
+      </div>
       <div className="stat-cards">
         {tabs.map(t => (
           <div key={t.key} className={`stat-card ${t.cls}`} style={{ cursor: 'pointer' }} onClick={() => setActiveTab(t.key)}>

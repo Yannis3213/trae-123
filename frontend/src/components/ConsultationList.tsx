@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import { api, statusLabels, stageLabels, urgencyLabels, formatDateTime } from '../lib/api';
-import type { User, Consultation, ProcessResult, BatchResult } from '../types';
+import type { User, Consultation, ProcessResult } from '../types';
 
 interface Props {
   user: User;
   stage: string | null;
   onOpen: (id: string) => void;
   onNew?: () => void;
+  ignoreRoleStage?: boolean;
 }
 
-export default function ConsultationList({ user, stage, onOpen, onNew }: Props) {
+export default function ConsultationList({ user, stage, onOpen, onNew, ignoreRoleStage = false }: Props) {
   const [list, setList] = useState<Consultation[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -41,6 +42,9 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
         ...filters,
       };
       if (stage) params.stage = stage;
+      if (ignoreRoleStage) {
+        params.role_override = '1';
+      }
       const data: any = await api.listConsultations(params);
       setList(data.list || []);
       setTotal(data.total || 0);
@@ -68,26 +72,48 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
     else setSelected(new Set(list.map(c => c.id)));
   };
 
-  const getBatchActions = () => {
-    const actions: { key: string; label: string; needEvidence?: boolean; needAbnormalReason?: boolean }[] = [];
+  const isCorrectStage = (c: Consultation) => {
+    if (!stage) return true;
+    return c.current_stage === stage;
+  };
+
+  const canOperate = (c: Consultation) => {
+    if (c.is_archived) return false;
+    if (!isCorrectStage(c)) return false;
     switch (user.role) {
       case 'registrar':
-        actions.push({ key: 'submit', label: '提交审核', needEvidence: true });
-        actions.push({ key: 'correct', label: '补正提交', needEvidence: true, needAbnormalReason: true });
+        return c.created_by === user.id && c.current_stage === 'registration';
+      case 'auditor':
+        return c.current_stage === 'verification' && (!c.current_handler || c.current_handler === user.id);
+      case 'reviewer':
+        return c.current_stage === 'review';
+      default:
+        return false;
+    }
+  };
+
+  const getBatchActions = () => {
+    const actions: { key: string; label: string; needEvidence?: boolean; needAbnormalReason?: boolean; allowedStages?: string[] }[] = [];
+    switch (user.role) {
+      case 'registrar':
+        actions.push({ key: 'submit', label: '提交审核', needEvidence: true, allowedStages: ['registration'] });
+        actions.push({ key: 'correct', label: '补正提交', needEvidence: true, needAbnormalReason: true, allowedStages: ['registration'] });
         break;
       case 'auditor':
-        actions.push({ key: 'verify_pass', label: '核验通过', needEvidence: true });
-        actions.push({ key: 'verify_fail', label: '核验异常', needAbnormalReason: true });
-        actions.push({ key: 'return', label: '退回补正', needAbnormalReason: true });
+        actions.push({ key: 'verify_pass', label: '核验通过', needEvidence: true, allowedStages: ['verification'] });
+        actions.push({ key: 'verify_fail', label: '核验异常', needAbnormalReason: true, allowedStages: ['verification'] });
+        actions.push({ key: 'return', label: '退回补正', needAbnormalReason: true, allowedStages: ['verification'] });
         break;
       case 'reviewer':
-        actions.push({ key: 'review_pass', label: '复核通过', needEvidence: true });
-        actions.push({ key: 'archive', label: '归档', needEvidence: true });
-        actions.push({ key: 'review_fail', label: '复核退回', needAbnormalReason: true });
+        actions.push({ key: 'review_pass', label: '复核通过', needEvidence: true, allowedStages: ['review'] });
+        actions.push({ key: 'archive', label: '归档', needEvidence: true, allowedStages: ['review'] });
+        actions.push({ key: 'review_fail', label: '复核退回', needAbnormalReason: true, allowedStages: ['review'] });
         break;
     }
     return actions;
   };
+
+  const actions = getBatchActions();
 
   const handleBatch = async () => {
     if (!batchAction) return;
@@ -116,10 +142,31 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
     }
   };
 
-  const actions = getBatchActions();
+  const getHandlerLabel = (c: Consultation) => {
+    if (!c.current_handler) return <span style={{ color: 'var(--text-secondary)' }}>未分配</span>;
+    if (c.current_handler === user.id) return <span style={{ color: 'var(--primary)', fontWeight: 600 }}>我处理</span>;
+    return <span style={{ color: 'var(--text-secondary)' }}>其他处理人</span>;
+  };
+
+  const showStageColumn = !stage;
+  const showHandlerColumn = user.role !== 'registrar';
+  const showCheckboxCol = actions.length > 0;
+
+  const totalCols = 8 + (showStageColumn ? 1 : 0) + (showHandlerColumn ? 1 : 0) + (showCheckboxCol ? 1 : 0);
 
   return (
     <div>
+      {user.role !== 'reviewer' && stage && (
+        <div className="alert info" style={{ marginBottom: 16 }}>
+          当前视图：<strong>{roleHint(user.role, stage || '')}</strong>；仅显示分配给您或待领取的单据，列表、批量操作、详情权限均已按角色收敛
+        </div>
+      )}
+      {ignoreRoleStage && (
+        <div className="alert info" style={{ marginBottom: 16 }}>
+          当前为全量会诊申请单视图（按角色可见范围过滤）；办理请切换到对应工作台（登记/核验/复核）
+        </div>
+      )}
+
       <div className="filter-bar">
         <div className="form-item">
           <label>状态</label>
@@ -158,23 +205,23 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
 
       <div className="toolbar">
         <div className="toolbar-left">
-          {onNew && user.role === 'registrar' && (
+          {onNew && user.role === 'registrar' && (stage === 'registration' || !stage) && (
             <button className="primary" onClick={onNew}>+ 新建会诊申请单</button>
           )}
-          {actions.length > 0 && (
+          {actions.length > 0 && !ignoreRoleStage && (
             <button onClick={() => setShowBatch(!showBatch)} disabled={selected.size === 0}>
               批量处理 {selected.size > 0 && `(${selected.size})`}
             </button>
           )}
         </div>
         <div className="toolbar-right" style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-          共 {total} 条
+          共 {total} 条 · 仅显示角色可见范围
         </div>
       </div>
 
       {showBatch && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div className="section-title" style={{ marginTop: 0 }}>批量处理（已选 {selected.size} 条）</div>
+          <div className="section-title" style={{ marginTop: 0 }}>批量处理（已选 {selected.size} 条，按角色和阶段逐条拦截）</div>
           <div className="form-row">
             <div className="form-item">
               <label>操作类型 *</label>
@@ -186,39 +233,44 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
             {actions.find(a => a.key === batchAction)?.needEvidence && (
               <div className="form-item">
                 <label>使用证据（用英文逗号分隔）*</label>
-                <input value={batchEvidence} onChange={(e) => setBatchEvidence(e.target.value)} placeholder="如：病历,心电图" />
+                <input value={batchEvidence} onChange={(e) => setBatchEvidence(e.target.value)} placeholder="如：病历,心电图；必须从已登记证据中选" />
               </div>
             )}
             {actions.find(a => a.key === batchAction)?.needAbnormalReason && (
               <>
                 <div className="form-item">
                   <label>异常类型</label>
-                  <input value={batchAbnormalType} onChange={(e) => setBatchAbnormalType(e.target.value)} placeholder="如：缺材料" />
+                  <input value={batchAbnormalType} onChange={(e) => setBatchAbnormalType(e.target.value)} placeholder="如：缺材料/超时/状态冲突" />
                 </div>
                 <div className="form-item" style={{ gridColumn: '1 / -1' }}>
-                  <label>异常/退回原因 *</label>
-                  <textarea value={batchAbnormalReason} onChange={(e) => setBatchAbnormalReason(e.target.value)} placeholder="请填写异常或退回原因" />
+                  <label>异常/退回原因 *（每条都会持久化）</label>
+                  <textarea value={batchAbnormalReason} onChange={(e) => setBatchAbnormalReason(e.target.value)} placeholder="请填写异常或退回原因，系统会逐条记录原因并关联到对应会诊申请单" />
                 </div>
               </>
             )}
             <div className="form-item" style={{ gridColumn: '1 / -1' }}>
-              <label>备注</label>
+              <label>处理备注</label>
               <textarea value={batchRemark} onChange={(e) => setBatchRemark(e.target.value)} />
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="primary" onClick={handleBatch} disabled={batchLoading || !batchAction}>
-              {batchLoading ? '处理中...' : '确认批量处理'}
+              {batchLoading ? '逐条处理中...' : '确认批量处理（后端会按角色/阶段/状态/版本逐条拦截）'}
             </button>
             <button onClick={() => { setShowBatch(false); setBatchResult(null); }}>取消</button>
           </div>
           {batchResult && (
             <div className="batch-result">
-              <div className="section-title">处理结果（成功 {batchResult.filter(r => r.success).length} / {batchResult.length}）</div>
+              <div className="section-title">
+                处理结果（成功 {batchResult.filter(r => r.success).length} / {batchResult.length}）
+                <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>
+                  每条失败均有具体原因，可直接定位
+                </span>
+              </div>
               {batchResult.map((r, i) => (
                 <div key={i} className={`batch-result-item ${r.success ? 'success' : 'fail'}`}>
-                  <strong>{r.id || `第${i + 1}条`}</strong>：
-                  {r.success ? '✓ ' : '✗ '}{r.message}
+                  <strong>[{r.id ? `单据 ${r.id}` : `第${i + 1}条`}]</strong>
+                  ：{r.success ? '✓ ' : '✗ '}{r.message}
                 </div>
               ))}
             </div>
@@ -230,7 +282,7 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
         <table>
           <thead>
             <tr>
-              {actions.length > 0 && (
+              {showCheckboxCol && (
                 <th style={{ width: 40 }}>
                   <input type="checkbox" checked={selected.size === list.length && list.length > 0} onChange={toggleSelectAll} style={{ width: 'auto' }} />
                 </th>
@@ -239,32 +291,33 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
               <th>患者姓名</th>
               <th>科室</th>
               <th>会诊类型</th>
-              <th>会诊科室</th>
-              <th>当前阶段</th>
+              {showStageColumn && <th>当前阶段</th>}
               <th>状态</th>
               <th>紧急度</th>
+              {showHandlerColumn && <th>当前处理人</th>}
               <th>截止时间</th>
               <th>版本</th>
-              <th>创建时间</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={13} style={{ textAlign: 'center', padding: 40 }}>加载中...</td></tr>
+              <tr><td colSpan={totalCols} style={{ textAlign: 'center', padding: 40 }}>加载中...</td></tr>
             )}
             {!loading && list.length === 0 && (
-              <tr><td colSpan={13} style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>暂无数据</td></tr>
+              <tr><td colSpan={totalCols} style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
+                当前角色在该范围内暂无会诊申请单
+              </td></tr>
             )}
             {list.map(c => (
               <tr key={c.id}>
-                {actions.length > 0 && (
+                {showCheckboxCol && (
                   <td>
                     <input
                       type="checkbox"
                       checked={selected.has(c.id)}
                       onChange={() => toggleSelect(c.id)}
-                      disabled={c.is_archived}
+                      disabled={c.is_archived || !canOperate(c)}
                       style={{ width: 'auto' }}
                     />
                   </td>
@@ -273,14 +326,17 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
                 <td>{c.patient_name}</td>
                 <td>{c.department}</td>
                 <td>{c.consultation_type}</td>
-                <td>{c.consultation_dept}</td>
-                <td>{stageLabels[c.current_stage]}</td>
+                {showStageColumn && <td>{stageLabels[c.current_stage]}</td>}
                 <td><span className={`badge ${c.status}`}>{statusLabels[c.status]}</span></td>
                 <td><span className={`badge ${c.urgency}`}>{urgencyLabels[c.urgency]}</span></td>
+                {showHandlerColumn && <td>{getHandlerLabel(c)}</td>}
                 <td>{formatDateTime(c.deadline)}</td>
                 <td>v{c.version}</td>
-                <td>{formatDateTime(c.created_at)}</td>
-                <td><button onClick={() => onOpen(c.id)}>查看详情</button></td>
+                <td>
+                  <button onClick={() => onOpen(c.id)}>
+                    {canOperate(c) ? '办理' : '查看'}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -293,4 +349,11 @@ export default function ConsultationList({ user, stage, onOpen, onNew }: Props) 
       </div>
     </div>
   );
+}
+
+function roleHint(role: string, stage: string): string {
+  if (role === 'registrar' && stage === 'registration') return '科室秘书 - 会诊申请单登记工作台';
+  if (role === 'auditor' && stage === 'verification') return '质控医生 - 过程核验工作台';
+  if (role === 'reviewer' && stage === 'review') return '医务部主任 - 复核归档工作台';
+  return stage;
 }

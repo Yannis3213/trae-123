@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api, statusLabels, urgencyLabels, formatDateTime } from '../lib/api';
+import { api, statusLabels, urgencyLabels, formatDateTime, roleLabels } from '../lib/api';
 import type { User, Consultation } from '../types';
 
 interface Props {
@@ -45,6 +45,12 @@ export default function LedgerPanel({ user, onOpen }: Props) {
 
   return (
     <div>
+      <div className="alert info" style={{ marginBottom: 16 }}>
+        会诊申请单台账按「{roleLabels[user.role]}」角色可见范围展示已归档单据。
+        {user.role === 'registrar' && ' 仅展示您本人创建的归档单据。'}
+        {user.role === 'auditor' && ' 仅展示核验阶段您处理过的归档单据。'}
+        {user.role === 'reviewer' && ' 展示全部归档单据。'}
+      </div>
       <div className="filter-bar">
         <div className="form-item">
           <label>病案号</label>
