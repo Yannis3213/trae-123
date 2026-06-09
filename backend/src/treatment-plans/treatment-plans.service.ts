@@ -525,6 +525,22 @@ export class TreatmentPlansService {
         plan.reminderComplete = true;
       }
 
+      if (dto.data) {
+        if (normModule === 'patient') {
+          if (typeof dto.data.name === 'string' && dto.data.name.trim()) plan.patientName = dto.data.name;
+          if (typeof dto.data.idCard === 'string' && dto.data.idCard.trim()) plan.patientIdCard = dto.data.idCard;
+          if (typeof dto.data.phone === 'string' && dto.data.phone.trim()) plan.patientPhone = dto.data.phone;
+        }
+        if (normModule === 'plan') {
+          if (typeof dto.data.content === 'string' && dto.data.content.trim()) plan.lastHandlerRemark = dto.data.content;
+        }
+        if (normModule === 'reminder') {
+          if (typeof dto.data.content === 'string' && dto.data.content.trim()) {
+            plan.lastHandlerRemark = `【复诊提醒】${dto.data.content}${plan.lastHandlerRemark ? ' | ' + plan.lastHandlerRemark : ''}`;
+          }
+        }
+      }
+
       await queryRunner.manager.save(plan);
 
       if (dto.attachments && dto.attachments.length > 0) {

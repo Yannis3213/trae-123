@@ -201,6 +201,12 @@ export interface CorrectionRequest {
 export interface StatisticsData {
   statusCounts: Record<PlanStatus, number>;
   dueStatusCounts: Record<DueStatus, number>;
+  total?: number;
+  deadlineWarning?: {
+    normal: any[];
+    approaching: any[];
+    overdue: any[];
+  };
 }
 
 export interface ListQueryParams {

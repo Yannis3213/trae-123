@@ -69,12 +69,13 @@ export default function PlanList() {
     fetchList();
   };
 
-  const toggleSelect = (id: string) => {
+  const toggleSelect = (id: string | number) => {
     const set = new Set(selectedIds());
-    if (set.has(id)) {
-      set.delete(id);
+    const key = String(id);
+    if (set.has(key)) {
+      set.delete(key);
     } else {
-      set.add(id);
+      set.add(key);
     }
     setSelectedIds(set);
   };
@@ -83,11 +84,15 @@ export default function PlanList() {
     if (selectedIds().size === list().length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(list().map((i) => i.id)));
+      const newSet = new Set<string>();
+      for (const item of list()) {
+        newSet.add(String(item.id));
+      }
+      setSelectedIds(newSet);
     }
   };
 
-  const selectedItems = () => list().filter((i) => selectedIds().has(i.id));
+  const selectedItems = () => list().filter((i) => selectedIds().has(String(i.id)));
 
   const openBatchModal = (action: typeof batchModal().action, actionLabel: string) => {
     if (selectedIds().size === 0) {
@@ -212,7 +217,7 @@ export default function PlanList() {
                       <input
                         type="checkbox"
                         class="checkbox"
-                        checked={selectedIds().has(item.id)}
+                        checked={selectedIds().has(String(item.id))}
                         onChange={() => toggleSelect(item.id)}
                       />
                     </td>

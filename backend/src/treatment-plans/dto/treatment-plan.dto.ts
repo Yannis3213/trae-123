@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean, ValidateNested } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean, ValidateNested, IsObject } from 'class-validator';
 import { Type } from 'class-transformer';
 import { AttachmentType, ExceptionType } from '../../common/types';
 

@@ -50,8 +50,13 @@ export class StatisticsService {
 
     return {
       statusCounts,
-      deadlineWarning: warning,
+      dueStatusCounts: {
+        normal: warning.normal.length,
+        approaching: warning.approaching.length,
+        overdue: warning.overdue.length,
+      },
       total: all.length,
+      deadlineWarning: warning,
     };
   }
 
