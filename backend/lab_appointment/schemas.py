@@ -103,7 +103,13 @@ class AppointmentBase(BaseModel):
 
 
 class AppointmentIn(AppointmentBase):
-    pass
+    version: int = 1
+    opinion: str = ''
+    comment: str = ''
+    audit_note: str = ''
+    attachments: List[AttachmentIn] = []
+    exception_type: str = ''
+    exception_desc: str = ''
 
 
 class AppointmentUpdateIn(BaseModel):

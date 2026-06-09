@@ -84,9 +84,9 @@
       if (res && res.ok === false && res.errors) {
         actionErrors = res.errors;
       } else {
-        order = res && res.order ? res.order : res;
         editing = false;
         error = '';
+        await load();
       }
     } catch (e) { error = e.message; }
     actionLoading = false;

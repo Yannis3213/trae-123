@@ -408,13 +408,45 @@ def get_appointment(request, order_id: int):
     return data
 
 
-@api.post('/appointments', response=AppointmentOut)
+@api.post('/appointments')
 def create_appointment(request, payload: AppointmentIn):
     user = get_current_user(request)
+    errors = []
     if user.role not in (Role.TA, Role.ADMIN):
-        raise HttpError(403, '只有实验助教或实验室管理员可以创建预约单')
-    if not payload.title.strip() or not payload.experiment_name.strip():
-        raise HttpError(400, '材料问题：标题和实验名称均不能为空')
+        errors.append({
+            'type': ExceptionType.PERMISSION,
+            'msg': f'权限问题：{user.name}({user.get_role_display()}) 无权创建预约单'
+        })
+    client_version = getattr(payload, 'version', None)
+    if client_version is None or client_version == 0 or client_version is False:
+        errors.append({
+            'type': ExceptionType.STATUS,
+            'msg': '版本缺失：创建预约单需传递 version=1（新建版本）'
+        })
+    elif client_version != 1:
+        errors.append({
+            'type': ExceptionType.STATUS,
+            'msg': f'状态冲突：创建预约单 version 必须为 1，提交 v{client_version}'
+        })
+    if not (payload.title or '').strip() or not (payload.experiment_name or '').strip():
+        errors.append({
+            'type': ExceptionType.MATERIAL,
+            'msg': '材料问题：标题和实验名称均不能为空'
+        })
+    if errors:
+        combined_msg = '；'.join([e['msg'] for e in errors])
+        first_type = errors[0]['type'] if errors else ExceptionType.STATUS
+        try:
+            ProcessingRecord.objects.create(
+                order=None, actor=user, action=ACTION_CREATE + '校验拦截',
+                from_status='', to_status='',
+                comment=combined_msg, opinion='', audit_note=combined_msg,
+                exception_type=first_type, exception_desc=combined_msg,
+                evidence_count=0, batch_id=''
+            )
+        except Exception:
+            pass
+        return {'ok': False, 'errors': errors}
     import random
     order_no = f'LAB-{timezone.now().strftime("%Y%m%d")}-{random.randint(1000,9999)}'
     while LabAppointment.objects.filter(order_no=order_no).exists():
@@ -436,10 +468,17 @@ def create_appointment(request, payload: AppointmentIn):
         deadline=payload.deadline,
         owner=user,
         current_handler=user,
+        version=1,
     )
+    evidence_count, audit_note_text, exc_type, exc_desc = persist_evidence_and_notes(order, user, payload)
     add_record_full(order, user, ACTION_CREATE, OrderStatus.DRAFT, OrderStatus.DRAFT,
-                    comment='创建预约单草稿')
-    return enrich_order(order)
+                    comment=payload.comment or '创建预约单草稿',
+                    opinion=payload.opinion,
+                    audit_note=audit_note_text,
+                    exception_type=exc_type,
+                    exception_desc=exc_desc,
+                    evidence_count=evidence_count)
+    return {'ok': True, 'order': enrich_order(order)}
 
 
 @api.put('/appointments/{order_id}')

@@ -138,16 +138,44 @@
   let newForm = {
     title: '', experiment_name: '', experiment_room: '', student_count: 0,
     course_name: '', teacher_name: '', materials_requested: '',
-    safety_confirmed: false, safety_note: '', priority: 'NORMAL'
+    safety_confirmed: false, safety_note: '', priority: 'NORMAL',
+    version: 1, opinion: '', audit_note: '', comment: '',
+    exception_type: '', exception_desc: ''
   };
+  let newFormErrors = [];
 
   async function createOrder() {
+    const errs = [];
+    if (!newForm.version || newForm.version !== 1) {
+      errs.push({ type: 'STATUS', msg: '版本异常：新建预约单 version 必须为 1' });
+    }
+    if (!newForm.title || !newForm.title.trim()) {
+      errs.push({ type: 'MATERIAL', msg: '材料问题：预约单标题不能为空' });
+    }
+    if (!newForm.experiment_name || !newForm.experiment_name.trim()) {
+      errs.push({ type: 'MATERIAL', msg: '材料问题：实验名称不能为空' });
+    }
+    if (errs.length > 0) {
+      newFormErrors = errs;
+      return;
+    }
     try {
-      if (!newForm.title || !newForm.experiment_name) { error = '标题和实验名称必填'; return; }
-      await api.createAppointment(newForm);
-      showCreate = false;
-      newForm = { title: '', experiment_name: '', experiment_room: '', student_count: 0, course_name: '', teacher_name: '', materials_requested: '', safety_confirmed: false, safety_note: '', priority: 'NORMAL' };
-      load();
+      newFormErrors = [];
+      const res = await api.createAppointment({ ...newForm, attachments: [] });
+      if (res && res.ok === false && res.errors) {
+        newFormErrors = res.errors;
+      } else {
+        showCreate = false;
+        newForm = {
+          title: '', experiment_name: '', experiment_room: '', student_count: 0,
+          course_name: '', teacher_name: '', materials_requested: '',
+          safety_confirmed: false, safety_note: '', priority: 'NORMAL',
+          version: 1, opinion: '', audit_note: '', comment: '',
+          exception_type: '', exception_desc: ''
+        };
+        newFormErrors = [];
+        load();
+      }
     } catch (e) { error = e.message; }
   }
 
@@ -323,9 +351,22 @@
 </div>
 
 {#if showCreate}
-  <div class="modal-overlay" on:click|self={() => showCreate = false}>
+  <div class="modal-overlay" on:click|self={() => { showCreate = false; newFormErrors = []; }}>
     <div class="modal">
       <h3>新建实验预约单</h3>
+      {#if newFormErrors.length > 0}
+        <div class="alert alert-danger" style="margin-bottom:16px">
+          校验未通过：
+          <ul style="margin-top:4px">
+            {#each newFormErrors as e}
+              <li>【{EXCEPTION_LABELS[e.type] || e.type}】{e.msg}</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+      <div class="alert alert-info" style="margin-bottom:16px">
+        🔒 当前创建版本：<b>v{newForm.version}</b>（后端拒绝缺省、0 或非 1 值）
+      </div>
       <div class="form-row">
         <div class="form-group">
           <label>预约单标题 *</label>
@@ -383,9 +424,41 @@
           <textarea bind:value={newForm.safety_note} />
         </div>
       </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>处理意见</label>
+          <input type="text" bind:value={newForm.opinion} placeholder="如：请尽快审批..." />
+        </div>
+        <div class="form-group">
+          <label>备注/留言</label>
+          <input type="text" bind:value={newForm.comment} />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group full">
+          <label>审计备注（留痕）</label>
+          <textarea bind:value={newForm.audit_note} placeholder="填写审计备注，用于事后追溯..." />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>异常类型（可选）</label>
+          <select bind:value={newForm.exception_type}>
+            <option value="">不标记</option>
+            <option value="MATERIAL">材料问题</option>
+            <option value="PERMISSION">权限问题</option>
+            <option value="TIMELIMIT">时限问题</option>
+            <option value="STATUS">状态问题</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>异常说明/退回原因</label>
+          <input type="text" bind:value={newForm.exception_desc} placeholder="如标记异常则需填写..." />
+        </div>
+      </div>
       <div class="flex-gap" style="justify-content:flex-end">
-        <button class="btn" on:click={() => showCreate = false}>取消</button>
-        <button class="btn btn-primary" on:click={createOrder}>创建草稿</button>
+        <button class="btn" on:click={() => { showCreate = false; newFormErrors = []; }}>取消</button>
+        <button class="btn btn-primary" on:click={createOrder}>创建草稿（v{newForm.version}）</button>
       </div>
     </div>
   </div>
