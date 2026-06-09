@@ -83,11 +83,13 @@ func (h *FlowHandler) GetFlow(w http.ResponseWriter, r *http.Request) {
 
 	records, _ := h.service.GetProcessRecords(id)
 	abnormalReasons, _ := h.service.GetAbnormalReasons(id)
+	auditNotes, _ := h.service.GetAuditNotes(id)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"flow":             flow,
 		"process_records":  records,
 		"abnormal_reasons": abnormalReasons,
+		"audit_notes":      auditNotes,
 	})
 }
 
@@ -205,4 +207,20 @@ func (h *FlowHandler) GetAbnormalReasons(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, reasons)
+}
+
+func (h *FlowHandler) GetAuditNotes(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "无效的处方流转单ID")
+		return
+	}
+
+	notes, err := h.service.GetAuditNotes(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, notes)
 }

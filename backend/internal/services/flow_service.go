@@ -130,6 +130,11 @@ func (s *FlowService) CreateFlow(req *models.CreateFlowRequest) (*models.Prescri
 	}
 	defer tx.Rollback()
 
+	abnormalReasonText := ""
+	if !materialComplete {
+		abnormalReasonText = "处方开具、煎药配送信息不齐全"
+	}
+
 	result, err := tx.Exec(
 		`INSERT INTO prescription_flows 
 		(flow_no, patient_name, prescription_info, decoction_info, delivery_info,
@@ -139,13 +144,8 @@ func (s *FlowService) CreateFlow(req *models.CreateFlowRequest) (*models.Prescri
 		flowNo, req.PatientName, req.PrescriptionInfo, req.DecoctionInfo, req.DeliveryInfo,
 		status, urgency, nextHandler, nextRole, req.Operator,
 		now, now, dueAt,
-		func() int { if materialComplete { return 1 }; return 0 }(),
-		func() string {
-			if !materialComplete {
-				return "处方开具、煎药配送信息不齐全"
-			}
-			return ""
-		}(),
+		map[bool]int{true: 1, false: 0}[materialComplete],
+		abnormalReasonText,
 	)
 	if err != nil {
 		return nil, err
@@ -155,9 +155,19 @@ func (s *FlowService) CreateFlow(req *models.CreateFlowRequest) (*models.Prescri
 
 	_, err = tx.Exec(
 		`INSERT INTO process_records 
-		(flow_id, action, operator, operator_role, from_status, to_status, remark, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		flowID, "create", req.Operator, req.OperatorRole, "", status, "创建处方流转单", now,
+		(flow_id, action, operator, operator_role, from_status, to_status, remark, evidence, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		flowID, "create", req.Operator, req.OperatorRole, "", status, "创建处方流转单", "登记发起", now,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.Exec(
+		`INSERT INTO audit_notes 
+		(flow_id, note, operator, created_at)
+		VALUES (?, ?, ?, ?)`,
+		flowID, fmt.Sprintf("[→%s] 操作人:%s 动作:创建处方流转单", status, req.Operator), req.Operator, now,
 	)
 	if err != nil {
 		return nil, err
@@ -168,7 +178,7 @@ func (s *FlowService) CreateFlow(req *models.CreateFlowRequest) (*models.Prescri
 			`INSERT INTO abnormal_reasons 
 			(flow_id, reason, type, operator, created_at)
 			VALUES (?, ?, ?, ?, ?)`,
-			flowID, "处方开具、煎药配送信息不齐全", "material_missing", req.Operator, now,
+			flowID, abnormalReasonText, "material_missing", req.Operator, now,
 		)
 		if err != nil {
 			return nil, err
@@ -310,13 +320,40 @@ func (s *FlowService) GetAbnormalReasons(flowID int64) ([]models.AbnormalReason,
 	return reasons, nil
 }
 
+func (s *FlowService) GetAuditNotes(flowID int64) ([]models.AuditNote, error) {
+	rows, err := db.GetDB().Query(
+		`SELECT id, flow_id, note, operator, created_at
+		 FROM audit_notes WHERE flow_id = ? ORDER BY id DESC`,
+		flowID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notes []models.AuditNote
+	for rows.Next() {
+		var n models.AuditNote
+		err := rows.Scan(&n.ID, &n.FlowID, &n.Note, &n.Operator, &n.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		notes = append(notes, n)
+	}
+	return notes, nil
+}
+
 func (s *FlowService) validateRequest(flow *models.PrescriptionFlow, req *models.ProcessFlowRequest) error {
 	if flow.Version != req.Version {
 		return fmt.Errorf("版本冲突：当前版本为 %d，您提交的是 %d，请刷新后重试", flow.Version, req.Version)
 	}
 
+	if flow.Status == models.StatusArchived || flow.Status == models.StatusCompleted {
+		return fmt.Errorf("该处方流转单已%s，无法再进行操作", STATUS_LABEL_CN[flow.Status])
+	}
+
 	if !s.canHandle(req.OperatorRole, flow.Status) {
-		return fmt.Errorf("越权操作：当前状态 [%s] 不允许角色 [%s] 处理", flow.Status, req.OperatorRole)
+		return fmt.Errorf("越权操作：当前状态 [%s] 不允许角色 [%s] 处理", STATUS_LABEL_CN[flow.Status], ROLE_LABEL_CN[req.OperatorRole])
 	}
 
 	if flow.CurrentHandler != req.Operator && flow.CurrentHandler != "" {
@@ -324,9 +361,21 @@ func (s *FlowService) validateRequest(flow *models.PrescriptionFlow, req *models
 	}
 
 	if flow.Urgency == models.UrgencyOverdue {
-		if req.Action != "resubmit" && req.Action != "correct" && req.Action != "return" {
-			return errors.New("该单据已逾期，需先进行补正或退回操作")
+		if req.Action != "resubmit" && req.Action != "correct" && req.Action != "return" && req.Action != "supplement" {
+			return errors.New("该单据已逾期，仅能执行补正或退回操作")
 		}
+	}
+
+	allowedActions := s.getAllowedActions(flow.Status)
+	found := false
+	for _, a := range allowedActions {
+		if a == req.Action {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("当前状态 [%s] 不允许执行动作 [%s]", STATUS_LABEL_CN[flow.Status], req.Action)
 	}
 
 	switch req.Action {
@@ -334,15 +383,21 @@ func (s *FlowService) validateRequest(flow *models.PrescriptionFlow, req *models
 		if req.Evidence == "" {
 			return errors.New("提交操作必须上传证据材料")
 		}
-	case "approve", "process":
+	case "approve", "process", "archive", "complete":
 		if req.Evidence == "" {
-			return errors.New("审批/办理操作必须提供办理依据")
+			return errors.New("审批/办理/归档操作必须提供办理依据")
 		}
 	case "return":
 		if req.ReturnReason == "" {
 			return errors.New("退回操作必须填写退回原因")
 		}
+		if req.Evidence == "" {
+			return errors.New("退回操作必须提供证据")
+		}
 	case "correct", "supplement":
+		if req.Evidence == "" {
+			return errors.New("补正资料操作必须提供补正证据")
+		}
 		prescription := req.PrescriptionInfo
 		if prescription == "" {
 			prescription = flow.PrescriptionInfo
@@ -361,6 +416,46 @@ func (s *FlowService) validateRequest(flow *models.PrescriptionFlow, req *models
 	}
 
 	return nil
+}
+
+func (s *FlowService) getAllowedActions(status models.PrescriptionStatus) []string {
+	switch status {
+	case models.StatusDraft:
+		return []string{"submit"}
+	case models.StatusReturned:
+		return []string{"resubmit", "correct", "supplement"}
+	case models.StatusAbnormal:
+		return []string{"correct", "supplement", "submit"}
+	case models.StatusToConfirm:
+		return []string{"approve", "return"}
+	case models.StatusProcessing:
+		return []string{"process", "return"}
+	case models.StatusRecheck:
+		return []string{"archive", "complete", "return"}
+	default:
+		return []string{}
+	}
+}
+
+var STATUS_LABEL_CN = map[models.PrescriptionStatus]string{
+	models.StatusDraft:      "草稿",
+	models.StatusPending:    "待处理",
+	models.StatusToConfirm:  "待确认",
+	models.StatusAbnormal:   "异常",
+	models.StatusProcessing: "办理中",
+	models.StatusRecheck:    "待复查",
+	models.StatusReturned:   "已退回",
+	models.StatusCompleted:  "已完成",
+	models.StatusArchived:   "已归档",
+}
+
+var ROLE_LABEL_CN = map[models.Role]string{
+	models.RoleRegistrar:        "处方流转登记员",
+	models.RoleReviewSupervisor: "处方流转审核主管",
+	models.RoleArchivist:        "中医馆复核负责人",
+	models.RoleAssistant:        "接诊助理",
+	models.RolePhysician:        "坐诊医师",
+	models.RolePharmacist:       "药房管理员",
 }
 
 func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.PrescriptionFlow, error) {
@@ -460,6 +555,24 @@ func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.Presc
 	urgency := s.calculateUrgency(dueAt)
 	now := time.Now()
 
+	remarkVal := req.Remark
+	if remarkVal == "" {
+		remarkVal = "无备注"
+	}
+	evidenceVal := req.Evidence
+	if evidenceVal == "" {
+		evidenceVal = "未提供"
+	}
+
+	auditNote := fmt.Sprintf("[%s→%s] 操作人:%s 动作:%s",
+		fromStatus, toStatus, req.Operator, req.Action)
+	if req.Remark != "" {
+		auditNote += " 备注:" + req.Remark
+	}
+	if req.Evidence != "" {
+		auditNote += " 证据:" + req.Evidence
+	}
+
 	_, err = tx.Exec(
 		`UPDATE prescription_flows SET 
 		 prescription_info = ?, decoction_info = ?, delivery_info = ?,
@@ -471,7 +584,12 @@ func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.Presc
 		toStatus, urgency, nextHandler, nextRole,
 		now, dueAt,
 		abnormalReason, returnReason,
-		func() int { if materialComplete { return 1 }; return 0 }(),
+		func() int {
+			if materialComplete {
+				return 1
+			}
+			return 0
+		}(),
 		flow.ID, flow.Version,
 	)
 	if err != nil {
@@ -483,10 +601,32 @@ func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.Presc
 		(flow_id, action, operator, operator_role, from_status, to_status, remark, evidence, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		flow.ID, req.Action, req.Operator, req.OperatorRole,
-		fromStatus, toStatus, req.Remark, req.Evidence, now,
+		fromStatus, toStatus, remarkVal, evidenceVal, now,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	_, err = tx.Exec(
+		`INSERT INTO audit_notes 
+		(flow_id, note, operator, created_at)
+		VALUES (?, ?, ?, ?)`,
+		flow.ID, auditNote, req.Operator, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if toStatus == models.StatusAbnormal && abnormalReason != "" {
+		_, err = tx.Exec(
+			`INSERT INTO abnormal_reasons 
+			(flow_id, reason, type, operator, created_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			flow.ID, abnormalReason, "material_missing", req.Operator, now,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if req.Action == "return" {

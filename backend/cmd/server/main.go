@@ -52,6 +52,7 @@ func main() {
 		r.Post("/{id}/process", http.HandlerFunc(handler.ProcessFlow))
 		r.Get("/{id}/records", handler.GetProcessRecords)
 		r.Get("/{id}/abnormal", handler.GetAbnormalReasons)
+		r.Get("/{id}/audit", handler.GetAuditNotes)
 	})
 
 	r.Post("/api/flows/batch", http.HandlerFunc(handler.BatchProcess))

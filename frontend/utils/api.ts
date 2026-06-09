@@ -63,6 +63,102 @@ export interface AbnormalReason {
   created_at: string;
 }
 
+export interface AuditNote {
+  id: number;
+  flow_id: number;
+  note: string;
+  operator: string;
+  created_at: string;
+}
+
+export const ABNORMAL_TYPE_LABELS: Record<string, string> = {
+  material_missing: "资料缺失",
+  returned: "退回补正",
+  corrected: "已补正",
+  timeout: "超时",
+};
+
+export interface ActionOption {
+  action: string;
+  label: string;
+  type: "primary" | "success" | "warning" | "danger";
+}
+
+export function getAvailableActions(
+  status: PrescriptionStatus
+): ActionOption[] {
+  switch (status) {
+    case "draft":
+      return [{ action: "submit", label: "提交审核", type: "primary" }];
+    case "returned":
+      return [
+        { action: "resubmit", label: "补正后重新提交", type: "primary" },
+        { action: "correct", label: "仅补正资料", type: "success" },
+      ];
+    case "abnormal":
+      return [
+        { action: "correct", label: "补正资料", type: "primary" },
+        { action: "submit", label: "补正后提交审核", type: "primary" },
+      ];
+    case "to_confirm":
+      return [
+        { action: "approve", label: "审批通过", type: "primary" },
+        { action: "return", label: "退回补正", type: "warning" },
+      ];
+    case "processing":
+      return [
+        { action: "process", label: "办理完成", type: "primary" },
+        { action: "return", label: "退回补正", type: "warning" },
+      ];
+    case "recheck":
+      return [
+        { action: "archive", label: "复核归档", type: "primary" },
+        { action: "return", label: "退回重新办理", type: "warning" },
+      ];
+    default:
+      return [];
+  }
+}
+
+export function canHandleFlow(
+  role: string,
+  status: PrescriptionStatus,
+  currentHandler: string,
+  myUsername: string
+): boolean {
+  if (status === "archived" || status === "completed") return false;
+
+  if (currentHandler && currentHandler !== myUsername) return false;
+
+  const handlerRoles: Record<PrescriptionStatus, string[]> = {
+    draft: ["registrar", "assistant"],
+    returned: ["registrar", "assistant"],
+    abnormal: ["assistant", "registrar"],
+    to_confirm: ["review_supervisor", "physician"],
+    processing: ["physician", "review_supervisor"],
+    recheck: ["archivist", "pharmacist"],
+    pending: ["registrar"],
+    completed: ["archivist"],
+    archived: [],
+  };
+
+  const allowed = handlerRoles[status] || [];
+  return allowed.includes(role);
+}
+
+export const ACTION_LABELS: Record<string, string> = {
+  create: "创建",
+  submit: "提交审核",
+  resubmit: "补正后重新提交",
+  approve: "审批通过",
+  process: "办理完成",
+  return: "退回补正",
+  correct: "补正资料",
+  supplement: "补充资料",
+  archive: "复核归档",
+  complete: "完成",
+};
+
 export interface BatchResult {
   flow_id: number;
   flow_no: string;

@@ -87,11 +87,11 @@ type ProcessRecord struct {
 }
 
 type AuditNote struct {
-	ID         int64  `json:"id"`
-	FlowID     int64  `json:"flow_id"`
-	Note       string `json:"note"`
-	Operator   string `json:"operator"`
-	CreatedAt  string `json:"created_at"`
+	ID         int64     `json:"id"`
+	FlowID     int64     `json:"flow_id"`
+	Note       string    `json:"note"`
+	Operator   string    `json:"operator"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type AbnormalReason struct {

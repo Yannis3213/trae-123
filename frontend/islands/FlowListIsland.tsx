@@ -88,7 +88,8 @@ export default function FlowListIsland() {
     if (u) {
       currentUser.value = u;
       setCurrentUser(u);
-      loadFlows();
+      selectedIds.value = [];
+      Promise.all([loadFlows(), loadStatistics()]);
     }
   }
 
