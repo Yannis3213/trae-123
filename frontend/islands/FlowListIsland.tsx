@@ -28,6 +28,12 @@ export default function FlowListIsland() {
   const batchAction = useSignal("");
   const batchRemark = useSignal("");
   const batchEvidence = useSignal("");
+  const batchReturnReason = useSignal("");
+  const batchSupplement = useSignal({
+    prescription_info: "",
+    decoction_info: "",
+    delivery_info: "",
+  });
   const batchResults = useSignal<BatchResult[]>([]);
   const showBatchResults = useSignal(false);
   const showCreateModal = useSignal(false);
@@ -113,6 +119,12 @@ export default function FlowListIsland() {
     batchAction.value = action;
     batchRemark.value = "";
     batchEvidence.value = "";
+    batchReturnReason.value = "";
+    batchSupplement.value = {
+      prescription_info: "",
+      decoction_info: "",
+      delivery_info: "",
+    };
     showBatchModal.value = true;
   }
 
@@ -126,6 +138,10 @@ export default function FlowListIsland() {
           action: batchAction.value,
           remark: batchRemark.value,
           evidence: batchEvidence.value,
+          return_reason: batchReturnReason.value,
+          prescription_info: batchSupplement.value.prescription_info,
+          decoction_info: batchSupplement.value.decoction_info,
+          delivery_info: batchSupplement.value.delivery_info,
         }),
       });
       batchResults.value = res.results;
@@ -463,11 +479,11 @@ export default function FlowListIsland() {
 
       {showBatchModal.value && (
         <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+          <div class="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
             <div class="px-6 py-4 border-b">
               <h3 class="text-lg font-medium">批量处理 ({selectedIds.value.length} 条)</h3>
             </div>
-            <div class="px-6 py-4 space-y-4">
+            <div class="px-6 py-4 space-y-4 overflow-y-auto">
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">备注</label>
                 <textarea
@@ -488,8 +504,68 @@ export default function FlowListIsland() {
                 />
               </div>
               {batchAction.value === "return" && (
-                <div class="text-xs text-red-600 bg-red-50 p-2 rounded">
-                  退回操作将把单据打回登记员处补正
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">退回原因 *</label>
+                  <textarea
+                    class="w-full px-3 py-2 border border-gray-300 rounded"
+                    rows={3}
+                    value={batchReturnReason.value}
+                    onChange={(e) => (batchReturnReason.value = (e.target as HTMLTextAreaElement).value)}
+                    placeholder="请详细说明退回原因，便于登记员补正"
+                  />
+                  <div class="text-xs text-red-600 bg-red-50 p-2 rounded mt-2">
+                    退回操作将把单据打回登记员处补正，退回原因不能为空
+                  </div>
+                </div>
+              )}
+              {(batchAction.value === "correct" || batchAction.value === "supplement" || batchAction.value === "resubmit") && (
+                <div class="space-y-3 p-3 bg-green-50 rounded border border-green-200">
+                  <div class="text-sm font-medium text-green-800">资料补正（三要素）</div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">处方开具信息</label>
+                    <textarea
+                      class="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      rows={2}
+                      value={batchSupplement.value.prescription_info}
+                      onChange={(e) =>
+                        (batchSupplement.value = {
+                          ...batchSupplement.value,
+                          prescription_info: (e.target as HTMLTextAreaElement).value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">煎药信息</label>
+                    <textarea
+                      class="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      rows={2}
+                      value={batchSupplement.value.decoction_info}
+                      onChange={(e) =>
+                        (batchSupplement.value = {
+                          ...batchSupplement.value,
+                          decoction_info: (e.target as HTMLTextAreaElement).value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">配送信息</label>
+                    <textarea
+                      class="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                      rows={2}
+                      value={batchSupplement.value.delivery_info}
+                      onChange={(e) =>
+                        (batchSupplement.value = {
+                          ...batchSupplement.value,
+                          delivery_info: (e.target as HTMLTextAreaElement).value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div class="text-xs text-amber-600">
+                    提示：处方、煎药、配送信息仍不齐全时，流转单将停在异常队列
+                  </div>
                 </div>
               )}
             </div>

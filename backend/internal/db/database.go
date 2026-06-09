@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -229,8 +230,10 @@ func seedData() error {
 			operatorRole string
 			fromStatus   string
 			toStatus     string
+			remark       string
+			evidence     string
 		}{
-			{"create", "registrar01", "registrar", "", "draft"},
+			{"create", "registrar01", "registrar", "", "draft", "创建处方流转单", "登记发起"},
 		}
 		if f.status != "draft" {
 			actions = append(actions, struct {
@@ -239,15 +242,77 @@ func seedData() error {
 				operatorRole string
 				fromStatus   string
 				toStatus     string
-			}{"submit", "registrar01", "registrar", "draft", "to_confirm"})
+				remark       string
+				evidence     string
+			}{"submit", "registrar01", "registrar", "draft", "to_confirm", "提交审核", "提交凭证"})
 		}
 
 		for _, a := range actions {
 			_, err := tx.Exec(
 				`INSERT INTO process_records 
-				(flow_id, action, operator, operator_role, from_status, to_status, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				flowID, a.action, a.operator, a.operatorRole, a.fromStatus, a.toStatus, now,
+				(flow_id, action, operator, operator_role, from_status, to_status, remark, evidence, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				flowID, a.action, a.operator, a.operatorRole, a.fromStatus, a.toStatus, a.remark, a.evidence, now,
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		for _, a := range actions {
+			fromStatusDisplay := a.fromStatus
+			if fromStatusDisplay == "" {
+				fromStatusDisplay = "无"
+			}
+			note := fmt.Sprintf(
+				"操作人[%s(%s)]执行动作[%s]，状态从[%s]流转至[%s]，备注：%s，证据：%s",
+				a.operator, a.operatorRole, a.action,
+				fromStatusDisplay, a.toStatus, a.remark, a.evidence,
+			)
+			_, err := tx.Exec(
+				`INSERT INTO audit_notes (flow_id, note, operator, created_at) VALUES (?, ?, ?, ?)`,
+				flowID, note, a.operator, now,
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		if !f.materialComplete {
+			_, err := tx.Exec(
+				`INSERT INTO abnormal_reasons (flow_id, reason, type, operator, created_at) VALUES (?, ?, ?, ?, ?)`,
+				flowID, "处方开具、煎药配送信息不齐全", "material_missing", "registrar01", now,
+			)
+			if err != nil {
+				return err
+			}
+			note2 := fmt.Sprintf(
+				"系统自动标记异常：处方开具、煎药配送信息不齐全，流转单停留在异常队列，操作人[%s]",
+				f.currentHandler,
+			)
+			_, err = tx.Exec(
+				`INSERT INTO audit_notes (flow_id, note, operator, created_at) VALUES (?, ?, ?, ?)`,
+				flowID, note2, f.currentHandler, now,
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		if f.status == "returned" {
+			_, err := tx.Exec(
+				`INSERT INTO abnormal_reasons (flow_id, reason, type, operator, created_at) VALUES (?, ?, ?, ?, ?)`,
+				flowID, "处方信息不完整，请补正", "returned", "supervisor01", now,
+			)
+			if err != nil {
+				return err
+			}
+			note3 := fmt.Sprintf(
+				"操作人[supervisor01(review_supervisor)]执行动作[退回补正]，状态从[to_confirm]流转至[returned]，原因：处方信息不完整，请补正",
+			)
+			_, err = tx.Exec(
+				`INSERT INTO audit_notes (flow_id, note, operator, created_at) VALUES (?, ?, ?, ?)`,
+				flowID, note3, "supervisor01", now,
 			)
 			if err != nil {
 				return err

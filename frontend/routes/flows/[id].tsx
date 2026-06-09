@@ -1,5 +1,5 @@
 import { Head } from "$fresh/runtime.ts";
-import FlowDetailIsland from "../islands/FlowDetailIsland.tsx";
+import FlowDetailIsland from "../../islands/FlowDetailIsland.tsx";
 import { PageProps } from "$fresh/server.ts";
 
 export default function FlowDetail(props: PageProps) {

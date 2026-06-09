@@ -128,12 +128,16 @@ type ProcessFlowRequest struct {
 }
 
 type BatchProcessRequest struct {
-	FlowIDs      []int64 `json:"flow_ids"`
-	Action       string  `json:"action"`
-	Operator     string  `json:"operator"`
-	OperatorRole Role    `json:"operator_role"`
-	Remark       string  `json:"remark"`
-	Evidence     string  `json:"evidence"`
+	FlowIDs          []int64 `json:"flow_ids"`
+	Action           string  `json:"action"`
+	Operator         string  `json:"operator"`
+	OperatorRole     Role    `json:"operator_role"`
+	Remark           string  `json:"remark"`
+	Evidence         string  `json:"evidence"`
+	ReturnReason     string  `json:"return_reason,omitempty"`
+	PrescriptionInfo string  `json:"prescription_info,omitempty"`
+	DecoctionInfo    string  `json:"decoction_info,omitempty"`
+	DeliveryInfo     string  `json:"delivery_info,omitempty"`
 }
 
 type BatchResult struct {

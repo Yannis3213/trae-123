@@ -81,9 +81,21 @@ func (h *FlowHandler) GetFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	records, _ := h.service.GetProcessRecords(id)
-	abnormalReasons, _ := h.service.GetAbnormalReasons(id)
-	auditNotes, _ := h.service.GetAuditNotes(id)
+	records, err := h.service.GetProcessRecords(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取处理记录失败: "+err.Error())
+		return
+	}
+	abnormalReasons, err := h.service.GetAbnormalReasons(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取异常/补正记录失败: "+err.Error())
+		return
+	}
+	auditNotes, err := h.service.GetAuditNotes(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取审计备注失败: "+err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"flow":             flow,

@@ -675,13 +675,17 @@ func (s *FlowService) BatchProcess(req *models.BatchProcessRequest) ([]models.Ba
 		}
 
 		processReq := &models.ProcessFlowRequest{
-			FlowID:       flowID,
-			Action:       req.Action,
-			Operator:     req.Operator,
-			OperatorRole: req.OperatorRole,
-			Remark:       req.Remark,
-			Evidence:     req.Evidence,
-			Version:      flow.Version,
+			FlowID:           flowID,
+			Action:           req.Action,
+			Operator:         req.Operator,
+			OperatorRole:     req.OperatorRole,
+			Remark:           req.Remark,
+			Evidence:         req.Evidence,
+			Version:          flow.Version,
+			ReturnReason:     req.ReturnReason,
+			PrescriptionInfo: req.PrescriptionInfo,
+			DecoctionInfo:    req.DecoctionInfo,
+			DeliveryInfo:     req.DeliveryInfo,
 		}
 
 		_, err = s.ProcessFlow(processReq)
@@ -693,12 +697,15 @@ func (s *FlowService) BatchProcess(req *models.BatchProcessRequest) ([]models.Ba
 				Message: err.Error(),
 			})
 		} else {
-			updatedFlow, _ := s.GetFlowByID(flowID)
+			statusText := "已更新"
+			if updatedFlow, err2 := s.GetFlowByID(flowID); err2 == nil && updatedFlow != nil {
+				statusText = string(updatedFlow.Status)
+			}
 			results = append(results, models.BatchResult{
 				FlowID:  flowID,
 				FlowNo:  flow.FlowNo,
 				Success: true,
-				Message: "处理成功，当前状态：" + string(updatedFlow.Status),
+				Message: "处理成功，当前状态：" + statusText,
 			})
 		}
 	}
