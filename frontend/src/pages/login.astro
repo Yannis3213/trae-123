@@ -1,0 +1,10 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import LoginIsland from '../components/LoginIsland.tsx';
+---
+
+<BaseLayout>
+  <div class="login-wrap">
+    <LoginIsland client:load />
+  </div>
+</BaseLayout>
