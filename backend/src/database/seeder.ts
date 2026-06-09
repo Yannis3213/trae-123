@@ -62,6 +62,8 @@ export async function runSeed(repos: SeedRepos) {
     materialsComplete: true,
     planComplete: true,
     reminderComplete: true,
+    followUpDate: new Date('2026-06-15'),
+    followUpContent: '电话提醒复查，患者确认到场',
   });
 
   const plan2 = planRepo.create({
@@ -80,6 +82,8 @@ export async function runSeed(repos: SeedRepos) {
     materialsComplete: false,
     planComplete: true,
     reminderComplete: false,
+    followUpDate: null,
+    followUpContent: null,
   });
 
   const plan3 = planRepo.create({
@@ -97,7 +101,9 @@ export async function runSeed(repos: SeedRepos) {
     lastHandlerRemark: null,
     materialsComplete: false,
     planComplete: false,
-    reminderComplete: false,
+    reminderComplete: true,
+    followUpDate: new Date('2026-06-05'),
+    followUpContent: '前台短信通知首次复诊',
   });
 
   const plan4 = planRepo.create({
@@ -116,6 +122,8 @@ export async function runSeed(repos: SeedRepos) {
     materialsComplete: true,
     planComplete: false,
     reminderComplete: false,
+    followUpDate: new Date('2026-06-12'),
+    followUpContent: '退回医生重新评估治疗方案',
   });
 
   await planRepo.save([plan1, plan2, plan3, plan4]);

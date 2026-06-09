@@ -30,6 +30,16 @@ const tabConfig: Array<{ key: TabKey; label: string }> = [
   { key: 'follow_up_reminder', label: '复诊提醒' },
 ];
 
+const actionLabelMap: Record<string, string> = {
+  correct_patient: '补正患者档案',
+  correct_plan: '补正治疗计划',
+  correct_reminder: '补正复诊提醒',
+};
+
+const getActionLabel = (action: string): string => {
+  return actionLabelMap[action] || action;
+};
+
 const abnormalCategories: AbnormalCategory[] = [
   'material',
   'permission',
@@ -61,6 +71,7 @@ export default function PlanDetail() {
   const [correctionData, setCorrectionData] = createSignal<Record<string, string>>({});
   const [correctionFileName, setCorrectionFileName] = createSignal('');
   const [correctionFileUrl, setCorrectionFileUrl] = createSignal('');
+  const [correctionEvidence, setCorrectionEvidence] = createSignal('');
   const [correctionLoading, setCorrectionLoading] = createSignal(false);
 
   const fetchDetail = async () => {
@@ -201,6 +212,7 @@ export default function PlanDetail() {
     setCorrectionData({});
     setCorrectionFileName('');
     setCorrectionFileUrl('');
+    setCorrectionEvidence('');
   };
 
   const handleCorrectionSubmit = async () => {
@@ -209,8 +221,9 @@ export default function PlanDetail() {
     const module = correctionModal().module;
     const hasData = Object.keys(correctionData()).some((k) => correctionData()[k]?.trim());
     const hasFile = correctionFileName().trim();
-    if (!hasData && !hasFile) {
-      show('error', '请填写补正信息或上传附件');
+    const hasEvidence = correctionEvidence().trim();
+    if (!hasData && !hasFile && !hasEvidence) {
+      show('error', '请填写补正信息、上传附件或填写证据说明');
       return;
     }
     setCorrectionLoading(true);
@@ -223,17 +236,24 @@ export default function PlanDetail() {
           url: correctionFileUrl() || `/uploads/demo/${correctionFileName()}`,
         });
       }
-      await submitCorrection({
+      const body: any = {
         planId: d.id,
         module,
+        version: d.version,
         data: correctionData(),
         attachments,
-      });
+      };
+      if (hasEvidence) body.evidence = correctionEvidence().trim();
+      await submitCorrection(body);
       show('success', '补正提交成功');
       setCorrectionModal({ ...correctionModal(), visible: false });
       await fetchDetail();
     } catch (err: any) {
-      show('error', err.message || '补正失败');
+      let msg = err.message || '补正失败';
+      if (msg.includes('version') || msg.includes('旧') || msg.includes('冲突')) {
+        msg = '版本过旧或状态冲突，请刷新页面后重试';
+      }
+      show('error', msg);
     } finally {
       setCorrectionLoading(false);
     }
@@ -324,6 +344,12 @@ export default function PlanDetail() {
               <span class="info-label">复诊提醒：</span>
               <span class="info-value">{detail()!.reminderComplete ? '✅ 已完成' : '❌ 未完成'}</span>
             </div>
+            <Show when={detail()!.followUpDate || detail()!.followUpReminder?.followUpDate}>
+              <div class="info-row">
+                <span class="info-label">复诊日期：</span>
+                <span class="info-value">{formatDateOnly(detail()!.followUpDate || detail()!.followUpReminder?.followUpDate)}</span>
+              </div>
+            </Show>
           </div>
         </div>
 
@@ -415,23 +441,27 @@ export default function PlanDetail() {
             <div style={{ display: 'grid', 'grid-template-columns': '1fr 1fr', gap: '16px', 'margin-bottom': '16px' }}>
               <div class="info-row">
                 <span class="info-label">复诊日期：</span>
-                <span class="info-value">{formatDateOnly(detail()!.followUpReminder.followUpDate)}</span>
+                <span class="info-value">{detail()!.followUpReminder?.followUpDate ? formatDateOnly(detail()!.followUpReminder.followUpDate) : '未设置'}</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">完成状态：</span>
+                <span class="info-value">{detail()!.followUpReminder?.complete ? '✅ 已完成' : '❌ 未完成'}</span>
               </div>
             </div>
             <div style={{ 'margin-bottom': '16px' }}>
               <div style={{ 'font-weight': 500, 'margin-bottom': '8px' }}>提醒内容：</div>
               <div style={{ padding: '12px', background: '#fafafa', 'border-radius': '4px' }}>
-                {detail()!.followUpReminder.content || '暂无内容'}
+                {detail()!.followUpReminder?.content || detail()!.followUpReminder?.followUpContent || '暂无内容'}
               </div>
             </div>
             <div style={{ 'margin-bottom': '12px', 'font-weight': 500 }}>证据附件：</div>
             <div class="attachment-list">
-              <Show when={detail()!.followUpReminder.attachments.length === 0}>
+              <Show when={!detail()!.followUpReminder?.attachments?.length}>
                 <div class="empty" style={{ padding: '20px', color: '#ff4d4f' }}>
                   ⚠️ 缺少复诊提醒证据
                 </div>
               </Show>
-              <For each={detail()!.followUpReminder.attachments}>
+              <For each={detail()!.followUpReminder?.attachments || []}>
                 {(att) => (
                   <div class="attachment-item">
                     <span class="attachment-icon">📎</span>
@@ -557,7 +587,7 @@ export default function PlanDetail() {
               {(h) => (
                 <div class="timeline-item">
                   <div class="timeline-title">
-                    {h.operator} · {h.action}
+                    {h.operator} · {getActionLabel(h.action)}
                   </div>
                   <div class="timeline-time">{formatDate(h.createdAt)}</div>
                   <div class="timeline-content">
@@ -692,6 +722,15 @@ export default function PlanDetail() {
                 </div>
               </Show>
 
+              <div class="form-item">
+                <label class="form-label">证据说明（可选）</label>
+                <textarea
+                  class="form-textarea"
+                  placeholder="请填写补正相关的证据说明"
+                  value={correctionEvidence()}
+                  onInput={(e) => setCorrectionEvidence((e.target as HTMLTextAreaElement).value)}
+                />
+              </div>
               <div class="form-item">
                 <label class="form-label">附件文件名（演示用，直接填写）</label>
                 <input

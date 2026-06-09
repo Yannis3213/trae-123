@@ -103,6 +103,8 @@ export interface TreatmentPlan {
 export interface FollowUpReminder {
   followUpDate: string;
   content: string;
+  followUpContent?: string;
+  complete?: boolean;
   attachments: Attachment[];
 }
 
@@ -129,6 +131,8 @@ export interface TreatmentPlanDetail extends TreatmentPlanItem {
   processHistory: ProcessHistory[];
   auditNotes: AuditNote[];
   currentHandlerUser?: { name: string };
+  followUpDate?: string;
+  followUpContent?: string;
 }
 
 export interface LoginRequest {
@@ -194,8 +198,10 @@ export interface BatchProcessResult {
 export interface CorrectionRequest {
   planId: string | number;
   module: 'patient_profile' | 'treatment_plan' | 'follow_up_reminder' | 'patient' | 'plan' | 'reminder';
+  version: number;
   data?: Record<string, unknown>;
   attachments?: AttachmentInput[];
+  evidence?: string;
 }
 
 export interface StatisticsData {

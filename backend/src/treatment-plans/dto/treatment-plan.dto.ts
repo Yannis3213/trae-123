@@ -165,9 +165,18 @@ export class CorrectDto {
   @IsNotEmpty()
   planId: number;
 
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  version: number;
+
   @IsOptional()
   @IsObject()
   data?: any;
+
+  @IsOptional()
+  @IsString()
+  evidence?: string;
 
   @IsOptional()
   @IsArray()

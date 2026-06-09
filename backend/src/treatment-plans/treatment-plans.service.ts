@@ -264,6 +264,8 @@ export class TreatmentPlansService {
       materialsComplete: plan.materialsComplete,
       planComplete: plan.planComplete,
       reminderComplete: plan.reminderComplete,
+      followUpDate: plan.followUpDate ? plan.followUpDate.toISOString() : '',
+      followUpContent: plan.followUpContent || '',
       patient: {
         id: plan.id,
         name: plan.patientName,
@@ -284,9 +286,11 @@ export class TreatmentPlansService {
         attachments: planAttachments.map(formatAttachment),
       },
       followUpReminder: {
-        followUpDate: '',
-        content: '',
-        attachments: reminderAttachments.map(formatAttachment),
+        followUpDate: plan.followUpDate ? plan.followUpDate.toISOString() : '',
+        content: plan.followUpContent || '',
+        followUpContent: plan.followUpContent || '',
+        complete: plan.reminderComplete,
+        attachments: reminderAttachments.map((a) => formatAttachment(a)),
       },
       abnormalReasons: exceptions.map((e: ExceptionCause) => ({
         id: e.id,
@@ -369,6 +373,16 @@ export class TreatmentPlansService {
           dto.reminderComplete === true;
         if (!hasEvidence) {
           throw new BadRequestException('异常补正必须提供补正证据或标记材料/计划/提醒已补全');
+        }
+      }
+
+      if (dto.action === 'review') {
+        const missing = [];
+        if (!plan.materialsComplete) missing.push('患者档案');
+        if (!plan.planComplete) missing.push('治疗计划');
+        if (!plan.reminderComplete) missing.push('复诊提醒');
+        if (missing.length > 0) {
+          throw new BadRequestException(`复核前必须补全以下模块：${missing.join('、')}`);
         }
       }
 
@@ -515,7 +529,30 @@ export class TreatmentPlansService {
         throw new NotFoundException('治疗计划不存在');
       }
 
+      if (plan.status === 'archived') {
+        throw new BadRequestException('已归档的治疗计划不能补正');
+      }
+      if (plan.currentHandler !== user.id) {
+        throw new ForbiddenException(`您不是当前处理人，不能执行补正`);
+      }
+      const allowedFrom = ROLE_PERMISSIONS[user.role];
+      if (!allowedFrom.includes(plan.status)) {
+        throw new ForbiddenException(`当前角色无权在「${plan.status}」状态下执行补正`);
+      }
+      if (dto.version !== plan.version) {
+        throw new ConflictException(`版本冲突，当前版本=${plan.version}，传入=${dto.version}`);
+      }
       const normModule = this.normalizeModule(dto.module);
+      if (normModule === 'reminder') {
+        const hasDate = dto.data && typeof dto.data.followUpDate === 'string' && dto.data.followUpDate.trim();
+        const hasContent = dto.data && typeof dto.data.content === 'string' && dto.data.content.trim();
+        const hasAttachments = dto.attachments && dto.attachments.length > 0;
+        if (!hasDate && !hasContent && !hasAttachments) {
+          throw new BadRequestException('复诊提醒补正必须提供复诊日期、提醒内容或证据附件');
+        }
+      }
+
+      plan.version = plan.version + 1;
 
       if (normModule === 'patient') {
         plan.materialsComplete = true;
@@ -535,13 +572,27 @@ export class TreatmentPlansService {
           if (typeof dto.data.content === 'string' && dto.data.content.trim()) plan.lastHandlerRemark = dto.data.content;
         }
         if (normModule === 'reminder') {
-          if (typeof dto.data.content === 'string' && dto.data.content.trim()) {
-            plan.lastHandlerRemark = `【复诊提醒】${dto.data.content}${plan.lastHandlerRemark ? ' | ' + plan.lastHandlerRemark : ''}`;
+          if (typeof dto.data.followUpDate === 'string' && dto.data.followUpDate.trim()) {
+            plan.followUpDate = new Date(dto.data.followUpDate);
           }
+          if (typeof dto.data.content === 'string' && dto.data.content.trim()) {
+            plan.followUpContent = dto.data.content;
+          }
+          plan.reminderComplete = true;
         }
       }
 
       await queryRunner.manager.save(plan);
+
+      const record = new ProcessRecord();
+      record.planId = plan.id;
+      record.userId = user.id;
+      record.action = 'correct_' + normModule;
+      record.fromStatus = plan.status;
+      record.toStatus = plan.status;
+      record.remark = `补正${normModule === 'patient' ? '患者档案' : normModule === 'plan' ? '治疗计划' : '复诊提醒'}` + (dto.evidence ? `：${dto.evidence}` : '');
+      record.evidence = dto.evidence || null;
+      await queryRunner.manager.save(record);
 
       if (dto.attachments && dto.attachments.length > 0) {
         for (const a of dto.attachments) {

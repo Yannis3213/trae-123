@@ -62,4 +62,10 @@ export class TreatmentPlan {
 
   @Column({ default: false })
   reminderComplete: boolean;
+
+  @Column({ type: 'datetime', nullable: true })
+  followUpDate: Date;
+
+  @Column({ nullable: true, type: 'text' })
+  followUpContent: string;
 }
