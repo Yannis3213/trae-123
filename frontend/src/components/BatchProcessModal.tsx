@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { api, type User, type DictItem, type PrescriptionOrder, type BatchResult } from '../lib/api';
 
 interface Props {
@@ -20,6 +20,9 @@ interface Props {
 const BatchProcessModal: React.FC<Props> = ({ selectedIds, orders, user, dict, onClose, onDone, onMessage }) => {
   const [toStatus, setToStatus] = useState('');
   const [note, setNote] = useState('');
+  const [abnormalType, setAbnormalType] = useState('');
+  const [abnormalReason, setAbnormalReason] = useState('');
+  const [correctionNote, setCorrectionNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<BatchResult[] | null>(null);
 
@@ -32,20 +35,28 @@ const BatchProcessModal: React.FC<Props> = ({ selectedIds, orders, user, dict, o
       const list = transitions[o.status] || [];
       list.forEach(s => merged.add(s));
     });
-    if (user.role === 'area_manager') {
-      selectedOrders.forEach(o => {
-        if (o.status === 'signed') merged.add('signed');
-      });
-    }
     return Array.from(merged);
-  }, [selectedOrders, dict, user]);
+  }, [selectedOrders, dict]);
+
+  const isAbnormalTarget = ['material_shortage', 'overdue', 'abnormal_return', 'returned_correction'].includes(toStatus);
 
   const handleSubmit = async () => {
     if (!toStatus) { onMessage('error', '请选择目标状态'); return; }
+    if (isAbnormalTarget && !abnormalType && !abnormalReason) {
+      onMessage('warning', '建议填写异常类型和原因，便于后续追溯');
+    }
     setSubmitting(true);
     const versionMap: Record<string, number> = {};
     selectedOrders.forEach(o => { versionMap[o.id] = o.version; });
-    const r = await api.batchProcess({ ids: selectedIds, to_status: toStatus, version_map: versionMap, note });
+    const r = await api.batchProcess({
+      ids: selectedIds,
+      to_status: toStatus,
+      version_map: versionMap,
+      note,
+      abnormal_type: abnormalType || undefined,
+      abnormal_reason: abnormalReason || undefined,
+      correction_note: correctionNote || undefined
+    });
     setSubmitting(false);
     if (r.code === 0 && r.data) {
       setResults(r.data.results);
@@ -65,11 +76,11 @@ const BatchProcessModal: React.FC<Props> = ({ selectedIds, orders, user, dict, o
           {!results ? (
             <>
               <div className="alert info">
-              当前角色：<b>{user.roleName}</b>。批量处理将逐条校验权限、状态、版本和证据，失败会给出具体原因。
+                当前角色：<b>{user.roleName}</b>。批量处理逐条校验「角色 → 当前处理人 → 状态机 → 版本号 → 必需证据」，失败会在结果中给出具体原因。
               </div>
               <table className="data-table">
                 <thead>
-                  <tr><th>订单号</th><th>患者</th><th>当前状态</th><th>版本</th><th>当前处理人</th></tr>
+                  <tr><th>订单号</th><th>患者</th><th>当前状态</th><th>版本</th><th>当前处理人</th><th>预警</th></tr>
                 </thead>
                 <tbody>
                   {selectedOrders.map(o => (
@@ -79,6 +90,7 @@ const BatchProcessModal: React.FC<Props> = ({ selectedIds, orders, user, dict, o
                       <td><span className={`tag status-${o.status}`}>{o.statusName}</span></td>
                       <td>v{o.version}</td>
                       <td>{o.handler_name || '-'}</td>
+                      <td><span className={`tag warning-${o.warningLevel}`}>{o.warningName}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -98,22 +110,51 @@ const BatchProcessModal: React.FC<Props> = ({ selectedIds, orders, user, dict, o
                   <input value={note} onChange={e => setNote(e.target.value)} placeholder="可选" />
                 </div>
               </div>
+              {isAbnormalTarget && (
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>异常类型</label>
+                    <select value={abnormalType} onChange={e => setAbnormalType(e.target.value)}>
+                      <option value="">不额外指定（自动按目标状态推导）</option>
+                      {dict?.abnormalTypes.map(t => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>异常原因</label>
+                    <input value={abnormalReason} onChange={e => setAbnormalReason(e.target.value)} placeholder="建议填写，便于追溯" />
+                  </div>
+                </div>
+              )}
+              {toStatus === 'returned_correction' && (
+                <div className="form-group">
+                  <label>补正要求</label>
+                  <textarea value={correctionNote} onChange={e => setCorrectionNote(e.target.value)} placeholder="请描述需要门店/处理人补正的具体要求" />
+                </div>
+              )}
             </>
           ) : (
             <>
               <div className={`alert ${results.every(r => r.success) ? 'success' : results.some(r => r.success) ? 'warning' : 'error'}`}>
-                批量处理完成：成功 {results.filter(r => r.success).length} 条，失败 {results.filter(r => !r.success).length} 条
+                批量处理完成：成功 <b>{results.filter(r => r.success).length}</b> 条，
+                失败 <b>{results.filter(r => !r.success).length}</b> 条（共 {results.length} 条）
               </div>
               <div className="batch-result-list">
                 {results.map((r, i) => (
                   <div key={i} className="batch-result-row">
                     <span>
                       <span className="no">{r.order_no || r.id}</span>
-                      <span style={{ marginLeft: 10, color: r.success ? '#065f46' : '#991b1b' }}>
+                      <span style={{ marginLeft: 10, color: r.success ? '#065f46' : '#991b1b', fontWeight: 600 }}>
                         {r.success ? '✓ 成功' : '✗ 失败'}
                       </span>
+                      {r.error_code && (
+                        <span className="tag" style={{ marginLeft: 8, background: '#fee2e2', color: '#991b1b', fontSize: 11 }}>
+                          {r.error_code}
+                        </span>
+                      )}
                     </span>
-                    <span style={{ color: '#4b5563' }}>{r.message}</span>
+                    <span style={{ color: '#4b5563', flexShrink: 0, textAlign: 'right' }}>{r.message}</span>
                   </div>
                 ))}
               </div>
@@ -122,7 +163,7 @@ const BatchProcessModal: React.FC<Props> = ({ selectedIds, orders, user, dict, o
         </div>
         <div className="modal-footer">
           <button className="btn secondary" onClick={results ? onDone : onClose}>
-            {results ? '完成' : '取消'}
+            {results ? '完成并刷新列表' : '取消'}
           </button>
           {!results && (
             <button className="btn" onClick={handleSubmit} disabled={submitting}>

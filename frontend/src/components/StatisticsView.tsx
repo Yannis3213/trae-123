@@ -117,7 +117,11 @@ const StatisticsView: React.FC<Props> = ({ user, dict, onChanged }) => {
                     </td>
                     <td>{formatTime(o.due_at)}</td>
                     <td>{o.handler_name || '-'}</td>
-                    <td>{o.abnormal_type ? (o.handler_name || '未指定') : '-'}</td>
+                    <td>
+                      {o.handler_name ? (
+                        <span className={`tag role-${o.handler_role}`}>{o.handler_name}</span>
+                      ) : <span style={{ color: '#9ca3af' }}>未指定</span>}
+                    </td>
                     <td>
                       <button className="link-btn" onClick={() => setDetailId(o.id)}>查看详情</button>
                     </td>

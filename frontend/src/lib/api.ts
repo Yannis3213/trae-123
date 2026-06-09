@@ -191,7 +191,7 @@ export const api = {
   },
   getStatistics: () => request<{
     byStatus: { status: string; statusName: string; count: number }[];
-    byWarning: { level: string; levelName: string; count: number }[];
+    byWarning: { level: string; levelName: string; count: number; responsibles: string[] }[];
     myPending: number;
     total: number;
   }>('/orders/statistics'),

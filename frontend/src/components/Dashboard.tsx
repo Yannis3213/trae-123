@@ -83,7 +83,7 @@ const Dashboard: React.FC<Props> = ({ user, dict, onLogout }) => {
           <p className="page-subtitle">{pageTitles[activeKey].subtitle}</p>
 
           {activeKey === 'orders' && (
-            <OrderList key={refreshKey} user={user} dict={dict} onChanged={refresh} />
+            <OrderList key={refreshKey} user={user} dict={dict} onChanged={refresh} refreshKey={refreshKey} />
           )}
           {activeKey === 'statistics' && (
             <StatisticsView key={refreshKey} user={user} dict={dict} onChanged={refresh} />

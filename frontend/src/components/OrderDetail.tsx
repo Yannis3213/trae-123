@@ -75,7 +75,7 @@ const OrderDetail: React.FC<Props> = ({ orderId, user, dict, onClose, onMessage 
   }
 
   const allowedTargets = dict?.transitions?.[order.status] || [];
-  const canReviewSigned = user.role === 'area_manager' && order.status === 'signed';
+  const canReviewSigned = allowedTargets.includes('signed') && order.status === 'signed';
 
   const isHandler = order.handler_role === user.role &&
     (!order.handler_id || order.handler_id === user.id);
@@ -192,13 +192,10 @@ const OrderDetail: React.FC<Props> = ({ orderId, user, dict, onClose, onMessage 
                     <div className="form-group">
                       <label><span className="required">*</span>目标状态</label>
                       <select value={toStatus} onChange={e => setToStatus(e.target.value)}>
-                        <option value="">请选择目标状态</option>
+                        <option value="">请选择目标状态{canReviewSigned ? '（当前已签收，可选择「签收完成」完成复核归档）' : ''}</option>
                         {dict?.statuses.filter(s => allowedTargets.includes(s.value)).map(s => (
-                          <option key={s.value} value={s.value}>{s.label}</option>
+                          <option key={s.value} value={s.value}>{s.label}{canReviewSigned && s.value === 'signed' ? '（复核归档）' : ''}</option>
                         ))}
-                        {canReviewSigned && !allowedTargets.includes('signed') && (
-                          <option value="signed">签收完成（复核归档）</option>
-                        )}
                       </select>
                     </div>
                     <div className="form-group">

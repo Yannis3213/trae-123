@@ -12,6 +12,11 @@ function canTransition(role, fromStatus, toStatus) {
   return allowed.includes(toStatus);
 }
 
+function isAllowedSameStatusTransition(role, fromStatus, toStatus) {
+  if (fromStatus !== toStatus) return false;
+  return canTransition(role, fromStatus, toStatus);
+}
+
 function isHandlerOfOrder(order, user) {
   if (user.role === ROLES.AREA_MANAGER) {
     return order.area_id === user.area_id;
@@ -144,6 +149,7 @@ function validateTransition(order, toStatus, user, clientVersion) {
 
 module.exports = {
   canTransition,
+  isAllowedSameStatusTransition,
   isHandlerOfOrder,
   isCurrentHandlerOfOrder,
   getNextHandler,

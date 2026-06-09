@@ -7,7 +7,8 @@ const {
   ABNORMAL_TYPES, ABNORMAL_NAMES, WARNING_LEVELS, WARNING_NAMES
 } = require('../utils/constants');
 const {
-  validateTransition, getNextHandler, computeWarningLevel, isHandlerOfOrder
+  validateTransition, getNextHandler, computeWarningLevel,
+  isHandlerOfOrder, isAllowedSameStatusTransition
 } = require('../utils/permission');
 
 const router = new Router({ prefix: '/api/orders' });
@@ -22,6 +23,34 @@ function decorateOrder(order, user) {
     warningName: WARNING_NAMES[warning],
     isMine: user ? (isHandlerOfOrder(order, user) && order.handler_role === user.role && (!order.handler_id || order.handler_id === user.id)) : false
   };
+}
+
+function writeProcessingRecord(tx, orderId, version, fromStatus, toStatus, user, note) {
+  tx.prepare(`
+    INSERT INTO processing_records (
+      id, order_id, order_version, from_status, to_status,
+      handler_id, handler_name, handler_role, note, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(uuidv4(), orderId, version, fromStatus, toStatus, user.id, user.name, user.role, note || null);
+}
+
+function writeAuditNote(tx, orderId, version, user, action, content) {
+  tx.prepare(`
+    INSERT INTO audit_notes (
+      id, order_id, order_version, operator_id, operator_name,
+      operator_role, action, content, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(uuidv4(), orderId, version, user.id, user.name, user.role, action, content || null);
+}
+
+function writeAbnormalReason(tx, orderId, abnormalType, description, responsible, user) {
+  if (!abnormalType || !description) return;
+  tx.prepare(`
+    INSERT INTO abnormal_reasons (
+      id, order_id, abnormal_type, description, responsible_person,
+      reported_by, reported_by_name, reported_at, resolved
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
+  `).run(uuidv4(), orderId, abnormalType, description, responsible || null, user.id, user.name);
 }
 
 router.get('/', authMiddleware, async (ctx) => {
@@ -96,7 +125,7 @@ router.get('/statistics', authMiddleware, async (ctx) => {
   Object.values(ORDER_STATUS).forEach(s => { statusCount[s] = 0; });
   statusRows.forEach(r => { statusCount[r.status] = r.cnt; });
 
-  let allSql = `SELECT due_at, status FROM prescription_orders WHERE 1=1`;
+  let allSql = `SELECT due_at, status, handler_name FROM prescription_orders WHERE 1=1`;
   const allParams = [];
   if (user.role === ROLES.AREA_MANAGER) {
     allSql += ` AND area_id = ?`;
@@ -107,9 +136,13 @@ router.get('/statistics', authMiddleware, async (ctx) => {
   }
   const allRows = db.prepare(allSql).all(...allParams);
   const warningCount = { normal: 0, approaching: 0, overdue: 0 };
+  const warningResponsible = { normal: [], approaching: [], overdue: [] };
   allRows.forEach(r => {
     const w = computeWarningLevel(r);
     warningCount[w]++;
+    if (r.handler_name && !warningResponsible[w].includes(r.handler_name)) {
+      warningResponsible[w].push(r.handler_name);
+    }
   });
 
   const mySql = `SELECT COUNT(*) as cnt FROM prescription_orders WHERE handler_role = ? AND (handler_id IS NULL OR handler_id = ?)`;
@@ -119,7 +152,10 @@ router.get('/statistics', authMiddleware, async (ctx) => {
     code: 0,
     data: {
       byStatus: Object.entries(statusCount).map(([k, v]) => ({ status: k, statusName: STATUS_NAMES[k], count: v })),
-      byWarning: Object.entries(warningCount).map(([k, v]) => ({ level: k, levelName: WARNING_NAMES[k], count: v })),
+      byWarning: Object.entries(warningCount).map(([k, v]) => ({
+        level: k, levelName: WARNING_NAMES[k], count: v,
+        responsibles: warningResponsible[k]
+      })),
       myPending: myCnt,
       total: allRows.length
     }
@@ -190,62 +226,49 @@ router.post('/', authMiddleware, async (ctx) => {
   const orderNo = `RX${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${String(Math.floor(Math.random() * 9000) + 1000)}`;
   const dueTime = due_at ? new Date(due_at) : new Date(Date.now() + 72 * 3600 * 1000);
 
-  const storeInfo = db.prepare('SELECT store_id, area_id FROM users WHERE id = ?').get(user.id);
   const storeNameMap = { store_001: '朝阳大药房（总店）', store_002: '朝阳大药房（分店）' };
   const areaNameMap = { area_east: '华东区域' };
 
   const orderId = uuidv4();
-  const pharmacist = db.prepare("SELECT * FROM users WHERE store_id = ? AND role = ? LIMIT 1").get(user.store_id, ROLES.PHARMACIST);
+  const pharmacist = db.prepare("SELECT * FROM users WHERE store_id = ? AND role = ? ORDER BY created_at LIMIT 1").get(user.store_id, ROLES.PHARMACIST);
 
-  const insertOrder = db.prepare(`
-    INSERT INTO prescription_orders (
-      id, order_no, patient_name, patient_id_card,
-      store_id, store_name, area_id, area_name,
-      drugs_count, total_amount, status,
-      handler_role, handler_id, handler_name,
-      version, created_by, created_by_name, due_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-  `);
-
-  insertOrder.run(
-    orderId, orderNo, patient_name, patient_id_card || null,
-    user.store_id, storeNameMap[user.store_id] || user.store_id,
-    user.area_id, areaNameMap[user.area_id] || user.area_id,
-    Number(drugs_count), Number(total_amount),
-    ORDER_STATUS.PENDING_SIGN,
-    ROLES.PHARMACIST, pharmacist ? pharmacist.id : null, pharmacist ? pharmacist.name : null,
-    user.id, user.name,
-    dueTime.toISOString()
-  );
-
-  const insertRecord = db.prepare(`
-    INSERT INTO processing_records (
-      id, order_id, order_version, from_status, to_status,
-      handler_id, handler_name, handler_role, note, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `);
-  insertRecord.run(uuidv4(), orderId, 1, null, ORDER_STATUS.PENDING_SIGN, user.id, user.name, user.role, '门店店员登记处方订单');
-
-  const insertAudit = db.prepare(`
-    INSERT INTO audit_notes (
-      id, order_id, order_version, operator_id, operator_name,
-      operator_role, action, content
-    ) VALUES (?, ?, ?, ?, ?, ?, 'create', ?)
-  `);
-  insertAudit.run(uuidv4(), orderId, 1, user.id, user.name, user.role, `创建处方订单 ${orderNo}`);
-
-  const insertAttachment = db.prepare(`
-    INSERT INTO attachments (
-      id, order_id, file_name, file_type, file_url,
-      evidence_type, uploaded_by, uploaded_by_name
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  attachments.forEach(att => {
-    insertAttachment.run(
-      uuidv4(), orderId, att.file_name, att.file_type || 'application/octet-stream',
-      att.file_url || '#', att.evidence_type || 'prescription', user.id, user.name
+  const tx = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO prescription_orders (
+        id, order_no, patient_name, patient_id_card,
+        store_id, store_name, area_id, area_name,
+        drugs_count, total_amount, status,
+        handler_role, handler_id, handler_name,
+        version, created_by, created_by_name, due_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(
+      orderId, orderNo, patient_name, patient_id_card || null,
+      user.store_id, storeNameMap[user.store_id] || user.store_id,
+      user.area_id, areaNameMap[user.area_id] || user.area_id,
+      Number(drugs_count), Number(total_amount),
+      ORDER_STATUS.PENDING_SIGN,
+      ROLES.PHARMACIST, pharmacist ? pharmacist.id : null, pharmacist ? pharmacist.name : null,
+      user.id, user.name,
+      dueTime.toISOString()
     );
+
+    writeProcessingRecord(db, orderId, 1, null, ORDER_STATUS.PENDING_SIGN, user, '门店店员登记处方订单');
+    writeAuditNote(db, orderId, 1, user, 'create', `创建处方订单 ${orderNo}`);
+
+    const insertAttachment = db.prepare(`
+      INSERT INTO attachments (
+        id, order_id, file_name, file_type, file_url,
+        evidence_type, uploaded_by, uploaded_by_name, uploaded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+    attachments.forEach(att => {
+      insertAttachment.run(
+        uuidv4(), orderId, att.file_name, att.file_type || 'application/octet-stream',
+        att.file_url || '#', att.evidence_type || 'prescription', user.id, user.name
+      );
+    });
   });
+  tx();
 
   const created = db.prepare('SELECT * FROM prescription_orders WHERE id = ?').get(orderId);
   ctx.status = 201;
@@ -262,27 +285,29 @@ router.post('/:id/status', authMiddleware, async (ctx) => {
     ctx.body = { code: 404, message: '处方订单不存在' };
     return;
   }
-
-  if (order.status === to_status && to_status === ORDER_STATUS.SIGNED && user.role === ROLES.AREA_MANAGER) {
-  } else {
-    const validation = validateTransition(order, to_status, user, version);
-    if (!validation.ok) {
-      ctx.status = 400;
-      ctx.body = {
-        code: 400,
-        error_code: validation.code,
-        message: validation.message,
-        missing: validation.missing || undefined,
-        current_status: order.status,
-        current_status_name: STATUS_NAMES[order.status],
-        current_version: order.version
-      };
-      return;
-    }
+  if (!to_status) {
+    ctx.status = 400;
+    ctx.body = { code: 400, message: '请提供 to_status' };
+    return;
   }
 
-  if (order.status === to_status && to_status === ORDER_STATUS.SIGNED && user.role === ROLES.AREA_MANAGER) {
-  } else if (order.status === to_status) {
+  const validation = validateTransition(order, to_status, user, version);
+  if (!validation.ok) {
+    ctx.status = 400;
+    ctx.body = {
+      code: 400,
+      error_code: validation.code,
+      message: validation.message,
+      missing: validation.missing || undefined,
+      current_status: order.status,
+      current_status_name: STATUS_NAMES[order.status],
+      current_version: order.version
+    };
+    return;
+  }
+
+  const sameStatusAllowed = isAllowedSameStatusTransition(user.role, order.status, to_status);
+  if (order.status === to_status && !sameStatusAllowed) {
     ctx.status = 400;
     ctx.body = {
       code: 400,
@@ -295,74 +320,75 @@ router.post('/:id/status', authMiddleware, async (ctx) => {
   const newVersion = order.version + 1;
   const nextHandler = getNextHandler(order, to_status, user);
 
-  const updateOrder = db.prepare(`
-    UPDATE prescription_orders SET
-      status = ?,
-      version = ?,
-      handler_role = ?,
-      handler_id = ?,
-      handler_name = ?,
-      abnormal_reason = ?,
-      abnormal_type = ?,
-      correction_note = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND version = ?
-  `);
-  const result = updateOrder.run(
-    to_status, newVersion,
-    nextHandler.handler_role, nextHandler.handler_id, nextHandler.handler_name,
-    abnormal_reason || order.abnormal_reason,
-    abnormal_type || order.abnormal_type,
-    correction_note || order.correction_note,
-    order.id, order.version
-  );
+  const finalAbnormalReason = abnormal_reason !== undefined && abnormal_reason !== null && abnormal_reason !== ''
+    ? abnormal_reason
+    : (sameStatusAllowed ? order.abnormal_reason : order.abnormal_reason);
+  const finalAbnormalType = abnormal_type || order.abnormal_type;
+  const finalCorrectionNote = correction_note !== undefined && correction_note !== null && correction_note !== ''
+    ? correction_note
+    : (sameStatusAllowed ? order.correction_note : order.correction_note);
 
-  if (result.changes === 0) {
-    const latest = db.prepare('SELECT version, status FROM prescription_orders WHERE id = ?').get(order.id);
-    ctx.status = 409;
-    ctx.body = {
-      code: 409,
-      error_code: ABNORMAL_TYPES.OLD_VERSION,
-      message: `版本冲突：当前版本已更新为 v${latest.version}，请刷新后重试`,
-      current_version: latest.version,
-      current_status: latest.status
-    };
-    return;
-  }
-
-  const insertRecord = db.prepare(`
-    INSERT INTO processing_records (
-      id, order_id, order_version, from_status, to_status,
-      handler_id, handler_name, handler_role, note
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  insertRecord.run(
-    uuidv4(), order.id, newVersion, order.status, to_status,
-    user.id, user.name, user.role, note || (order.status === to_status ? '区域经理复核归档' : null)
-  );
-
-  const insertAudit = db.prepare(`
-    INSERT INTO audit_notes (
-      id, order_id, order_version, operator_id, operator_name,
-      operator_role, action, content
-    ) VALUES (?, ?, ?, ?, ?, ?, 'update_status', ?)
-  `);
-  const actionContent = order.status === to_status
-    ? `复核归档：${note || '确认通过'}`
-    : `状态由「${STATUS_NAMES[order.status]}」变更为「${STATUS_NAMES[to_status]}」${note ? '，备注：' + note : ''}`;
-  insertAudit.run(uuidv4(), order.id, newVersion, user.id, user.name, user.role, actionContent);
-
-  if (abnormal_reason && abnormal_type) {
-    const insertAbnormal = db.prepare(`
-      INSERT INTO abnormal_reasons (
-        id, order_id, abnormal_type, description, responsible_person,
-        reported_by, reported_by_name
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    insertAbnormal.run(
-      uuidv4(), order.id, abnormal_type, abnormal_reason,
-      order.handler_name, user.id, user.name
+  const tx = db.transaction(() => {
+    const result = db.prepare(`
+      UPDATE prescription_orders SET
+        status = ?,
+        version = ?,
+        handler_role = ?,
+        handler_id = ?,
+        handler_name = ?,
+        abnormal_reason = ?,
+        abnormal_type = ?,
+        correction_note = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND version = ?
+    `).run(
+      to_status, newVersion,
+      nextHandler.handler_role, nextHandler.handler_id, nextHandler.handler_name,
+      finalAbnormalReason || null,
+      finalAbnormalType || null,
+      finalCorrectionNote || null,
+      order.id, order.version
     );
+
+    if (result.changes === 0) {
+      const latest = db.prepare('SELECT version, status FROM prescription_orders WHERE id = ?').get(order.id);
+      const err = new Error('VERSION_CONFLICT');
+      err.latest = latest;
+      throw err;
+    }
+
+    const actionNote = note || (sameStatusAllowed ? '区域经理复核归档' : null);
+    writeProcessingRecord(db, order.id, newVersion, order.status, to_status, user, actionNote);
+
+    const actionContent = sameStatusAllowed
+      ? `复核归档：${note || '确认通过，状态保持「' + STATUS_NAMES[to_status] + '」'}`
+      : `状态由「${STATUS_NAMES[order.status]}」变更为「${STATUS_NAMES[to_status]}」${note ? '，备注：' + note : ''}`;
+    writeAuditNote(db, order.id, newVersion, user, sameStatusAllowed ? 'review' : 'update_status', actionContent);
+
+    if ((abnormal_reason && abnormal_type) ||
+        (to_status === ORDER_STATUS.MATERIAL_SHORTAGE) ||
+        (to_status === ORDER_STATUS.OVERDUE)) {
+      const abType = abnormal_type || (to_status === ORDER_STATUS.MATERIAL_SHORTAGE ? ABNORMAL_TYPES.MATERIAL_SHORTAGE : ABNORMAL_TYPES.OVERDUE);
+      const abDesc = abnormal_reason || (to_status === ORDER_STATUS.MATERIAL_SHORTAGE ? '缺料，需补货或联系患者' : '已超过处方有效期，节点超时');
+      writeAbnormalReason(db, order.id, abType, abDesc, order.handler_name, user);
+    }
+  });
+
+  try {
+    tx();
+  } catch (e) {
+    if (e.message === 'VERSION_CONFLICT') {
+      ctx.status = 409;
+      ctx.body = {
+        code: 409,
+        error_code: ABNORMAL_TYPES.OLD_VERSION,
+        message: `版本冲突：当前版本已更新为 v${e.latest.version}，请刷新后重试`,
+        current_version: e.latest.version,
+        current_status: e.latest.status
+      };
+      return;
+    }
+    throw e;
   }
 
   const updated = db.prepare('SELECT * FROM prescription_orders WHERE id = ?').get(order.id);
@@ -371,7 +397,10 @@ router.post('/:id/status', authMiddleware, async (ctx) => {
 
 router.post('/batch', authMiddleware, async (ctx) => {
   const user = ctx.state.currentUser;
-  const { ids, to_status, version_map = {}, note } = ctx.request.body || {};
+  const {
+    ids, to_status, version_map = {}, note,
+    abnormal_reason, abnormal_type, correction_note
+  } = ctx.request.body || {};
 
   if (!Array.isArray(ids) || ids.length === 0) {
     ctx.status = 400;
@@ -406,8 +435,8 @@ router.post('/batch', authMiddleware, async (ctx) => {
       continue;
     }
 
-    if (order.status === to_status && to_status === ORDER_STATUS.SIGNED && user.role === ROLES.AREA_MANAGER) {
-    } else if (order.status === to_status) {
+    const sameStatusAllowed = isAllowedSameStatusTransition(user.role, order.status, to_status);
+    if (order.status === to_status && !sameStatusAllowed) {
       results.push({
         id, order_no: order.order_no, success: false,
         error_code: ABNORMAL_TYPES.DUPLICATE_SUBMIT,
@@ -420,60 +449,77 @@ router.post('/batch', authMiddleware, async (ctx) => {
       const newVersion = order.version + 1;
       const nextHandler = getNextHandler(order, to_status, user);
 
-      const updateOrder = db.prepare(`
-        UPDATE prescription_orders SET
-          status = ?, version = ?,
-          handler_role = ?, handler_id = ?, handler_name = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND version = ?
-      `);
-      const r = updateOrder.run(
-        to_status, newVersion,
-        nextHandler.handler_role, nextHandler.handler_id, nextHandler.handler_name,
-        order.id, order.version
-      );
+      const finalAbnormalReason = abnormal_reason || order.abnormal_reason;
+      const finalAbnormalType = abnormal_type || order.abnormal_type;
+      const finalCorrectionNote = correction_note || order.correction_note;
 
-      if (r.changes === 0) {
-        results.push({
-          id, order_no: order.order_no, success: false,
-          error_code: ABNORMAL_TYPES.OLD_VERSION,
-          message: '版本冲突，已被他人更新'
-        });
-        continue;
-      }
+      let updated = null;
+      const tx = db.transaction(() => {
+        const r = db.prepare(`
+          UPDATE prescription_orders SET
+            status = ?, version = ?,
+            handler_role = ?, handler_id = ?, handler_name = ?,
+            abnormal_reason = ?, abnormal_type = ?, correction_note = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND version = ?
+        `).run(
+          to_status, newVersion,
+          nextHandler.handler_role, nextHandler.handler_id, nextHandler.handler_name,
+          finalAbnormalReason || null,
+          finalAbnormalType || null,
+          finalCorrectionNote || null,
+          order.id, order.version
+        );
 
-      const insertRecord = db.prepare(`
-        INSERT INTO processing_records (
-          id, order_id, order_version, from_status, to_status,
-          handler_id, handler_name, handler_role, note
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      insertRecord.run(
-        uuidv4(), order.id, newVersion, order.status, to_status,
-        user.id, user.name, user.role, note || (order.status === to_status ? '批量复核归档' : '批量状态变更')
-      );
+        if (r.changes === 0) {
+          const err = new Error('VERSION_CONFLICT');
+          throw err;
+        }
 
-      const insertAudit = db.prepare(`
-        INSERT INTO audit_notes (
-          id, order_id, order_version, operator_id, operator_name,
-          operator_role, action, content
-        ) VALUES (?, ?, ?, ?, ?, ?, 'batch_update', ?)
-      `);
-      insertAudit.run(
-        uuidv4(), order.id, newVersion, user.id, user.name, user.role,
-        `批量处理：状态变更为「${STATUS_NAMES[to_status]}」`
-      );
+        const actionNote = note || (sameStatusAllowed ? '批量复核归档' : '批量状态变更');
+        writeProcessingRecord(db, order.id, newVersion, order.status, to_status, user, actionNote);
+
+        const actionContent = sameStatusAllowed
+          ? `批量复核归档：${note || '确认通过'}`
+          : `批量处理：状态由「${STATUS_NAMES[order.status]}」变更为「${STATUS_NAMES[to_status]}」${note ? '，备注：' + note : ''}`;
+        writeAuditNote(db, order.id, newVersion, user, 'batch_update', actionContent);
+
+        if ((abnormal_reason && abnormal_type) ||
+            (to_status === ORDER_STATUS.MATERIAL_SHORTAGE) ||
+            (to_status === ORDER_STATUS.OVERDUE)) {
+          const abType = abnormal_type || (to_status === ORDER_STATUS.MATERIAL_SHORTAGE ? ABNORMAL_TYPES.MATERIAL_SHORTAGE : ABNORMAL_TYPES.OVERDUE);
+          const abDesc = abnormal_reason || (to_status === ORDER_STATUS.MATERIAL_SHORTAGE ? '批量标记缺料' : '批量标记逾期');
+          writeAbnormalReason(db, order.id, abType, abDesc, order.handler_name, user);
+        }
+
+        updated = db.prepare('SELECT * FROM prescription_orders WHERE id = ?').get(order.id);
+      });
+
+      tx();
 
       results.push({
         id, order_no: order.order_no, success: true,
-        message: `已变更为「${STATUS_NAMES[to_status]}」`,
-        new_version: newVersion
+        message: sameStatusAllowed
+          ? `已复核归档（保持「${STATUS_NAMES[to_status]}」）`
+          : `已变更为「${STATUS_NAMES[to_status]}」`,
+        new_version: newVersion,
+        status: to_status,
+        status_name: STATUS_NAMES[to_status],
+        handler_name: updated ? updated.handler_name : null
       });
     } catch (e) {
-      results.push({
-        id, order_no: order.order_no, success: false,
-        message: `处理失败：${e.message}`
-      });
+      if (e.message === 'VERSION_CONFLICT') {
+        results.push({
+          id, order_no: order.order_no, success: false,
+          error_code: ABNORMAL_TYPES.OLD_VERSION,
+          message: '版本冲突，已被他人更新，请刷新后重试'
+        });
+      } else {
+        results.push({
+          id, order_no: order.order_no, success: false,
+          message: `处理失败：${e.message}`
+        });
+      }
     }
   }
 
@@ -510,23 +556,21 @@ router.post('/:id/attachments', authMiddleware, async (ctx) => {
     ctx.body = { code: 400, message: '请提供文件名和证据类型' };
     return;
   }
-  const attId = uuidv4();
-  db.prepare(`
-    INSERT INTO attachments (
-      id, order_id, file_name, file_type, file_url,
-      evidence_type, uploaded_by, uploaded_by_name
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    attId, order.id, file_name, file_type || 'application/octet-stream',
-    file_url || '#', evidence_type, user.id, user.name
-  );
 
-  db.prepare(`
-    INSERT INTO audit_notes (
-      id, order_id, order_version, operator_id, operator_name,
-      operator_role, action, content
-    ) VALUES (?, ?, ?, ?, ?, ?, 'upload_attachment', ?)
-  `).run(uuidv4(), order.id, order.version, user.id, user.name, user.role, `上传附件：${file_name}（${evidence_type}）`);
+  const attId = uuidv4();
+  const tx = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO attachments (
+        id, order_id, file_name, file_type, file_url,
+        evidence_type, uploaded_by, uploaded_by_name, uploaded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      attId, order.id, file_name, file_type || 'application/octet-stream',
+      file_url || '#', evidence_type, user.id, user.name
+    );
+    writeAuditNote(db, order.id, order.version, user, 'upload_attachment', `上传附件：${file_name}（${evidence_type}）`);
+  });
+  tx();
 
   const created = db.prepare('SELECT * FROM attachments WHERE id = ?').get(attId);
   ctx.status = 201;

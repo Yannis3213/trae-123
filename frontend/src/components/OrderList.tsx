@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { api, type User, type DictItem, type PrescriptionOrder } from '../lib/api';
 import OrderDetail from './OrderDetail';
 import CreateOrderModal from './CreateOrderModal';
@@ -14,6 +14,7 @@ interface Props {
     transitions: Record<string, string[]>;
   } | null;
   onChanged: () => void;
+  refreshKey: number;
 }
 
 const formatTime = (iso: string) => {
@@ -36,7 +37,7 @@ const timeLeft = (iso: string) => {
   return `${prefix}${hours}小时${mins}分`;
 };
 
-const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
+const OrderList: React.FC<Props> = ({ user, dict, onChanged, refreshKey }) => {
   const [orders, setOrders] = useState<PrescriptionOrder[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -50,7 +51,7 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
   const [showBatch, setShowBatch] = useState(false);
   const [msg, setMsg] = useState<{ type: string; text: string } | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     const [r1, r2] = await Promise.all([
       api.listOrders({ status: statusFilter, warning: warningFilter, keyword, onlyMine: onlyMine ? 'true' : 'false' }),
@@ -59,9 +60,11 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
     setLoading(false);
     if (r1.code === 0 && r1.data) setOrders(r1.data);
     if (r2.code === 0 && r2.data) setStats(r2.data);
-  };
+  }, [statusFilter, warningFilter, keyword, onlyMine]);
 
-  useEffect(() => { load(); }, [statusFilter, warningFilter, keyword, onlyMine]);
+  useEffect(() => { load(); }, [load, refreshKey]);
+
+  useEffect(() => { setSelected([]); }, [statusFilter, warningFilter, keyword, onlyMine]);
 
   const allWarningStats = useMemo(() => {
     if (!stats || !stats.byWarning) return [];
@@ -80,20 +83,54 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
     setTimeout(() => setMsg(null), 3500);
   };
 
+  const handleWarningClick = (level: string) => {
+    setWarningFilter(warningFilter === level ? '' : level);
+  };
+
   const canCreate = user.role === 'store_clerk';
   const canBatch = user.role !== 'store_clerk';
+
+  const handleDetailClose = () => {
+    setDetailId(null);
+    load();
+    onChanged();
+  };
+
+  const handleBatchDone = () => {
+    setShowBatch(false);
+    setSelected([]);
+    load();
+    onChanged();
+  };
 
   return (
     <div>
       {stats && (
         <div className="warning-banner">
           {allWarningStats.map(w => (
-            <div key={w.level} className={`wb-card ${w.level}`}>
-              <div className="wb-title">{w.levelName}</div>
+            <div
+              key={w.level}
+              className={`wb-card ${w.level} ${warningFilter === w.level ? 'active' : ''}`}
+              onClick={() => handleWarningClick(w.level)}
+              style={{ cursor: 'pointer', outline: warningFilter === w.level ? '2px solid #1e3a5f' : 'none' }}
+              title={`${w.levelName}${w.responsibles?.length ? '，责任人：' + w.responsibles.join('、') : ''}`}
+            >
+              <div className="wb-title">
+                {w.levelName}
+                {w.responsibles?.length > 0 && (
+                  <span style={{ display: 'block', fontSize: 11, marginTop: 2, color: '#6b7280' }}>
+                    责任人：{w.responsibles.slice(0, 3).join('、')}{w.responsibles.length > 3 ? '...' : ''}
+                  </span>
+                )}
+              </div>
               <div className="wb-count">{w.count}</div>
             </div>
           ))}
-          <div className="wb-card normal" style={{ borderLeftColor: '#2e5b8a' }}>
+          <div
+            className="wb-card normal"
+            style={{ borderLeftColor: '#2e5b8a', cursor: 'pointer', outline: warningFilter === '' ? '2px solid #1e3a5f' : 'none' }}
+            onClick={() => setWarningFilter('')}
+          >
             <div className="wb-title">待我处理</div>
             <div className="wb-count">{stats.myPending || 0}</div>
           </div>
@@ -152,7 +189,10 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
         {loading ? (
           <div className="empty">加载中...</div>
         ) : orders.length === 0 ? (
-          <div className="empty">暂无处方订单数据</div>
+          <div className="empty">
+            暂无处方订单数据
+            {(statusFilter || warningFilter || keyword || onlyMine) && <div style={{ marginTop: 6, color: '#6b7280' }}>（当前筛选条件下无结果）</div>}
+          </div>
         ) : (
           <table className="data-table">
             <thead>
@@ -171,6 +211,7 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
                 <th>预警</th>
                 <th>到期剩余</th>
                 <th>当前处理人</th>
+                <th>版本</th>
                 <th>创建时间</th>
                 <th>操作</th>
               </tr>
@@ -193,9 +234,10 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
                   <td>{timeLeft(o.due_at)}</td>
                   <td>
                     {o.handler_name
-                      ? (<><span className={`tag role-${o.handler_role}`}>{o.handler_name}</span></>)
+                      ? <span className={`tag role-${o.handler_role}`}>{o.handler_name}</span>
                       : <span style={{ color: '#9ca3af' }}>未分配</span>}
                   </td>
+                  <td>v{o.version}</td>
                   <td>{formatTime(o.created_at)}</td>
                   <td>
                     <button className="link-btn" onClick={() => setDetailId(o.id)}>查看详情</button>
@@ -212,7 +254,7 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
           orderId={detailId}
           user={user}
           dict={dict}
-          onClose={() => { setDetailId(null); onChanged(); }}
+          onClose={handleDetailClose}
           onMessage={showMsg}
         />
       )}
@@ -223,6 +265,7 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
           onCreated={(order) => {
             setShowCreate(false);
             showMsg('success', `处方订单 ${order.order_no} 已创建，已流转至执业药师处理`);
+            load();
             onChanged();
           }}
         />
@@ -234,11 +277,7 @@ const OrderList: React.FC<Props> = ({ user, dict, onChanged }) => {
           user={user}
           dict={dict}
           onClose={() => setShowBatch(false)}
-          onDone={() => {
-            setShowBatch(false);
-            setSelected([]);
-            onChanged();
-          }}
+          onDone={handleBatchDone}
           onMessage={showMsg}
         />
       )}
