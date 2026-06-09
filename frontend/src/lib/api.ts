@@ -113,6 +113,10 @@ export interface BatchResult {
   error_code?: string;
   message: string;
   new_version?: number;
+  status?: string;
+  status_name?: string;
+  current_version?: number;
+  handler_name?: string;
 }
 
 export interface DictItem {

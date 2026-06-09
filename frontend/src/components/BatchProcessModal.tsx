@@ -142,19 +142,37 @@ const BatchProcessModal: React.FC<Props> = ({ selectedIds, orders, user, dict, o
               </div>
               <div className="batch-result-list">
                 {results.map((r, i) => (
-                  <div key={i} className="batch-result-row">
-                    <span>
-                      <span className="no">{r.order_no || r.id}</span>
-                      <span style={{ marginLeft: 10, color: r.success ? '#065f46' : '#991b1b', fontWeight: 600 }}>
-                        {r.success ? '✓ 成功' : '✗ 失败'}
-                      </span>
-                      {r.error_code && (
-                        <span className="tag" style={{ marginLeft: 8, background: '#fee2e2', color: '#991b1b', fontSize: 11 }}>
-                          {r.error_code}
+                  <div key={i} className="batch-result-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>
+                        <span className="no">{r.order_no || r.id}</span>
+                        <span style={{ marginLeft: 10, color: r.success ? '#065f46' : '#991b1b', fontWeight: 600 }}>
+                          {r.success ? '✓ 成功' : '✗ 失败'}
                         </span>
-                      )}
-                    </span>
-                    <span style={{ color: '#4b5563', flexShrink: 0, textAlign: 'right' }}>{r.message}</span>
+                        {r.error_code && (
+                          <span className="tag" style={{ marginLeft: 8, background: '#fee2e2', color: '#991b1b', fontSize: 11 }}>
+                            {r.error_code}
+                          </span>
+                        )}
+                      </span>
+                      <span style={{ color: '#4b5563', flexShrink: 0, textAlign: 'right' }}>{r.message}</span>
+                    </div>
+                    {!r.success && (r.handler_name || r.current_version || r.status_name) && (
+                      <div style={{ fontSize: 12, color: '#6b7280', paddingLeft: 22 }}>
+                        {r.handler_name && <span style={{ marginRight: 12 }}>当前处理人：{r.handler_name}</span>}
+                        {r.current_version !== undefined && <span style={{ marginRight: 12 }}>当前版本：v{r.current_version}</span>}
+                        {r.status_name && <span>当前状态：{r.status_name}</span>}
+                        {r.success && r.new_version !== undefined && <span style={{ marginLeft: 12 }}>新版本：v{r.new_version}</span>}
+                        {r.success && r.status_name && <span>目标状态：{r.status_name}</span>}
+                      </div>
+                    )}
+                    {r.success && (r.new_version !== undefined || r.handler_name || r.status_name) && (
+                      <div style={{ fontSize: 12, color: '#065f46', paddingLeft: 22 }}>
+                        {r.new_version !== undefined && <span style={{ marginRight: 12 }}>新版本：v{r.new_version}</span>}
+                        {r.status_name && <span style={{ marginRight: 12 }}>新状态：{r.status_name}</span>}
+                        {r.handler_name && <span>下一处理人：{r.handler_name}</span>}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

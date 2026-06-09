@@ -306,6 +306,22 @@ router.post('/:id/status', authMiddleware, async (ctx) => {
     return;
   }
 
+  if (to_status === ORDER_STATUS.OVERDUE) {
+    const wl = computeWarningLevel(order);
+    if (wl === WARNING_LEVELS.NORMAL) {
+      ctx.status = 400;
+      ctx.body = {
+        code: 400,
+        error_code: ABNORMAL_TYPES.STATE_CONFLICT,
+        message: `无法标记为逾期：该订单还有 ${Math.max(1, Math.floor((new Date(order.due_at).getTime() - Date.now()) / (1000 * 60 * 60)))} 小时到期，属正常队列，请到期后再处理`,
+        current_status: order.status,
+        current_status_name: STATUS_NAMES[order.status],
+        current_version: order.version
+      };
+      return;
+    }
+  }
+
   const sameStatusAllowed = isAllowedSameStatusTransition(user.role, order.status, to_status);
   if (order.status === to_status && !sameStatusAllowed) {
     ctx.status = 400;
@@ -430,9 +446,25 @@ router.post('/batch', authMiddleware, async (ctx) => {
     if (!validation.ok) {
       results.push({
         id, order_no: order.order_no, success: false,
-        error_code: validation.code, message: validation.message
+        error_code: validation.code, message: validation.message,
+        current_status: order.status, current_status_name: STATUS_NAMES[order.status],
+        current_version: order.version, handler_name: order.handler_name
       });
       continue;
+    }
+
+    if (to_status === ORDER_STATUS.OVERDUE) {
+      const wl = computeWarningLevel(order);
+      if (wl === WARNING_LEVELS.NORMAL) {
+        results.push({
+          id, order_no: order.order_no, success: false,
+          error_code: ABNORMAL_TYPES.STATE_CONFLICT,
+          message: `无法标记为逾期：该订单还有 ${Math.max(1, Math.floor((new Date(order.due_at).getTime() - Date.now()) / (1000 * 60 * 60)))} 小时到期，属正常队列，请到期后再处理`,
+          current_status: order.status, current_status_name: STATUS_NAMES[order.status],
+          current_version: order.version, handler_name: order.handler_name
+        });
+        continue;
+      }
     }
 
     const sameStatusAllowed = isAllowedSameStatusTransition(user.role, order.status, to_status);

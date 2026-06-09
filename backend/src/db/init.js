@@ -66,7 +66,7 @@ function seed() {
       uuidv4(), 'RX20260601002', '李四', '110101198505052345',
       'store_001', '朝阳大药房（总店）', 'area_east', '华东区域',
       5, 680.00, ORDER_STATUS.MATERIAL_SHORTAGE,
-      ROLES.PHARMACIST, 'u_pharmacist_zhang', '张药师',
+      ROLES.AREA_MANAGER, 'u_manager_zhao', '赵经理',
       2, 'u_clerk_wang', '王店员',
       hoursAgo(26), hoursAgo(10), hoursLater(22),
       '阿莫西林胶囊库存不足，仅剩 12 粒，处方需 24 粒', 'material_shortage', null
@@ -75,7 +75,7 @@ function seed() {
       uuidv4(), 'RX20260601003', '王五', '110101197808083456',
       'store_002', '朝阳大药房（分店）', 'area_east', '华东区域',
       2, 120.00, ORDER_STATUS.OVERDUE,
-      ROLES.PHARMACIST, 'u_pharmacist_chen', '陈药师',
+      ROLES.AREA_MANAGER, 'u_manager_zhao', '赵经理',
       2, 'u_clerk_li', '李店员',
       hoursAgo(80), hoursAgo(72), hoursAgo(8),
       '已超过处方有效期 8 小时，需联系患者确认是否重新开方', 'overdue', null
@@ -111,7 +111,7 @@ function seed() {
       uuidv4(), 'RX20260601007', '周九', '110101198006067890',
       'store_001', '朝阳大药房（总店）', 'area_east', '华东区域',
       2, 180.00, ORDER_STATUS.ABNORMAL_RETURN,
-      ROLES.PHARMACIST, 'u_pharmacist_zhang', '张药师',
+      ROLES.AREA_MANAGER, 'u_manager_zhao', '赵经理',
       2, 'u_clerk_wang', '王店员',
       hoursAgo(20), hoursAgo(12), hoursLater(36),
       '药品批号存在问题，需退回厂家核查', 'abnormal_return', null
