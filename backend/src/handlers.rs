@@ -133,21 +133,31 @@ pub async fn batch_process_records(
 
     for record_id in &body.record_ids {
         let version = body.versions.get(record_id).copied().unwrap_or(0);
-        let push_fail = |msg: &str| {
-            failure_count += 1;
-            results.push(BatchProcessResultItem {
-                record_id: *record_id,
-                success: false,
-                message: msg.to_string(),
-                from_status: None,
-                to_status: None,
-            });
-        };
 
         let record = match crate::db::get_borrow_record(&db, record_id) {
             Ok(Some(r)) => r,
-            Ok(None) => { push_fail("记录不存在"); continue; }
-            Err(e) => { push_fail(&format!("数据库错误: {}", e)); continue; }
+            Ok(None) => {
+                failure_count += 1;
+                results.push(BatchProcessResultItem {
+                    record_id: *record_id,
+                    success: false,
+                    message: "记录不存在".to_string(),
+                    from_status: None,
+                    to_status: None,
+                });
+                continue;
+            }
+            Err(e) => {
+                failure_count += 1;
+                results.push(BatchProcessResultItem {
+                    record_id: *record_id,
+                    success: false,
+                    message: format!("数据库错误: {}", e),
+                    from_status: None,
+                    to_status: None,
+                });
+                continue;
+            }
         };
         let from_status = record.status;
 
@@ -163,7 +173,14 @@ pub async fn batch_process_records(
                 Some("越权推进"),
                 Some(&format!("role={}, status={}", body.operator_role.as_str(), record.status.as_str())),
             );
-            push_fail(&msg);
+            failure_count += 1;
+            results.push(BatchProcessResultItem {
+                record_id: *record_id,
+                success: false,
+                message: msg,
+                from_status: Some(from_status),
+                to_status: None,
+            });
             continue;
         }
 
@@ -192,7 +209,14 @@ pub async fn batch_process_records(
                 });
             }
             Err(e) => {
-                push_fail(&e.to_string());
+                failure_count += 1;
+                results.push(BatchProcessResultItem {
+                    record_id: *record_id,
+                    success: false,
+                    message: e.to_string(),
+                    from_status: Some(from_status),
+                    to_status: None,
+                });
             }
         }
     }

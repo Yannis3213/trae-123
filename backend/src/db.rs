@@ -541,6 +541,28 @@ pub fn validate_and_process(
         }
     }
 
+    if let Some(handler_name) = &record.current_handler {
+        if req.operator_role != Role::LibraryDirector
+            && !handler_name.is_empty()
+            && handler_name != &req.operator
+        {
+            add_audit_note(
+                conn, record_id, record.status,
+                &format!(
+                    "处理人姓名不匹配: 记录当前处理人 {}，操作人 {}",
+                    handler_name, req.operator
+                ),
+                &req.operator, req.operator_role,
+                Some("越权推进"),
+                Some(&format!("expected_handler={}, actual={}", handler_name, req.operator)),
+            )?;
+            return Err(anyhow!(
+                "该记录当前处理人为 {}，操作人 {} 无权办理（仅馆长可代操作）",
+                handler_name, req.operator
+            ));
+        }
+    }
+
     let required_evidence = required_evidence_for(&record.status, &req.target_status);
     let missing_evidence: Vec<String> = required_evidence
         .iter()
