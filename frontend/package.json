@@ -1,0 +1,17 @@
+{
+  "name": "lab-appointment-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite dev --port 3001 --host",
+    "build": "vite build",
+    "preview": "vite preview --port 3001"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.1",
+    "@sveltejs/kit": "^2.5.0",
+    "@sveltejs/vite-plugin-svelte": "^3.0.2",
+    "svelte": "^4.2.12",
+    "vite": "^5.1.6"
+  }
+}
