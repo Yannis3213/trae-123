@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 24, 30, 42;
+  --background-rgb: 245, 247, 250;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: rgb(var(--background-rgb));
+}
+
+.badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border;
+}
+
+.btn {
+  @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border border-transparent;
+}
+
+.btn-primary {
+  @apply btn bg-library-600 text-white hover:bg-library-700;
+}
+
+.btn-secondary {
+  @apply btn bg-white text-library-700 border-library-200 hover:bg-library-50;
+}
+
+.btn-danger {
+  @apply btn bg-red-600 text-white hover:bg-red-700;
+}
+
+.btn-success {
+  @apply btn bg-green-600 text-white hover:bg-green-700;
+}
+
+.btn:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+.card {
+  @apply bg-white rounded-lg border border-library-200 shadow-sm;
+}
+
+.input {
+  @apply block w-full rounded-md border border-library-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-library-400 focus:outline-none focus:ring-1 focus:ring-library-400;
+}
+
+.label {
+  @apply block text-sm font-medium text-library-700 mb-1;
+}
+
+.select {
+  @apply input appearance-none bg-no-repeat bg-right pr-8;
+}
+
+th {
+  @apply text-left text-xs font-medium text-library-500 uppercase tracking-wider px-3 py-2 bg-library-50 border-b border-library-200;
+}
+
+td {
+  @apply px-3 py-2 text-sm text-library-800 border-b border-library-100;
+}
+
+tr:hover td {
+  @apply bg-library-50/50;
+}
+
+.tab {
+  @apply px-4 py-2 text-sm font-medium text-library-600 border-b-2 border-transparent hover:text-library-800 hover:border-library-300 cursor-pointer;
+}
+
+.tab-active {
+  @apply tab border-library-600 text-library-800;
+}
+
+.divider {
+  @apply h-px bg-library-200 my-4;
+}
+
+.scroll-area {
+  @apply overflow-auto max-h-[400px];
+}
