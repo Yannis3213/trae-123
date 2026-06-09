@@ -239,14 +239,23 @@ export default function RecordList({ user, showToast }) {
                 </div>
                 <div class="evidence-card">
                   <h4>🔔 异常通知摘要</h4>
-                  {activeRecord.attachments && activeRecord.attachments.filter(a => a.type === 'abnormal_notice').length > 0 ? (
-                    activeRecord.attachments.filter(a => a.type === 'abnormal_notice').map(a => (
+                  {activeRecord.abnormal_notices && activeRecord.abnormal_notices.length > 0 ? (
+                    activeRecord.abnormal_notices.map(a => (
                       <div key={a.id} class="summary-item">
                         <span class="label">{a.name}</span>{a.content || '已上传'}
                       </div>
                     ))
                   ) : (
-                    <div class="empty">{activeRecord.health_status === 'abnormal' ? '⚠️ 异常记录缺少异常通知书' : '暂无异常通知'}</div>
+                    <div class="empty">
+                      {activeRecord.health_status === 'abnormal'
+                        ? '⚠️ 异常记录缺少异常通知书（' + (activeRecord.abnormal_notice_summary || '需补录') + '）'
+                        : '暂无异常通知'}
+                    </div>
+                  )}
+                  {activeRecord.abnormal_reason && (
+                    <div class="summary-item" style={{ marginTop: 6, paddingTop: 6, borderTop: '1px dashed #f0f0f0', color: '#cf1322' }}>
+                      <span class="label">异常原因</span>{activeRecord.abnormal_reason}
+                    </div>
                   )}
                 </div>
                 <div class="evidence-card">

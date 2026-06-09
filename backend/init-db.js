@@ -335,6 +335,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[0].id, action: 'submit',
       action_by: users[0].username, action_by_role: users[0].role, action_by_name: users[0].name,
       previous_status: null, new_status: 'pending_review', remark: '提交晨检记录',
+      correction_reason: null, reject_reason: null,
       evidence_summary: '已上传晨检登记表、幼儿档案卡',
       created_at: threeDaysAgo.toISOString()
     },
@@ -342,6 +343,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[1].id, action: 'submit',
       action_by: users[0].username, action_by_role: users[0].role, action_by_name: users[0].name,
       previous_status: null, new_status: 'pending_review', remark: '提交晨检记录',
+      correction_reason: null, reject_reason: null,
       evidence_summary: '已上传晨检登记表、幼儿档案卡',
       created_at: twoDaysAgo.toISOString()
     },
@@ -349,6 +351,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[1].id, action: 'accept',
       action_by: users[1].username, action_by_role: users[1].role, action_by_name: users[1].name,
       previous_status: 'pending_review', new_status: 'accepted', remark: '审核通过',
+      correction_reason: null, reject_reason: null,
       evidence_summary: '材料齐全，审核通过',
       created_at: yesterday.toISOString()
     },
@@ -356,6 +359,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[2].id, action: 'submit',
       action_by: users[0].username, action_by_role: users[0].role, action_by_name: users[0].name,
       previous_status: null, new_status: 'pending_review', remark: '提交晨检记录',
+      correction_reason: null, reject_reason: null,
       evidence_summary: '已上传晨检登记表、幼儿档案卡',
       created_at: yesterday.toISOString()
     },
@@ -363,7 +367,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[2].id, action: 'reject',
       action_by: users[1].username, action_by_role: users[1].role, action_by_name: users[1].name,
       previous_status: 'pending_review', new_status: 'pending_registrar_correction', remark: '退回补正',
-      reject_reason: '体温异常需补充医院诊断证明',
+      correction_reason: null, reject_reason: '体温异常需补充医院诊断证明',
       evidence_summary: '缺少诊断证明缺失',
       created_at: today.toISOString()
     },
@@ -371,6 +375,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[3].id, action: 'submit',
       action_by: users[0].username, action_by_role: users[0].role, action_by_name: users[0].name,
       previous_status: null, new_status: 'pending_review', remark: '提交晨检记录',
+      correction_reason: null, reject_reason: null,
       evidence_summary: '已上传晨检登记表、幼儿档案卡',
       created_at: fiveDaysAgo.toISOString()
     },
@@ -378,6 +383,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[4].id, action: 'submit',
       action_by: users[0].username, action_by_role: users[0].role, action_by_name: users[0].name,
       previous_status: null, new_status: 'pending_registration', remark: '发起晨检记录（异常）',
+      correction_reason: null, reject_reason: null,
       evidence_summary: '已上传晨检登记表、幼儿档案卡、异常通知书',
       created_at: today.toISOString()
     },
@@ -385,6 +391,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[5].id, action: 'submit',
       action_by: users[0].username, action_by_role: users[0].role, action_by_name: users[0].name,
       previous_status: null, new_status: 'pending_review', remark: '提交晨检记录',
+      correction_reason: null, reject_reason: null,
       evidence_summary: '已上传晨检登记表、幼儿档案卡',
       created_at: twoDaysAgo.toISOString()
     },
@@ -392,6 +399,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[5].id, action: 'accept',
       action_by: users[1].username, action_by_role: users[1].role, action_by_name: users[1].name,
       previous_status: 'pending_review', new_status: 'accepted', remark: '审核通过',
+      correction_reason: null, reject_reason: null,
       evidence_summary: '材料齐全',
       created_at: yesterday.toISOString()
     },
@@ -399,6 +407,7 @@ function initDatabase() {
       id: uuidv4(), record_id: sampleRecords[5].id, action: 'verify',
       action_by: users[2].username, action_by_role: users[2].role, action_by_name: users[2].name,
       previous_status: 'accepted', new_status: 'verified', remark: '复核通过，归档',
+      correction_reason: null, reject_reason: null,
       evidence_summary: '复核通过，已归档',
       created_at: yesterday.toISOString()
     }
@@ -423,7 +432,7 @@ function initDatabase() {
   const insertAudit = db.prepare(
     'INSERT INTO audit_notes (id, record_id, note, noted_by, created_at) VALUES (?, ?, ?, ?, ?)'
   );
-  auditNotes.forEach(a => insertAudit.run(a.id, a.record_id, a.note, a.created_at));
+  auditNotes.forEach(a => insertAudit.run(a.id, a.record_id, a.note, a.noted_by, a.created_at));
 
   db.close();
   console.log('数据库初始化完成！');

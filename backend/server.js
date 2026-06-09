@@ -133,14 +133,29 @@ app.get('/api/records', authMiddleware, (req, res) => {
   let records = db.prepare(baseQuery).all(...params);
 
   records = records.map(r => {
-    const attachments = db.prepare('SELECT * FROM attachments WHERE record_id = ?').all(r.id);
+    const attachments = db.prepare('SELECT * FROM attachments WHERE record_id = ? ORDER BY uploaded_at DESC').all(r.id);
+    const child = {
+      id: r.child_id,
+      name: r.child_name,
+      class_name: r.class_name
+    };
+    try {
+      const fullChild = db.prepare('SELECT * FROM children WHERE id = ?').get(r.child_id);
+      if (fullChild) Object.assign(child, fullChild);
+    } catch (e) {}
+    const abnormal_notices = attachments.filter(a => a.type === ATTACHMENT_TYPES.ABNORMAL_NOTICE);
     return {
       ...r,
+      child,
       status_name: STATUS_NAMES[r.status] || r.status,
       deadline_status: getDeadlineStatus(r.deadline),
       current_handler_role_name: r.current_handler_role ? ROLE_NAMES[r.current_handler_role] : null,
       evidence_count: attachments.length,
-      attachments
+      attachments,
+      abnormal_notices,
+      abnormal_notice_summary: abnormal_notices.length > 0
+        ? abnormal_notices.map(a => a.name + (a.content ? `：${a.content}` : '')).join('；')
+        : null
     };
   });
 
