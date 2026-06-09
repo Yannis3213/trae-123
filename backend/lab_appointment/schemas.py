@@ -121,7 +121,7 @@ class AppointmentUpdateIn(BaseModel):
     deadline: Optional[datetime] = None
     status: Optional[str] = None
     audit_comment: Optional[str] = None
-    version: int = 0
+    version: int
 
 
 class AppointmentOut(AppointmentBase):

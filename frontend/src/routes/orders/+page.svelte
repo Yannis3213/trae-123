@@ -22,6 +22,7 @@
   let showBatch = false;
   let batchResult = null;
   let batchLoading = false;
+  let batchErrors = [];
   let batchForm = {
     opinion: '',
     audit_note: '',
@@ -72,8 +73,32 @@
 
   async function doBatch(action) {
     if (selected.size === 0) return;
+    const errs = [];
+    for (const o of orders) {
+      if (selected.has(o.id) && (!o.version || o.version <= 0)) {
+        errs.push({ type: 'STATUS', msg: `单据 ${o.order_no} 版本缺失，请刷新页面后重试` });
+      }
+    }
+    if (action === 'archive_dean') {
+      if (!batchForm.opinion || !batchForm.opinion.trim()) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：批量归档必须填写统一处理意见' });
+      }
+      if (!batchForm.audit_note || !batchForm.audit_note.trim()) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：批量归档必须填写统一审计备注' });
+      }
+    }
+    if (action === 'return_dean') {
+      if (!batchForm.comment && !batchForm.exception_desc) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：批量退回必须填写退回原因（备注或异常说明）' });
+      }
+    }
+    if (errs.length > 0) {
+      batchErrors = errs;
+      return;
+    }
     batchLoading = true;
     batchResult = null;
+    batchErrors = [];
     try {
       const versionMap = {};
       const opinionMap = {};
@@ -377,6 +402,16 @@
         ⚠️ 系统将逐条执行并校验：每条单据都会校验版本、角色、处理人、状态和必填证据，
         失败单据会在详情页留下「批量拦截留痕」处理记录和异常原因，不会整批放行。
       </div>
+      {#if batchErrors.length > 0}
+        <div class="alert alert-danger" style="margin-bottom:16px">
+          校验未通过：
+          <ul style="margin-top:4px">
+            {#each batchErrors as e}
+              <li>【{EXCEPTION_LABELS[e.type] || e.type}】{e.msg}</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
       <div class="form-row">
         <div class="form-group full">
           <label>统一处理意见（批量归档必填）*</label>
@@ -419,7 +454,7 @@
         （每条单据的当前版本号将自动逐条传递，避免旧版本/重复提交）
       </div>
       <div class="flex-gap" style="justify-content:flex-end">
-        <button class="btn" on:click={() => showBatch = false}>取消</button>
+        <button class="btn" on:click={() => { showBatch = false; batchErrors = []; }}>取消</button>
         <button
           class={showBatch === 'archive' ? 'btn btn-success' : 'btn btn-warning'}
           disabled={batchLoading}

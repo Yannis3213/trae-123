@@ -62,12 +62,34 @@
   }
 
   async function saveEdit() {
+    const errs = [];
+    if (!order || !order.version) {
+      errs.push({ type: 'STATUS', msg: '版本缺失，请刷新页面后重试' });
+    }
+    if (!editForm.title || !editForm.title.trim()) {
+      errs.push({ type: 'MATERIAL', msg: '材料问题：预约单标题不能为空' });
+    }
+    if (!editForm.experiment_name || !editForm.experiment_name.trim()) {
+      errs.push({ type: 'MATERIAL', msg: '材料问题：实验名称不能为空' });
+    }
+    if (errs.length > 0) {
+      actionErrors = errs;
+      return;
+    }
     try {
+      actionLoading = true;
+      actionErrors = [];
       const payload = { ...editForm, version: order.version };
-      order = await api.updateAppointment(order.id, payload);
-      editing = false;
-      error = '';
+      const res = await api.updateAppointment(order.id, payload);
+      if (res && res.ok === false && res.errors) {
+        actionErrors = res.errors;
+      } else {
+        order = res && res.order ? res.order : res;
+        editing = false;
+        error = '';
+      }
     } catch (e) { error = e.message; }
+    actionLoading = false;
   }
 
   function addAttachment() {
@@ -77,6 +99,43 @@
   }
 
   async function doAction(action) {
+    const errs = [];
+    if (!order || !order.version) {
+      errs.push({ type: 'STATUS', msg: '版本缺失，请刷新页面后重试' });
+    }
+    if (action === 'submit') {
+      if (!submitPayload.opinion || !submitPayload.opinion.trim()) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：提交复核必须填写处理意见' });
+      }
+      if (!order.safety_confirmed && !submitPayload.attachments.some(a => a.evidence_type === 'safety')) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：提交复核必须完成安全确认或上传安全证据' });
+      }
+    }
+    if (action === 'process') {
+      if (!submitPayload.opinion || !submitPayload.opinion.trim()) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：核验必须填写处理意见' });
+      }
+      if (!submitPayload.audit_note || !submitPayload.audit_note.trim()) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：核验必须填写审计备注' });
+      }
+    }
+    if (action === 'review') {
+      if (!submitPayload.opinion || !submitPayload.opinion.trim()) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：复核归档必须填写处理意见' });
+      }
+      if (!submitPayload.audit_note || !submitPayload.audit_note.trim()) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：复核归档必须填写审计备注' });
+      }
+    }
+    if (action === 'return') {
+      if (!submitPayload.comment && !submitPayload.exception_desc) {
+        errs.push({ type: 'MATERIAL', msg: '材料问题：退回必须填写退回原因（备注或异常说明）' });
+      }
+    }
+    if (errs.length > 0) {
+      actionErrors = errs;
+      return;
+    }
     actionLoading = true;
     actionErrors = [];
     error = '';

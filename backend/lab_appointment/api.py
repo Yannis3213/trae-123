@@ -73,7 +73,7 @@ RULES = {
     'return': WriteActionRule(
         ACTION_RETURN, allowed_roles=[Role.ADMIN, Role.DEAN],
         allowed_statuses=[OrderStatus.PENDING],
-        require_owner=False, require_handler=False,
+        require_owner=False, require_handler=True,
         require_opinion=False, require_audit_note=False,
         require_evidence_types=[], block_if_overdue=False,
     ),
@@ -94,7 +94,7 @@ RULES = {
     'batch_return': WriteActionRule(
         ACTION_BATCH_RETURN, allowed_roles=[Role.DEAN],
         allowed_statuses=[OrderStatus.PENDING],
-        require_owner=False, require_handler=False,
+        require_owner=False, require_handler=True,
         require_opinion=False, require_audit_note=False,
         require_evidence_types=[], block_if_overdue=False,
     ),
@@ -179,7 +179,12 @@ def validate_write_action(user: User, order: LabAppointment, payload, rule: Writ
             'msg': f'状态问题：当前状态【{order.get_status_display()}】不允许执行【{rule.action_name}】'
         })
     client_version = getattr(payload, 'version', None)
-    if client_version is not None and client_version > 0 and client_version != order.version:
+    if client_version is None or client_version == 0 or client_version is False:
+        errors.append({
+            'type': ExceptionType.STATUS,
+            'msg': f'版本缺失：请传递当前单据版本号(当前v{order.version})，防止重复提交'
+        })
+    elif client_version != order.version:
         errors.append({
             'type': ExceptionType.STATUS,
             'msg': f'状态冲突/旧版本提交：当前v{order.version}，提交v{client_version}，请刷新后重试'
@@ -268,14 +273,18 @@ def add_block_record(order, user, action, errors, batch_id=''):
     ProcessingRecord.objects.create(
         order=order, actor=user, action=action,
         from_status=order.status, to_status=order.status,
-        comment=combined_msg, opinion='', audit_note='',
+        comment=combined_msg, opinion='', audit_note=combined_msg,
         exception_type=first_type, exception_desc=combined_msg,
         evidence_count=0, batch_id=batch_id
     )
-    ExceptionReason.objects.get_or_create(
+    ExceptionReason.objects.create(
         order=order, exception_type=first_type,
         description=combined_msg, reporter=user,
         resolved=False
+    )
+    AuditNote.objects.create(
+        order=order, author=user,
+        content=f'[{action}] 校验拦截：{combined_msg}'
     )
 
 
@@ -433,7 +442,7 @@ def create_appointment(request, payload: AppointmentIn):
     return enrich_order(order)
 
 
-@api.put('/appointments/{order_id}', response=AppointmentOut)
+@api.put('/appointments/{order_id}')
 def update_appointment(request, order_id: int, payload: AppointmentUpdateIn):
     user = get_current_user(request)
     try:
@@ -443,7 +452,8 @@ def update_appointment(request, order_id: int, payload: AppointmentUpdateIn):
     rule = RULES['update']
     errors = validate_write_action(user, order, payload, rule)
     if errors:
-        raise HttpError(400, '；'.join(e['msg'] for e in errors))
+        add_block_record(order, user, ACTION_UPDATE + '校验拦截', errors)
+        return {'ok': False, 'errors': errors}
     update_fields = payload.dict(exclude_unset=True)
     for skip_key in ('audit_comment', 'status', 'version'):
         update_fields.pop(skip_key, None)
@@ -452,10 +462,12 @@ def update_appointment(request, order_id: int, payload: AppointmentUpdateIn):
             setattr(order, k, v)
     order.version += 1
     order.save()
+    evidence_count, audit_note_text, exc_type, exc_desc = persist_evidence_and_notes(order, user, payload)
     add_record_full(order, user, ACTION_UPDATE, order.status, order.status,
                     comment=payload.audit_comment or '补正/更新预约单信息',
-                    audit_note=payload.audit_comment or '')
-    return enrich_order(order)
+                    audit_note=audit_note_text, exception_type=exc_type,
+                    exception_desc=exc_desc, evidence_count=evidence_count)
+    return {'ok': True, 'order': enrich_order(order)}
 
 
 @api.post('/appointments/{order_id}/submit')
@@ -617,7 +629,7 @@ def batch_action(request, payload: BatchActionIn):
 
         class _ItemPayload:
             def __init__(self):
-                self.version = 0
+                self.version = None
                 self.opinion = ''
                 self.audit_note = ''
                 self.attachments = []
@@ -626,11 +638,11 @@ def batch_action(request, payload: BatchActionIn):
                 self.exception_desc = ''
         ip = _ItemPayload()
         cv = payload.version_map.get(str(oid)) if payload.version_map else None
-        ip.version = int(cv) if cv is not None else 0
+        ip.version = int(cv) if cv is not None and cv != '' else None
         ip.opinion = item_opinion if item_opinion is not None else payload.opinion
         ip.audit_note = item_audit if item_audit is not None else payload.audit_note
-        ip.exception_type = item_exc_type if item_exc_type else payload.exception_type_map.get('default', '') if hasattr(payload, 'exception_type_map') else ''
-        ip.exception_desc = item_exc_desc if item_exc_desc else ''
+        ip.exception_type = item_exc_type if item_exc_type else getattr(payload, 'exception_type', '') or ''
+        ip.exception_desc = item_exc_desc if item_exc_desc else getattr(payload, 'exception_desc', '') or ''
         ip.comment = payload.comment or ''
 
         errors = validate_write_action(user, order, ip, rule)
