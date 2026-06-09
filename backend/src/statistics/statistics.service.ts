@@ -80,6 +80,7 @@ export class StatisticsService {
         id: p.id,
         planNo: p.planNo,
         patientName: p.patientName,
+        patientPhone: p.patientPhone,
         phone: p.patientPhone,
         status: p.status,
         currentHandler: userMap.get(p.currentHandler)?.name || '',
@@ -87,6 +88,12 @@ export class StatisticsService {
         deadline: p.deadline,
         dueStatus: ds,
         version: p.version,
+        followUpDate: p.followUpDate,
+        reminderComplete: p.reminderComplete,
+        materialsComplete: p.materialsComplete,
+        planComplete: p.planComplete,
+        correctCount: 0,
+        abnormalSummary: '',
       };
       if (ds === 'overdue') overdue.push(item);
       else if (ds === 'approaching') approaching.push(item);

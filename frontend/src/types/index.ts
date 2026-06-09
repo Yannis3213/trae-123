@@ -120,6 +120,12 @@ export interface TreatmentPlanItem {
   deadline: string;
   dueStatus: DueStatus;
   version: number;
+  followUpDate?: string;
+  reminderComplete?: boolean;
+  materialsComplete?: boolean;
+  planComplete?: boolean;
+  correctCount?: number;
+  abnormalSummary?: string;
 }
 
 export interface TreatmentPlanDetail extends TreatmentPlanItem {

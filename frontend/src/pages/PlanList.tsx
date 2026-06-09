@@ -56,6 +56,9 @@ export default function PlanList() {
 
   createEffect(() => {
     fetchList();
+    const handleRefresh = () => fetchList();
+    window.addEventListener('plan-list:refresh', handleRefresh);
+    return () => window.removeEventListener('plan-list:refresh', handleRefresh);
   });
 
   const handleSearch = () => {
@@ -196,6 +199,10 @@ export default function PlanList() {
                 <th>手机号</th>
                 <th>当前状态</th>
                 <th>当前处理人</th>
+                <th>复诊日期</th>
+                <th>提醒状态</th>
+                <th>补正次数</th>
+                <th>异常摘要</th>
                 <th>创建时间</th>
                 <th>截止日期</th>
                 <th>到期状态</th>
@@ -205,7 +212,7 @@ export default function PlanList() {
             <tbody>
               <Show when={!loading() && list().length === 0}>
                 <tr>
-                  <td colspan="10">
+                  <td colspan="14">
                     <div class="empty">暂无数据</div>
                   </td>
                 </tr>
@@ -232,6 +239,14 @@ export default function PlanList() {
                       </span>
                     </td>
                     <td>{item.currentHandler}</td>
+                    <td>{item.followUpDate ? formatDateOnly(item.followUpDate) : '-'}</td>
+                    <td>{item.reminderComplete ? '✅ 已完成' : '❌ 未完成'}</td>
+                    <td style={{ color: (item.correctCount || 0) > 0 ? '#fa8c16' : 'inherit' }}>
+                      {item.correctCount || 0}
+                    </td>
+                    <td style={{ color: item.abnormalSummary ? '#ff4d4f' : 'inherit' }}>
+                      {item.abnormalSummary || '-'}
+                    </td>
                     <td>{formatDate(item.createdAt)}</td>
                     <td>{formatDateOnly(item.deadline)}</td>
                     <td>

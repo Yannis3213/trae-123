@@ -169,6 +169,7 @@ export default function PlanDetail() {
       setEvidence('');
       setExceptionDesc('');
       show('success', '办理成功');
+      window.dispatchEvent(new CustomEvent('plan-list:refresh'));
       await fetchDetail();
     } catch (err: any) {
       let msg = err.message || '办理失败';
@@ -247,6 +248,7 @@ export default function PlanDetail() {
       await submitCorrection(body);
       show('success', '补正提交成功');
       setCorrectionModal({ ...correctionModal(), visible: false });
+      window.dispatchEvent(new CustomEvent('plan-list:refresh'));
       await fetchDetail();
     } catch (err: any) {
       let msg = err.message || '补正失败';

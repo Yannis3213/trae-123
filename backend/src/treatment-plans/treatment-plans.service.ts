@@ -184,6 +184,47 @@ export class TreatmentPlansService {
       });
     }
 
+    const planIds = plans.map((p) => p.id);
+
+    const correctCountsRaw = planIds.length
+      ? await this.processRecordsRepository
+          .createQueryBuilder('r')
+          .select('r.planId', 'planId')
+          .addSelect('COUNT(*)', 'count')
+          .where('r.planId IN (:...planIds)', { planIds })
+          .andWhere('r.action LIKE :prefix', { prefix: 'correct_%' })
+          .groupBy('r.planId')
+          .getRawMany()
+      : [];
+    const correctCountMap = new Map(correctCountsRaw.map((r) => [r.planId, Number(r.count)]));
+
+    const exceptionsRaw = planIds.length
+      ? await this.exceptionCausesRepository
+          .createQueryBuilder('e')
+          .select('e.planId', 'planId')
+          .addSelect('e.type', 'type')
+          .where('e.planId IN (:...planIds)', { planIds })
+          .andWhere('e.resolved = :resolved', { resolved: false })
+          .getRawMany()
+      : [];
+    const typeLabelMap: Record<string, string> = {
+      material: '材料',
+      permission: '权限',
+      timeline: '时限',
+      status: '状态',
+    };
+    const abnormalSummaryMap = new Map<number, string>();
+    for (const e of exceptionsRaw) {
+      const pid = Number(e.planId);
+      const label = typeLabelMap[e.type] || e.type;
+      const existing = abnormalSummaryMap.get(pid);
+      if (!existing) {
+        abnormalSummaryMap.set(pid, label);
+      } else if (!existing.includes(label)) {
+        abnormalSummaryMap.set(pid, existing + '、' + label);
+      }
+    }
+
     return plans.map((p: TreatmentPlan) => ({
       id: p.id,
       planNo: p.planNo,
@@ -196,6 +237,12 @@ export class TreatmentPlansService {
       deadline: p.deadline,
       dueStatus: this.computeDueStatus(p.deadline),
       version: p.version,
+      followUpDate: p.followUpDate,
+      reminderComplete: p.reminderComplete,
+      materialsComplete: p.materialsComplete,
+      planComplete: p.planComplete,
+      correctCount: correctCountMap.get(p.id) || 0,
+      abnormalSummary: abnormalSummaryMap.get(p.id) || '',
     }));
   }
 
@@ -251,6 +298,19 @@ export class TreatmentPlansService {
 
     const currentHandlerName = userMap.get(plan.currentHandler)?.name || '';
 
+    const correctCount = records.filter((r) => r.action && r.action.startsWith('correct_')).length;
+    const typeLabelMap: Record<string, string> = {
+      material: '材料',
+      permission: '权限',
+      timeline: '时限',
+      status: '状态',
+    };
+    const unresolvedTypes = exceptions
+      .filter((e) => !e.resolved)
+      .map((e) => typeLabelMap[e.type] || e.type);
+    const uniqueTypes = Array.from(new Set(unresolvedTypes));
+    const abnormalSummary = uniqueTypes.join('、');
+
     return {
       id: plan.id,
       planNo: plan.planNo,
@@ -266,6 +326,8 @@ export class TreatmentPlansService {
       reminderComplete: plan.reminderComplete,
       followUpDate: plan.followUpDate ? plan.followUpDate.toISOString() : '',
       followUpContent: plan.followUpContent || '',
+      correctCount,
+      abnormalSummary,
       patient: {
         id: plan.id,
         name: plan.patientName,
