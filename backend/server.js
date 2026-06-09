@@ -507,11 +507,18 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
     return res.status(400).json({ error: '批量处理仅支持接单(accept)或归档(verify)' });
   }
 
+  if (action === 'accept' && user.role !== ROLES.SUPERVISOR) {
+    return res.status(403).json({ error: '只有晨检审核主管可执行批量接单' });
+  }
+  if (action === 'verify' && user.role !== ROLES.PRINCIPAL) {
+    return res.status(403).json({ error: '只有幼儿园复核负责人可执行批量归档' });
+  }
+
   const logBatchFailure = db.prepare(`
     INSERT INTO processing_logs
     (id, record_id, action, action_by, action_by_role, action_by_name, previous_status, new_status,
      remark, correction_reason, reject_reason, evidence_summary, created_at)
-    VALUES (?, ?, 'batch_failed', ?, ?, ?, ?, ?, ?, ?, ?, ?, '批量处理被拦截', ?)
+    VALUES (?, ?, 'batch_failed', ?, ?, ?, ?, ?, ?, ?, ?, '批量处理被拦截', ?)
   `);
 
   const logBatchSuccess = db.prepare(`
@@ -602,7 +609,14 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
     try {
       const record = db.prepare('SELECT * FROM morning_check_records WHERE id = ?').get(recordId);
       if (!record) {
-        results.push({ id: recordId, success: false, reason: '记录不存在' });
+        results.push({
+          id: recordId,
+          child_id: null, child_name: null, class_name: null, child: null,
+          status: null, status_name: null, deadline_status: null,
+          current_handler: null, current_handler_role: null, current_handler_role_name: null,
+          health_status: null, abnormal_type: null, abnormal_reason: null, version: null,
+          success: false, reason: '记录不存在', new_version: null
+        });
         continue;
       }
 
@@ -635,21 +649,6 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
 
       if (action === 'verify' && record.status !== STATUS.ACCEPTED) {
         pushFailure(record, `状态为"${STATUS_NAMES[record.status]}"的记录不支持批量归档`);
-        continue;
-      }
-
-      if (user.role === ROLES.SUPERVISOR && action === 'accept') {
-        if (record.status !== STATUS.PENDING_REVIEW && record.status !== STATUS.PENDING_SUPERVISOR_CORRECTION) {
-          pushFailure(record, '只有待接单状态可批量接单');
-          continue;
-        }
-      } else if (user.role === ROLES.PRINCIPAL && action === 'verify') {
-        if (record.status !== STATUS.ACCEPTED) {
-          pushFailure(record, '只有已接单状态可批量归档');
-          continue;
-        }
-      } else {
-        pushFailure(record, `当前角色(${ROLE_NAMES[user.role]})不支持执行批量${action === 'accept' ? '接单' : '归档'}`);
         continue;
       }
 
@@ -698,7 +697,14 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
         pushFailure(record, err.message);
       }
     } catch (err) {
-      results.push({ id: recordId, success: false, reason: err.message });
+      const base = buildBaseResult(null);
+      results.push({
+        ...(base || { id: recordId }),
+        id: recordId,
+        success: false,
+        reason: err.message || '处理异常',
+        new_version: null
+      });
     }
   }
 

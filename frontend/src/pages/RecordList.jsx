@@ -18,7 +18,7 @@ export default function RecordList({ user, showToast }) {
   const [loading, setLoading] = useState(true);
   const [constants, setConstants] = useState(null);
 
-  const loadData = async () => {
+  const loadData = async (clearSelection = false) => {
     setLoading(true);
     try {
       const [listRes, constRes] = await Promise.all([
@@ -29,14 +29,16 @@ export default function RecordList({ user, showToast }) {
       setStats(listRes.stats);
       setConstants(constRes);
       if (listRes.records.length > 0) {
-        const currentActiveId = activeRecord ? activeRecord.id : null;
-        const stillExists = currentActiveId && listRes.records.find(r => r.id === currentActiveId);
-        setActiveRecord(stillExists || listRes.records[0]);
-        const nextSelected = new Set();
-        selectedIds.forEach(id => {
-          if (listRes.records.find(r => r.id === id)) nextSelected.add(id);
-        });
-        setSelectedIds(nextSelected);
+        setActiveRecord(listRes.records[0]);
+        if (clearSelection) {
+          setSelectedIds(new Set());
+        } else {
+          const nextSelected = new Set();
+          selectedIds.forEach(id => {
+            if (listRes.records.find(r => r.id === id)) nextSelected.add(id);
+          });
+          setSelectedIds(nextSelected);
+        }
       } else {
         setActiveRecord(null);
         setSelectedIds(new Set());
@@ -83,14 +85,13 @@ export default function RecordList({ user, showToast }) {
   const canCreate = user.role === 'registrar';
 
   const handleBatchDone = () => {
-    setSelectedIds(new Set());
     setShowBatch(false);
-    loadData();
+    loadData(true);
   };
 
   const handleCreateDone = () => {
     setShowCreate(false);
-    loadData();
+    loadData(true);
   };
 
   const deadlineClass = (s) => `deadline-badge deadline-${s}`;
