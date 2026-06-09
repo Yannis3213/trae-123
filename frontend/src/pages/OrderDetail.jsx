@@ -48,11 +48,17 @@ export default function OrderDetail() {
     order.status === 'pending_review' &&
     (!order.current_handler_name || order.current_handler_name === user.real_name)
 
+  const isOverdue = order.urgency_status === 'overdue'
+
   const canCorrect = user.role === 'optometrist' &&
-    (order.status === 'returned_for_correction' || order.status === 'pending_review')
+    (order.status === 'returned_for_correction' || order.status === 'pending_review') &&
+    (order.current_handler_name === user.real_name ||
+     order.submitted_by_name === user.real_name ||
+     !order.current_handler_name)
 
   const canSync = user.role === 'operations_manager' &&
-    order.status === 'review_approved'
+    order.status === 'review_approved' &&
+    (!order.current_handler_name || order.current_handler_name === user.real_name)
 
   const doUpload = async () => {
     if (!uploadFile) { alert('请选择文件'); return }
@@ -140,26 +146,34 @@ export default function OrderDetail() {
         <div className="left">
           <strong>当前可执行操作：</strong>
           {!canReview && !canCorrect && !canSync && <span style={{ color: '#8c8c8c' }}>无（角色或状态不匹配）</span>}
+          {isOverdue && (canReview || canSync) && (
+            <span style={{ color: '#cf1322', marginLeft: 12, fontSize: 12 }}>
+              ⚠️ 订单已逾期，推进动作将被后端拦截，请先补正材料
+            </span>
+          )}
         </div>
         <div className="right">
           {canReview && (
             <>
-              <button className="btn btn-success" onClick={() => { setReviewAction('approve'); setShowReview(true) }}>
-                ✓ 审核通过
+              <button className={`btn btn-success ${isOverdue ? 'btn-danger-outline' : ''}`}
+                onClick={() => { setReviewAction('approve'); setShowReview(true) }}>
+                ✓ 审核通过{isOverdue && '（逾期）'}
               </button>
-              <button className="btn btn-warning" onClick={() => { setReviewAction('return'); setShowReview(true) }}>
-                ↺ 退回补正
+              <button className={`btn btn-warning ${isOverdue ? 'btn-danger-outline' : ''}`}
+                onClick={() => { setReviewAction('return'); setShowReview(true) }}>
+                ↺ 退回补正{isOverdue && '（逾期）'}
               </button>
             </>
           )}
           {canCorrect && (
             <button className="btn btn-primary" onClick={() => setShowCorrect(true)}>
-              ✎ 补正资料并提交
+              ✎ 补正资料并提交{isOverdue && '（逾期可补正）'}
             </button>
           )}
           {canSync && (
-            <button className="btn btn-primary" onClick={() => { setReviewAction('sync'); setShowReview(true) }}>
-              ⇌ 同步订单
+            <button className={`btn btn-primary ${isOverdue ? 'btn-danger-outline' : ''}`}
+              onClick={() => { setReviewAction('sync'); setShowReview(true) }}>
+              ⇌ 同步订单{isOverdue && '（逾期）'}
             </button>
           )}
         </div>
@@ -398,8 +412,40 @@ export default function OrderDetail() {
                 </div>
               </div>
               {order.urgency_status === 'overdue' && (
-                <div className="alert-box error mt-16">
-                  ⚠️ 该订单已逾期，责任人为：<strong>{order.current_handler_name || '未分配'}</strong>
+                <div className="alert-box error mt-16" style={{ gap: 12, flexDirection: 'column' }}>
+                  <div>
+                    ⚠️ 该订单已逾期，责任人为：<strong>{order.current_handler_name || '未分配'}</strong>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#8c8c8c', lineHeight: 1.8 }}>
+                    <div>
+                      当前状态：<strong style={{ color: '#cf1322' }}>{renderStatus(order.status)}</strong>
+                      ，版本 v{order.version}
+                    </div>
+                    {order.status === 'pending_review' && order.review_due_at && (
+                      <div>审核截止：<strong>{dayjs(order.review_due_at).format('YYYY-MM-DD HH:mm')}</strong>
+                        （已逾期 {dayjs().diff(dayjs(order.review_due_at), 'day')} 天）</div>
+                    )}
+                    {order.status === 'review_approved' && order.sync_due_at && (
+                      <div>同步截止：<strong>{dayjs(order.sync_due_at).format('YYYY-MM-DD HH:mm')}</strong>
+                        （已逾期 {dayjs().diff(dayjs(order.sync_due_at), 'day')} 天）</div>
+                    )}
+                    {order.status === 'returned_for_correction' && order.review_due_at && (
+                      <div>审核截止：<strong>{dayjs(order.review_due_at).format('YYYY-MM-DD HH:mm')}</strong>
+                        （已逾期 {dayjs().diff(dayjs(order.review_due_at), 'day')} 天）</div>
+                    )}
+                    <div>
+                      未解决异常：
+                      <strong style={{ color: '#cf1322' }}>
+                        {order.exceptions.filter(e => !e.resolved).length}
+                      </strong> / 共 {order.exceptions.length} 条
+                    </div>
+                  </div>
+                  {order.defect_description && (
+                    <div style={{ fontSize: 12, padding: '6px 10px', background: '#fff7e6',
+                      border: '1px solid #ffd591', borderRadius: 4, color: '#ad6800' }}>
+                      📋 缺项说明：{order.defect_description}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -592,21 +592,6 @@ def correct_order(request, data: OrderCorrectSchema):
         return BatchResultSchema(order_id=data.order_id, order_no='', success=False, message='订单不存在')
 
     profile = request.user.profile
-    urgency = order.get_urgency_status()
-    if urgency == GlassesOrder.URGENCY_OVERDUE:
-        handler = order.current_handler
-        handler_name = handler.profile.real_name if handler else '未分配'
-        msg = (f'处理超时拦截：处理截止已逾期（责任人：{handler_name}），'
-               f'请先登记异常并手动处理后再推进')
-        add_exception(order, ExceptionReason.TYPE_TIMEOUT,
-                      f'correct拦截：{msg}', request.user)
-        add_audit_note(
-            order, request.user,
-            f'补正超时拦截（v{data.version}）：订单已逾期，责任人={handler_name}',
-            note_type='error'
-        )
-        return BatchResultSchema(order_id=order.id, order_no=order.order_no, success=False, message=msg)
-
     errors = validate_order_for_role(order, request.user, expected_version=data.version)
     if errors:
         add_audit_note(order, request.user, '补正拦截：' + '；'.join(errors), note_type='error')

@@ -995,6 +995,19 @@ table.data-table input[type="checkbox"] {
 
 .mt-8 { margin-top: 8px; }
 .mt-16 { margin-top: 16px; }
+.mb-8 { margin-bottom: 8px; }
+.mb-16 { margin-bottom: 16px; }
+
+.btn-danger-outline {
+  background: #fff1f0 !important;
+  color: #cf1322 !important;
+  border: 1px solid #ffa39e !important;
+}
+
+.btn-danger-outline:hover {
+  background: #ffccc7 !important;
+  border-color: #cf1322 !important;
+}
 
 .urgency-columns {
   display: grid;
