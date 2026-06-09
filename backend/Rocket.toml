@@ -1,0 +1,10 @@
+[default]
+address = "0.0.0.0"
+port = 8004
+limits = { json = "10MiB", form = "10MiB" }
+
+[development]
+ident = "Nursing Care Plan API"
+
+[production]
+ident = "Nursing Care Plan API"
