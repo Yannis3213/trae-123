@@ -69,43 +69,46 @@ impl CarePlanService {
              assessment_done, assessment_note, plan_done, plan_note,
              family_confirmed, family_note, created_at, updated_at FROM care_plans WHERE 1=1"
         );
-        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut param_idx = 1i32;
 
         match user.role {
             Role::Registrar => {
-                conditions.push("(status IN ('待派发', '处理中') AND current_handler = ?1)".to_string());
+                sql.push_str(&format!(" AND (status IN ('待派发', '处理中') AND current_handler = ?{})", param_idx));
+                params.push(Box::new(user.display_name.clone()));
+                param_idx += 1;
             }
             Role::Supervisor => {
-                conditions.push("status = '处理中'".to_string());
+                sql.push_str(" AND status = '处理中'");
             }
             Role::Director => {
-                conditions.push("status IN ('处理中', '已关闭')".to_string());
+                sql.push_str(" AND status IN ('处理中', '已关闭')");
             }
         }
 
         if let Some(s) = &query.status {
             if !s.is_empty() {
-                conditions.push(format!("status = '{}'", s));
+                sql.push_str(&format!(" AND status = ?{}", param_idx));
+                params.push(Box::new(s.clone()));
+                param_idx += 1;
             }
         }
         if let Some(kw) = &query.keyword {
             if !kw.is_empty() {
-                conditions.push(format!("(elder_name LIKE '%{}%' OR plan_no LIKE '%{}%' OR room_no LIKE '%{}%')", kw, kw, kw));
+                let like_kw = format!("%{}%", kw);
+                sql.push_str(&format!(" AND (elder_name LIKE ?{} OR plan_no LIKE ?{} OR room_no LIKE ?{})", param_idx, param_idx + 1, param_idx + 2));
+                params.push(Box::new(like_kw.clone()));
+                params.push(Box::new(like_kw.clone()));
+                params.push(Box::new(like_kw));
+                param_idx += 3;
             }
         }
 
-        for c in &conditions {
-            sql.push_str(" AND ");
-            sql.push_str(c);
-        }
         sql.push_str(" ORDER BY deadline ASC, created_at DESC");
 
         let mut stmt = conn.prepare(&sql).unwrap();
-        let plan_iter = if matches!(user.role, Role::Registrar) {
-            stmt.query_map(params![user.display_name], |row| self.row_to_plan(row))
-        } else {
-            stmt.query_map([], |row| self.row_to_plan(row))
-        }.unwrap();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let plan_iter = stmt.query_map(param_refs.as_slice(), |row| self.row_to_plan(row)).unwrap();
 
         let mut plans: Vec<CarePlan> = Vec::new();
         for p in plan_iter {
@@ -140,11 +143,14 @@ impl CarePlanService {
              FROM care_plans WHERE id = ?1"
         ).unwrap();
         let plan = stmt.query_row(params![plan_id.to_string()], |row| self.row_to_plan(row)).ok();
+        drop(conn);
 
         if let Some(p) = &plan {
             match user.role {
                 Role::Registrar => {
                     if p.current_handler != user.display_name && p.status != PlanStatus::PendingDispatch {
+                        self.write_failure(plan_id, user, "查看计划单详情", p.status.to_str(), "越权操作",
+                            &format!("越权访问：非当前处理人不可查看该计划单，当前处理人为{}", p.current_handler), None);
                         return None;
                     }
                 }

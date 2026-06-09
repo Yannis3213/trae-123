@@ -132,7 +132,15 @@
       <table>
         <thead>
           <tr>
-            <th style="width: 40px;"><input type="checkbox" v-model="allSelected" /></th>
+            <th style="width: 40px;">
+              <input
+                type="checkbox"
+                ref="selectAllRef"
+                v-model="allSelected"
+                :disabled="selectablePlans.length === 0"
+                :indeterminate="halfSelected"
+              />
+            </th>
             <th>计划单号</th>
             <th>老人姓名</th>
             <th>房间号</th>
@@ -186,8 +194,8 @@
             </td>
             <td style="font-size:12px;color:#909399;">v{{ p.version }}</td>
             <td>
-              <button class="btn btn-sm" :class="canHandle(p) ? 'btn-primary' : ''" :disabled="!canHandle(p)" @click="goDetail(p.id)">
-                {{ canHandle(p) ? '详情办理' : '查看详情' }}
+              <button class="btn btn-sm" :class="canHandle(p) ? 'btn-primary' : 'btn-secondary'" @click="goDetail(p.id)">
+                {{ canHandle(p) ? '📝 详情办理' : '👁️ 查看详情' }}
               </button>
             </td>
           </tr>
@@ -336,6 +344,7 @@ const selectedIds = ref<string[]>([])
 const currentTab = ref('all')
 const showCreate = ref(false)
 const batchResults = ref<BatchResult[]>([])
+const selectAllRef = ref<HTMLInputElement | null>(null)
 
 const query = reactive({
   status: '' as string,
@@ -364,15 +373,23 @@ const displayPlans = computed(() => {
   }
 })
 
+const selectablePlans = computed(() => displayPlans.value.filter(p => canSelect(p)))
+
 const allSelected = computed({
-  get: () => displayPlans.value.length > 0 && displayPlans.value.every(p => selectedIds.value.includes(p.id)),
+  get: () => selectablePlans.value.length > 0 && selectablePlans.value.every(p => selectedIds.value.includes(p.id)),
   set: (v: boolean) => {
     if (v) {
-      selectedIds.value = displayPlans.value.filter(p => canSelect(p)).map(p => p.id)
+      selectedIds.value = selectablePlans.value.map(p => p.id)
     } else {
-      selectedIds.value = []
+      selectedIds.value = selectedIds.value.filter(id => !selectablePlans.value.some(p => p.id === id))
     }
   },
+})
+
+const halfSelected = computed(() => {
+  if (selectablePlans.value.length === 0) return false
+  const selectedCount = selectablePlans.value.filter(p => selectedIds.value.includes(p.id)).length
+  return selectedCount > 0 && selectedCount < selectablePlans.value.length
 })
 
 const batchSuccessCount = computed(() => batchResults.value.filter(r => r.success).length)

@@ -183,6 +183,10 @@ impl Database {
             (Uuid::new_v4().to_string(), plan_p3.clone(), "提交至院区主任复核".into(), "王主管".into(), "护理计划审核主管".into(), "处理中".into(), "处理中".into(), Some("所有模块完成".into()), hours_ago(5)),
             (Uuid::new_v4().to_string(), plan_p5.clone(), "院区主任复核通过，归档关闭".into(), "张主任".into(), "养老护理院复核负责人".into(), "处理中".into(), "已关闭".into(), Some("月底集中复核通过".into()), hours_ago(240)),
             (Uuid::new_v4().to_string(), plan_p6.clone(), "主管退回登记员补正".into(), "王主管".into(), "护理计划审核主管".into(), "处理中".into(), "处理中".into(), Some("缺家属签字材料".into()), hours_ago(12)),
+            (Uuid::new_v4().to_string(), plan_p4.clone(), "提交复核（失败）".into(), "王主管".into(), "护理计划审核主管".into(), "处理中".into(), "处理中".into(), Some("缺少必填证据：护理计划未完成".into()), hours_ago(3)),
+            (Uuid::new_v4().to_string(), plan_p4.clone(), "批量提交复核（失败）".into(), "王主管".into(), "护理计划审核主管".into(), "处理中".into(), "处理中".into(), Some("逾期拦截：截止日期已过，责任人为王主管".into()), hours_ago(1)),
+            (Uuid::new_v4().to_string(), plan_p2.clone(), "查看计划单详情（失败）".into(), "李登记".into(), "护理计划登记员".into(), "处理中".into(), "处理中".into(), Some("越权访问：非当前处理人不可查看该计划单，当前处理人为王主管".into()), hours_ago(48)),
+            (Uuid::new_v4().to_string(), plan_p6.clone(), "退回补正（失败）".into(), "王主管".into(), "护理计划审核主管".into(), "处理中".into(), "处理中".into(), Some("版本冲突：当前版本已更新为 v2，请刷新后重试".into()), hours_ago(20)),
         ];
         for (id, pid, action, op, opr, prev, new, remark, time) in &records {
             conn.execute(
@@ -195,7 +199,10 @@ impl Database {
             (Uuid::new_v4().to_string(), plan_p3.clone(), "李登记".into(), "护理计划登记员".into(), "发起计划单".into(), "-".into(), "待派发".into(), true, None::<String>, None::<String>, hours_ago(96)),
             (Uuid::new_v4().to_string(), plan_p3.clone(), "李登记".into(), "护理计划登记员".into(), "派发计划单".into(), "待派发".into(), "处理中".into(), true, None::<String>, None::<String>, hours_ago(90)),
             (Uuid::new_v4().to_string(), plan_p4.clone(), "王主管".into(), "护理计划审核主管".into(), "提交复核".into(), "处理中".into(), "处理中".into(), false, Some("缺少必填证据：护理计划未完成".into()), None::<String>, hours_ago(3)),
+            (Uuid::new_v4().to_string(), plan_p4.clone(), "王主管".into(), "护理计划审核主管".into(), "批量提交复核".into(), "处理中".into(), "处理中".into(), false, Some("逾期拦截：截止日期已过，责任人为王主管".into()), None::<String>, hours_ago(1)),
             (Uuid::new_v4().to_string(), plan_p6.clone(), "王主管".into(), "护理计划审核主管".into(), "退回补正".into(), "处理中".into(), "处理中".into(), true, None::<String>, Some("缺家属签字材料".into()), hours_ago(12)),
+            (Uuid::new_v4().to_string(), plan_p6.clone(), "王主管".into(), "护理计划审核主管".into(), "退回补正".into(), "处理中".into(), "处理中".into(), false, Some("版本冲突：当前版本已更新为 v2，请刷新后重试".into()), None::<String>, hours_ago(20)),
+            (Uuid::new_v4().to_string(), plan_p2.clone(), "李登记".into(), "护理计划登记员".into(), "查看计划单详情".into(), "处理中".into(), "处理中".into(), false, Some("越权访问：非当前处理人不可查看该计划单，当前处理人为王主管".into()), None::<String>, hours_ago(48)),
             (Uuid::new_v4().to_string(), plan_p5.clone(), "张主任".into(), "养老护理院复核负责人".into(), "复核归档".into(), "处理中".into(), "已关闭".into(), true, None::<String>, Some("月底集中复核".into()), hours_ago(240)),
         ];
         for (id, pid, op, opr, action, prev, new, success, fail, remark, time) in &audits {
@@ -207,7 +214,10 @@ impl Database {
 
         let exceptions = vec![
             (Uuid::new_v4().to_string(), plan_p4.clone(), "缺少证据".into(), "护理计划模块未完成，无法提交复核".into(), "王主管".into(), false, hours_ago(3), None::<String>),
+            (Uuid::new_v4().to_string(), plan_p4.clone(), "批量逾期拦截".into(), "逾期拦截：截止日期已过，责任人为王主管".into(), "王主管".into(), false, hours_ago(1), None::<String>),
             (Uuid::new_v4().to_string(), plan_p6.clone(), "退回补正".into(), "缺家属签字材料，请补充后重新提交".into(), "王主管".into(), false, hours_ago(12), None::<String>),
+            (Uuid::new_v4().to_string(), plan_p6.clone(), "版本冲突".into(), "乐观锁校验失败：提交版本 v1 与当前版本 v2 不一致，请刷新后重试".into(), "王主管".into(), false, hours_ago(20), None::<String>),
+            (Uuid::new_v4().to_string(), plan_p2.clone(), "越权操作".into(), "越权访问：非当前处理人不可查看该计划单，当前处理人为王主管".into(), "李登记".into(), false, hours_ago(48), None::<String>),
             (Uuid::new_v4().to_string(), plan_p4.clone(), "临期预警".into(), "距截止日不足1天，请尽快完成护理计划模块".into(), "系统自动".into(), false, hours_ago(1), None::<String>),
         ];
         for (id, pid, etype, desc, op, resolved, time, rtime) in &exceptions {
