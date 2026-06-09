@@ -138,10 +138,26 @@ class Command(BaseCommand):
             from_status=OrderStatus.DRAFT, to_status=OrderStatus.PENDING,
             comment='紧急实验需尽快处理', opinion='加急'
         )
+        ProcessingRecord.objects.create(
+            order=overdue, actor=dean, action='批量拦截留痕',
+            from_status=OrderStatus.PENDING, to_status=OrderStatus.PENDING,
+            comment='时限问题：已超过截止时间，需先补正后再办理',
+            opinion='', audit_note='月底批量归档中被拦截',
+            exception_type=ExceptionType.TIMELIMIT,
+            exception_desc='已超过截止时间，批量归档被拦截，请先补正延期或说明情况',
+            evidence_count=0, batch_id='B7F3A2C1D4E5B6'
+        )
         ExceptionReason.objects.create(
             order=overdue, exception_type=ExceptionType.TIMELIMIT,
             description='预约单已超过截止时间，实验日期已过', reporter=admin
         )
+        ExceptionReason.objects.create(
+            order=overdue, exception_type=ExceptionType.TIMELIMIT,
+            description='【月底批量归档拦截】已超过截止时间，请先补正延期或说明情况后再单独办理',
+            reporter=dean
+        )
+        AuditNote.objects.create(order=overdue, author=dean,
+                                  content='月底批量处理（批次 B7F3A2C1D4E5B6）：该单因逾期被拦截，需实验助教重新确认实验日期或申请延期')
         orders.append(overdue)
         self.stdout.write(f'  ✅ {overdue.order_no}：{overdue.title}（已逾期）')
 

@@ -96,6 +96,11 @@ class ProcessingRecord(models.Model):
     to_status = models.CharField(max_length=20, choices=OrderStatus.choices)
     comment = models.TextField(default='', blank=True)
     opinion = models.TextField(default='', blank=True)
+    audit_note = models.TextField(default='', blank=True)
+    exception_type = models.CharField(max_length=20, choices=ExceptionType.choices, default='', blank=True)
+    exception_desc = models.TextField(default='', blank=True)
+    evidence_count = models.IntegerField(default=0)
+    batch_id = models.CharField(max_length=64, default='', blank=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:

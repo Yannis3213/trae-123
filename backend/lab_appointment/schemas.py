@@ -76,6 +76,11 @@ class ProcessingRecordOut(BaseModel):
     to_status: str
     comment: str
     opinion: str
+    audit_note: str = ''
+    exception_type: str = ''
+    exception_desc: str = ''
+    evidence_count: int = 0
+    batch_id: str = ''
     created_at: datetime
 
     class Config:
@@ -116,6 +121,7 @@ class AppointmentUpdateIn(BaseModel):
     deadline: Optional[datetime] = None
     status: Optional[str] = None
     audit_comment: Optional[str] = None
+    version: int = 0
 
 
 class AppointmentOut(AppointmentBase):
@@ -158,4 +164,9 @@ class BatchActionIn(BaseModel):
     action: str
     opinion: str = ''
     comment: str = ''
+    audit_note: str = ''
     version_map: dict = {}
+    opinion_map: dict = {}
+    audit_note_map: dict = {}
+    exception_type_map: dict = {}
+    exception_desc_map: dict = {}

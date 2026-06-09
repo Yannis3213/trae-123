@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, STATUS_LABELS, WARNING_LABELS, PRIORITY_LABELS, ROLE_LABELS, formatDate } from '$lib/api.js';
+  import { api, STATUS_LABELS, WARNING_LABELS, PRIORITY_LABELS, ROLE_LABELS, EXCEPTION_LABELS, formatDate } from '$lib/api.js';
   import { currentUser as userStore } from '$lib/stores';
 
   $: user = $userStore;
@@ -19,8 +19,16 @@
   let tab = 'all';
   let selected = new Set();
   let showCreate = false;
+  let showBatch = false;
   let batchResult = null;
   let batchLoading = false;
+  let batchForm = {
+    opinion: '',
+    audit_note: '',
+    comment: '',
+    exception_type: '',
+    exception_desc: ''
+  };
 
   $: filtered = orders;
 
@@ -68,9 +76,35 @@
     batchResult = null;
     try {
       const versionMap = {};
-      for (const o of orders) { if (selected.has(o.id)) versionMap[o.id] = o.version; }
-      batchResult = await api.batchAction({ ids: [...selected], action, version_map: versionMap });
+      const opinionMap = {};
+      const auditNoteMap = {};
+      const excTypeMap = {};
+      const excDescMap = {};
+      for (const o of orders) {
+        if (selected.has(o.id)) {
+          versionMap[o.id] = o.version;
+          opinionMap[o.id] = batchForm.opinion;
+          auditNoteMap[o.id] = batchForm.audit_note;
+          if (batchForm.exception_type && batchForm.exception_desc) {
+            excTypeMap[o.id] = batchForm.exception_type;
+            excDescMap[o.id] = batchForm.exception_desc;
+          }
+        }
+      }
+      batchResult = await api.batchAction({
+        ids: [...selected],
+        action,
+        opinion: batchForm.opinion,
+        audit_note: batchForm.audit_note,
+        comment: batchForm.comment,
+        version_map: versionMap,
+        opinion_map: opinionMap,
+        audit_note_map: auditNoteMap,
+        exception_type_map: excTypeMap,
+        exception_desc_map: excDescMap
+      });
       selected = new Set();
+      showBatch = false;
       load();
     } catch (e) { error = e.message; }
     batchLoading = false;
@@ -113,10 +147,23 @@
 {#if batchResult}
   <div class="alert {batchResult.success_count === batchResult.total ? 'alert-success' : 'alert-warning'}">
     批量处理结果：成功 {batchResult.success_count}/{batchResult.total} 条
-    <ul>
+    {#if batchResult.batch_id}
+      <span class="tag" style="margin-left:8px;background:#e0e7ff;color:#3730a3">批次 {batchResult.batch_id}</span>
+    {/if}
+    <div style="font-size:12px;color:var(--gray-500);margin-top:4px">
+      失败单据已在详情页留下拦截留痕（处理记录 + 异常原因），请逐条进入详情页补正。
+    </div>
+    <ul style="margin-top:8px">
       {#each batchResult.items as it}
-        <li>
-        ID#{it.id}：{it.ok ? '✅ ' + it.reason : '❌ ' + it.reason}
+        <li style="margin-bottom:4px">
+          ID#{it.id}（{orders.find(o => o.id === it.id)?.order_no || '已删除'}）：
+          {#if it.ok}
+            <span style="color:var(--success)">✅ {it.reason}</span>
+          {:else}
+            <span style="color:var(--danger)">
+              ❌ [{EXCEPTION_LABELS[it.type] || it.type || '未知'}] {it.reason}
+            </span>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -190,10 +237,10 @@
     </div>
     <div class="flex-gap">
       {#if selected.size > 0}
-        <span>已选 {selected.size} 条</span>
+        <span>已选 {selected.size} 条（各单据版本号将逐条传递）</span>
         {#if canBatchArchive()}
-          <button class="btn btn-success btn-sm" disabled={batchLoading} on:click={() => doBatch('archive_dean')}>批量归档</button>
-          <button class="btn btn-warning btn-sm" disabled={batchLoading} on:click={() => doBatch('return_dean')}>批量退回</button>
+          <button class="btn btn-success btn-sm" disabled={batchLoading} on:click={() => showBatch = 'archive'}>批量归档</button>
+          <button class="btn btn-warning btn-sm" disabled={batchLoading} on:click={() => showBatch = 'return'}>批量退回</button>
         {/if}
       {/if}
       {#if canCreate()}
@@ -314,6 +361,71 @@
       <div class="flex-gap" style="justify-content:flex-end">
         <button class="btn" on:click={() => showCreate = false}>取消</button>
         <button class="btn btn-primary" on:click={createOrder}>创建草稿</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showBatch}
+  <div class="modal-overlay" on:click|self={() => showBatch = false}>
+    <div class="modal">
+      <h3>
+        {showBatch === 'archive' ? '批量归档' : '批量退回'}
+        <span class="tag" style="margin-left:8px">共 {selected.size} 条</span>
+      </h3>
+      <div class="alert alert-info" style="margin-bottom:16px">
+        ⚠️ 系统将逐条执行并校验：每条单据都会校验版本、角色、处理人、状态和必填证据，
+        失败单据会在详情页留下「批量拦截留痕」处理记录和异常原因，不会整批放行。
+      </div>
+      <div class="form-row">
+        <div class="form-group full">
+          <label>统一处理意见（批量归档必填）*</label>
+          <textarea bind:value={batchForm.opinion} placeholder="填写统一的处理意见..." />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group full">
+          <label>统一审计备注（批量归档必填）*</label>
+          <textarea bind:value={batchForm.audit_note} placeholder="填写审计备注，用于事后追溯..." />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>{showBatch === 'return' ? '退回异常类型' : '异常类型（可选）'}</label>
+          <select bind:value={batchForm.exception_type}>
+            <option value="">不标记</option>
+            <option value="MATERIAL">材料问题</option>
+            <option value="PERMISSION">权限问题</option>
+            <option value="TIMELIMIT">时限问题</option>
+            <option value="STATUS">状态问题</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>备注/留言</label>
+          <input type="text" bind:value={batchForm.comment} />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group full">
+          <label>{showBatch === 'return' ? '退回原因说明（必填）' : '异常说明（可选）'}</label>
+          <textarea bind:value={batchForm.exception_desc} placeholder="如勾选异常类型则需填写说明..." />
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--gray-500);margin-bottom:12px">
+        ✅ 已勾选单据：
+        {#each Array.from(selected) as sid}
+          <span class="tag">{orders.find(o => o.id === sid)?.order_no || sid}</span>
+        {/each}
+        （每条单据的当前版本号将自动逐条传递，避免旧版本/重复提交）
+      </div>
+      <div class="flex-gap" style="justify-content:flex-end">
+        <button class="btn" on:click={() => showBatch = false}>取消</button>
+        <button
+          class={showBatch === 'archive' ? 'btn btn-success' : 'btn btn-warning'}
+          disabled={batchLoading}
+          on:click={() => doBatch(showBatch === 'archive' ? 'archive_dean' : 'return_dean')}>
+          {batchLoading ? '处理中...' : `确认${showBatch === 'archive' ? '归档' : '退回'}`}
+        </button>
       </div>
     </div>
   </div>

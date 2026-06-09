@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional, List
 from django.http import HttpRequest
@@ -19,6 +20,85 @@ from .schemas import (
 
 
 api = NinjaAPI(title='高校实验室-月底集中处理实验预约单系统', version='1.0.0')
+
+ACTION_SUBMIT = '提交复核'
+ACTION_PROCESS = '办理中核验'
+ACTION_REVIEW = '复核归档'
+ACTION_RETURN = '退回补正'
+ACTION_UPDATE = '信息更新/补正'
+ACTION_CREATE = '创建'
+ACTION_BATCH_ARCHIVE = '批量归档'
+ACTION_BATCH_RETURN = '批量退回'
+ACTION_BATCH_BLOCK = '批量拦截留痕'
+
+
+class WriteActionRule:
+    def __init__(self, action_name, allowed_roles, allowed_statuses,
+                 require_owner=False, require_handler=True,
+                 require_opinion=True, require_audit_note=True,
+                 require_evidence_types=None, block_if_overdue=False):
+        self.action_name = action_name
+        self.allowed_roles = allowed_roles
+        self.allowed_statuses = allowed_statuses
+        self.require_owner = require_owner
+        self.require_handler = require_handler
+        self.require_opinion = require_opinion
+        self.require_audit_note = require_audit_note
+        self.require_evidence_types = require_evidence_types or []
+        self.block_if_overdue = block_if_overdue
+
+
+RULES = {
+    'submit': WriteActionRule(
+        ACTION_SUBMIT, allowed_roles=[Role.TA],
+        allowed_statuses=[OrderStatus.DRAFT, OrderStatus.RETURNED],
+        require_owner=True, require_handler=False,
+        require_opinion=True, require_audit_note=False,
+        require_evidence_types=['safety'], block_if_overdue=False,
+    ),
+    'process': WriteActionRule(
+        ACTION_PROCESS, allowed_roles=[Role.ADMIN],
+        allowed_statuses=[OrderStatus.PENDING],
+        require_owner=False, require_handler=True,
+        require_opinion=True, require_audit_note=True,
+        require_evidence_types=[], block_if_overdue=False,
+    ),
+    'review': WriteActionRule(
+        ACTION_REVIEW, allowed_roles=[Role.DEAN],
+        allowed_statuses=[OrderStatus.PENDING],
+        require_owner=False, require_handler=True,
+        require_opinion=True, require_audit_note=True,
+        require_evidence_types=[], block_if_overdue=True,
+    ),
+    'return': WriteActionRule(
+        ACTION_RETURN, allowed_roles=[Role.ADMIN, Role.DEAN],
+        allowed_statuses=[OrderStatus.PENDING],
+        require_owner=False, require_handler=False,
+        require_opinion=False, require_audit_note=False,
+        require_evidence_types=[], block_if_overdue=False,
+    ),
+    'update': WriteActionRule(
+        ACTION_UPDATE, allowed_roles=[Role.TA],
+        allowed_statuses=[OrderStatus.DRAFT, OrderStatus.RETURNED],
+        require_owner=True, require_handler=False,
+        require_opinion=False, require_audit_note=False,
+        require_evidence_types=[], block_if_overdue=False,
+    ),
+    'batch_archive': WriteActionRule(
+        ACTION_BATCH_ARCHIVE, allowed_roles=[Role.DEAN],
+        allowed_statuses=[OrderStatus.PENDING],
+        require_owner=False, require_handler=True,
+        require_opinion=True, require_audit_note=True,
+        require_evidence_types=[], block_if_overdue=True,
+    ),
+    'batch_return': WriteActionRule(
+        ACTION_BATCH_RETURN, allowed_roles=[Role.DEAN],
+        allowed_statuses=[OrderStatus.PENDING],
+        require_owner=False, require_handler=False,
+        require_opinion=False, require_audit_note=False,
+        require_evidence_types=[], block_if_overdue=False,
+    ),
+}
 
 
 def get_current_user(request: HttpRequest) -> User:
@@ -76,55 +156,126 @@ def enrich_order(order: LabAppointment) -> dict:
     return data
 
 
-def validate_review(user: User, order: LabAppointment, payload: ActionIn):
+def validate_write_action(user: User, order: LabAppointment, payload, rule: WriteActionRule) -> list:
     errors = []
-    if order.current_handler_id and order.current_handler_id != user.id:
+    if user.role not in rule.allowed_roles:
         errors.append({
-            'type': 'PERMISSION',
-            'msg': f'权限问题：当前处理人是 {order.current_handler.name}，你无权操作'
+            'type': ExceptionType.PERMISSION,
+            'msg': f'权限问题：{user.name}({user.get_role_display()}) 无权执行【{rule.action_name}】'
         })
-    if order.deadline and order.deadline < timezone.now() and order.status != OrderStatus.ARCHIVED:
+    if rule.require_owner and order.owner_id and order.owner_id != user.id:
         errors.append({
-            'type': 'TIMELIMIT',
-            'msg': '时限问题：该单据已超过截止时间，需先补正后再提交'
+            'type': ExceptionType.PERMISSION,
+            'msg': f'权限问题：该单据归属 {order.owner.name}，仅本人可执行【{rule.action_name}】'
         })
-    if not payload.opinion.strip():
+    if rule.require_handler and order.current_handler_id and order.current_handler_id != user.id:
         errors.append({
-            'type': 'MATERIAL',
-            'msg': '材料问题：处理意见不能为空'
+            'type': ExceptionType.PERMISSION,
+            'msg': f'权限问题：当前处理人是 {order.current_handler.name}，请先转办再执行【{rule.action_name}】'
         })
-    if not payload.audit_note.strip():
+    if order.status not in rule.allowed_statuses:
         errors.append({
-            'type': 'MATERIAL',
-            'msg': '材料问题：审计备注不能为空'
+            'type': ExceptionType.STATUS,
+            'msg': f'状态问题：当前状态【{order.get_status_display()}】不允许执行【{rule.action_name}】'
         })
-    required_evidence = {
-        OrderStatus.DRAFT: ['safety_confirm'],
-        OrderStatus.PENDING: ['audit_note', 'opinion'],
-    }
-    need = required_evidence.get(order.status, [])
-    if 'safety_confirm' in need and not order.safety_confirmed and not any(
-        a.evidence_type == 'safety' for a in order.attachments.all()
-    ) and not any(
-        a.evidence_type == 'safety' for a in payload.attachments
-    ):
+    client_version = getattr(payload, 'version', None)
+    if client_version is not None and client_version > 0 and client_version != order.version:
         errors.append({
-            'type': 'MATERIAL',
-            'msg': '材料问题：缺少安全确认证据（安全确认书或勾选）'
+            'type': ExceptionType.STATUS,
+            'msg': f'状态冲突/旧版本提交：当前v{order.version}，提交v{client_version}，请刷新后重试'
         })
-    if 'audit_note' in need and not payload.audit_note.strip():
+    if rule.block_if_overdue and order.deadline and order.deadline < timezone.now():
         errors.append({
-            'type': 'MATERIAL',
-            'msg': '材料问题：复核阶段必须填写审计备注'
+            'type': ExceptionType.TIMELIMIT,
+            'msg': f'时限问题：已超过截止时间 {order.deadline.strftime("%Y-%m-%d %H:%M")}，需先补正后再办理'
         })
+    if rule.require_opinion and not (getattr(payload, 'opinion', '') or '').strip():
+        errors.append({
+            'type': ExceptionType.MATERIAL,
+            'msg': '材料问题：【处理意见】不能为空'
+        })
+    if rule.require_audit_note and not (getattr(payload, 'audit_note', '') or '').strip():
+        errors.append({
+            'type': ExceptionType.MATERIAL,
+            'msg': '材料问题：【审计备注】不能为空，用于事后追溯'
+        })
+    for etype in rule.require_evidence_types:
+        has_evidence = False
+        if etype == 'safety':
+            if order.safety_confirmed:
+                has_evidence = True
+            else:
+                if any(a.evidence_type == 'safety' for a in order.attachments.all()):
+                    has_evidence = True
+                payload_atts = getattr(payload, 'attachments', []) or []
+                if any(getattr(a, 'evidence_type', '') == 'safety' for a in payload_atts):
+                    has_evidence = True
+        if not has_evidence:
+            errors.append({
+                'type': ExceptionType.MATERIAL,
+                'msg': f'材料问题：缺少必填证据【{etype}】'
+            })
+    if rule.action_name in (ACTION_RETURN, ACTION_BATCH_RETURN):
+        if not (getattr(payload, 'comment', '') or '').strip() \
+                and not (getattr(payload, 'exception_desc', '') or '').strip():
+            errors.append({
+                'type': ExceptionType.MATERIAL,
+                'msg': '材料问题：退回必须说明退回原因(comment 或 exception_desc)'
+            })
     return errors
 
 
-def add_record(order, user, action, from_status, to_status, comment='', opinion=''):
+def persist_evidence_and_notes(order, user, payload):
+    evidence_count = 0
+    for att in getattr(payload, 'attachments', []) or []:
+        Attachment.objects.create(
+            order=order, file_name=att.file_name,
+            file_type=getattr(att, 'file_type', 'text/plain'),
+            evidence_type=getattr(att, 'evidence_type', ''),
+            description=getattr(att, 'description', ''),
+            uploaded_by=user
+        )
+        evidence_count += 1
+    audit_note_text = (getattr(payload, 'audit_note', '') or '').strip()
+    if audit_note_text:
+        AuditNote.objects.create(order=order, author=user, content=audit_note_text)
+    exc_type = (getattr(payload, 'exception_type', '') or '').strip()
+    exc_desc = (getattr(payload, 'exception_desc', '') or '').strip()
+    if exc_type and exc_desc:
+        ExceptionReason.objects.create(
+            order=order, exception_type=exc_type,
+            description=exc_desc, reporter=user
+        )
+    return evidence_count, audit_note_text, exc_type, exc_desc
+
+
+def add_record_full(order, user, action, from_status, to_status,
+                    comment='', opinion='', audit_note='',
+                    exception_type='', exception_desc='',
+                    evidence_count=0, batch_id=''):
     ProcessingRecord.objects.create(
         order=order, actor=user, action=action,
         from_status=from_status, to_status=to_status,
-        comment=comment, opinion=opinion
+        comment=comment, opinion=opinion, audit_note=audit_note,
+        exception_type=exception_type, exception_desc=exception_desc,
+        evidence_count=evidence_count, batch_id=batch_id
+    )
+
+
+def add_block_record(order, user, action, errors, batch_id=''):
+    combined_msg = '；'.join([e['msg'] for e in errors])
+    first_type = errors[0]['type'] if errors else ExceptionType.STATUS
+    ProcessingRecord.objects.create(
+        order=order, actor=user, action=action,
+        from_status=order.status, to_status=order.status,
+        comment=combined_msg, opinion='', audit_note='',
+        exception_type=first_type, exception_desc=combined_msg,
+        evidence_count=0, batch_id=batch_id
+    )
+    ExceptionReason.objects.get_or_create(
+        order=order, exception_type=first_type,
+        description=combined_msg, reporter=user,
+        resolved=False
     )
 
 
@@ -224,6 +375,9 @@ def get_appointment(request, order_id: int):
             'id': r.id, 'actor_id': r.actor_id, 'actor_name': r.actor.name,
             'action': r.action, 'from_status': r.from_status, 'to_status': r.to_status,
             'comment': r.comment, 'opinion': r.opinion, 'created_at': r.created_at,
+            'audit_note': r.audit_note, 'exception_type': r.exception_type,
+            'exception_desc': r.exception_desc, 'evidence_count': r.evidence_count,
+            'batch_id': r.batch_id,
         })
     notes = []
     for n in order.audit_notes.select_related('author').all():
@@ -250,6 +404,8 @@ def create_appointment(request, payload: AppointmentIn):
     user = get_current_user(request)
     if user.role not in (Role.TA, Role.ADMIN):
         raise HttpError(403, '只有实验助教或实验室管理员可以创建预约单')
+    if not payload.title.strip() or not payload.experiment_name.strip():
+        raise HttpError(400, '材料问题：标题和实验名称均不能为空')
     import random
     order_no = f'LAB-{timezone.now().strftime("%Y%m%d")}-{random.randint(1000,9999)}'
     while LabAppointment.objects.filter(order_no=order_no).exists():
@@ -272,7 +428,8 @@ def create_appointment(request, payload: AppointmentIn):
         owner=user,
         current_handler=user,
     )
-    add_record(order, user, '创建', OrderStatus.DRAFT, OrderStatus.DRAFT, '创建预约单')
+    add_record_full(order, user, ACTION_CREATE, OrderStatus.DRAFT, OrderStatus.DRAFT,
+                    comment='创建预约单草稿')
     return enrich_order(order)
 
 
@@ -283,19 +440,21 @@ def update_appointment(request, order_id: int, payload: AppointmentUpdateIn):
         order = LabAppointment.objects.select_for_update().get(id=order_id)
     except LabAppointment.DoesNotExist:
         raise HttpError(404, '预约单不存在')
-    if user.role != Role.TA and order.owner_id != user.id:
-        raise HttpError(403, '只有建单人可以编辑基础信息')
-    if order.status not in (OrderStatus.DRAFT, OrderStatus.RETURNED):
-        raise HttpError(400, '状态问题：只有草稿或退回补正状态才能编辑')
+    rule = RULES['update']
+    errors = validate_write_action(user, order, payload, rule)
+    if errors:
+        raise HttpError(400, '；'.join(e['msg'] for e in errors))
     update_fields = payload.dict(exclude_unset=True)
-    if 'audit_comment' in update_fields:
-        del update_fields['audit_comment']
+    for skip_key in ('audit_comment', 'status', 'version'):
+        update_fields.pop(skip_key, None)
     for k, v in update_fields.items():
         if hasattr(order, k) and v is not None:
             setattr(order, k, v)
     order.version += 1
     order.save()
-    add_record(order, user, '更新', order.status, order.status, payload.audit_comment or '更新预约单信息')
+    add_record_full(order, user, ACTION_UPDATE, order.status, order.status,
+                    comment=payload.audit_comment or '补正/更新预约单信息',
+                    audit_note=payload.audit_comment or '')
     return enrich_order(order)
 
 
@@ -306,38 +465,25 @@ def submit_appointment(request, order_id: int, payload: ActionIn):
         order = LabAppointment.objects.select_for_update().get(id=order_id)
     except LabAppointment.DoesNotExist:
         raise HttpError(404, '预约单不存在')
-    if order.version != payload.version:
-        raise HttpError(409, f'状态冲突：当前版本 v{order.version}，你提交的是 v{payload.version}，请刷新重试')
-    if user.role != Role.TA:
-        raise HttpError(403, '权限问题：只有实验助教可以提交复核')
-    if order.owner_id != user.id:
-        raise HttpError(403, '权限问题：只能提交自己创建的预约单')
-    if order.status not in (OrderStatus.DRAFT, OrderStatus.RETURNED):
-        raise HttpError(400, '状态问题：当前状态不能提交复核')
+    rule = RULES['submit']
+    errors = validate_write_action(user, order, payload, rule)
+    if errors:
+        add_block_record(order, user, ACTION_SUBMIT + '校验拦截', errors)
+        return {'ok': False, 'errors': errors}
+    evidence_count, audit_note_text, exc_type, exc_desc = persist_evidence_and_notes(order, user, payload)
     admins = User.objects.filter(role=Role.ADMIN)
     next_handler = admins.first() if admins.exists() else None
     if not next_handler:
         raise HttpError(500, '系统中没有实验室管理员账号')
-    if not order.safety_confirmed and not any(
-        a.evidence_type == 'safety' for a in order.attachments.all()
-    ):
-        raise HttpError(400, '材料问题：缺少安全确认，请勾选或上传安全确认书')
-    if not order.experiment_name.strip() or not order.title.strip():
-        raise HttpError(400, '材料问题：标题和实验名称不能为空')
-    for att in payload.attachments:
-        Attachment.objects.create(
-            order=order, file_name=att.file_name, file_type=att.file_type,
-            evidence_type=att.evidence_type, description=att.description,
-            uploaded_by=user
-        )
-    if payload.audit_note.strip():
-        AuditNote.objects.create(order=order, author=user, content=payload.audit_note)
     old = order.status
     order.status = OrderStatus.PENDING
     order.current_handler = next_handler
     order.version += 1
     order.save()
-    add_record(order, user, '提交复核', old, OrderStatus.PENDING, payload.comment, payload.opinion)
+    add_record_full(order, user, ACTION_SUBMIT, old, OrderStatus.PENDING,
+                    comment=payload.comment, opinion=payload.opinion,
+                    audit_note=audit_note_text, exception_type=exc_type,
+                    exception_desc=exc_desc, evidence_count=evidence_count)
     return {'ok': True, 'order': enrich_order(order)}
 
 
@@ -348,30 +494,12 @@ def process_appointment(request, order_id: int, payload: ActionIn):
         order = LabAppointment.objects.select_for_update().get(id=order_id)
     except LabAppointment.DoesNotExist:
         raise HttpError(404, '预约单不存在')
-    if order.version != payload.version:
-        raise HttpError(409, f'状态冲突：当前版本 v{order.version}，你提交的是 v{payload.version}，请刷新重试')
-    if user.role != Role.ADMIN:
-        raise HttpError(403, '权限问题：只有实验室管理员可以办理预约单')
-    if order.current_handler_id and order.current_handler_id != user.id:
-        raise HttpError(403, f'权限问题：当前处理人是 {order.current_handler.name}')
-    if order.status != OrderStatus.PENDING:
-        raise HttpError(400, '状态问题：只有待复核状态可以办理')
-    errors = validate_review(user, order, payload)
+    rule = RULES['process']
+    errors = validate_write_action(user, order, payload, rule)
     if errors:
+        add_block_record(order, user, ACTION_PROCESS + '校验拦截', errors)
         return {'ok': False, 'errors': errors}
-    for att in payload.attachments:
-        Attachment.objects.create(
-            order=order, file_name=att.file_name, file_type=att.file_type,
-            evidence_type=att.evidence_type, description=att.description,
-            uploaded_by=user
-        )
-    if payload.audit_note.strip():
-        AuditNote.objects.create(order=order, author=user, content=payload.audit_note)
-    if payload.exception_type.strip() and payload.exception_desc.strip():
-        ExceptionReason.objects.create(
-            order=order, exception_type=payload.exception_type,
-            description=payload.exception_desc, reporter=user
-        )
+    evidence_count, audit_note_text, exc_type, exc_desc = persist_evidence_and_notes(order, user, payload)
     deans = User.objects.filter(role=Role.DEAN)
     next_handler = deans.first() if deans.exists() else None
     if not next_handler:
@@ -380,7 +508,10 @@ def process_appointment(request, order_id: int, payload: ActionIn):
     order.current_handler = next_handler
     order.version += 1
     order.save()
-    add_record(order, user, '办理中核验', old, order.status, payload.comment, payload.opinion)
+    add_record_full(order, user, ACTION_PROCESS, old, order.status,
+                    comment=payload.comment, opinion=payload.opinion,
+                    audit_note=audit_note_text, exception_type=exc_type,
+                    exception_desc=exc_desc, evidence_count=evidence_count)
     return {'ok': True, 'order': enrich_order(order)}
 
 
@@ -391,36 +522,21 @@ def review_appointment(request, order_id: int, payload: ActionIn):
         order = LabAppointment.objects.select_for_update().get(id=order_id)
     except LabAppointment.DoesNotExist:
         raise HttpError(404, '预约单不存在')
-    if order.version != payload.version:
-        raise HttpError(409, f'状态冲突：当前版本 v{order.version}，你提交的是 v{payload.version}，请刷新重试')
-    if user.role != Role.DEAN:
-        raise HttpError(403, '权限问题：只有学院负责人可以进行最终复核')
-    if order.current_handler_id and order.current_handler_id != user.id:
-        raise HttpError(403, f'权限问题：当前处理人是 {order.current_handler.name}')
-    if order.status != OrderStatus.PENDING:
-        raise HttpError(400, '状态问题：只有待复核状态可以复核')
-    errors = validate_review(user, order, payload)
+    rule = RULES['review']
+    errors = validate_write_action(user, order, payload, rule)
     if errors:
+        add_block_record(order, user, ACTION_REVIEW + '校验拦截', errors)
         return {'ok': False, 'errors': errors}
-    for att in payload.attachments:
-        Attachment.objects.create(
-            order=order, file_name=att.file_name, file_type=att.file_type,
-            evidence_type=att.evidence_type, description=att.description,
-            uploaded_by=user
-        )
-    if payload.audit_note.strip():
-        AuditNote.objects.create(order=order, author=user, content=payload.audit_note)
-    if payload.exception_type.strip() and payload.exception_desc.strip():
-        ExceptionReason.objects.create(
-            order=order, exception_type=payload.exception_type,
-            description=payload.exception_desc, reporter=user
-        )
+    evidence_count, audit_note_text, exc_type, exc_desc = persist_evidence_and_notes(order, user, payload)
     old = order.status
     order.status = OrderStatus.ARCHIVED
     order.current_handler = None
     order.version += 1
     order.save()
-    add_record(order, user, '复核归档', old, OrderStatus.ARCHIVED, payload.comment, payload.opinion)
+    add_record_full(order, user, ACTION_REVIEW, old, OrderStatus.ARCHIVED,
+                    comment=payload.comment, opinion=payload.opinion,
+                    audit_note=audit_note_text, exception_type=exc_type,
+                    exception_desc=exc_desc, evidence_count=evidence_count)
     return {'ok': True, 'order': enrich_order(order)}
 
 
@@ -431,32 +547,28 @@ def return_appointment(request, order_id: int, payload: ActionIn):
         order = LabAppointment.objects.select_for_update().get(id=order_id)
     except LabAppointment.DoesNotExist:
         raise HttpError(404, '预约单不存在')
-    if order.version != payload.version:
-        raise HttpError(409, f'状态冲突：当前版本 v{order.version}，你提交的是 v{payload.version}，请刷新重试')
-    if user.role not in (Role.ADMIN, Role.DEAN):
-        raise HttpError(403, '权限问题：只有管理员或负责人可以退回')
-    if order.status != OrderStatus.PENDING:
-        raise HttpError(400, '状态问题：只有待复核状态可以退回')
-    if not payload.comment.strip():
-        raise HttpError(400, '材料问题：退回必须填写退回原因')
-    if payload.exception_type.strip() and payload.exception_desc.strip():
+    rule = RULES['return']
+    errors = validate_write_action(user, order, payload, rule)
+    if errors:
+        add_block_record(order, user, ACTION_RETURN + '校验拦截', errors)
+        return {'ok': False, 'errors': errors}
+    evidence_count, audit_note_text, exc_type, exc_desc = persist_evidence_and_notes(order, user, payload)
+    final_exc_type = exc_type or ExceptionType.STATUS
+    final_exc_desc = exc_desc or payload.comment or '退回补正'
+    if not exc_type and not exc_desc:
         ExceptionReason.objects.create(
-            order=order, exception_type=payload.exception_type,
-            description=payload.exception_desc, reporter=user
+            order=order, exception_type=final_exc_type,
+            description=final_exc_desc, reporter=user
         )
-    elif payload.comment.strip():
-        ExceptionReason.objects.create(
-            order=order, exception_type=payload.exception_type or ExceptionType.STATUS,
-            description=payload.comment, reporter=user
-        )
-    if payload.audit_note.strip():
-        AuditNote.objects.create(order=order, author=user, content=payload.audit_note)
     old = order.status
     order.status = OrderStatus.RETURNED
     order.current_handler = order.owner
     order.version += 1
     order.save()
-    add_record(order, user, '退回补正', old, OrderStatus.RETURNED, payload.comment, payload.opinion)
+    add_record_full(order, user, ACTION_RETURN, old, OrderStatus.RETURNED,
+                    comment=payload.comment, opinion=payload.opinion,
+                    audit_note=audit_note_text, exception_type=final_exc_type,
+                    exception_desc=final_exc_desc, evidence_count=evidence_count)
     return {'ok': True, 'order': enrich_order(order)}
 
 
@@ -471,59 +583,102 @@ def add_exception(request, order_id: int, payload: ExceptionReasonIn):
         order=order, exception_type=payload.exception_type,
         description=payload.description, reporter=user
     )
+    add_record_full(order, user, '异常登记', order.status, order.status,
+                    exception_type=payload.exception_type, exception_desc=payload.description)
     return {'ok': True, 'id': exc.id}
 
 
 @api.post('/appointments/batch')
 def batch_action(request, payload: BatchActionIn):
     user = get_current_user(request)
+    rule_key = None
+    if payload.action == 'archive_dean':
+        rule_key = 'batch_archive'
+    elif payload.action == 'return_dean':
+        rule_key = 'batch_return'
+    if rule_key not in RULES:
+        return {'ok': False, 'success_count': 0, 'total': 0, 'items': [
+            {'id': 0, 'ok': False, 'reason': f'权限问题：未知批量动作 {payload.action}', 'type': ExceptionType.PERMISSION}
+        ]}
+    rule = RULES[rule_key]
+    batch_id = 'B' + uuid.uuid4().hex[:12].upper()
     results = []
+
     for oid in payload.ids:
         try:
             order = LabAppointment.objects.select_for_update().get(id=oid)
         except LabAppointment.DoesNotExist:
-            results.append({'id': oid, 'ok': False, 'reason': '预约单不存在'})
+            results.append({'id': oid, 'ok': False, 'reason': '预约单不存在', 'type': ExceptionType.STATUS})
             continue
-        client_version = payload.version_map.get(str(oid)) if payload.version_map else None
-        if client_version is not None and int(client_version) != order.version:
-            results.append({
-                'id': oid, 'ok': False,
-                'reason': f'状态冲突/旧版本：当前v{order.version}，提交v{client_version}'
-            })
+        item_opinion = payload.opinion_map.get(str(oid)) if payload.opinion_map else None
+        item_audit = payload.audit_note_map.get(str(oid)) if payload.audit_note_map else None
+        item_exc_type = payload.exception_type_map.get(str(oid)) if payload.exception_type_map else None
+        item_exc_desc = payload.exception_desc_map.get(str(oid)) if payload.exception_desc_map else None
+
+        class _ItemPayload:
+            def __init__(self):
+                self.version = 0
+                self.opinion = ''
+                self.audit_note = ''
+                self.attachments = []
+                self.comment = ''
+                self.exception_type = ''
+                self.exception_desc = ''
+        ip = _ItemPayload()
+        cv = payload.version_map.get(str(oid)) if payload.version_map else None
+        ip.version = int(cv) if cv is not None else 0
+        ip.opinion = item_opinion if item_opinion is not None else payload.opinion
+        ip.audit_note = item_audit if item_audit is not None else payload.audit_note
+        ip.exception_type = item_exc_type if item_exc_type else payload.exception_type_map.get('default', '') if hasattr(payload, 'exception_type_map') else ''
+        ip.exception_desc = item_exc_desc if item_exc_desc else ''
+        ip.comment = payload.comment or ''
+
+        errors = validate_write_action(user, order, ip, rule)
+        if errors:
+            add_block_record(order, user, ACTION_BATCH_BLOCK, errors, batch_id=batch_id)
+            reason = '；'.join(e['msg'] for e in errors)
+            results.append({'id': oid, 'ok': False, 'reason': reason, 'type': errors[0]['type']})
             continue
-        if payload.action == 'archive_dean' and user.role == Role.DEAN:
-            if order.status != OrderStatus.PENDING:
-                results.append({'id': oid, 'ok': False, 'reason': f'状态问题：{order.get_status_display()}不能归档'})
-                continue
-            if order.current_handler_id and order.current_handler_id != user.id:
-                results.append({'id': oid, 'ok': False, 'reason': f'权限问题：当前处理人是{order.current_handler.name}'})
-                continue
-            if order.deadline and order.deadline < timezone.now():
-                results.append({'id': oid, 'ok': False, 'reason': '时限问题：已逾期，需先补正'})
-                continue
+
+        if rule_key == 'batch_archive':
+            AuditNote.objects.create(order=order, author=user, content=ip.audit_note or f'批量归档审计备注[{batch_id}]')
+            if ip.exception_type and ip.exception_desc:
+                ExceptionReason.objects.create(
+                    order=order, exception_type=ip.exception_type,
+                    description=ip.exception_desc, reporter=user
+                )
             old = order.status
             order.status = OrderStatus.ARCHIVED
             order.current_handler = None
             order.version += 1
             order.save()
-            add_record(order, user, '批量归档', old, OrderStatus.ARCHIVED, payload.comment, payload.opinion)
-            results.append({'id': oid, 'ok': True, 'reason': '已归档'})
-        elif payload.action == 'return_dean' and user.role == Role.DEAN:
-            if order.status != OrderStatus.PENDING:
-                results.append({'id': oid, 'ok': False, 'reason': f'状态问题：{order.get_status_display()}不能退回'})
-                continue
+            add_record_full(order, user, ACTION_BATCH_ARCHIVE, old, OrderStatus.ARCHIVED,
+                            comment=ip.comment, opinion=ip.opinion,
+                            audit_note=ip.audit_note, exception_type=ip.exception_type,
+                            exception_desc=ip.exception_desc, evidence_count=0, batch_id=batch_id)
+            results.append({'id': oid, 'ok': True, 'reason': '已归档', 'type': ''})
+        elif rule_key == 'batch_return':
+            final_exc_type = ip.exception_type or ExceptionType.STATUS
+            final_exc_desc = ip.exception_desc or ip.comment or f'批量退回补正[{batch_id}]'
+            ExceptionReason.objects.create(
+                order=order, exception_type=final_exc_type,
+                description=final_exc_desc, reporter=user
+            )
+            if ip.audit_note:
+                AuditNote.objects.create(order=order, author=user, content=ip.audit_note)
             old = order.status
             order.status = OrderStatus.RETURNED
             order.current_handler = order.owner
             order.version += 1
             order.save()
-            add_record(order, user, '批量退回', old, OrderStatus.RETURNED, payload.comment or '批量退回', payload.opinion)
-            ExceptionReason.objects.create(
-                order=order, exception_type=ExceptionType.STATUS,
-                description=payload.comment or '批量退回补正', reporter=user
-            )
-            results.append({'id': oid, 'ok': True, 'reason': '已退回补正'})
-        else:
-            results.append({'id': oid, 'ok': False, 'reason': f'权限问题：当前角色不支持该操作'})
-    success = sum(1 for r in results if r['ok'])
-    return {'ok': True, 'success_count': success, 'total': len(results), 'items': results}
+            add_record_full(order, user, ACTION_BATCH_RETURN, old, OrderStatus.RETURNED,
+                            comment=ip.comment, opinion=ip.opinion,
+                            audit_note=ip.audit_note, exception_type=final_exc_type,
+                            exception_desc=final_exc_desc, evidence_count=0, batch_id=batch_id)
+            results.append({'id': oid, 'ok': True, 'reason': '已退回补正', 'type': ''})
+
+    success_count = sum(1 for r in results if r['ok'])
+    return {
+        'ok': True, 'success_count': success_count, 'total': len(results),
+        'batch_id': batch_id, 'items': results
+    }

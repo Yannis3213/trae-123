@@ -63,7 +63,8 @@
 
   async function saveEdit() {
     try {
-      order = await api.updateAppointment(order.id, editForm);
+      const payload = { ...editForm, version: order.version };
+      order = await api.updateAppointment(order.id, payload);
       editing = false;
       error = '';
     } catch (e) { error = e.message; }
@@ -131,7 +132,7 @@
         <span class="badge badge-{order.warning_level}">{WARNING_LABELS[order.warning_level]}</span>
       {/if}
       <span class="badge badge-prio-{order.priority.toLowerCase()}">{PRIORITY_LABELS[order.priority]}</span>
-      <span class="tag">v{order.version}</span>
+      <span class="tag" style="background:#dbeafe;color:#1e3a8a" title="后端校验使用，防止重复提交和状态冲突">🔒 版本 v{order.version}</span>
       {#if editable()}
         <button class="btn btn-primary btn-sm" on:click={toggleEdit}>{editing ? '取消编辑' : '✏️ 编辑'}</button>
       {/if}
@@ -345,14 +346,22 @@
 
   {#if activeTab === 'process'}
     <div class="card">
-      <div class="section-header"><h3>处理记录 / 操作日志</h3></div>
+      <div class="section-header"><h3>处理记录 / 操作日志（含审计备注、异常、补正动作留痕）</h3></div>
       {#if order.records.length === 0}
         <div class="empty-state">暂无处理记录</div>
       {:else}
         <div class="timeline">
           {#each order.records as r}
             <div class="timeline-item">
-              <div class="time">{formatDate(r.created_at)} · <span class="actor">{r.actor_name}</span></div>
+              <div class="time">
+                {formatDate(r.created_at)} · <span class="actor">{r.actor_name}</span>
+                {#if r.batch_id}
+                  <span class="tag" style="margin-left:6px;background:#e0e7ff;color:#3730a3">批次 {r.batch_id}</span>
+                {/if}
+                {#if r.evidence_count > 0}
+                  <span class="tag" style="margin-left:6px">📎 证据 {r.evidence_count}</span>
+                {/if}
+              </div>
               <div class="action">
                 <b>{r.action}</b>:
                 {STATUS_LABELS[r.from_status]} → {STATUS_LABELS[r.to_status]}
@@ -360,7 +369,15 @@
                   <div style="margin-top:4px;color:var(--gray-700)">💬 {r.comment}</div>
                 {/if}
                 {#if r.opinion}
-                  <div style="margin-top:4px;color:var(--primary)">📝 意见：{r.opinion}</div>
+                  <div style="margin-top:4px;color:var(--primary)">📝 处理意见：{r.opinion}</div>
+                {/if}
+                {#if r.audit_note}
+                  <div style="margin-top:4px;color:var(--info)">🔖 审计备注：{r.audit_note}</div>
+                {/if}
+                {#if r.exception_type}
+                  <div style="margin-top:4px;color:var(--danger)">
+                    ⚠️ 异常 [{EXCEPTION_LABELS[r.exception_type] || r.exception_type}]：{r.exception_desc || r.comment}
+                  </div>
                 {/if}
               </div>
             </div>

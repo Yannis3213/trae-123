@@ -39,7 +39,8 @@ export const api = {
   processAppointment: (id, payload) => request(`/appointments/${id}/process`, { method: 'POST', body: JSON.stringify(payload) }),
   reviewAppointment: (id, payload) => request(`/appointments/${id}/review`, { method: 'POST', body: JSON.stringify(payload) }),
   returnAppointment: (id, payload) => request(`/appointments/${id}/return`, { method: 'POST', body: JSON.stringify(payload) }),
-  batchAction: (payload) => request('/appointments/batch', { method: 'POST', body: JSON.stringify(payload) })
+  batchAction: (payload) => request('/appointments/batch', { method: 'POST', body: JSON.stringify(payload) }),
+  updateAppointment: (id, payload) => request(`/appointments/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
 };
 
 export const STATUS_LABELS = {
