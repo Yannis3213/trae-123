@@ -1,0 +1,32 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+<BaseLayout>
+  <main class="app-shell">
+    <h1 class="loading-title">正在加载处方订单系统...</h1>
+  </main>
+  <style>
+    .app-shell {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f3f6fb;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .loading-title {
+      color: #1e3a5f;
+      font-size: 18px;
+      font-weight: 500;
+    }
+  </style>
+</BaseLayout>
+<script>
+  import App from '../components/App.tsx';
+  import { hydrateRoot, createRoot } from 'react-dom/client';
+  const container = document.querySelector('.app-shell');
+  if (container) {
+    const root = createRoot(container);
+    root.render(<App />);
+  }
+</script>
