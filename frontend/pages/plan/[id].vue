@@ -6,6 +6,8 @@
         <button class="btn btn-info" @click="loadDetail">🔄 刷新队列</button>
       </div>
       <div class="flex gap-8" v-if="plan">
+        <span v-if="isReadOnly" class="tag tag-info">👁️ 只读模式</span>
+        <span v-else class="tag tag-progress">📝 可办理模式</span>
         <span v-if="plan.status === '待派发'" class="tag tag-pending">待派发</span>
         <span v-else-if="plan.status === '处理中'" class="tag tag-progress">处理中</span>
         <span v-else class="tag tag-closed">已关闭</span>
@@ -38,52 +40,60 @@
 
     <div v-if="plan" class="card">
       <h3 class="section-title">📝 办理操作</h3>
-      <div class="form-row">
-        <div class="form-item" style="flex: 1;">
-          <label>处理意见 / 备注</label>
-          <textarea v-model="remark" placeholder="请输入处理意见或备注..."></textarea>
+      <div v-if="isReadOnly" style="background:#ecf5ff;border:1px solid #b3d8ff;border-radius:4px;padding:12px;margin-bottom:16px;">
+        <div style="color:#409eff;font-weight:bold;">👁️ 当前为只读浏览模式</div>
+        <div style="font-size:12px;color:#606266;margin-top:4px;">
+          {{ readonlyReason }}
         </div>
       </div>
-      <div class="flex gap-8 justify-end">
-        <button
-          v-if="auth.currentRole === 'registrar' && plan.status === '待派发' && plan.current_handler === auth.displayName"
-          class="btn btn-primary"
-          @click="doDispatch"
-        >📤 派发至审核主管</button>
+      <template v-else>
+        <div class="form-row">
+          <div class="form-item" style="flex: 1;">
+            <label>处理意见 / 备注</label>
+            <textarea v-model="remark" placeholder="请输入处理意见或备注..."></textarea>
+          </div>
+        </div>
+        <div class="flex gap-8 justify-end">
+          <button
+            v-if="auth.currentRole === 'registrar' && plan.status === '待派发'"
+            class="btn btn-primary"
+            @click="doDispatch"
+          >📤 派发至审核主管</button>
 
-        <button
-          v-if="auth.currentRole === 'registrar' && plan.status === '处理中' && plan.current_handler === auth.displayName"
-          class="btn btn-info"
-          @click="doUpdate"
-        >💾 保存补正信息</button>
+          <button
+            v-if="auth.currentRole === 'registrar' && plan.status === '处理中'"
+            class="btn btn-info"
+            @click="doUpdate"
+          >💾 保存补正信息</button>
 
-        <button
-          v-if="auth.currentRole === 'supervisor' && plan.status === '处理中' && plan.current_handler === auth.displayName"
-          class="btn btn-info"
-          @click="doUpdate"
-        >💾 保存办理信息</button>
-        <button
-          v-if="auth.currentRole === 'supervisor' && plan.status === '处理中' && plan.current_handler === auth.displayName"
-          class="btn btn-warning"
-          @click="showReturn = true"
-        >↩️ 退回登记员补正</button>
-        <button
-          v-if="auth.currentRole === 'supervisor' && plan.status === '处理中' && plan.current_handler === auth.displayName"
-          class="btn btn-primary"
-          @click="doSubmit"
-        >📤 提交院区主任复核</button>
+          <button
+            v-if="auth.currentRole === 'supervisor' && plan.status === '处理中'"
+            class="btn btn-info"
+            @click="doUpdate"
+          >💾 保存办理信息</button>
+          <button
+            v-if="auth.currentRole === 'supervisor' && plan.status === '处理中'"
+            class="btn btn-warning"
+            @click="showReturn = true"
+          >↩️ 退回登记员补正</button>
+          <button
+            v-if="auth.currentRole === 'supervisor' && plan.status === '处理中'"
+            class="btn btn-primary"
+            @click="doSubmit"
+          >📤 提交院区主任复核</button>
 
-        <button
-          v-if="auth.currentRole === 'director' && plan.status === '处理中' && plan.current_handler === auth.displayName"
-          class="btn btn-warning"
-          @click="showReturn = true"
-        >↩️ 退回主管补正</button>
-        <button
-          v-if="auth.currentRole === 'director' && plan.status === '处理中' && plan.current_handler === auth.displayName"
-          class="btn btn-success"
-          @click="doReview"
-        >✅ 复核通过并归档</button>
-      </div>
+          <button
+            v-if="auth.currentRole === 'director' && plan.status === '处理中'"
+            class="btn btn-warning"
+            @click="showReturn = true"
+          >↩️ 退回主管补正</button>
+          <button
+            v-if="auth.currentRole === 'director' && plan.status === '处理中'"
+            class="btn btn-success"
+            @click="doReview"
+          >✅ 复核通过并归档</button>
+        </div>
+      </template>
     </div>
 
     <div v-if="plan" class="card">
@@ -371,10 +381,35 @@ const form = reactive({
   family_note: '' as string | null,
 })
 
-const canEdit = computed(() => {
+const canHandle = computed(() => {
   if (!plan.value) return false
   if (plan.value.status === '已关闭') return false
+  if (auth.currentRole === 'registrar') {
+    if (!['待派发', '处理中'].includes(plan.value.status)) return false
+  }
+  if (auth.currentRole === 'supervisor') {
+    if (plan.value.status !== '处理中') return false
+  }
+  if (auth.currentRole === 'director') {
+    if (plan.value.status !== '处理中') return false
+  }
   if (plan.value.current_handler !== auth.displayName) return false
+  return true
+})
+
+const isReadOnly = computed(() => !canHandle.value)
+
+const readonlyReason = computed(() => {
+  if (!plan.value) return ''
+  if (plan.value.status === '已关闭') return '该护理计划单已归档关闭，仅支持历史数据浏览。'
+  if (plan.value.current_handler !== auth.displayName) return `当前处理人为「${plan.value.current_handler}」，非本人单据仅支持只读浏览。`
+  if (auth.currentRole === 'registrar' && !['待派发', '处理中'].includes(plan.value.status)) return `登记员仅可操作「待派发/处理中」状态单据，当前为「${plan.value.status}」。`
+  if ((auth.currentRole === 'supervisor' || auth.currentRole === 'director') && plan.value.status !== '处理中') return `${auth.roleLabel}仅可操作「处理中」状态单据，当前为「${plan.value.status}」。`
+  return '当前状态仅支持只读浏览。'
+})
+
+const canEdit = computed(() => {
+  if (!canHandle.value) return false
   if (auth.currentRole === 'director') return false
   return true
 })

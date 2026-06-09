@@ -79,10 +79,14 @@ impl CarePlanService {
                 param_idx += 1;
             }
             Role::Supervisor => {
-                sql.push_str(" AND status = '处理中'");
+                sql.push_str(&format!(" AND status = '处理中' AND current_handler = ?{}", param_idx));
+                params.push(Box::new(user.display_name.clone()));
+                param_idx += 1;
             }
             Role::Director => {
-                sql.push_str(" AND status IN ('处理中', '已关闭')");
+                sql.push_str(&format!(" AND ((status = '处理中' AND current_handler = ?{}) OR status = '已关闭')", param_idx));
+                params.push(Box::new(user.display_name.clone()));
+                param_idx += 1;
             }
         }
 
@@ -134,27 +138,36 @@ impl CarePlanService {
     }
 
     pub fn get_plan(&self, user: &User, plan_id: Uuid) -> Option<CarePlan> {
-        let conn = self.db.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, plan_no, elder_name, elder_id_card, room_no, admission_date,
-             status, current_handler, responsible_person, deadline, version,
-             assessment_done, assessment_note, plan_done, plan_note,
-             family_confirmed, family_note, created_at, updated_at
-             FROM care_plans WHERE id = ?1"
-        ).unwrap();
-        let plan = stmt.query_row(params![plan_id.to_string()], |row| self.row_to_plan(row)).ok();
-        drop(conn);
+        let plan: Option<CarePlan> = {
+            let conn = self.db.conn.lock().unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT id, plan_no, elder_name, elder_id_card, room_no, admission_date,
+                 status, current_handler, responsible_person, deadline, version,
+                 assessment_done, assessment_note, plan_done, plan_note,
+                 family_confirmed, family_note, created_at, updated_at
+                 FROM care_plans WHERE id = ?1"
+            ).unwrap();
+            stmt.query_row(params![plan_id.to_string()], |row| self.row_to_plan(row)).ok()
+        };
 
         if let Some(p) = &plan {
-            match user.role {
+            let allowed = match user.role {
                 Role::Registrar => {
-                    if p.current_handler != user.display_name && p.status != PlanStatus::PendingDispatch {
-                        self.write_failure(plan_id, user, "查看计划单详情", p.status.to_str(), "越权操作",
-                            &format!("越权访问：非当前处理人不可查看该计划单，当前处理人为{}", p.current_handler), None);
-                        return None;
-                    }
+                    p.current_handler == user.display_name || p.status == PlanStatus::PendingDispatch
                 }
-                _ => {}
+                Role::Supervisor => {
+                    p.status == PlanStatus::InProgress && p.current_handler == user.display_name
+                }
+                Role::Director => {
+                    (p.status == PlanStatus::InProgress && p.current_handler == user.display_name)
+                        || p.status == PlanStatus::Closed
+                }
+            };
+            if !allowed {
+                self.write_failure(plan_id, user, "查看计划单详情", p.status.to_str(), "越权操作",
+                    &format!("越权访问：角色[{}]非当前处理人不可查看该计划单，当前处理人为{}，状态为{}",
+                        user.role.to_str(), p.current_handler, p.status.to_str()), None);
+                return None;
             }
         }
         plan
