@@ -510,6 +510,26 @@ def review_order(request, data: OrderReviewSchema):
         return BatchResultSchema(order_id=data.order_id, order_no='', success=False, message='订单不存在')
 
     profile = request.user.profile
+    urgency = order.get_urgency_status()
+    if urgency == GlassesOrder.URGENCY_OVERDUE:
+        handler = order.current_handler
+        handler_name = handler.profile.real_name if handler else '未分配'
+        if order.status == GlassesOrder.STATUS_PENDING_REVIEW:
+            due_field, due_time = '审核截止', order.review_due_at
+        else:
+            due_field, due_time = '同步截止', order.sync_due_at
+        msg = (f'处理超时拦截：{due_field}已逾期（责任人：{handler_name}），'
+               f'请先登记异常并手动处理后再推进')
+        add_exception(order, ExceptionReason.TYPE_TIMEOUT,
+                      f'{data.action}拦截：{msg}', request.user)
+        add_audit_note(
+            order, request.user,
+            f'{data.action}超时拦截（v{data.version}）：订单已逾期，责任人={handler_name}，'
+            f'截止时间={due_time.strftime("%Y-%m-%d %H:%M") if due_time else "未设置"}',
+            note_type='error'
+        )
+        return BatchResultSchema(order_id=order.id, order_no=order.order_no, success=False, message=msg)
+
     errors = validate_order_for_role(order, request.user, expected_version=data.version, check_attachments=True)
     if errors:
         add_audit_note(order, request.user, '审核拦截：' + '；'.join(errors), note_type='error')
@@ -572,6 +592,21 @@ def correct_order(request, data: OrderCorrectSchema):
         return BatchResultSchema(order_id=data.order_id, order_no='', success=False, message='订单不存在')
 
     profile = request.user.profile
+    urgency = order.get_urgency_status()
+    if urgency == GlassesOrder.URGENCY_OVERDUE:
+        handler = order.current_handler
+        handler_name = handler.profile.real_name if handler else '未分配'
+        msg = (f'处理超时拦截：处理截止已逾期（责任人：{handler_name}），'
+               f'请先登记异常并手动处理后再推进')
+        add_exception(order, ExceptionReason.TYPE_TIMEOUT,
+                      f'correct拦截：{msg}', request.user)
+        add_audit_note(
+            order, request.user,
+            f'补正超时拦截（v{data.version}）：订单已逾期，责任人={handler_name}',
+            note_type='error'
+        )
+        return BatchResultSchema(order_id=order.id, order_no=order.order_no, success=False, message=msg)
+
     errors = validate_order_for_role(order, request.user, expected_version=data.version)
     if errors:
         add_audit_note(order, request.user, '补正拦截：' + '；'.join(errors), note_type='error')
@@ -667,6 +702,22 @@ def sync_order(request, data: OrderReviewSchema):
         return BatchResultSchema(order_id=data.order_id, order_no='', success=False, message='订单不存在')
 
     profile = request.user.profile
+    urgency = order.get_urgency_status()
+    if urgency == GlassesOrder.URGENCY_OVERDUE:
+        handler = order.current_handler
+        handler_name = handler.profile.real_name if handler else '未分配'
+        msg = (f'处理超时拦截：同步截止已逾期（责任人：{handler_name}），'
+               f'请先登记异常并手动处理后再推进')
+        add_exception(order, ExceptionReason.TYPE_TIMEOUT,
+                      f'sync拦截：{msg}', request.user)
+        add_audit_note(
+            order, request.user,
+            f'同步超时拦截（v{data.version}）：订单已逾期，责任人={handler_name}，'
+            f'截止时间={order.sync_due_at.strftime("%Y-%m-%d %H:%M") if order.sync_due_at else "未设置"}',
+            note_type='error'
+        )
+        return BatchResultSchema(order_id=order.id, order_no=order.order_no, success=False, message=msg)
+
     errors = validate_order_for_role(order, request.user, expected_version=data.version, check_attachments=True)
     if errors:
         add_audit_note(order, request.user, '同步拦截：' + '；'.join(errors), note_type='error')
@@ -708,6 +759,35 @@ def batch_process(request, data: BatchProcessSchema):
         try:
             with transaction.atomic():
                 order = GlassesOrder.objects.select_for_update().get(id=order_id)
+
+                urgency = order.get_urgency_status()
+                if urgency == GlassesOrder.URGENCY_OVERDUE:
+                    handler = order.current_handler
+                    handler_name = handler.profile.real_name if handler else '未分配'
+                    if order.status == GlassesOrder.STATUS_PENDING_REVIEW:
+                        due_field, due_time = '审核截止', order.review_due_at
+                    elif order.status == GlassesOrder.STATUS_REVIEW_APPROVED:
+                        due_field, due_time = '同步截止', order.sync_due_at
+                    else:
+                        due_field, due_time = '处理截止', order.review_due_at or order.sync_due_at
+                    msg = (f'处理超时拦截：{due_field}已逾期 '
+                           f'（责任人：{handler_name}），'
+                           f'请先登记异常并手动处理后再推进')
+                    add_exception(
+                        order, ExceptionReason.TYPE_TIMEOUT,
+                        f'批量{data.action}拦截：{msg}', request.user
+                    )
+                    add_audit_note(
+                        order, request.user,
+                        f'批量{data.action}超时拦截（v{item_version}）：'
+                        f'订单已逾期，责任人={handler_name}，'
+                        f'截止时间={due_time.strftime("%Y-%m-%d %H:%M") if due_time else "未设置"}',
+                        note_type='error'
+                    )
+                    results.append(BatchResultSchema(
+                        order_id=order.id, order_no=order.order_no, success=False, message=msg
+                    ))
+                    continue
 
                 if data.action == 'approve':
                     if order.status != GlassesOrder.STATUS_PENDING_REVIEW:

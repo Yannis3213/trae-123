@@ -40,6 +40,9 @@ export default function BatchModal({ action, selectedOrders, onClose, onSuccess 
   const successCount = results?.filter(r => r.success).length || 0
   const failCount = results?.filter(r => !r.success).length || 0
 
+  const overdueCount = selectedOrders.filter(o => o.urgency_status === 'overdue').length
+  const warningCount = selectedOrders.filter(o => o.urgency_status === 'warning').length
+
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal large" onClick={(e) => e.stopPropagation()}>
@@ -51,13 +54,24 @@ export default function BatchModal({ action, selectedOrders, onClose, onSuccess 
           <div className="alert-box info">
             将对以下 <strong>{selectedOrders.length}</strong> 条订单执行【{actionLabel}】，
             已携带每条订单的版本号进行乐观锁校验：
-            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {overdueCount > 0 && (
+              <div style={{ marginTop: 8, color: '#cf1322', fontWeight: 500 }}>
+                ⚠️ 其中 <strong>{overdueCount}</strong> 条已逾期，将被后端自动拦截（超时）
+                {warningCount > 0 && `，另有 ${warningCount} 条临期`}
+              </div>
+            )}
+            <div className="batch-order-list">
               {selectedOrders.map(o => (
-                <span key={o.id} style={{
-                  background: '#e6f7ff', padding: '4px 10px', borderRadius: 4, fontSize: 12,
-                  border: '1px solid #91d5ff'
-                }}>
-                  <strong>{o.order_no}</strong> <span style={{ color: '#595959' }}>v{o.version}</span>
+                <span key={o.id} className={`batch-order-tag ${
+                  o.urgency_status === 'overdue' ? 'is-overdue' :
+                  o.urgency_status === 'warning' ? 'is-warning' : ''
+                }`}>
+                  <span>
+                    {o.urgency_status === 'overdue' && <span className="overdue-icon">🔴</span>}
+                    {o.urgency_status === 'warning' && <span className="overdue-icon">🟡</span>}
+                    <strong>{o.order_no}</strong> <span style={{ opacity: 0.6 }}>v{o.version}</span>
+                  </span>
+                  <span className="handler">责任人：{o.current_handler_name || '未分配'}</span>
                 </span>
               ))}
             </div>

@@ -995,5 +995,197 @@ table.data-table input[type="checkbox"] {
 
 .mt-8 { margin-top: 8px; }
 .mt-16 { margin-top: 16px; }
+
+.urgency-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.urgency-column {
+  background: #fafafa;
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+}
+
+.urgency-column.col-normal {
+  border-top: 3px solid #52c41a;
+}
+
+.urgency-column.col-warning {
+  border-top: 3px solid #faad14;
+}
+
+.urgency-column.col-overdue {
+  border-top: 3px solid #ff4d4f;
+  background: #fff7f7;
+}
+
+.column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 12px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 12px;
+}
+
+.column-header h3 {
+  font-size: 14px;
+  color: #262626;
+  margin: 0;
+}
+
+.column-header .count {
+  background: white;
+  border: 1px solid #d9d9d9;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  color: #595959;
+  font-weight: 600;
+}
+
+.col-overdue .column-header .count {
+  background: #ff4d4f;
+  color: white;
+  border-color: #ff4d4f;
+}
+
+.column-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.order-card {
+  background: white;
+  border-radius: 6px;
+  padding: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  border: 1px solid #f0f0f0;
+  transition: all 0.2s;
+}
+
+.order-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  border-color: #d9d9d9;
+}
+
+.order-card.urgency-overdue {
+  border-left: 3px solid #ff4d4f;
+  background: #fffbfb;
+}
+
+.order-card.urgency-warning {
+  border-left: 3px solid #faad14;
+}
+
+.order-card.urgency-normal {
+  border-left: 3px solid #52c41a;
+}
+
+.order-card .card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.order-card .order-main {
+  flex: 1;
+}
+
+.order-card .order-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.order-card .order-title strong {
+  font-size: 14px;
+  color: #262626;
+}
+
+.order-card .order-title .cust-name {
+  font-size: 13px;
+  color: #595959;
+}
+
+.order-card .order-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.order-card .order-sub .version {
+  color: #8c8c8c;
+  font-size: 12px;
+}
+
+.order-card .card-actions {
+  flex-shrink: 0;
+}
+
+.order-card .card-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding-top: 8px;
+  border-top: 1px dashed #f0f0f0;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+.batch-order-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.batch-order-tag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  border: 1px solid #e6f7ff;
+  background: #e6f7ff;
+}
+
+.batch-order-tag.is-overdue {
+  background: #fff1f0;
+  border-color: #ffa39e;
+  color: #cf1322;
+}
+
+.batch-order-tag.is-warning {
+  background: #fffbe6;
+  border-color: #ffe58f;
+}
+
+.batch-order-tag .handler {
+  color: #8c8c8c;
+  font-size: 11px;
+}
+
+.batch-order-tag.is-overdue .handler {
+  color: #cf1322;
+  font-weight: 500;
+}
+
+.batch-order-tag .overdue-icon {
+  margin-right: 4px;
+}
 .mb-8 { margin-bottom: 8px; }
 .mb-16 { margin-bottom: 16px; }

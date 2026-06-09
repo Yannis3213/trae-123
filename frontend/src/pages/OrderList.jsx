@@ -69,6 +69,8 @@ export default function OrderList() {
     }
   }
 
+  const allSelected = orders.length > 0 && selectedIds.size === orders.length
+
   const handleSelect = (id, checked) => {
     const newSet = new Set(selectedIds)
     if (checked) newSet.add(id); else newSet.delete(id)
@@ -93,6 +95,10 @@ export default function OrderList() {
     return orders.filter(o => selectedIds.has(o.id))
   }, [selectedIds, orders])
 
+  const normalOrders = orders.filter(o => o.urgency_status === 'normal')
+  const warningOrders = orders.filter(o => o.urgency_status === 'warning')
+  const overdueOrders = orders.filter(o => o.urgency_status === 'overdue')
+
   const renderUrgency = (urgency) => {
     const map = { normal: '正常', warning: '临期', overdue: '逾期' }
     return <span className={`urgency-tag ${urgency}`}>{map[urgency] || urgency}</span>
@@ -107,6 +113,55 @@ export default function OrderList() {
     }
     return <span className={`status-tag ${status}`}>{map[status] || status}</span>
   }
+
+  const renderOrderCard = (o) => (
+    <div key={o.id} className={`order-card urgency-${o.urgency_status}`}>
+      <div className="card-top">
+        <label>
+          <input type="checkbox" checked={selectedIds.has(o.id)}
+            onChange={(e) => handleSelect(o.id, e.target.checked)} />
+        </label>
+        <div className="order-main">
+          <div className="order-title">
+            <strong>{o.order_no}</strong>
+            <span className="cust-name">{o.customer_name}</span>
+            {o.has_defect && <span className="defect-badge">缺材料</span>}
+          </div>
+          <div className="order-sub">
+            {renderStatus(o.status)}
+            {renderUrgency(o.urgency_status)}
+            <span className="version">v{o.version}</span>
+          </div>
+        </div>
+        <div className="card-actions">
+          <button className="btn btn-default btn-sm"
+            onClick={() => navigate(`/orders/${o.id}`)}>详情</button>
+        </div>
+      </div>
+      <div className="card-info">
+        <span>📞 {o.customer_phone}</span>
+        <span>📍 {o.business_area}</span>
+        <span>👤 {o.current_handler_name || '-'}</span>
+        <span>🕐 {dayjs(o.created_at).format('MM-DD HH:mm')}</span>
+      </div>
+    </div>
+  )
+
+  const renderColumn = (title, cls, list, emptyText) => (
+    <div className={`urgency-column ${cls}`}>
+      <div className="column-header">
+        <h3>{title}</h3>
+        <span className="count">{list.length}</span>
+      </div>
+      <div className="column-body">
+        {list.length === 0 ? (
+          <div className="empty-state">{emptyText}</div>
+        ) : (
+          list.map(renderOrderCard)
+        )}
+      </div>
+    </div>
+  )
 
   return (
     <div>
@@ -195,7 +250,13 @@ export default function OrderList() {
 
       <div className="action-bar">
         <div className="left">
-          已选择 <strong style={{ color: '#1890ff' }}>{selectedIds.size}</strong> 条
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={allSelected} onChange={handleSelectAll} />
+            <span>全选</span>
+          </label>
+          <span style={{ marginLeft: 12 }}>
+            已选择 <strong style={{ color: '#1890ff' }}>{selectedIds.size}</strong> / {orders.length} 条
+          </span>
           {selectedIds.size > 0 && (
             <button className="btn btn-default btn-sm" onClick={() => setSelectedIds(new Set())}>
               清空
@@ -221,58 +282,10 @@ export default function OrderList() {
         </div>
       </div>
 
-      <div className="table-container">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th style={{ width: 40 }}>
-                <input type="checkbox"
-                  checked={selectedIds.size > 0 && selectedIds.size === orders.length}
-                  onChange={handleSelectAll} />
-              </th>
-              <th>订单号</th>
-              <th>客户姓名</th>
-              <th>联系电话</th>
-              <th>业务区</th>
-              <th>状态</th>
-              <th>到期预警</th>
-              <th>当前处理人</th>
-              <th>版本</th>
-              <th>创建时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan="11"><div className="empty-state">加载中...</div></td></tr>
-            ) : orders.length === 0 ? (
-              <tr><td colSpan="11"><div className="empty-state">暂无订单数据</div></td></tr>
-            ) : orders.map(o => (
-              <tr key={o.id}>
-                <td>
-                  <input type="checkbox" checked={selectedIds.has(o.id)}
-                    onChange={(e) => handleSelect(o.id, e.target.checked)} />
-                </td>
-                <td><strong>{o.order_no}</strong></td>
-                <td>
-                  {o.customer_name}
-                  {o.has_defect && <span className="defect-badge">缺材料</span>}
-                </td>
-                <td>{o.customer_phone}</td>
-                <td>{o.business_area}</td>
-                <td>{renderStatus(o.status)}</td>
-                <td>{renderUrgency(o.urgency_status)}</td>
-                <td>{o.current_handler_name || '-'}</td>
-                <td>v{o.version}</td>
-                <td>{dayjs(o.created_at).format('MM-DD HH:mm')}</td>
-                <td>
-                  <button className="btn btn-default btn-sm"
-                    onClick={() => navigate(`/orders/${o.id}`)}>查看详情</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="urgency-columns">
+        {renderColumn('🟢 正常队列', 'col-normal', normalOrders, '暂无正常订单')}
+        {renderColumn('🟡 临期队列（≤2天）', 'col-warning', warningOrders, '暂无临期订单')}
+        {renderColumn('🔴 逾期队列', 'col-overdue', overdueOrders, '暂无逾期订单')}
       </div>
 
       {showBatchModal && (
