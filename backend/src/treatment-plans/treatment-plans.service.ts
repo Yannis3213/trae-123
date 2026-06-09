@@ -188,6 +188,7 @@ export class TreatmentPlansService {
       id: p.id,
       planNo: p.planNo,
       patientName: p.patientName,
+      patientPhone: p.patientPhone,
       phone: p.patientPhone,
       status: p.status,
       currentHandler: userMap.get(p.currentHandler)?.name || '',
@@ -240,19 +241,23 @@ export class TreatmentPlansService {
     const planAttachments = attachments.filter((a: Attachment) => a.type === 'plan');
     const reminderAttachments = attachments.filter((a: Attachment) => a.type === 'reminder');
 
-    const categoryMap: Record<string, string> = {
-      material: 'material',
-      permission: 'permission',
-      timeline: 'time_limit',
-      status: 'status',
-    };
+    const formatAttachment = (a: Attachment) => ({
+      id: a.id,
+      name: a.filename,
+      filename: a.filename,
+      url: a.url,
+      uploadedAt: a.uploadedAt,
+    });
+
+    const currentHandlerName = userMap.get(plan.currentHandler)?.name || '';
 
     return {
       id: plan.id,
       planNo: plan.planNo,
       status: plan.status,
       version: plan.version,
-      currentHandler: userMap.get(plan.currentHandler)?.name || '',
+      currentHandler: currentHandlerName,
+      currentHandlerUser: { name: currentHandlerName },
       createdAt: plan.createdAt,
       deadline: plan.deadline,
       dueStatus: this.computeDueStatus(plan.deadline),
@@ -272,20 +277,21 @@ export class TreatmentPlansService {
           idCard: plan.patientIdCard,
           phone: plan.patientPhone,
         },
-        attachments: patientAttachments,
+        attachments: patientAttachments.map(formatAttachment),
       },
       treatmentPlan: {
         content: plan.lastHandlerRemark || '',
-        attachments: planAttachments,
+        attachments: planAttachments.map(formatAttachment),
       },
       followUpReminder: {
         followUpDate: '',
         content: '',
-        attachments: reminderAttachments,
+        attachments: reminderAttachments.map(formatAttachment),
       },
       abnormalReasons: exceptions.map((e: ExceptionCause) => ({
         id: e.id,
-        category: categoryMap[e.type] || e.type,
+        category: e.type,
+        reason: e.description,
         description: e.description,
         resolved: e.resolved,
         createdAt: e.createdAt,
@@ -296,14 +302,14 @@ export class TreatmentPlansService {
         action: r.action,
         fromStatus: r.fromStatus,
         toStatus: r.toStatus,
-        opinion: r.remark || '',
-        evidences: [],
+        remark: r.remark || '',
+        evidence: r.evidence || '',
         createdAt: r.createdAt,
       })),
       auditNotes: notes.map((n: AuditNote) => ({
         id: n.id,
         author: userMap.get(n.userId)?.name || '',
-        content: n.note,
+        note: n.note,
         createdAt: n.createdAt,
       })),
     };
@@ -351,6 +357,18 @@ export class TreatmentPlansService {
           (dto.evidence && dto.evidence.trim().length > 0);
         if (!hasReminder) {
           throw new BadRequestException('提交复查前必须完成复诊提醒（有提醒证据）');
+        }
+      }
+
+      if (dto.action === 'resolve_exception') {
+        const hasEvidence =
+          (dto.attachments && dto.attachments.length > 0) ||
+          (dto.evidence && dto.evidence.trim().length > 0) ||
+          dto.materialsComplete === true ||
+          dto.planComplete === true ||
+          dto.reminderComplete === true;
+        if (!hasEvidence) {
+          throw new BadRequestException('异常补正必须提供补正证据或标记材料/计划/提醒已补全');
         }
       }
 

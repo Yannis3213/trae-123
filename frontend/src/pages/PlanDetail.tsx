@@ -245,7 +245,7 @@ export default function PlanDetail() {
     const grouped: Record<string, string[]> = {};
     for (const r of d.abnormalReasons) {
       if (!grouped[r.category]) grouped[r.category] = [];
-      grouped[r.category].push(r.reason);
+      grouped[r.category].push(r.reason || r.description || '');
     }
     return grouped;
   };
@@ -310,7 +310,7 @@ export default function PlanDetail() {
             </div>
             <div class="info-row">
               <span class="info-label">当前处理人：</span>
-              <span class="info-value">{detail()!.currentHandlerUser?.name || '-'}</span>
+              <span class="info-value">{detail()!.currentHandlerUser?.name || detail()!.currentHandler || '-'}</span>
             </div>
             <div class="info-row">
               <span class="info-label">材料完整：</span>
@@ -365,7 +365,7 @@ export default function PlanDetail() {
                 {(att) => (
                   <div class="attachment-item">
                     <span class="attachment-icon">📎</span>
-                    <span>{att.name || att.filename}</span>
+                    <span>{att.name || att.filename || '附件'}</span>
                     <span style={{ color: '#999', 'margin-left': 'auto', 'font-size': '12px' }}>
                       {formatDate(att.uploadedAt)}
                     </span>
@@ -396,7 +396,7 @@ export default function PlanDetail() {
                 {(att) => (
                   <div class="attachment-item">
                     <span class="attachment-icon">📎</span>
-                    <span>{att.name || att.filename}</span>
+                    <span>{att.name || att.filename || '附件'}</span>
                     <span style={{ color: '#999', 'margin-left': 'auto', 'font-size': '12px' }}>
                       {formatDate(att.uploadedAt)}
                     </span>
@@ -435,7 +435,7 @@ export default function PlanDetail() {
                 {(att) => (
                   <div class="attachment-item">
                     <span class="attachment-icon">📎</span>
-                    <span>{att.name || att.filename}</span>
+                    <span>{att.name || att.filename || '附件'}</span>
                     <span style={{ color: '#999', 'margin-left': 'auto', 'font-size': '12px' }}>
                       {formatDate(att.uploadedAt)}
                     </span>

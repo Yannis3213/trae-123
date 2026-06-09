@@ -68,6 +68,7 @@ export class ProcessPlanDto {
 }
 
 export class BatchProcessItemDto {
+  @Type(() => Number)
   @IsNumber()
   @IsNotEmpty()
   id: number;
@@ -76,6 +77,7 @@ export class BatchProcessItemDto {
   @IsNotEmpty()
   action: string;
 
+  @Type(() => Number)
   @IsNumber()
   @IsNotEmpty()
   version: number;

@@ -49,37 +49,42 @@ export interface User {
 }
 
 export interface Patient {
-  id: string;
+  id: string | number;
   name: string;
   idCard: string;
   phone: string;
 }
 
 export interface Attachment {
-  id: string;
-  name: string;
+  id: string | number;
+  name?: string;
+  filename?: string;
   url: string;
   uploadedAt: string;
+  [key: string]: any;
 }
 
 export interface AbnormalReason {
   category: AbnormalCategory;
   reason: string;
+  description?: string;
+  resolved?: boolean;
+  createdAt?: string;
 }
 
 export interface ProcessHistory {
-  id: string;
+  id: string | number;
   operator: string;
   action: string;
   fromStatus: PlanStatus | null;
   toStatus: PlanStatus;
   remark: string;
-  evidences: Attachment[];
+  evidence?: string;
   createdAt: string;
 }
 
 export interface AuditNote {
-  id: string;
+  id: string | number;
   author: string;
   note: string;
   createdAt: string;
@@ -102,11 +107,11 @@ export interface FollowUpReminder {
 }
 
 export interface TreatmentPlanItem {
-  id: string;
+  id: string | number;
   planNo: string;
   patientName: string;
+  patientPhone: string;
   phone?: string;
-  patientPhone?: string;
   status: PlanStatus;
   currentHandler: string;
   createdAt: string;
@@ -123,6 +128,7 @@ export interface TreatmentPlanDetail extends TreatmentPlanItem {
   abnormalReasons: AbnormalReason[];
   processHistory: ProcessHistory[];
   auditNotes: AuditNote[];
+  currentHandlerUser?: { name: string };
 }
 
 export interface LoginRequest {
