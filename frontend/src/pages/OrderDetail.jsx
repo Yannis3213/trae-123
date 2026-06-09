@@ -66,58 +66,24 @@ export default function OrderDetail() {
       const res = await api.post(`/orders/${order.id}/attachments`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
-      const newAtt = res.data
-      setOrder(prev => {
-        if (!prev) return prev
-        return {
-          ...prev,
-          attachments: [newAtt, ...prev.attachments],
-          processing_records: [
-            {
-              id: Date.now(),
-              action: 'add_attachment',
-              action_display: '添加附件',
-              operator: user.real_name,
-              opinion: `上传【${newAtt.category_display}】附件：${newAtt.file_name}`,
-              version: prev.version,
-              created_at: new Date().toISOString()
-            },
-            ...prev.processing_records
-          ],
-          audit_notes: [
-            {
-              id: Date.now() + 1,
-              operator: user.real_name,
-              note_type: 'general',
-              content: `${user.real_name}（${user.role_display}）上传附件：${newAtt.file_name}（${newAtt.category_display}）`,
-              created_at: new Date().toISOString()
-            },
-            ...prev.audit_notes
-          ],
-          exceptions: prev.exceptions.map(exc => {
-            if (exc.resolved) return exc
-            if (uploadCategory === 'optometry' &&
-                (exc.exception_type === 'missing_optometry' ||
-                 (exc.exception_type === 'missing_attachment' && exc.description.includes('验光')))) {
-              return { ...exc, resolved: true, resolved_by: user.real_name, resolution_note: `已补正上传附件：${newAtt.file_name}` }
-            }
-            if (uploadCategory === 'lens' &&
-                (exc.exception_type === 'missing_lens' ||
-                 (exc.exception_type === 'missing_attachment' && exc.description.includes('镜片')))) {
-              return { ...exc, resolved: true, resolved_by: user.real_name, resolution_note: `已补正上传附件：${newAtt.file_name}` }
-            }
-            if (uploadCategory === 'registration' &&
-                exc.exception_type === 'missing_attachment' && exc.description.includes('登记')) {
-              return { ...exc, resolved: true, resolved_by: user.real_name, resolution_note: `已补正上传附件：${newAtt.file_name}` }
-            }
-            return exc
-          })
-        }
-      })
-      setUploadFile(null); setUploadDesc(''); setUploadRequired(false)
-      document.getElementById('fileInput').value = ''
-      alert('上传成功，附件列表、异常和审计区已同步刷新')
-      setTimeout(loadDetail, 500)
+      setOrder(res.data)
+      setUploadFile(null)
+      setUploadDesc('')
+      setUploadRequired(false)
+      const fileInput = document.getElementById('fileInput')
+      if (fileInput) fileInput.value = ''
+      const defectsCleared = !res.data.has_defect && order.has_defect
+      const resolvedCount = res.data.exceptions.filter(e => e.resolved).length -
+        order.exceptions.filter(e => e.resolved).length
+      alert(
+        `上传成功！\n` +
+        `附件区：已更新为 ${res.data.attachments.length} 条\n` +
+        `处理记录：已写入\n` +
+        `审计备注：已写入\n` +
+        (resolvedCount > 0 ? `异常原因：已自动解决 ${resolvedCount} 条\n` : '') +
+        (defectsCleared ? '缺项标记：已清除 ✓' :
+          (res.data.has_defect ? `缺项标记：仍存在（${res.data.defect_description}）` : '缺项标记：无'))
+      )
     } catch (e) {
       alert('上传失败：' + (e.response?.data?.detail || e.message))
     } finally {

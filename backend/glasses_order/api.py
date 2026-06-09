@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import Q, Count
 from django.utils import timezone
-from ninja import NinjaAPI, Schema, File, UploadedFile
+from ninja import NinjaAPI, Schema, File, UploadedFile, Form
 from ninja.security import HttpBearer
 
 from .models import (
@@ -881,26 +881,39 @@ def batch_process(request, data: BatchProcessSchema):
     return results
 
 
-@api.post('/orders/{order_id}/attachments', response=AttachmentSchema, auth=auth, tags=['订单'])
+@api.post('/orders/{order_id}/attachments', response=GlassesOrderDetailSchema, auth=auth, tags=['订单'])
 @transaction.atomic
-def upload_attachment(request, order_id: int, file: File[UploadedFile],
-                      category: str = '',
-                      description: str = '',
-                      is_required: str = 'false'):
+def upload_attachment(request, order_id: int,
+                      file: File[UploadedFile],
+                      category: Form[str],
+                      description: Form[str] = '',
+                      is_required: Form[str] = 'false'):
     try:
         order = GlassesOrder.objects.select_related(
-            'submitted_by__profile', 'current_handler__profile'
+            'submitted_by__profile', 'current_handler__profile',
+            'reviewed_by__profile', 'synced_by__profile', 'last_operator__profile'
+        ).prefetch_related(
+            'optometry_record', 'lens_order', 'registration',
+            'attachments__uploaded_by__profile',
+            'processing_records__operator__profile',
+            'audit_notes__operator__profile',
+            'exceptions__detected_by__profile', 'exceptions__resolved_by__profile'
         ).select_for_update().get(id=order_id)
     except GlassesOrder.DoesNotExist:
         return api.create_response(request, {'detail': '订单不存在'}, status=404)
 
     profile = request.user.profile
-    is_required_bool = str(is_required).lower() in ('true', '1', 'yes')
+    is_required_bool = str(is_required).lower() in ('true', '1', 'yes', 'on')
 
     valid_categories = [c[0] for c in Attachment.CATEGORY_CHOICES]
     if category not in valid_categories:
-        add_audit_note(order, request.user, f'上传附件失败：无效的附件类别 {category}', note_type='error')
-        return api.create_response(request, {'detail': '无效的附件类别'}, status=400)
+        add_audit_note(order, request.user,
+                       f'上传附件失败：无效的附件类别 category={category}', note_type='error')
+        return api.create_response(request, {'detail': f'无效的附件类别：{category}'}, status=400)
+
+    if not file or file.size <= 0:
+        add_audit_note(order, request.user, '上传附件失败：文件为空或无效', note_type='error')
+        return api.create_response(request, {'detail': '文件为空或无效'}, status=400)
 
     if order.status == GlassesOrder.STATUS_SYNCED:
         msg = '订单已同步，无法上传附件'
@@ -912,7 +925,8 @@ def upload_attachment(request, order_id: int, file: File[UploadedFile],
         if not (profile.role == UserProfile.ROLE_OPTOMETRIST and
                 order.submitted_by_id == request.user.id and
                 order.status in [GlassesOrder.STATUS_RETURNED_FOR_CORRECTION, GlassesOrder.STATUS_PENDING_REVIEW]):
-            msg = f'当前处理人为 {order.current_handler.profile.real_name}，您无权上传附件'
+            handler_name = order.current_handler.profile.real_name if order.current_handler else '未分配'
+            msg = f'当前处理人为 {handler_name}，您无权上传附件'
             add_exception(order, ExceptionReason.TYPE_PERMISSION_DENIED, msg, request.user)
             add_audit_note(order, request.user, f'上传附件拦截：{msg}', note_type='error')
             return api.create_response(request, {'detail': msg}, status=403)
@@ -940,10 +954,12 @@ def upload_attachment(request, order_id: int, file: File[UploadedFile],
 
     import os
     os.makedirs('media/attachments', exist_ok=True)
-    safe_filename = file.name.replace('/', '_').replace('\\', '_')
-    file_path = f'media/attachments/{order.order_no}_{category}_{safe_filename}'
+    safe_filename = str(file.name).replace('/', '_').replace('\\', '_')
+    ts = int(timezone.now().timestamp())
+    file_path = f'media/attachments/{order.order_no}_{ts}_{category}_{safe_filename}'
     with open(file_path, 'wb') as f:
-        f.write(file.read())
+        for chunk in file.chunks():
+            f.write(chunk)
 
     att = Attachment.objects.create(
         order=order,
@@ -952,7 +968,7 @@ def upload_attachment(request, order_id: int, file: File[UploadedFile],
         file_path=file_path,
         file_size=file.size,
         uploaded_by=request.user,
-        description=description,
+        description=description or '',
         is_required=is_required_bool
     )
 
@@ -960,6 +976,8 @@ def upload_attachment(request, order_id: int, file: File[UploadedFile],
     opinion = f'上传【{category_display}】附件：{safe_filename}'
     if is_required_bool:
         opinion += '（标记为必填证据）'
+    if description:
+        opinion += f' - {description}'
 
     rec = add_processing_record(
         order, ProcessingRecord.ACTION_ADD_ATTACHMENT, request.user,
@@ -967,72 +985,87 @@ def upload_attachment(request, order_id: int, file: File[UploadedFile],
     )
     add_audit_note(
         order, request.user,
-        f'{profile.real_name}（{profile.get_role_display()}）上传附件：{safe_filename}（{category_display}）',
+        f'{profile.real_name}（{profile.get_role_display()}）上传附件：{safe_filename}'
+        f'（{category_display}）' + (f'，描述：{description}' if description else ''),
         related_record=rec
     )
 
-    if category == Attachment.CATEGORY_OPTOMETRY:
-        resolved = order.exceptions.filter(
-            exception_type__in=[ExceptionReason.TYPE_MISSING_ATTACHMENT, ExceptionReason.TYPE_MISSING_OPTOMETRY],
-            resolved=False
-        )
-        if resolved.exists():
-            for exc in resolved:
-                if '验光' in exc.description or 'optometry' in exc.description:
-                    exc.resolved = True
-                    exc.resolved_by = request.user
-                    exc.resolved_at = timezone.now()
-                    exc.resolution_note = f'已补正上传附件：{safe_filename}'
-                    exc.save()
+    resolve_map = {
+        Attachment.CATEGORY_OPTOMETRY: {
+            'types': [ExceptionReason.TYPE_MISSING_ATTACHMENT, ExceptionReason.TYPE_MISSING_OPTOMETRY],
+            'keywords': ['验光', 'optometry']
+        },
+        Attachment.CATEGORY_LENS: {
+            'types': [ExceptionReason.TYPE_MISSING_ATTACHMENT, ExceptionReason.TYPE_MISSING_LENS],
+            'keywords': ['镜片', 'lens']
+        },
+        Attachment.CATEGORY_REGISTRATION: {
+            'types': [ExceptionReason.TYPE_MISSING_ATTACHMENT],
+            'keywords': ['登记', 'registration', '订单']
+        },
+    }
 
-    if category == Attachment.CATEGORY_LENS:
-        resolved = order.exceptions.filter(
-            exception_type__in=[ExceptionReason.TYPE_MISSING_ATTACHMENT, ExceptionReason.TYPE_MISSING_LENS],
+    if category in resolve_map:
+        rule = resolve_map[category]
+        resolved_qs = order.exceptions.filter(
+            exception_type__in=rule['types'],
             resolved=False
         )
-        if resolved.exists():
-            for exc in resolved:
-                if '镜片' in exc.description or 'lens' in exc.description:
-                    exc.resolved = True
-                    exc.resolved_by = request.user
-                    exc.resolved_at = timezone.now()
-                    exc.resolution_note = f'已补正上传附件：{safe_filename}'
-                    exc.save()
-
-    if category == Attachment.CATEGORY_REGISTRATION:
-        resolved = order.exceptions.filter(
-            exception_type=ExceptionReason.TYPE_MISSING_ATTACHMENT,
-            resolved=False
-        )
-        if resolved.exists():
-            for exc in resolved:
-                if '登记' in exc.description or 'registration' in exc.description:
-                    exc.resolved = True
-                    exc.resolved_by = request.user
-                    exc.resolved_at = timezone.now()
-                    exc.resolution_note = f'已补正上传附件：{safe_filename}'
-                    exc.save()
+        for exc in resolved_qs:
+            match = any(kw in exc.description for kw in rule['keywords']) or \
+                    (category == Attachment.CATEGORY_OPTOMETRY
+                     and exc.exception_type == ExceptionReason.TYPE_MISSING_OPTOMETRY) or \
+                    (category == Attachment.CATEGORY_LENS
+                     and exc.exception_type == ExceptionReason.TYPE_MISSING_LENS)
+            if match:
+                exc.resolved = True
+                exc.resolved_by = request.user
+                exc.resolved_at = timezone.now()
+                exc.resolution_note = f'补正上传【{category_display}】附件：{safe_filename}'
+                exc.save()
+                add_audit_note(
+                    order, request.user,
+                    f'异常已解决（id={exc.id}，{exc.exception_type}）：{exc.resolution_note}',
+                    note_type='general'
+                )
 
     missing_after = check_required_attachments(order)
     issues = check_optometry_and_lens_complete(order)
+    previous_defect = order.has_defect
     if not missing_after and not issues:
-        order.has_defect = False
-        order.defect_description = ''
-        order.save()
-        add_audit_note(order, request.user, '补正后材料齐全，缺项标记已清除', note_type='general')
+        if previous_defect:
+            order.has_defect = False
+            order.defect_description = ''
+            order.save()
+            add_audit_note(
+                order, request.user,
+                '补正后验光、镜片、登记三类材料齐全，缺项标记已清除', note_type='general'
+            )
+    else:
+        all_defects = []
+        if issues:
+            all_defects.extend(issues)
+        if missing_after:
+            all_defects.extend(missing_after)
+        new_desc = '；'.join(all_defects)
+        if new_desc != order.defect_description:
+            order.has_defect = True
+            order.defect_description = new_desc
+            order.save()
 
-    return AttachmentSchema(
-        id=att.id,
-        category=att.category,
-        category_display=att.get_category_display(),
-        file_name=att.file_name,
-        file_path=att.file_path,
-        file_size=att.file_size,
-        uploaded_by=att.uploaded_by.profile.real_name,
-        description=att.description,
-        is_required=att.is_required,
-        created_at=att.created_at
-    )
+    order.refresh_from_db()
+    order = GlassesOrder.objects.select_related(
+        'submitted_by__profile', 'current_handler__profile',
+        'reviewed_by__profile', 'synced_by__profile', 'last_operator__profile'
+    ).prefetch_related(
+        'optometry_record', 'lens_order', 'registration',
+        'attachments__uploaded_by__profile',
+        'processing_records__operator__profile',
+        'audit_notes__operator__profile',
+        'exceptions__detected_by__profile', 'exceptions__resolved_by__profile'
+    ).get(id=order.id)
+
+    return build_order_detail(order)
 
 
 @api.get('/business-areas', auth=auth, tags=['基础数据'])
