@@ -111,14 +111,16 @@ impl CarePlanService {
         for p in plan_iter {
             if let Ok(mut plan) = p {
                 if let Some(w) = &query.warning {
-                    if let Some(level) = &plan.warning_level {
-                        let level_str = match level {
-                            WarningLevel::Normal => "正常",
-                            WarningLevel::Approaching => "临期",
-                            WarningLevel::Overdue => "逾期",
-                        };
-                        if level_str != w {
-                            continue;
+                    if !w.is_empty() {
+                        if let Some(level) = &plan.warning_level {
+                            let level_str = match level {
+                                WarningLevel::Normal => "正常",
+                                WarningLevel::Approaching => "临期",
+                                WarningLevel::Overdue => "逾期",
+                            };
+                            if level_str != w.as_str() {
+                                continue;
+                            }
                         }
                     }
                 }
@@ -284,19 +286,23 @@ impl CarePlanService {
         ).unwrap();
     }
 
+    fn write_failure(&self, plan_id: Uuid, user: &User, action: &str, prev_status: &str, ex_type: &str, failure: &str, remark: Option<&str>) {
+        self.write_processing(plan_id, user, &format!("{}（失败）", action), prev_status, prev_status, Some(failure));
+        self.write_audit(plan_id, user, action, prev_status, prev_status, false, Some(failure), remark);
+        self.write_exception(plan_id, ex_type, failure, &user.display_name);
+    }
+
     pub fn upload_attachment(&self, user: &User, plan_id: Uuid, req: &UploadAttachmentRequest) -> Result<Attachment, (u16, String)> {
         let plan = match self.get_plan(user, plan_id) {
             Some(p) => p,
             None => return Err((404, "护理计划单不存在".to_string())),
         };
         if plan.status == PlanStatus::Closed {
-            self.write_audit(plan_id, user, "上传附件", plan.status.to_str(), plan.status.to_str(), false,
-                Some("状态冲突：已关闭计划单不可上传附件"), None);
+            self.write_failure(plan_id, user, "上传附件", plan.status.to_str(), "状态冲突", "状态冲突：已关闭计划单不可上传附件", None);
             return Err((409, "计划单已关闭，不可上传附件".to_string()));
         }
         if plan.current_handler != user.display_name && !matches!(user.role, Role::Director) {
-            self.write_audit(plan_id, user, "上传附件", plan.status.to_str(), plan.status.to_str(), false,
-                Some("越权操作：非当前处理人不可上传附件"), None);
+            self.write_failure(plan_id, user, "上传附件", plan.status.to_str(), "越权操作", &format!("越权操作：非当前处理人不可上传附件，当前处理人为{}", plan.current_handler), None);
             return Err((403, "当前角色无权限上传附件".to_string()));
         }
         let conn = self.db.conn.lock().unwrap();
@@ -356,21 +362,20 @@ impl CarePlanService {
         };
 
         if plan.version != req.version {
-            self.write_audit(plan_id, user, "更新计划单", plan.status.to_str(), plan.status.to_str(), false,
-                Some(&format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version)), req.remark.as_deref());
-            self.write_exception(plan_id, "版本冲突", &format!("提交版本{}，当前版本{}", req.version, plan.version), &user.display_name);
+            self.write_failure(plan_id, user, "更新计划单", plan.status.to_str(), "版本冲突",
+                &format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version), req.remark.as_deref());
             return Err((409, "版本冲突，请刷新页面后重试".to_string()));
         }
 
         if plan.status == PlanStatus::Closed {
-            self.write_audit(plan_id, user, "更新计划单", plan.status.to_str(), plan.status.to_str(), false,
-                Some("状态冲突：计划单已关闭，不可更新"), req.remark.as_deref());
+            self.write_failure(plan_id, user, "更新计划单", plan.status.to_str(), "状态冲突",
+                "状态冲突：计划单已关闭，不可更新", req.remark.as_deref());
             return Err((409, "当前状态不允许该操作，期望状态：待派发或处理中".to_string()));
         }
 
-        if matches!(user.role, Role::Registrar) && plan.current_handler != user.display_name {
-            self.write_audit(plan_id, user, "更新计划单", plan.status.to_str(), plan.status.to_str(), false,
-                Some("越权操作：非当前处理人不可更新"), req.remark.as_deref());
+        if plan.current_handler != user.display_name && !matches!(user.role, Role::Director) {
+            self.write_failure(plan_id, user, "更新计划单", plan.status.to_str(), "越权操作",
+                &format!("越权操作：非当前处理人不可更新，当前处理人为{}", plan.current_handler), req.remark.as_deref());
             return Err((403, "当前角色无权限执行该操作".to_string()));
         }
 
@@ -379,9 +384,8 @@ impl CarePlanService {
                 let atts = self.get_attachments(plan_id);
                 let has_family = atts.iter().any(|a| a.file_type.contains("family") || a.file_name.contains("家属") || a.file_name.contains("签字"));
                 if !has_family {
-                    self.write_audit(plan_id, user, "更新计划单", plan.status.to_str(), plan.status.to_str(), false,
-                        Some("缺少必填证据：家属签字确认单"), req.remark.as_deref());
-                    self.write_exception(plan_id, "缺少证据", "家属确认环节未上传家属签字确认单", &user.display_name);
+                    self.write_failure(plan_id, user, "更新计划单", plan.status.to_str(), "缺少证据",
+                        "缺少必填证据：家属签字确认单", req.remark.as_deref());
                     return Err((400, "缺少必填证据：家属签字确认单".to_string()));
                 }
             }
@@ -414,27 +418,34 @@ impl CarePlanService {
         ).unwrap();
         drop(conn);
 
+        self.write_processing(plan_id, user, "更新计划单", plan.status.to_str(), plan.status.to_str(), req.remark.as_deref());
         self.write_audit(plan_id, user, "更新计划单", plan.status.to_str(), plan.status.to_str(), true, None, req.remark.as_deref());
         self.get_plan(user, plan_id).ok_or((500, "更新后查询失败".to_string()))
     }
 
     pub fn dispatch_plan(&self, user: &User, plan_id: Uuid, req: &ActionRequest) -> Result<CarePlan, (u16, String)> {
-        if !matches!(user.role, Role::Registrar) {
-            self.write_audit(plan_id, user, "派发计划单", "", "", false, Some("越权操作：非登记员角色不可派发"), req.remark.as_deref());
-            return Err((403, "当前角色无权限执行该操作".to_string()));
-        }
         let plan = match self.get_plan(user, plan_id) {
             Some(p) => p,
             None => return Err((404, "护理计划单不存在".to_string())),
         };
+        if !matches!(user.role, Role::Registrar) {
+            self.write_failure(plan_id, user, "派发计划单", plan.status.to_str(), "越权操作",
+                "越权操作：非登记员角色不可派发", req.remark.as_deref());
+            return Err((403, "当前角色无权限执行该操作".to_string()));
+        }
+        if plan.current_handler != user.display_name {
+            self.write_failure(plan_id, user, "派发计划单", plan.status.to_str(), "越权操作",
+                &format!("越权操作：非当前处理人不可派发，当前处理人为{}", plan.current_handler), req.remark.as_deref());
+            return Err((403, "当前角色无权限执行该操作".to_string()));
+        }
         if plan.status != PlanStatus::PendingDispatch {
-            self.write_audit(plan_id, user, "派发计划单", plan.status.to_str(), plan.status.to_str(), false,
-                Some(&format!("状态冲突：当前状态{}，期望状态：待派发", plan.status.to_str())), req.remark.as_deref());
+            self.write_failure(plan_id, user, "派发计划单", plan.status.to_str(), "状态冲突",
+                &format!("状态冲突：当前状态{}，期望状态：待派发", plan.status.to_str()), req.remark.as_deref());
             return Err((409, "当前状态不允许该操作，期望状态：待派发".to_string()));
         }
         if plan.version != req.version {
-            self.write_audit(plan_id, user, "派发计划单", plan.status.to_str(), plan.status.to_str(), false,
-                Some(&format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version)), req.remark.as_deref());
+            self.write_failure(plan_id, user, "派发计划单", plan.status.to_str(), "版本冲突",
+                &format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version), req.remark.as_deref());
             return Err((409, "版本冲突，请刷新页面后重试".to_string()));
         }
 
@@ -452,28 +463,33 @@ impl CarePlanService {
     }
 
     pub fn submit_plan(&self, user: &User, plan_id: Uuid, req: &ActionRequest) -> Result<CarePlan, (u16, String)> {
-        if !matches!(user.role, Role::Supervisor) {
-            self.write_audit(plan_id, user, "提交复核", "", "", false, Some("越权操作：非主管角色不可提交复核"), req.remark.as_deref());
-            return Err((403, "当前角色无权限执行该操作".to_string()));
-        }
         let plan = match self.get_plan(user, plan_id) {
             Some(p) => p,
             None => return Err((404, "护理计划单不存在".to_string())),
         };
+        if !matches!(user.role, Role::Supervisor) {
+            self.write_failure(plan_id, user, "提交复核", plan.status.to_str(), "越权操作",
+                "越权操作：非主管角色不可提交复核", req.remark.as_deref());
+            return Err((403, "当前角色无权限执行该操作".to_string()));
+        }
+        if plan.current_handler != user.display_name {
+            self.write_failure(plan_id, user, "提交复核", plan.status.to_str(), "越权操作",
+                &format!("越权操作：非当前处理人不可提交复核，当前处理人为{}", plan.current_handler), req.remark.as_deref());
+            return Err((403, "当前角色无权限执行该操作".to_string()));
+        }
         if plan.status != PlanStatus::InProgress {
-            self.write_audit(plan_id, user, "提交复核", plan.status.to_str(), plan.status.to_str(), false,
-                Some(&format!("状态冲突：当前状态{}，期望状态：处理中", plan.status.to_str())), req.remark.as_deref());
+            self.write_failure(plan_id, user, "提交复核", plan.status.to_str(), "状态冲突",
+                &format!("状态冲突：当前状态{}，期望状态：处理中", plan.status.to_str()), req.remark.as_deref());
             return Err((409, "当前状态不允许该操作，期望状态：处理中".to_string()));
         }
         if plan.version != req.version {
-            self.write_audit(plan_id, user, "提交复核", plan.status.to_str(), plan.status.to_str(), false,
-                Some(&format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version)), req.remark.as_deref());
+            self.write_failure(plan_id, user, "提交复核", plan.status.to_str(), "版本冲突",
+                &format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version), req.remark.as_deref());
             return Err((409, "版本冲突，请刷新页面后重试".to_string()));
         }
         if !plan.assessment_done || !plan.plan_done {
-            self.write_audit(plan_id, user, "提交复核", plan.status.to_str(), plan.status.to_str(), false,
-                Some("缺少必填证据：入住评估或护理计划未完成"), req.remark.as_deref());
-            self.write_exception(plan_id, "缺少证据", "入住评估或护理计划模块未完成", &user.display_name);
+            self.write_failure(plan_id, user, "提交复核", plan.status.to_str(), "缺少证据",
+                "缺少必填证据：入住评估或护理计划未完成", req.remark.as_deref());
             return Err((400, "缺少必填证据：入住评估和护理计划必须全部完成".to_string()));
         }
 
@@ -491,28 +507,33 @@ impl CarePlanService {
     }
 
     pub fn review_plan(&self, user: &User, plan_id: Uuid, req: &ActionRequest) -> Result<CarePlan, (u16, String)> {
-        if !matches!(user.role, Role::Director) {
-            self.write_audit(plan_id, user, "复核归档", "", "", false, Some("越权操作：非院区主任角色不可复核归档"), req.remark.as_deref());
-            return Err((403, "当前角色无权限执行该操作".to_string()));
-        }
         let plan = match self.get_plan(user, plan_id) {
             Some(p) => p,
             None => return Err((404, "护理计划单不存在".to_string())),
         };
+        if !matches!(user.role, Role::Director) {
+            self.write_failure(plan_id, user, "复核归档", plan.status.to_str(), "越权操作",
+                "越权操作：非院区主任角色不可复核归档", req.remark.as_deref());
+            return Err((403, "当前角色无权限执行该操作".to_string()));
+        }
+        if plan.current_handler != user.display_name {
+            self.write_failure(plan_id, user, "复核归档", plan.status.to_str(), "越权操作",
+                &format!("越权操作：非当前处理人不可复核归档，当前处理人为{}", plan.current_handler), req.remark.as_deref());
+            return Err((403, "当前角色无权限执行该操作".to_string()));
+        }
         if plan.status != PlanStatus::InProgress {
-            self.write_audit(plan_id, user, "复核归档", plan.status.to_str(), plan.status.to_str(), false,
-                Some(&format!("状态冲突：当前状态{}，期望状态：处理中", plan.status.to_str())), req.remark.as_deref());
+            self.write_failure(plan_id, user, "复核归档", plan.status.to_str(), "状态冲突",
+                &format!("状态冲突：当前状态{}，期望状态：处理中", plan.status.to_str()), req.remark.as_deref());
             return Err((409, "当前状态不允许该操作，期望状态：处理中".to_string()));
         }
         if plan.version != req.version {
-            self.write_audit(plan_id, user, "复核归档", plan.status.to_str(), plan.status.to_str(), false,
-                Some(&format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version)), req.remark.as_deref());
+            self.write_failure(plan_id, user, "复核归档", plan.status.to_str(), "版本冲突",
+                &format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version), req.remark.as_deref());
             return Err((409, "版本冲突，请刷新页面后重试".to_string()));
         }
         if !plan.family_confirmed {
-            self.write_audit(plan_id, user, "复核归档", plan.status.to_str(), plan.status.to_str(), false,
-                Some("缺少必填证据：家属确认未完成"), req.remark.as_deref());
-            self.write_exception(plan_id, "缺少证据", "家属确认环节未完成", &user.display_name);
+            self.write_failure(plan_id, user, "复核归档", plan.status.to_str(), "缺少证据",
+                "缺少必填证据：家属确认未完成", req.remark.as_deref());
             return Err((400, "缺少必填证据：家属确认必须完成".to_string()));
         }
 
@@ -535,14 +556,19 @@ impl CarePlanService {
             None => return Err((404, "护理计划单不存在".to_string())),
         };
         if plan.status == PlanStatus::Closed {
-            self.write_audit(plan_id, user, "退回补正", plan.status.to_str(), plan.status.to_str(), false,
-                Some("状态冲突：计划单已关闭，不可退回"), Some(&req.remark));
+            self.write_failure(plan_id, user, "退回补正", plan.status.to_str(), "状态冲突",
+                "状态冲突：计划单已关闭，不可退回", Some(&req.remark));
             return Err((409, "当前状态不允许该操作".to_string()));
         }
         if plan.version != req.version {
-            self.write_audit(plan_id, user, "退回补正", plan.status.to_str(), plan.status.to_str(), false,
-                Some(&format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version)), Some(&req.remark));
+            self.write_failure(plan_id, user, "退回补正", plan.status.to_str(), "版本冲突",
+                &format!("版本冲突：提交版本{}，当前版本{}", req.version, plan.version), Some(&req.remark));
             return Err((409, "版本冲突，请刷新页面后重试".to_string()));
+        }
+        if plan.current_handler != user.display_name {
+            self.write_failure(plan_id, user, "退回补正", plan.status.to_str(), "越权操作",
+                &format!("越权操作：非当前处理人不可退回，当前处理人为{}", plan.current_handler), Some(&req.remark));
+            return Err((403, "当前角色或状态不允许执行退回操作".to_string()));
         }
 
         let (next_handler, next_resp, allowed) = match user.role {
@@ -564,8 +590,8 @@ impl CarePlanService {
         };
 
         if !allowed {
-            self.write_audit(plan_id, user, "退回补正", plan.status.to_str(), plan.status.to_str(), false,
-                Some("越权操作或状态不允许退回"), Some(&req.remark));
+            self.write_failure(plan_id, user, "退回补正", plan.status.to_str(), "越权操作",
+                "越权操作或状态不允许退回", Some(&req.remark));
             return Err((403, "当前角色或状态不允许执行退回操作".to_string()));
         }
 
@@ -597,27 +623,28 @@ impl CarePlanService {
 
             if let Some(plan) = &plan_opt {
                 if plan.current_handler != user.display_name && !matches!(user.role, Role::Director) {
-                    self.write_audit(*pid, user, &format!("批量{}", req.action), plan.status.to_str(), plan.status.to_str(), false,
-                        Some(&format!("越权操作：非当前处理人，当前处理人为{}", plan.current_handler)), req.remark.as_deref());
+                    let failure_msg = format!("越权：当前处理人为{}，非本人操作被拦截", plan.current_handler);
+                    self.write_failure(*pid, user, &format!("批量{}", req.action), plan.status.to_str(), "越权操作",
+                        &format!("越权操作：非当前处理人，当前处理人为{}", plan.current_handler), req.remark.as_deref());
                     results.push(BatchResult {
                         plan_id: *pid,
                         plan_no: plan_no.clone(),
                         elder_name: elder_name.clone(),
                         success: false,
-                        message: format!("越权：当前处理人为{}，非本人操作被拦截", plan.current_handler),
+                        message: failure_msg,
                     });
                     continue;
                 }
                 if matches!(plan.warning_level, Some(WarningLevel::Overdue)) {
-                    self.write_exception(*pid, "批量逾期拦截", &format!("单据已逾期，责任人为{}", plan.responsible_person), &user.display_name);
-                    self.write_audit(*pid, user, &format!("批量{}", req.action), plan.status.to_str(), plan.status.to_str(), false,
-                        Some(&format!("逾期拦截：截止日期{}，责任人为{}", plan.deadline, plan.responsible_person)), req.remark.as_deref());
+                    let failure_msg = format!("逾期拦截：截止日{}，责任人{}，需先处理逾期原因再推进", plan.deadline, plan.responsible_person);
+                    self.write_failure(*pid, user, &format!("批量{}", req.action), plan.status.to_str(), "批量逾期拦截",
+                        &format!("逾期拦截：截止日期{}，责任人为{}", plan.deadline, plan.responsible_person), req.remark.as_deref());
                     results.push(BatchResult {
                         plan_id: *pid,
                         plan_no: plan_no.clone(),
                         elder_name: elder_name.clone(),
                         success: false,
-                        message: format!("逾期拦截：截止日{}，责任人{}，需先处理逾期原因再推进", plan.deadline, plan.responsible_person),
+                        message: failure_msg,
                     });
                     continue;
                 }

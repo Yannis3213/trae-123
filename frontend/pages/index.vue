@@ -132,7 +132,7 @@
       <table>
         <thead>
           <tr>
-            <th style="width: 40px;"><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th>
+            <th style="width: 40px;"><input type="checkbox" v-model="allSelected" /></th>
             <th>计划单号</th>
             <th>老人姓名</th>
             <th>房间号</th>
@@ -186,7 +186,9 @@
             </td>
             <td style="font-size:12px;color:#909399;">v{{ p.version }}</td>
             <td>
-              <button class="btn btn-primary btn-sm" @click="goDetail(p.id)">详情办理</button>
+              <button class="btn btn-sm" :class="canHandle(p) ? 'btn-primary' : ''" :disabled="!canHandle(p)" @click="goDetail(p.id)">
+                {{ canHandle(p) ? '详情办理' : '查看详情' }}
+              </button>
             </td>
           </tr>
           <tr v-if="displayPlans.length === 0">
@@ -404,7 +406,23 @@ function getRowStyle(p: CarePlan) {
 
 function canSelect(p: CarePlan) {
   if (p.status === '已关闭') return false
+  if (auth.currentRole === 'registrar') {
+    if (!['待派发', '处理中'].includes(p.status)) return false
+    if (p.current_handler !== auth.displayName) return false
+  }
+  if (auth.currentRole === 'supervisor') {
+    if (p.status !== '处理中') return false
+    if (p.current_handler !== auth.displayName) return false
+  }
+  if (auth.currentRole === 'director') {
+    if (p.status !== '处理中') return false
+    if (p.current_handler !== auth.displayName) return false
+  }
   return true
+}
+
+function canHandle(p: CarePlan) {
+  return canSelect(p)
 }
 
 watch(() => auth.currentRole, () => loadData())
