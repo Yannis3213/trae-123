@@ -15,14 +15,20 @@ export default function OverduePage() {
   const load = async () => {
     setLoading(true);
     try {
-      const all = (await api.listBorrowRecords({ page_size: '500' })) as BorrowRecord[];
+      const params: Record<string, string> = { page_size: '500', role: currentRole };
+      const all = (await api.listBorrowRecords(params)) as BorrowRecord[];
       setRecords(all);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [currentRole]);
+
+  useEffect(() => {
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const filtered = useMemo(() => {
     switch (filter) {

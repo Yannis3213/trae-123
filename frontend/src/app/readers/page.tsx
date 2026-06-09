@@ -1,32 +1,41 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Reader, BorrowRecord } from '@/types';
 import { api } from '@/lib/api';
+import { useRole } from '@/context/RoleContext';
 
 export default function ReadersPage() {
+  const { currentRole } = useRole();
   const [readers, setReaders] = useState<Reader[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
   const [selectedReader, setSelectedReader] = useState<Reader | null>(null);
   const [readerRecords, setReaderRecords] = useState<BorrowRecord[]>([]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = (await api.listReaders()) as Reader[];
-        setReaders(data);
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const loadReaders = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = (await api.listReaders()) as Reader[];
+      setReaders(data);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { loadReaders(); }, [loadReaders]);
+
+  useEffect(() => {
+    const t = setInterval(loadReaders, 20000);
+    return () => clearInterval(t);
+  }, [loadReaders]);
 
   const loadReaderRecords = async (reader: Reader) => {
     setSelectedReader(reader);
     try {
-      const all = (await api.listBorrowRecords({ page_size: '200' })) as BorrowRecord[];
+      const params: Record<string, string> = { page_size: '500', role: currentRole };
+      const all = (await api.listBorrowRecords(params)) as BorrowRecord[];
       setReaderRecords(all.filter((r) => r.reader_id === reader.id));
     } catch {
       setReaderRecords([]);

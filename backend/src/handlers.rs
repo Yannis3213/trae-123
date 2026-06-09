@@ -133,7 +133,7 @@ pub async fn batch_process_records(
 
     for record_id in &body.record_ids {
         let version = body.versions.get(record_id).copied().unwrap_or(0);
-        let mut fail = |msg: &str| {
+        let push_fail = |msg: &str| {
             failure_count += 1;
             results.push(BatchProcessResultItem {
                 record_id: *record_id,
@@ -146,63 +146,24 @@ pub async fn batch_process_records(
 
         let record = match crate::db::get_borrow_record(&db, record_id) {
             Ok(Some(r)) => r,
-            Ok(None) => { fail("记录不存在"); continue; }
-            Err(e) => { fail(&format!("数据库错误: {}", e)); continue; }
+            Ok(None) => { push_fail("记录不存在"); continue; }
+            Err(e) => { push_fail(&format!("数据库错误: {}", e)); continue; }
         };
-
         let from_status = record.status;
 
         if !can_access_record(&record, body.operator_role) {
-            fail(&format!("越权: 角色{}无权处理状态{}的记录",
-                body.operator_role.as_str(), record.status.as_str()));
+            let msg = format!(
+                "越权: 角色 {} 无权处理状态 {} 的记录",
+                body.operator_role.as_str(), record.status.as_str()
+            );
             let _ = crate::db::add_audit_note(
                 &db, record_id, record.status,
-                &format!("批量处理被拦截: 越权操作，目标状态 {}", body.target_status.as_str()),
+                &format!("批量处理被拦截: {}", msg),
                 &body.operator, body.operator_role,
                 Some("越权推进"),
                 Some(&format!("role={}, status={}", body.operator_role.as_str(), record.status.as_str())),
             );
-            continue;
-        }
-
-        if record.version != version {
-            fail(&format!("版本冲突: 期望版本{}，提交版本{}", record.version, version));
-            let _ = crate::db::add_audit_note(
-                &db, record_id, record.status,
-                &format!("批量处理被拦截: 版本冲突，期望{}实际{}", record.version, version),
-                &body.operator, body.operator_role,
-                Some("版本冲突"),
-                Some(&format!("expected={}, actual={}", record.version, version)),
-            );
-            continue;
-        }
-
-        let required = crate::db::required_evidence_for(&record.status, &body.target_status);
-        let missing: Vec<String> = required.iter()
-            .filter(|e| !body.evidence.contains(e))
-            .cloned()
-            .collect();
-        if !missing.is_empty() && body.target_status != BorrowStatus::ReturnedForCorrection {
-            fail(&format!("资料缺失: {}", missing.join(", ")));
-            let _ = crate::db::add_audit_note(
-                &db, record_id, record.status,
-                &format!("批量处理被拦截: 缺少必要证据 {:?}", missing),
-                &body.operator, body.operator_role,
-                Some("资料缺失"),
-                Some(&missing.join(", ")),
-            );
-            continue;
-        }
-
-        if record.node_timeout && body.operator_role != Role::LibraryDirector {
-            fail("节点超时: 仅馆长可处理超时记录");
-            let _ = crate::db::add_audit_note(
-                &db, record_id, record.status,
-                "批量处理被拦截: 节点超时，非馆长角色推进",
-                &body.operator, body.operator_role,
-                Some("超期未处理"),
-                Some(&format!("timeout_responsible={:?}", record.timeout_responsible)),
-            );
+            push_fail(&msg);
             continue;
         }
 
@@ -231,7 +192,7 @@ pub async fn batch_process_records(
                 });
             }
             Err(e) => {
-                fail(&e.to_string());
+                push_fail(&e.to_string());
             }
         }
     }

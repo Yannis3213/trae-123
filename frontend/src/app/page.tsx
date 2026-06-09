@@ -16,6 +16,7 @@ export default function HomePage() {
   const [status, setStatus] = useState<BorrowStatus | ''>('');
   const [overdueLevel, setOverdueLevel] = useState<OverdueLevel | ''>('');
   const [roleFilter, setRoleFilter] = useState<Role | ''>('');
+  const [handler, setHandler] = useState('');
   const [keyword, setKeyword] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -28,6 +29,7 @@ export default function HomePage() {
       if (status) params.status = status;
       if (overdueLevel) params.overdue_level = overdueLevel;
       if (keyword) params.reader_keyword = keyword;
+      if (handler) params.handler = handler;
       params.page = '1';
       params.page_size = '200';
       const data = (await api.listBorrowRecords(params)) as BorrowRecord[];
@@ -35,10 +37,15 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [currentRole, status, overdueLevel, roleFilter, keyword]);
+  }, [currentRole, status, overdueLevel, roleFilter, keyword, handler]);
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  useEffect(() => {
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
   }, [load]);
 
   const toggleSelect = (id: string) => {
@@ -63,6 +70,7 @@ export default function HomePage() {
     setOverdueLevel('');
     setRoleFilter('');
     setKeyword('');
+    setHandler('');
     setSelectedIds(new Set());
   };
 
@@ -88,6 +96,8 @@ export default function HomePage() {
         setOverdueLevel={setOverdueLevel}
         role={roleFilter}
         setRole={setRoleFilter}
+        handler={handler}
+        setHandler={setHandler}
         keyword={keyword}
         setKeyword={setKeyword}
         onReset={onReset}

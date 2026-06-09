@@ -25,11 +25,11 @@ impl Role {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "借阅登记员" => Some(Role::RegistrationClerk),
-            "流通馆员" => Some(Role::CirculationLibrarian),
-            "采编馆员" => Some(Role::CatalogingLibrarian),
-            "借阅审核主管" => Some(Role::AuditSupervisor),
-            "馆长" => Some(Role::LibraryDirector),
+            "借阅登记员" | "registration_clerk" => Some(Role::RegistrationClerk),
+            "流通馆员" | "circulation_librarian" => Some(Role::CirculationLibrarian),
+            "采编馆员" | "cataloging_librarian" => Some(Role::CatalogingLibrarian),
+            "借阅审核主管" | "audit_supervisor" => Some(Role::AuditSupervisor),
+            "馆长" | "library_director" => Some(Role::LibraryDirector),
             _ => None,
         }
     }
@@ -70,12 +70,12 @@ impl BorrowStatus {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "待分派" => Some(BorrowStatus::PendingAssignment),
-            "已转办" => Some(BorrowStatus::Transferred),
-            "已回访" => Some(BorrowStatus::Revisited),
-            "退回补正" => Some(BorrowStatus::ReturnedForCorrection),
-            "复核归档" => Some(BorrowStatus::ReviewedArchived),
-            "已逾期" => Some(BorrowStatus::Overdue),
+            "待分派" | "pending_assignment" => Some(BorrowStatus::PendingAssignment),
+            "已转办" | "transferred" => Some(BorrowStatus::Transferred),
+            "已回访" | "revisited" => Some(BorrowStatus::Revisited),
+            "退回补正" | "returned_for_correction" => Some(BorrowStatus::ReturnedForCorrection),
+            "复核归档" | "reviewed_archived" => Some(BorrowStatus::ReviewedArchived),
+            "已逾期" | "overdue" => Some(BorrowStatus::Overdue),
             _ => None,
         }
     }

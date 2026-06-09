@@ -507,6 +507,40 @@ pub fn validate_and_process(
 
     crate::auth::check_permission(&record, req.operator_role, &req.target_status)?;
 
+    if record.node_timeout && req.operator_role != Role::LibraryDirector {
+        add_audit_note(
+            conn, record_id, record.status,
+            "节点超时: 非馆长角色无法推进超时记录",
+            &req.operator, req.operator_role,
+            Some("超期未处理"),
+            Some(&format!("timeout_responsible={:?}, operator_role={}", record.timeout_responsible, req.operator_role.as_str())),
+        )?;
+        return Err(anyhow!("节点已超时，仅馆长可推进此记录"));
+    }
+
+    if let Some(handler_role) = record.current_handler_role {
+        if handler_role != req.operator_role
+            && req.operator_role != Role::LibraryDirector
+            && record.current_handler.is_some()
+        {
+            add_audit_note(
+                conn, record_id, record.status,
+                &format!(
+                    "当前处理人越权: 记录归属角色为 {}，操作角色为 {}",
+                    handler_role.as_str(), req.operator_role.as_str()
+                ),
+                &req.operator, req.operator_role,
+                Some("越权推进"),
+                Some(&format!("expected_handler_role={}, actual={}", handler_role.as_str(), req.operator_role.as_str())),
+            )?;
+            return Err(anyhow!(
+                "该记录当前处理人为 {}（{}），您无权操作",
+                record.current_handler.as_deref().unwrap_or("-"),
+                handler_role.as_str()
+            ));
+        }
+    }
+
     let required_evidence = required_evidence_for(&record.status, &req.target_status);
     let missing_evidence: Vec<String> = required_evidence
         .iter()
