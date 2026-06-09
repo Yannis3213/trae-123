@@ -219,8 +219,13 @@ class OrderCorrectSchema(BaseModel):
     opinion: str = ''
 
 
+class BatchOrderItemSchema(BaseModel):
+    order_id: int
+    version: int
+
+
 class BatchProcessSchema(BaseModel):
-    order_ids: List[int]
+    orders: List[BatchOrderItemSchema]
     action: str
     opinion: str = ''
 

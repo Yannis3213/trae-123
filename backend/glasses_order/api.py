@@ -702,29 +702,42 @@ def batch_process(request, data: BatchProcessSchema):
     profile = request.user.profile
     results = []
 
-    for order_id in data.order_ids:
+    for item in data.orders:
+        order_id = item.order_id
+        item_version = item.version
         try:
             with transaction.atomic():
                 order = GlassesOrder.objects.select_for_update().get(id=order_id)
 
                 if data.action == 'approve':
                     if order.status != GlassesOrder.STATUS_PENDING_REVIEW:
-                        results.append(BatchResultSchema(
-                            order_id=order.id, order_no=order.order_no, success=False,
-                            message=f'状态冲突：当前状态为 {order.get_status_display()}，无法批量通过'
-                        ))
+                        msg = f'状态冲突：当前状态为 {order.get_status_display()}，无法批量通过'
                         add_exception(order, ExceptionReason.TYPE_STATUS_CONFLICT,
-                                      f'批量通过失败：状态为 {order.get_status_display()}', request.user)
+                                      f'批量通过失败（v{item_version}）：{msg}', request.user)
+                        add_audit_note(order, request.user, f'批量审核拦截（v{item_version}）：{msg}', note_type='error')
+                        results.append(BatchResultSchema(
+                            order_id=order.id, order_no=order.order_no, success=False, message=msg
+                        ))
                         continue
 
-                    errors = validate_order_for_role(order, request.user, check_attachments=True)
+                    errors = validate_order_for_role(order, request.user,
+                                                      expected_version=item_version, check_attachments=True)
                     if errors:
+                        add_audit_note(order, request.user,
+                                       f'批量审核拦截（v{item_version}）：' + '；'.join(errors), note_type='error')
                         results.append(BatchResultSchema(
                             order_id=order.id, order_no=order.order_no, success=False,
                             message='；'.join(errors)
                         ))
-                        add_audit_note(order, request.user, '批量审核拦截：' + '；'.join(errors), note_type='error')
                         continue
+
+                    issues = check_optometry_and_lens_complete(order)
+                    missing_att = check_required_attachments(order)
+                    if issues or missing_att:
+                        all_issues = issues + missing_att
+                        add_audit_note(order, request.user,
+                                       f'批量通过前检测异常（v{item_version}）：' + '；'.join(all_issues),
+                                       note_type='warning')
 
                     from_status = order.status
                     order.status = GlassesOrder.STATUS_REVIEW_APPROVED
@@ -735,37 +748,41 @@ def batch_process(request, data: BatchProcessSchema):
                     if ops_mgrs.exists():
                         order.current_handler = ops_mgrs.first().user
                     order.version += 1
-                    order.last_opinion = data.opinion
+                    order.last_opinion = data.opinion or f'批量审核通过（v{item_version}→v{order.version}）'
                     order.last_operator = request.user
                     order.save()
 
                     rec = add_processing_record(order, ProcessingRecord.ACTION_APPROVE, request.user,
                                                 from_status=from_status, to_status=order.status,
-                                                opinion=data.opinion, version=order.version)
+                                                opinion=data.opinion or '批量审核通过', version=order.version)
                     add_audit_note(order, request.user,
-                                   f'{profile.real_name} 批量审核通过：{data.opinion}', related_record=rec)
+                                   f'{profile.real_name} 批量审核通过（v{item_version}→v{order.version}）：{data.opinion}',
+                                   related_record=rec)
                     results.append(BatchResultSchema(
                         order_id=order.id, order_no=order.order_no, success=True,
-                        message='批量审核通过成功'
+                        message=f'批量审核通过成功（v{item_version}→v{order.version}）'
                     ))
 
                 elif data.action == 'sync':
                     if order.status != GlassesOrder.STATUS_REVIEW_APPROVED:
-                        results.append(BatchResultSchema(
-                            order_id=order.id, order_no=order.order_no, success=False,
-                            message=f'状态冲突：当前状态为 {order.get_status_display()}，无法批量同步'
-                        ))
+                        msg = f'状态冲突：当前状态为 {order.get_status_display()}，无法批量同步'
                         add_exception(order, ExceptionReason.TYPE_STATUS_CONFLICT,
-                                      f'批量同步失败：状态为 {order.get_status_display()}', request.user)
+                                      f'批量同步失败（v{item_version}）：{msg}', request.user)
+                        add_audit_note(order, request.user, f'批量同步拦截（v{item_version}）：{msg}', note_type='error')
+                        results.append(BatchResultSchema(
+                            order_id=order.id, order_no=order.order_no, success=False, message=msg
+                        ))
                         continue
 
-                    errors = validate_order_for_role(order, request.user, check_attachments=True)
+                    errors = validate_order_for_role(order, request.user,
+                                                      expected_version=item_version, check_attachments=True)
                     if errors:
+                        add_audit_note(order, request.user,
+                                       f'批量同步拦截（v{item_version}）：' + '；'.join(errors), note_type='error')
                         results.append(BatchResultSchema(
                             order_id=order.id, order_no=order.order_no, success=False,
                             message='；'.join(errors)
                         ))
-                        add_audit_note(order, request.user, '批量同步拦截：' + '；'.join(errors), note_type='error')
                         continue
 
                     from_status = order.status
@@ -774,30 +791,36 @@ def batch_process(request, data: BatchProcessSchema):
                     order.synced_at = timezone.now()
                     order.current_handler = None
                     order.version += 1
-                    order.last_opinion = data.opinion
+                    order.last_opinion = data.opinion or f'批量同步（v{item_version}→v{order.version}）'
                     order.last_operator = request.user
                     order.save()
 
                     rec = add_processing_record(order, ProcessingRecord.ACTION_SYNC, request.user,
                                                 from_status=from_status, to_status=order.status,
-                                                opinion=data.opinion, version=order.version)
+                                                opinion=data.opinion or '批量同步', version=order.version)
                     add_audit_note(order, request.user,
-                                   f'{profile.real_name} 批量同步：{data.opinion}', related_record=rec)
+                                   f'{profile.real_name} 批量同步（v{item_version}→v{order.version}）：{data.opinion}',
+                                   related_record=rec)
                     results.append(BatchResultSchema(
                         order_id=order.id, order_no=order.order_no, success=True,
-                        message='批量同步成功'
+                        message=f'批量同步成功（v{item_version}→v{order.version}）'
                     ))
 
                 elif data.action == 'return':
                     if order.status != GlassesOrder.STATUS_PENDING_REVIEW:
+                        msg = f'状态冲突：当前状态为 {order.get_status_display()}，无法批量退回'
+                        add_exception(order, ExceptionReason.TYPE_STATUS_CONFLICT,
+                                      f'批量退回失败（v{item_version}）：{msg}', request.user)
+                        add_audit_note(order, request.user, f'批量退回拦截（v{item_version}）：{msg}', note_type='error')
                         results.append(BatchResultSchema(
-                            order_id=order.id, order_no=order.order_no, success=False,
-                            message=f'状态冲突：当前状态为 {order.get_status_display()}，无法批量退回'
+                            order_id=order.id, order_no=order.order_no, success=False, message=msg
                         ))
                         continue
 
-                    errors = validate_order_for_role(order, request.user)
+                    errors = validate_order_for_role(order, request.user, expected_version=item_version)
                     if errors:
+                        add_audit_note(order, request.user,
+                                       f'批量退回拦截（v{item_version}）：' + '；'.join(errors), note_type='error')
                         results.append(BatchResultSchema(
                             order_id=order.id, order_no=order.order_no, success=False,
                             message='；'.join(errors)
@@ -807,39 +830,52 @@ def batch_process(request, data: BatchProcessSchema):
                     from_status = order.status
                     order.status = GlassesOrder.STATUS_RETURNED_FOR_CORRECTION
                     order.has_defect = True
-                    order.defect_description = data.opinion or '批量退回补正'
+                    order.defect_description = data.opinion or f'批量退回补正（v{item_version}）'
                     optometrist = order.submitted_by
                     if optometrist:
                         order.current_handler = optometrist
                     order.version += 1
-                    order.last_opinion = data.opinion
+                    order.last_opinion = data.opinion or f'批量退回补正（v{item_version}→v{order.version}）'
                     order.last_operator = request.user
                     order.save()
 
-                    add_exception(order, ExceptionReason.TYPE_OTHER, f'批量退回补正：{data.opinion}', request.user)
+                    add_exception(order, ExceptionReason.TYPE_OTHER,
+                                  f'批量退回补正（v{item_version}→v{order.version}）：{data.opinion}', request.user)
                     rec = add_processing_record(order, ProcessingRecord.ACTION_RETURN, request.user,
                                                 from_status=from_status, to_status=order.status,
-                                                opinion=data.opinion, version=order.version)
+                                                opinion=data.opinion or '批量退回补正', version=order.version)
                     add_audit_note(order, request.user,
-                                   f'{profile.real_name} 批量退回补正：{data.opinion}', related_record=rec)
+                                   f'{profile.real_name} 批量退回补正（v{item_version}→v{order.version}）：{data.opinion}',
+                                   related_record=rec)
                     results.append(BatchResultSchema(
                         order_id=order.id, order_no=order.order_no, success=True,
-                        message='批量退回补正成功'
+                        message=f'批量退回补正成功（v{item_version}→v{order.version}）'
                     ))
 
                 else:
                     results.append(BatchResultSchema(
-                        order_id=order.id, order_no=order.order_no if order else '',
-                        success=False, message='不支持的批量操作'
+                        order_id=order.id, order_no=order.order_no,
+                        success=False, message=f'不支持的批量操作：{data.action}'
                     ))
 
         except GlassesOrder.DoesNotExist:
             results.append(BatchResultSchema(
-                order_id=order_id, order_no='', success=False, message='订单不存在'
+                order_id=order_id, order_no='', success=False,
+                message=f'订单不存在（id={order_id}, v{item_version}）'
             ))
         except Exception as e:
+            try:
+                order_err = GlassesOrder.objects.filter(id=order_id).first()
+                if order_err:
+                    add_audit_note(order_err, request.user,
+                                   f'批量处理系统错误（v{item_version}）：{str(e)}', note_type='error')
+                    add_exception(order_err, ExceptionReason.TYPE_OTHER,
+                                  f'批量处理系统错误：{str(e)}', request.user)
+            except Exception:
+                pass
             results.append(BatchResultSchema(
-                order_id=order_id, order_no='', success=False, message=f'系统错误：{str(e)}'
+                order_id=order_id, order_no='', success=False,
+                message=f'系统错误（v{item_version}）：{str(e)}'
             ))
 
     return results
@@ -847,38 +883,143 @@ def batch_process(request, data: BatchProcessSchema):
 
 @api.post('/orders/{order_id}/attachments', response=AttachmentSchema, auth=auth, tags=['订单'])
 @transaction.atomic
-def upload_attachment(request, order_id: int, category: str, file: File[UploadedFile],
-                      description: str = '', is_required: bool = False):
+def upload_attachment(request, order_id: int, file: File[UploadedFile],
+                      category: str = '',
+                      description: str = '',
+                      is_required: str = 'false'):
     try:
-        order = GlassesOrder.objects.get(id=order_id)
+        order = GlassesOrder.objects.select_related(
+            'submitted_by__profile', 'current_handler__profile'
+        ).select_for_update().get(id=order_id)
     except GlassesOrder.DoesNotExist:
         return api.create_response(request, {'detail': '订单不存在'}, status=404)
 
     profile = request.user.profile
+    is_required_bool = str(is_required).lower() in ('true', '1', 'yes')
+
     valid_categories = [c[0] for c in Attachment.CATEGORY_CHOICES]
     if category not in valid_categories:
+        add_audit_note(order, request.user, f'上传附件失败：无效的附件类别 {category}', note_type='error')
         return api.create_response(request, {'detail': '无效的附件类别'}, status=400)
+
+    if order.status == GlassesOrder.STATUS_SYNCED:
+        msg = '订单已同步，无法上传附件'
+        add_exception(order, ExceptionReason.TYPE_STATUS_CONFLICT, msg, request.user)
+        add_audit_note(order, request.user, f'上传附件拦截：{msg}', note_type='error')
+        return api.create_response(request, {'detail': msg}, status=400)
+
+    if order.current_handler and order.current_handler_id != request.user.id:
+        if not (profile.role == UserProfile.ROLE_OPTOMETRIST and
+                order.submitted_by_id == request.user.id and
+                order.status in [GlassesOrder.STATUS_RETURNED_FOR_CORRECTION, GlassesOrder.STATUS_PENDING_REVIEW]):
+            msg = f'当前处理人为 {order.current_handler.profile.real_name}，您无权上传附件'
+            add_exception(order, ExceptionReason.TYPE_PERMISSION_DENIED, msg, request.user)
+            add_audit_note(order, request.user, f'上传附件拦截：{msg}', note_type='error')
+            return api.create_response(request, {'detail': msg}, status=403)
+
+    if profile.role == UserProfile.ROLE_OPHTHALMOLOGIST:
+        if order.status not in [GlassesOrder.STATUS_PENDING_REVIEW]:
+            msg = f'眼科医生仅能在「待审核」状态上传附件，当前为 {order.get_status_display()}'
+            add_exception(order, ExceptionReason.TYPE_PERMISSION_DENIED, msg, request.user)
+            add_audit_note(order, request.user, f'上传附件拦截：{msg}', note_type='error')
+            return api.create_response(request, {'detail': msg}, status=403)
+
+    if profile.role == UserProfile.ROLE_OPERATIONS_MANAGER:
+        if order.status not in [GlassesOrder.STATUS_REVIEW_APPROVED]:
+            msg = f'运营主管仅能在「审核通过」状态上传附件，当前为 {order.get_status_display()}'
+            add_exception(order, ExceptionReason.TYPE_PERMISSION_DENIED, msg, request.user)
+            add_audit_note(order, request.user, f'上传附件拦截：{msg}', note_type='error')
+            return api.create_response(request, {'detail': msg}, status=403)
+
+    if profile.role == UserProfile.ROLE_OPTOMETRIST:
+        if order.status not in [GlassesOrder.STATUS_PENDING_REVIEW, GlassesOrder.STATUS_RETURNED_FOR_CORRECTION]:
+            msg = f'验光师仅能在「待审核/退回补正」状态上传附件，当前为 {order.get_status_display()}'
+            add_exception(order, ExceptionReason.TYPE_PERMISSION_DENIED, msg, request.user)
+            add_audit_note(order, request.user, f'上传附件拦截：{msg}', note_type='error')
+            return api.create_response(request, {'detail': msg}, status=403)
 
     import os
     os.makedirs('media/attachments', exist_ok=True)
-    file_path = f'media/attachments/{order.order_no}_{category}_{file.name}'
+    safe_filename = file.name.replace('/', '_').replace('\\', '_')
+    file_path = f'media/attachments/{order.order_no}_{category}_{safe_filename}'
     with open(file_path, 'wb') as f:
         f.write(file.read())
 
     att = Attachment.objects.create(
         order=order,
         category=category,
-        file_name=file.name,
+        file_name=safe_filename,
         file_path=file_path,
         file_size=file.size,
         uploaded_by=request.user,
         description=description,
-        is_required=is_required
+        is_required=is_required_bool
     )
 
-    add_processing_record(order, ProcessingRecord.ACTION_ADD_ATTACHMENT, request.user,
-                          opinion=f'上传附件：{file.name} ({att.get_category_display()})')
-    add_audit_note(order, request.user, f'{profile.real_name} 上传附件：{file.name}')
+    category_display = att.get_category_display()
+    opinion = f'上传【{category_display}】附件：{safe_filename}'
+    if is_required_bool:
+        opinion += '（标记为必填证据）'
+
+    rec = add_processing_record(
+        order, ProcessingRecord.ACTION_ADD_ATTACHMENT, request.user,
+        opinion=opinion, version=order.version
+    )
+    add_audit_note(
+        order, request.user,
+        f'{profile.real_name}（{profile.get_role_display()}）上传附件：{safe_filename}（{category_display}）',
+        related_record=rec
+    )
+
+    if category == Attachment.CATEGORY_OPTOMETRY:
+        resolved = order.exceptions.filter(
+            exception_type__in=[ExceptionReason.TYPE_MISSING_ATTACHMENT, ExceptionReason.TYPE_MISSING_OPTOMETRY],
+            resolved=False
+        )
+        if resolved.exists():
+            for exc in resolved:
+                if '验光' in exc.description or 'optometry' in exc.description:
+                    exc.resolved = True
+                    exc.resolved_by = request.user
+                    exc.resolved_at = timezone.now()
+                    exc.resolution_note = f'已补正上传附件：{safe_filename}'
+                    exc.save()
+
+    if category == Attachment.CATEGORY_LENS:
+        resolved = order.exceptions.filter(
+            exception_type__in=[ExceptionReason.TYPE_MISSING_ATTACHMENT, ExceptionReason.TYPE_MISSING_LENS],
+            resolved=False
+        )
+        if resolved.exists():
+            for exc in resolved:
+                if '镜片' in exc.description or 'lens' in exc.description:
+                    exc.resolved = True
+                    exc.resolved_by = request.user
+                    exc.resolved_at = timezone.now()
+                    exc.resolution_note = f'已补正上传附件：{safe_filename}'
+                    exc.save()
+
+    if category == Attachment.CATEGORY_REGISTRATION:
+        resolved = order.exceptions.filter(
+            exception_type=ExceptionReason.TYPE_MISSING_ATTACHMENT,
+            resolved=False
+        )
+        if resolved.exists():
+            for exc in resolved:
+                if '登记' in exc.description or 'registration' in exc.description:
+                    exc.resolved = True
+                    exc.resolved_by = request.user
+                    exc.resolved_at = timezone.now()
+                    exc.resolution_note = f'已补正上传附件：{safe_filename}'
+                    exc.save()
+
+    missing_after = check_required_attachments(order)
+    issues = check_optometry_and_lens_complete(order)
+    if not missing_after and not issues:
+        order.has_defect = False
+        order.defect_description = ''
+        order.save()
+        add_audit_note(order, request.user, '补正后材料齐全，缺项标记已清除', note_type='general')
 
     return AttachmentSchema(
         id=att.id,

@@ -63,12 +63,61 @@ export default function OrderDetail() {
     formData.append('is_required', uploadRequired ? 'true' : 'false')
     setUploading(true)
     try {
-      await api.post(`/orders/${order.id}/attachments`, formData, {
+      const res = await api.post(`/orders/${order.id}/attachments`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
-      alert('上传成功')
+      const newAtt = res.data
+      setOrder(prev => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          attachments: [newAtt, ...prev.attachments],
+          processing_records: [
+            {
+              id: Date.now(),
+              action: 'add_attachment',
+              action_display: '添加附件',
+              operator: user.real_name,
+              opinion: `上传【${newAtt.category_display}】附件：${newAtt.file_name}`,
+              version: prev.version,
+              created_at: new Date().toISOString()
+            },
+            ...prev.processing_records
+          ],
+          audit_notes: [
+            {
+              id: Date.now() + 1,
+              operator: user.real_name,
+              note_type: 'general',
+              content: `${user.real_name}（${user.role_display}）上传附件：${newAtt.file_name}（${newAtt.category_display}）`,
+              created_at: new Date().toISOString()
+            },
+            ...prev.audit_notes
+          ],
+          exceptions: prev.exceptions.map(exc => {
+            if (exc.resolved) return exc
+            if (uploadCategory === 'optometry' &&
+                (exc.exception_type === 'missing_optometry' ||
+                 (exc.exception_type === 'missing_attachment' && exc.description.includes('验光')))) {
+              return { ...exc, resolved: true, resolved_by: user.real_name, resolution_note: `已补正上传附件：${newAtt.file_name}` }
+            }
+            if (uploadCategory === 'lens' &&
+                (exc.exception_type === 'missing_lens' ||
+                 (exc.exception_type === 'missing_attachment' && exc.description.includes('镜片')))) {
+              return { ...exc, resolved: true, resolved_by: user.real_name, resolution_note: `已补正上传附件：${newAtt.file_name}` }
+            }
+            if (uploadCategory === 'registration' &&
+                exc.exception_type === 'missing_attachment' && exc.description.includes('登记')) {
+              return { ...exc, resolved: true, resolved_by: user.real_name, resolution_note: `已补正上传附件：${newAtt.file_name}` }
+            }
+            return exc
+          })
+        }
+      })
       setUploadFile(null); setUploadDesc(''); setUploadRequired(false)
-      loadDetail()
+      document.getElementById('fileInput').value = ''
+      alert('上传成功，附件列表、异常和审计区已同步刷新')
+      setTimeout(loadDetail, 500)
     } catch (e) {
       alert('上传失败：' + (e.response?.data?.detail || e.message))
     } finally {
