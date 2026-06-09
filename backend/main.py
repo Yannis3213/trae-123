@@ -96,6 +96,7 @@ class DispatchReq(BaseModel):
 
 class ProcessReq(BaseModel):
     action: str
+    version: int
     target_status: Optional[str] = None
     handler_id: Optional[int] = None
     remark: Optional[str] = None
@@ -105,12 +106,13 @@ class ProcessReq(BaseModel):
 
 
 class BatchProcessReq(BaseModel):
-    order_ids: list[int]
     action: str
-    target_status: Optional[str] = None
+    orders: list[dict]
     handler_id: Optional[int] = None
     remark: Optional[str] = None
     evidence_types: list[str] = Field(default_factory=list)
+    exception_reason: Optional[str] = None
+    correction_action: Optional[str] = None
 
 
 async def login(request: Request):
@@ -261,17 +263,28 @@ async def create_order(request: Request):
         return JSONResponse({"code": 0, "data": order_to_dict(row)})
 
 
-def _check_and_transition(conn, order_id, user, action, target_status, handler_id, remark, evidence_types, exception_reason, correction_action):
+def _check_and_transition(conn, order_id, user, client_version, action, target_status, handler_id, remark, evidence_types, exception_reason, correction_action):
     order = conn.execute("SELECT * FROM service_orders WHERE id=?", (order_id,)).fetchone()
     if not order:
         return None, "服务单不存在"
+
+    if order["completed_at"]:
+        return None, f"服务单已于 {order['completed_at']} 完成归档，禁止重复操作"
+
     current_status = order["status"]
     current_version = order["version"]
     current_handler = order["current_handler"]
+    created_by = order["created_by"]
 
-    allowed = ROLE_TRANSITIONS.get(user["role"], {}).get(current_status, [])
-    if target_status and target_status not in allowed and action not in ("退回补正", "复核归档"):
-        return None, f"当前角色({user['role']})在状态({current_status})下不能执行该操作"
+    if client_version is not None and client_version != current_version:
+        return None, f"版本冲突：客户端版本 v{client_version}，当前最新版本 v{current_version}，请刷新后重试"
+
+    if action not in ("退回补正", "复核归档"):
+        allowed = ROLE_TRANSITIONS.get(user["role"], {}).get(current_status, [])
+        if target_status and target_status not in allowed:
+            return None, f"当前角色({user['role']})在状态({current_status})下不能执行该操作"
+        elif not target_status and action not in ("转办班主任", "完成回访转校长"):
+            return None, f"未知操作: {action}"
 
     if user["role"] != "jiaowu" and current_handler and current_handler != user["id"]:
         return None, f"当前处理人不是您，越权操作已拦截"
@@ -319,12 +332,22 @@ def _check_and_transition(conn, order_id, user, action, target_status, handler_i
             return None, "请说明补正动作"
         if not exception_reason:
             return None, "请说明异常原因"
-        if user["role"] == "banzhuren":
+        if user["role"] == "banzhuren" and current_status == "已转办":
             new_status = "待分派"
-            new_handler = None
-        else:
+            new_handler = created_by
+        elif user["role"] == "xiaozhang" and current_status == "已回访":
+            new_status = "已转办"
+            last_banzhuren = conn.execute(
+                """SELECT handler_id FROM processing_records
+                   WHERE order_id=? AND to_status='已转办' ORDER BY created_at DESC LIMIT 1""",
+                (order_id,),
+            ).fetchone()
+            new_handler = last_banzhuren["handler_id"] if last_banzhuren else current_handler
+        elif user["role"] == "xiaozhang" and current_status == "已转办":
             new_status = "已转办"
             new_handler = current_handler
+        else:
+            return None, f"角色({user['role']})在状态({current_status})下不允许退回补正"
         is_exc = 1
         exc_reason = exception_reason
         conn.execute(
@@ -345,12 +368,10 @@ def _check_and_transition(conn, order_id, user, action, target_status, handler_i
 
     new_version = current_version + 1
     now = get_now()
-    completed_at = None
-    if action == "复核归档":
-        completed_at = now
+    completed_at = now if action == "复核归档" else None
     conn.execute(
         """UPDATE service_orders SET status=?, version=?, current_handler=?,
-           updated_at=?, exception_reason=?, is_exception=?, completed_at=COALESCE(?, completed_at)
+           updated_at=?, exception_reason=?, is_exception=?, completed_at=?
            WHERE id=? AND version=?""",
         (new_status, new_version, new_handler, now, exc_reason, is_exc, completed_at, order_id, current_version),
     )
@@ -364,7 +385,7 @@ def _check_and_transition(conn, order_id, user, action, target_status, handler_i
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (order_id, current_status, new_status, action, user["id"], new_handler, remark, now, new_version),
     )
-    return {"id": order_id, "status": new_status, "version": new_version}, None
+    return {"id": order_id, "status": new_status, "version": new_version, "handler_id": new_handler}, None
 
 
 @require_auth
@@ -379,7 +400,7 @@ async def process_order(request: Request):
 
     with get_db() as conn:
         result, err = _check_and_transition(
-            conn, order_id, user, data.action, data.target_status, data.handler_id,
+            conn, order_id, user, data.version, data.action, data.target_status, data.handler_id,
             data.remark, data.evidence_types, data.exception_reason, data.correction_action,
         )
         if err:
@@ -395,16 +416,21 @@ async def batch_process(request: Request):
         data = BatchProcessReq(**body)
     except Exception as e:
         return JSONResponse({"code": 400, "msg": f"参数错误: {e}"}, status_code=400)
-    if not data.order_ids:
+    if not data.orders:
         return JSONResponse({"code": 400, "msg": "请选择要处理的单据"}, status_code=400)
 
     results = []
     with get_db() as conn:
-        for oid in data.order_ids:
+        for item in data.orders:
+            oid = item.get("id")
+            client_version = item.get("version")
+            if not oid:
+                results.append({"id": oid, "success": False, "msg": "缺少单据 id"})
+                continue
             try:
                 result, err = _check_and_transition(
-                    conn, oid, user, data.action, data.target_status, data.handler_id,
-                    data.remark, data.evidence_types, None, None,
+                    conn, oid, user, client_version, data.action, None, data.handler_id,
+                    data.remark, data.evidence_types, data.exception_reason, data.correction_action,
                 )
                 if err:
                     results.append({"id": oid, "success": False, "msg": err})

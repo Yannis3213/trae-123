@@ -129,17 +129,25 @@ npm run dev
 
 ## 五、后端关键校验（即使绕开前端直调接口也会被拦）
 
-| 校验 | 实现位置 | 拦截说明 |
-| --- | --- | --- |
-| 角色校验 | `main.py:_check_and_transition` 中的 `ROLE_TRANSITIONS` | 教务只能在"待分派"下转办；班主任只能在"已转办"下回访/退回；校长只能在"已回访"下归档/退回 |
-| 当前处理人校验 | `_check_and_transition` | 非当前处理人不能办理（教务除外，其在"待分派"下可转办） |
-| 状态顺序校验 | `ROLE_TRANSITIONS` 映射 | 不符合顺序的状态变更直接 400 |
-| 版本校验（乐观锁） | `UPDATE ... WHERE id=? AND version=?` + `changes()` | 旧版本提交 → 返回版本冲突 |
-| 必填证据校验 | `REQUIRED_EVIDENCE` | 转办需"课程排班"；回访需"课后反馈、回访记录、家长确认"，缺项不可放行 |
-| 重复提交 | 状态与版本联合判断 | 同一状态再次提交被视为重复，被版本/状态校验拦 |
-| 越权访问 | `require_auth` 中间件 | 未登录返回 401 |
+`_check_and_transition()` 按以下顺序执行 8 层拦截：
 
-批量接口 `POST /api/orders/batch` 对每张单据独立执行上述校验，返回逐条 `success` 与 `msg`。
+| 顺序 | 校验 | 实现位置 | 拦截说明 |
+| --- | --- | --- | --- |
+| 1 | 已归档拦截 | `order["completed_at"]` 非空直接拒绝 | 已复核归档的单据禁止任何后续操作，防重复归档 |
+| 2 | 客户端版本校验 | `client_version != current_version` 立即拒绝 | 前端在请求体中携带 `version`，与库中最新版本比对，旧版本直接被拦 |
+| 3 | 角色-状态校验 | `ROLE_TRANSITIONS` 映射 | 教务只能在"待分派"下转办；班主任只能在"已转办"下回访/退回；校长只能在"已回访"下归档/退回 |
+| 4 | 当前处理人校验 | 非当前处理人不能办理（教务除外） | 越权操作直接 403 |
+| 5 | 必填证据校验 | `REQUIRED_EVIDENCE` | 转办需"课程排班"；回访需"课后反馈、回访记录、家长确认"，**缺课后反馈不能悄悄放行** |
+| 6 | 责任人回退 | `退回补正` 分支中按岗位确定 | 班主任从已转办退回 → 回到创建人教务；校长从已回访退回 → 回到原班主任；校长从已转办退回 → 保持当前班主任 |
+| 7 | 版本乐观锁 | `UPDATE ... WHERE id=? AND version=?` + `changes()` | 并发提交时旧版本被拦，返回"版本冲突，单据已被他人处理" |
+| 8 | 越权访问 | `require_auth` 中间件 | 未登录返回 401 |
+
+### 接口请求格式
+
+- `POST /api/orders/{id}/process` 请求体：`{ action, version, handler_id?, correction_action?, exception_reason?, remark? }`
+- `POST /api/orders/batch` 请求体：`{ action, orders: [{id, version}, ...], handler_id?, correction_action?, exception_reason?, remark? }`，对每张单据独立执行上述 8 层校验，返回逐条 `success` 与 `msg`。
+
+补正退回后责任人回到正确岗位，并通过 `processing_records`、`correction_actions`、`exception_reason` 留痕；列表、详情、统计卡片、操作流水均从 SQLite 同一张持久化表实时读取，刷新后保持一致。
 
 ---
 

@@ -1,11 +1,13 @@
 import sqlite3
 import os
 from datetime import datetime, timedelta
+from database import init_db
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "k12_service.db")
 
 
 def seed_data():
+    init_db()
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     c = conn.cursor()

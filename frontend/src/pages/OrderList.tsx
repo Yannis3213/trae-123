@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { request, ServiceOrder, Stats, User, ROLE_LABEL, DEADLINE_LABEL } from '../api';
 import { showToast } from '../App';
@@ -10,6 +10,7 @@ export default function OrderList({ user }: { user: User }) {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<ServiceOrder[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [status, setStatus] = useState<string>('');
   const [deadlineStatus, setDeadlineStatus] = useState<string>('');
@@ -17,7 +18,11 @@ export default function OrderList({ user }: { user: User }) {
   const [onlyMine, setOnlyMine] = useState(false);
   const [batchResults, setBatchResults] = useState<any[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [showBatch, setShowBatch] = useState<string | null>(null);
+  const [batchAction, setBatchAction] = useState<string | null>(null);
+  const [batchHandlerId, setBatchHandlerId] = useState<number>(0);
+  const [batchRemark, setBatchRemark] = useState('');
+  const [batchCorrection, setBatchCorrection] = useState('');
+  const [batchException, setBatchException] = useState('');
 
   const load = async () => {
     const params = new URLSearchParams();
@@ -36,6 +41,13 @@ export default function OrderList({ user }: { user: User }) {
 
   useEffect(() => {
     load();
+    request<{ code: number; data: User[] }>('/users').then(r => {
+      if (r.code === 0) {
+        setUsers(r.data);
+        const bzr = r.data.find(u => u.role === 'banzhuren');
+        if (bzr) setBatchHandlerId(bzr.id);
+      }
+    });
   }, [status, deadlineStatus, keyword, onlyMine]);
 
   const allSelected = orders.length > 0 && orders.every(o => selected.has(o.id));
@@ -68,22 +80,34 @@ export default function OrderList({ user }: { user: User }) {
     return acts;
   };
 
-  const runBatch = async (action: string) => {
+  const openBatchDialog = (action: string) => {
     if (selected.size === 0) {
       showToast('请先勾选单据', 'error');
       return;
     }
-    const ids = Array.from(selected);
-    const body: any = { order_ids: ids, action };
-    if (action === '转办班主任') {
-      const usersRes = await request<{ code: number; data: User[] }>('/users');
-      if (usersRes.code !== 0) return;
-      const banzhurens = usersRes.data.filter(u => u.role === 'banzhuren');
-      if (banzhurens.length === 0) {
-        showToast('没有可用的班主任账号', 'error');
-        return;
-      }
-      body.handler_id = banzhurens[0].id;
+    setBatchRemark('');
+    setBatchCorrection('');
+    setBatchException('');
+    setBatchAction(action);
+  };
+
+  const submitBatch = async () => {
+    if (!batchAction) return;
+    const selectedOrders = orders.filter(o => selected.has(o.id));
+    const body: any = {
+      action: batchAction,
+      orders: selectedOrders.map(o => ({ id: o.id, version: o.version })),
+      remark: batchRemark || undefined,
+    };
+    if (batchAction === '转办班主任') {
+      if (!batchHandlerId) { showToast('请选择处理人', 'error'); return; }
+      body.handler_id = batchHandlerId;
+    }
+    if (batchAction === '退回补正') {
+      if (!batchCorrection.trim()) { showToast('请填写补正动作', 'error'); return; }
+      if (!batchException.trim()) { showToast('请填写异常原因', 'error'); return; }
+      body.correction_action = batchCorrection;
+      body.exception_reason = batchException;
     }
     const res = await request<{ code: number; msg: string; data: { items: any[] } }>('/orders/batch', {
       method: 'POST',
@@ -97,7 +121,7 @@ export default function OrderList({ user }: { user: User }) {
     } else {
       showToast(res.msg || '批量处理失败', 'error');
     }
-    setShowBatch(null);
+    setBatchAction(null);
   };
 
   const deadlineBadge = (s: ServiceOrder['deadline_status']) => (
@@ -152,7 +176,7 @@ export default function OrderList({ user }: { user: User }) {
       <div className="batch-bar">
         <div className="count">已勾选 <strong>{selected.size}</strong> / {orders.length} 条</div>
         {getBatchActions().map(a => (
-          <button key={a.key} className={`btn ${a.color}`} onClick={() => runBatch(a.key)}>
+          <button key={a.key} className={`btn ${a.color}`} onClick={() => openBatchDialog(a.key)}>
             {a.label}
           </button>
         ))}
@@ -220,6 +244,81 @@ export default function OrderList({ user }: { user: User }) {
       </div>
 
       {showCreate && <CreateDialog onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} user={user} />}
+
+      {batchAction && (
+        <BatchDialog
+          action={batchAction}
+          users={users}
+          handlerId={batchHandlerId}
+          setHandlerId={setBatchHandlerId}
+          remark={batchRemark}
+          setRemark={setBatchRemark}
+          correction={batchCorrection}
+          setCorrection={setBatchCorrection}
+          exception={batchException}
+          setException={setBatchException}
+          selectedCount={selected.size}
+          onClose={() => setBatchAction(null)}
+          onSubmit={submitBatch}
+        />
+      )}
+    </div>
+  );
+}
+
+function BatchDialog({
+  action, users, handlerId, setHandlerId, remark, setRemark,
+  correction, setCorrection, exception, setException,
+  selectedCount, onClose, onSubmit,
+}: {
+  action: string;
+  users: User[];
+  handlerId: number;
+  setHandlerId: (n: number) => void;
+  remark: string;
+  setRemark: (s: string) => void;
+  correction: string;
+  setCorrection: (s: string) => void;
+  exception: string;
+  setException: (s: string) => void;
+  selectedCount: number;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const banzhurens = users.filter(u => u.role === 'banzhuren');
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <h3>批量操作 · {action}（共 {selectedCount} 条）</h3>
+        {action === '转办班主任' && (
+          <div className="form-item">
+            <label>指派处理人（班主任）*</label>
+            <select value={handlerId} onChange={e => setHandlerId(Number(e.target.value))}>
+              {banzhurens.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+        )}
+        {action === '退回补正' && (
+          <>
+            <div className="form-item">
+              <label>补正动作 *</label>
+              <input value={correction} onChange={e => setCorrection(e.target.value)} placeholder="例如：重新录制回访录音" />
+            </div>
+            <div className="form-item">
+              <label>异常原因 *</label>
+              <textarea rows={2} value={exception} onChange={e => setException(e.target.value)} placeholder="例如：回访录音不清晰" />
+            </div>
+          </>
+        )}
+        <div className="form-item">
+          <label>备注</label>
+          <textarea rows={2} value={remark} onChange={e => setRemark(e.target.value)} />
+        </div>
+        <div className="footer">
+          <button className="btn btn-default" onClick={onClose}>取消</button>
+          <button className="btn btn-primary" onClick={onSubmit}>确认提交</button>
+        </div>
+      </div>
     </div>
   );
 }

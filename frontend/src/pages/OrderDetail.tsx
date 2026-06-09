@@ -42,7 +42,7 @@ export default function OrderDetail({ user }: { user: User }) {
   const doDispatch = async (handlerId: number, remark: string) => {
     const res = await request(`/orders/${order.id}/process`, {
       method: 'POST',
-      body: JSON.stringify({ action: '转办班主任', handler_id: handlerId, remark }),
+      body: JSON.stringify({ action: '转办班主任', handler_id: handlerId, remark, version: order.version }),
     });
     if (res.code === 0) { showToast('转办成功', 'success'); setShowDispatch(false); load(); }
     else showToast(res.msg || '操作失败', 'error');
@@ -51,7 +51,7 @@ export default function OrderDetail({ user }: { user: User }) {
   const doReview = async () => {
     const res = await request(`/orders/${order.id}/process`, {
       method: 'POST',
-      body: JSON.stringify({ action: '完成回访转校长' }),
+      body: JSON.stringify({ action: '完成回访转校长', version: order.version }),
     });
     if (res.code === 0) { showToast('已提交校长确认', 'success'); load(); }
     else showToast(res.msg || '操作失败', 'error');
@@ -60,7 +60,7 @@ export default function OrderDetail({ user }: { user: User }) {
   const doArchive = async () => {
     const res = await request(`/orders/${order.id}/process`, {
       method: 'POST',
-      body: JSON.stringify({ action: '复核归档' }),
+      body: JSON.stringify({ action: '复核归档', version: order.version }),
     });
     if (res.code === 0) { showToast('复核归档完成', 'success'); load(); }
     else showToast(res.msg || '操作失败', 'error');
@@ -69,7 +69,7 @@ export default function OrderDetail({ user }: { user: User }) {
   const doReturn = async (action: string, reason: string, remark: string) => {
     const res = await request(`/orders/${order.id}/process`, {
       method: 'POST',
-      body: JSON.stringify({ action: '退回补正', correction_action: action, exception_reason: reason, remark }),
+      body: JSON.stringify({ action: '退回补正', correction_action: action, exception_reason: reason, remark, version: order.version }),
     });
     if (res.code === 0) { showToast('已退回补正', 'success'); setShowReturn(false); load(); }
     else showToast(res.msg || '操作失败', 'error');
