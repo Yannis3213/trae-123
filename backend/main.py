@@ -105,19 +105,36 @@ class ProcessReq(BaseModel):
     correction_action: Optional[str] = None
 
 
-class BatchOrderItem(BaseModel):
-    id: int
-    version: int
-
-
 class BatchProcessReq(BaseModel):
     action: str
-    orders: list[BatchOrderItem]
+    orders: list[dict]
     handler_id: Optional[int] = None
     remark: Optional[str] = None
     evidence_types: list[str] = Field(default_factory=list)
     exception_reason: Optional[str] = None
     correction_action: Optional[str] = None
+
+
+def _get_latest(conn, order_id):
+    if order_id is None:
+        return None
+    try:
+        oid = int(order_id)
+    except (TypeError, ValueError):
+        return None
+    row = conn.execute(
+        """SELECT so.id, so.status, so.version, so.current_handler, so.completed_at,
+                  so.exception_reason, so.is_exception, u.name AS current_handler_name
+           FROM service_orders so
+           LEFT JOIN users u ON so.current_handler = u.id
+           WHERE so.id=?""",
+        (oid,),
+    ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["is_exception"] = bool(d["is_exception"])
+    return d
 
 
 async def login(request: Request):
@@ -411,13 +428,10 @@ async def process_order(request: Request):
             data.remark, data.evidence_types, data.exception_reason, data.correction_action,
         )
         if err:
-            latest = conn.execute(
-                "SELECT id, status, version, current_handler, completed_at, exception_reason, is_exception FROM service_orders WHERE id=?",
-                (order_id,),
-            ).fetchone()
+            latest = _get_latest(conn, order_id)
             return JSONResponse({
                 "code": 400, "msg": err,
-                "latest": dict(latest) if latest else None,
+                "latest": latest,
             }, status_code=400)
         return JSONResponse({"code": 0, "data": result, "msg": "操作成功"})
 
@@ -435,27 +449,71 @@ async def batch_process(request: Request):
 
     results = []
     with get_db() as conn:
-        for item in data.orders:
-            oid = item.id
-            client_version = item.version
+        for idx, item in enumerate(data.orders):
+            if not isinstance(item, dict):
+                results.append({
+                    "id": None, "success": False,
+                    "msg": f"第{idx+1}条条目格式错误，必须是对象",
+                    "latest": None,
+                })
+                continue
+            raw_id = item.get("id")
+            raw_version = item.get("version")
+
+            oid = None
+            if raw_id is None:
+                latest = None
+                results.append({
+                    "id": None, "success": False,
+                    "msg": f"第{idx+1}条条目缺少 id 字段",
+                    "latest": None,
+                })
+                continue
+            try:
+                oid = int(raw_id)
+            except (TypeError, ValueError):
+                results.append({
+                    "id": raw_id, "success": False,
+                    "msg": f"第{idx+1}条条目 id 必须为整数",
+                    "latest": _get_latest(conn, raw_id),
+                })
+                continue
+
+            if raw_version is None:
+                results.append({
+                    "id": oid, "success": False,
+                    "msg": f"单据#{oid}缺少 version 字段，请携带当前单据版本号",
+                    "latest": _get_latest(conn, oid),
+                })
+                continue
+            try:
+                client_version = int(raw_version)
+            except (TypeError, ValueError):
+                results.append({
+                    "id": oid, "success": False,
+                    "msg": f"单据#{oid}的 version 必须为整数",
+                    "latest": _get_latest(conn, oid),
+                })
+                continue
+
             try:
                 result, err = _check_and_transition(
                     conn, oid, user, client_version, data.action, None, data.handler_id,
                     data.remark, data.evidence_types, data.exception_reason, data.correction_action,
                 )
                 if err:
-                    latest = conn.execute(
-                        "SELECT id, status, version, current_handler, completed_at, exception_reason, is_exception FROM service_orders WHERE id=?",
-                        (oid,),
-                    ).fetchone()
+                    latest = _get_latest(conn, oid)
                     results.append({
                         "id": oid, "success": False, "msg": err,
-                        "latest": dict(latest) if latest else None,
+                        "latest": latest,
                     })
                 else:
                     results.append({"id": oid, "success": True, "msg": "处理成功", "data": result})
             except Exception as e:
-                results.append({"id": oid, "success": False, "msg": f"系统异常: {e}"})
+                results.append({
+                    "id": oid, "success": False, "msg": f"系统异常: {e}",
+                    "latest": _get_latest(conn, oid),
+                })
     success_count = sum(1 for r in results if r["success"])
     return JSONResponse({
         "code": 0,

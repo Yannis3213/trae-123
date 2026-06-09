@@ -185,15 +185,18 @@ def seed_data():
         orders,
     )
 
+    c.execute("SELECT id, order_no FROM service_orders")
+    oid = {row[1]: row[0] for row in c.fetchall()}
+
     attachments = [
-        (3, "课后反馈表_王小刚.pdf", "pdf", "课后反馈", 2, (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")),
-        (3, "补课回访录音.mp3", "audio", "回访记录", 2, (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
-        (3, "家长确认签字扫描件.png", "image", "家长确认", 2, (now - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")),
-        (8, "课后反馈表_周小美.pdf", "pdf", "课后反馈", 2, (now - timedelta(days=6)).strftime("%Y-%m-%d %H:%M:%S")),
-        (8, "回访录音_周小美.mp3", "audio", "回访记录", 2, (now - timedelta(days=5, hours=12)).strftime("%Y-%m-%d %H:%M:%S")),
-        (8, "家长确认_周小美.png", "image", "家长确认", 2, (now - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")),
-        (2, "课程调整排班表.xlsx", "xlsx", "课程排班", 1, (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
-        (5, "课后反馈登记表.pdf", "pdf", "课后反馈", 1, (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506003"], "课后反馈表_王小刚.pdf", "pdf", "课后反馈", 2, (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506003"], "补课回访录音.mp3", "audio", "回访记录", 2, (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506003"], "家长确认签字扫描件.png", "image", "家长确认", 2, (now - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506008"], "课后反馈表_周小美.pdf", "pdf", "课后反馈", 2, (now - timedelta(days=6)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506008"], "回访录音_周小美.mp3", "audio", "回访记录", 2, (now - timedelta(days=5, hours=12)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506008"], "家长确认_周小美.png", "image", "家长确认", 2, (now - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506002"], "课程调整排班表.xlsx", "xlsx", "课程排班", 1, (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506004"], "课后反馈登记表.pdf", "pdf", "课后反馈", 1, (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")),
     ]
     c.executemany(
         """INSERT INTO attachments (order_id, filename, file_type, evidence_type, uploaded_by, uploaded_at)
@@ -202,14 +205,14 @@ def seed_data():
     )
 
     records = [
-        (3, "待分派", "已转办", "转办班主任", 1, 2, "课程服务单登记完成，转班主任处理回访", (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S"), 2),
-        (3, "已转办", "已回访", "回访完成转校长确认", 2, 3, "补课完成，家长满意，回访录音已上传", (now - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S"), 3),
-        (8, "待分派", "已转办", "转办班主任", 1, 2, "作文班服务单转班主任", (now - timedelta(days=6, hours=12)).strftime("%Y-%m-%d %H:%M:%S"), 2),
-        (8, "已转办", "已回访", "回访完成转校长确认", 2, 3, "课后反馈齐全，家长满意", (now - timedelta(days=5, hours=6)).strftime("%Y-%m-%d %H:%M:%S"), 3),
-        (8, "已回访", "已回访", "复核归档", 3, 3, "校长复核通过，材料齐全，完成归档", (now - timedelta(days=4)).strftime("%Y-%m-%d %H:%M:%S"), 4),
-        (2, "待分派", "已转办", "转办班主任", 1, 2, "排班表已调整，需班主任回访确认", (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"), 2),
-        (5, "待分派", "已转办", "转办班主任", 1, 2, "课后反馈已提交，转班主任回访", (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"), 2),
-        (7, "待分派", "已转办", "转办班主任", 1, 2, "竞赛班服务单转交班主任处理", (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"), 2),
+        (oid["FW202506003"], "待分派", "已转办", "转办班主任", 1, 2, "课程服务单登记完成，转班主任处理回访", (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S"), 2),
+        (oid["FW202506003"], "已转办", "已回访", "回访完成转校长确认", 2, 3, "补课完成，家长满意，回访录音已上传", (now - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S"), 3),
+        (oid["FW202506008"], "待分派", "已转办", "转办班主任", 1, 2, "作文班服务单转班主任", (now - timedelta(days=6, hours=12)).strftime("%Y-%m-%d %H:%M:%S"), 2),
+        (oid["FW202506008"], "已转办", "已回访", "回访完成转校长确认", 2, 3, "课后反馈齐全，家长满意", (now - timedelta(days=5, hours=6)).strftime("%Y-%m-%d %H:%M:%S"), 3),
+        (oid["FW202506008"], "已回访", "已回访", "复核归档", 3, 3, "校长复核通过，材料齐全，完成归档", (now - timedelta(days=4)).strftime("%Y-%m-%d %H:%M:%S"), 4),
+        (oid["FW202506002"], "待分派", "已转办", "转办班主任", 1, 2, "排班表已调整，需班主任回访确认", (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"), 2),
+        (oid["FW202506004"], "待分派", "已转办", "转办班主任", 1, 2, "课后反馈已提交，转班主任回访", (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"), 2),
+        (oid["FW202506007"], "待分派", "已转办", "转办班主任", 1, 2, "竞赛班服务单转交班主任处理", (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"), 2),
     ]
     c.executemany(
         """INSERT INTO processing_records
@@ -219,10 +222,10 @@ def seed_data():
     )
 
     audit_notes = [
-        (8, 3, "复核通过，材料齐全，家长反馈良好，归档完成", (now - timedelta(days=4)).strftime("%Y-%m-%d %H:%M:%S")),
-        (3, 3, "课后反馈、回访录音、家长确认齐全，待校长最终复核归档", now.strftime("%Y-%m-%d %H:%M:%S")),
-        (4, 2, "教务发起时未上传家长签字，需补正后再分派", (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")),
-        (7, 3, "回访录音听不清，请重新录制后再提交确认", (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506008"], 3, "复核通过，材料齐全，家长反馈良好，归档完成", (now - timedelta(days=4)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506003"], 3, "课后反馈、回访录音、家长确认齐全，待校长最终复核归档", now.strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506004"], 2, "教务发起时未上传家长签字，需补正后再分派", (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506007"], 3, "回访录音听不清，请重新录制后再提交确认", (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
     ]
     c.executemany(
         "INSERT INTO audit_notes (order_id, user_id, content, created_at) VALUES (?, ?, ?, ?)",
@@ -230,8 +233,8 @@ def seed_data():
     )
 
     corrections = [
-        (4, "退回教务补传家长签字", "课后反馈缺家长签字", 2, (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")),
-        (7, "退回班主任重新录制回访录音", "回访录音不清晰无法辨认", 3, (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506004"], "退回教务补传家长签字", "课后反馈缺家长签字", 2, (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506007"], "退回班主任重新录制回访录音", "回访录音不清晰无法辨认", 3, (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
     ]
     c.executemany(
         "INSERT INTO correction_actions (order_id, action, reason, operator_id, created_at) VALUES (?, ?, ?, ?, ?)",

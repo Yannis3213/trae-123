@@ -201,13 +201,19 @@ export default function OrderList({ user }: { user: User }) {
 
       {batchResults && batchResults.length > 0 && (
         <div className="batch-result">
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>批量处理结果（逐条反馈）：</div>
-          {batchResults.map(r => (
-            <div key={r.id} className="item">
-              <span>单据 #{r.id}</span>
+          <div style={{ fontWeight: 600, marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
+            <span>批量处理结果（逐条反馈）：</span>
+            <button className="btn-ghost" onClick={() => setBatchResults(null)}>关闭</button>
+          </div>
+          {batchResults.map((r, idx) => (
+            <div key={`${r.id ?? 'x'}-${idx}`} className="item">
+              <span>单据 {r.id ? `#${r.id}` : `（第${idx + 1}条）`}</span>
               <span className={r.success ? 'ok' : 'fail'}>
                 {r.success ? '✅ 成功' : `❌ 失败：${r.msg}`}
               </span>
+              {!r.success && r.latest && r.latest.exception_reason && (
+                <span style={{ color: '#6b7280', fontSize: 12, marginLeft: 12 }}>当前异常：{r.latest.exception_reason}</span>
+              )}
             </div>
           ))}
         </div>
