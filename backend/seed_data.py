@@ -175,6 +175,24 @@ def seed_data():
             "回访录音不清晰，需重新提交",
             1,
         ),
+        (
+            "FW202506009",
+            "吴梦琪",
+            "S2025009",
+            "高二英语提高班",
+            "逾期未归档-材料齐全样例",
+            "吴梦琪英语提高班回访材料齐全，但已超过截止时间2天未推进，演示逾期禁止推进、仅允许退回补正",
+            "已转办",
+            2,
+            1,
+            2,
+            (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"),
+            None,
+            (now - timedelta(days=6)).strftime("%Y-%m-%d %H:%M:%S"),
+            (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S"),
+            "逾期2天未推进归档",
+            1,
+        ),
     ]
     c.executemany(
         """INSERT INTO service_orders
@@ -197,6 +215,10 @@ def seed_data():
         (oid["FW202506008"], "家长确认_周小美.png", "image", "家长确认", 2, (now - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")),
         (oid["FW202506002"], "课程调整排班表.xlsx", "xlsx", "课程排班", 1, (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
         (oid["FW202506004"], "课后反馈登记表.pdf", "pdf", "课后反馈", 1, (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506009"], "英语提高班排班表.xlsx", "xlsx", "课程排班", 1, (now - timedelta(days=6)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506009"], "课后反馈表_吴梦琪.pdf", "pdf", "课后反馈", 2, (now - timedelta(days=4)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506009"], "回访录音_吴梦琪.mp3", "audio", "回访记录", 2, (now - timedelta(days=3, hours=12)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506009"], "家长确认_吴梦琪.png", "image", "家长确认", 2, (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")),
     ]
     c.executemany(
         """INSERT INTO attachments (order_id, filename, file_type, evidence_type, uploaded_by, uploaded_at)
@@ -213,6 +235,7 @@ def seed_data():
         (oid["FW202506002"], "待分派", "已转办", "转办班主任", 1, 2, "排班表已调整，需班主任回访确认", (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"), 2),
         (oid["FW202506004"], "待分派", "已转办", "转办班主任", 1, 2, "课后反馈已提交，转班主任回访", (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"), 2),
         (oid["FW202506007"], "待分派", "已转办", "转办班主任", 1, 2, "竞赛班服务单转交班主任处理", (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S"), 2),
+        (oid["FW202506009"], "待分派", "已转办", "转办班主任", 1, 2, "英语提高班回访材料已齐备，转班主任跟进", (now - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S"), 2),
     ]
     c.executemany(
         """INSERT INTO processing_records
@@ -226,6 +249,7 @@ def seed_data():
         (oid["FW202506003"], 3, "课后反馈、回访录音、家长确认齐全，待校长最终复核归档", now.strftime("%Y-%m-%d %H:%M:%S")),
         (oid["FW202506004"], 2, "教务发起时未上传家长签字，需补正后再分派", (now - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")),
         (oid["FW202506007"], 3, "回访录音听不清，请重新录制后再提交确认", (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")),
+        (oid["FW202506009"], 3, "课后反馈、回访记录、家长确认、排班表齐全，但已超过截止时间2天，需退回补正走逾期特批流程", now.strftime("%Y-%m-%d %H:%M:%S")),
     ]
     c.executemany(
         "INSERT INTO audit_notes (order_id, user_id, content, created_at) VALUES (?, ?, ?, ?)",

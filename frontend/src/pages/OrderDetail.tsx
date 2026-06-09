@@ -33,9 +33,11 @@ export default function OrderDetail({ user }: { user: User }) {
   const needForTransferred = ['课程排班'].filter(e => !evidenceTypes.includes(e));
   const needForReviewed = ['课后反馈', '回访记录', '家长确认'].filter(e => !evidenceTypes.includes(e));
 
-  const canDispatch = user.role === 'jiaowu' && order.status === '待分派';
-  const canReview = user.role === 'banzhuren' && order.status === '已转办';
-  const canArchive = user.role === 'xiaozhang' && order.status === '已回访';
+  const isOverdue = order.deadline_status === 'overdue' && !order.completed_at;
+
+  const canDispatch = user.role === 'jiaowu' && order.status === '待分派' && !isOverdue;
+  const canReview = user.role === 'banzhuren' && order.status === '已转办' && !isOverdue;
+  const canArchive = user.role === 'xiaozhang' && order.status === '已回访' && !isOverdue;
   const canReturn = (user.role === 'banzhuren' && order.status === '已转办') ||
                    (user.role === 'xiaozhang' && (order.status === '已转办' || order.status === '已回访'));
 
@@ -114,6 +116,23 @@ export default function OrderDetail({ user }: { user: User }) {
                 {order.is_exception && <span className="exception-tag">异常</span>}
               </span>
             </h3>
+            {isOverdue && (
+              <div style={{
+                margin: '10px 0 14px',
+                padding: '10px 14px',
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                borderRadius: 6,
+                color: '#991b1b',
+                fontSize: 13,
+              }}>
+                <strong>⚠️ 该服务单已逾期</strong>（截止 {order.deadline}），禁止转办/回访/归档等推进操作，仅允许<b>退回补正</b>。
+                <div style={{ marginTop: 4, fontSize: 12, color: '#b91c1c' }}>
+                  当前责任人：{order.current_handler_name || '-'}
+                  {order.exception_reason && `｜异常原因：${order.exception_reason}`}
+                </div>
+              </div>
+            )}
             <div className="info-row"><div className="k">服务单号</div><div className="v">{order.order_no}（版本 v{order.version}）</div></div>
             <div className="info-row"><div className="k">学员姓名</div><div className="v">{order.student_name} {order.student_id && `(${order.student_id})`}</div></div>
             <div className="info-row"><div className="k">课程名称</div><div className="v">{order.course_name}</div></div>
@@ -212,6 +231,21 @@ export default function OrderDetail({ user }: { user: User }) {
         <div>
           <div className="action-panel">
             <h3>办理操作</h3>
+            {isOverdue && (
+              <div style={{
+                margin: '0 0 10px',
+                padding: '8px 10px',
+                background: '#fef2f2',
+                borderRadius: 6,
+                color: '#991b1b',
+                fontSize: 12,
+                lineHeight: 1.6,
+              }}>
+                <strong>已逾期，仅允许退回补正。</strong>
+                <br />责任人：{order.current_handler_name || '-'}
+                {order.exception_reason && <><br />异常：{order.exception_reason}</>}
+              </div>
+            )}
             <div className="action-btns">
               {canDispatch && <button className="btn btn-primary" onClick={() => setShowDispatch(true)}>转办班主任</button>}
               {canReview && <button className="btn btn-success" onClick={doReview}>完成回访并提交校长确认</button>}

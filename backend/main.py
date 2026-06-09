@@ -303,6 +303,33 @@ def _check_and_transition(conn, order_id, user, client_version, action, target_s
     if client_version != current_version:
         return None, f"版本冲突：客户端版本 v{client_version}，当前最新版本 v{current_version}，请刷新后重试"
 
+    if order["deadline"] and not order["completed_at"]:
+        try:
+            deadline_dt = datetime.strptime(order["deadline"], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            deadline_dt = None
+        if deadline_dt and deadline_dt < datetime.now():
+            if action != "退回补正":
+                handler_row = conn.execute(
+                    "SELECT name FROM users WHERE id=?", (current_handler,),
+                ).fetchone() if current_handler else None
+                handler_name = handler_row["name"] if handler_row else "-"
+                now = get_now()
+                conn.execute(
+                    """INSERT INTO processing_records
+                       (order_id, from_status, to_status, action, operator_id, handler_id, remark, created_at, version)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (order_id, current_status, current_status, "逾期拦截-禁止推进",
+                     user["id"], current_handler,
+                     f"截止时间 {order['deadline']} 已过期，当前责任人：{handler_name}，仅可退回补正",
+                     now, current_version),
+                )
+                conn.commit()
+                return None, (
+                    f"服务单已逾期（截止 {order['deadline']}），禁止转办/回访/归档等推进操作，"
+                    f"仅允许退回补正。当前责任人：{handler_name}"
+                )
+
     if action not in ("退回补正", "复核归档"):
         allowed = ROLE_TRANSITIONS.get(user["role"], {}).get(current_status, [])
         if target_status and target_status not in allowed:

@@ -24,6 +24,8 @@ export default function OrderList({ user }: { user: User }) {
   const [batchCorrection, setBatchCorrection] = useState('');
   const [batchException, setBatchException] = useState('');
 
+  const isOverdue = (o: ServiceOrder) => o.deadline_status === 'overdue' && !o.completed_at;
+
   const load = async () => {
     const params = new URLSearchParams();
     if (status) params.set('status', status);
@@ -85,6 +87,19 @@ export default function OrderList({ user }: { user: User }) {
       showToast('请先勾选单据', 'error');
       return;
     }
+    const selList = orders.filter(o => selected.has(o.id));
+    if (action !== '退回补正') {
+      const overdue = selList.filter(isOverdue);
+      if (overdue.length > 0) {
+        const keep = selList.filter(o => !isOverdue(o));
+        if (keep.length === 0) {
+          showToast(`已勾选的 ${overdue.length} 条单据均已逾期，仅允许"退回补正"类操作`, 'error');
+          return;
+        }
+        setSelected(new Set(keep.map(o => o.id)));
+        showToast(`自动排除 ${overdue.length} 条逾期单据（仅允许退回补正），剩余 ${keep.length} 条继续处理`, 'info');
+      }
+    }
     setBatchRemark('');
     setBatchCorrection('');
     setBatchException('');
@@ -93,7 +108,15 @@ export default function OrderList({ user }: { user: User }) {
 
   const submitBatch = async () => {
     if (!batchAction) return;
-    const selectedOrders = orders.filter(o => selected.has(o.id));
+    let selectedOrders = orders.filter(o => selected.has(o.id));
+    if (batchAction !== '退回补正') {
+      const before = selectedOrders.length;
+      selectedOrders = selectedOrders.filter(o => !isOverdue(o));
+      if (selectedOrders.length === 0 && before > 0) {
+        showToast('所选单据均已逾期，仅允许"退回补正"类操作', 'error');
+        return;
+      }
+    }
     const body: any = {
       action: batchAction,
       orders: selectedOrders.map(o => ({ id: o.id, version: o.version })),
@@ -233,7 +256,7 @@ export default function OrderList({ user }: { user: User }) {
               <th>状态</th>
               <th>到期预警</th>
               <th>当前处理人</th>
-              <th>创建人</th>
+              <th>异常原因</th>
               <th>截止时间</th>
               <th>操作</th>
             </tr>
@@ -243,11 +266,12 @@ export default function OrderList({ user }: { user: User }) {
               <tr><td colSpan={11}><div className="empty">暂无数据</div></td></tr>
             )}
             {orders.map(o => (
-              <tr key={o.id}>
+              <tr key={o.id} className={isOverdue(o) ? 'row-overdue' : ''}>
                 <td><input type="checkbox" checked={selected.has(o.id)} onChange={() => toggleOne(o.id)} /></td>
                 <td>
                   {o.order_no}
                   {o.is_exception && <span className="exception-tag">异常</span>}
+                  {isOverdue(o) && <span className="exception-tag" style={{ background: '#b91c1c' }}>已逾期</span>}
                 </td>
                 <td>{o.student_name}{o.student_id && <div style={{ color: '#9ca3af', fontSize: 12 }}>{o.student_id}</div>}</td>
                 <td>{o.course_name}</td>
@@ -255,7 +279,7 @@ export default function OrderList({ user }: { user: User }) {
                 <td><span className={`status-tag status-${o.status}`}>{o.status}</span></td>
                 <td>{deadlineBadge(o.deadline_status)}</td>
                 <td>{o.current_handler_name || '-'}</td>
-                <td>{o.created_by_name || '-'}</td>
+                <td style={{ color: '#b91c1c', fontSize: 12 }}>{o.exception_reason || '-'}</td>
                 <td>{o.deadline || '-'}</td>
                 <td>
                   <button className="link-btn" onClick={() => navigate(`/orders/${o.id}`)}>详情 / 办理</button>
