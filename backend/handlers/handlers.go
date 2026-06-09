@@ -88,7 +88,7 @@ func ListApplications(c *gin.Context) {
 	args := []interface{}{}
 
 	if role == models.RoleRegistrar || role == models.RoleAuditor || role == models.RoleReviewer {
-		query += " AND (current_handler = ? OR current_handler_role = ?)"
+		query += " AND (current_handler = ? AND current_handler_role = ?)"
 		args = append(args, userID, string(role))
 	}
 
@@ -394,8 +394,8 @@ func validateAndPrepare(action string, app *models.StudentApplication, userID st
 		return ValidationResult{Pass: false, HTTPStatus: http.StatusConflict, ErrorMsg: "版本冲突：当前数据已更新，请刷新后重试", ExcType: "version_conflict"}
 	}
 
-	if app.CurrentHandler != userID && app.CurrentHandlerRole != role {
-		return ValidationResult{Pass: false, HTTPStatus: http.StatusForbidden, ErrorMsg: "权限不足，您不是当前处理人", ExcType: "permission_denied"}
+	if app.CurrentHandler != userID || app.CurrentHandlerRole != role {
+		return ValidationResult{Pass: false, HTTPStatus: http.StatusForbidden, ErrorMsg: "权限不足，您不是当前处理人或角色不匹配（同时匹配校验失败）", ExcType: "permission_denied"}
 	}
 
 	if role != cfg.RequiredRole {
@@ -488,10 +488,16 @@ func ProcessApplication(c *gin.Context) {
 	if !vr.Pass {
 		recordExceptionPersistence(id, vr.ExcType, vr.ErrorMsg, userID, userName)
 		c.JSON(vr.HTTPStatus, gin.H{
-			"error":       vr.ErrorMsg,
-			"success":     false,
-			"exc_type":    vr.ExcType,
-			"curr_version": app.Version,
+			"error":        vr.ErrorMsg,
+			"success":      false,
+			"exc_type":     vr.ExcType,
+			"client_version": req.Version,
+			"server_version": app.Version,
+			"prev_version":  app.Version,
+			"curr_version":  app.Version,
+			"prev_status":   string(app.Status),
+			"prev_handler":  app.CurrentHandlerName,
+			"student_name":  app.StudentName,
 		})
 		return
 	}
@@ -537,9 +543,16 @@ func ProcessApplication(c *gin.Context) {
 		tx.Rollback()
 		recordExceptionPersistence(id, "update_failed", "更新失败: "+err.Error(), userID, userName)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":        "更新失败: " + err.Error(),
-			"success":      false,
-			"curr_version": app.Version,
+			"error":         "更新失败: " + err.Error(),
+			"success":       false,
+			"exc_type":      "update_failed",
+			"client_version": req.Version,
+			"server_version": app.Version,
+			"prev_version":  app.Version,
+			"curr_version":  app.Version,
+			"prev_status":   string(app.Status),
+			"prev_handler":  app.CurrentHandlerName,
+			"student_name":  app.StudentName,
 		})
 		return
 	}
@@ -548,10 +561,16 @@ func ProcessApplication(c *gin.Context) {
 		tx.Rollback()
 		recordExceptionPersistence(id, "version_conflict", "版本冲突：更新时数据已变化", userID, userName)
 		c.JSON(http.StatusConflict, gin.H{
-			"error":        "版本冲突：数据已被修改，请刷新后重试",
-			"success":      false,
-			"exc_type":     "version_conflict",
-			"curr_version": app.Version,
+			"error":         "版本冲突：数据已被修改，请刷新后重试",
+			"success":       false,
+			"exc_type":      "version_conflict",
+			"client_version": req.Version,
+			"server_version": app.Version,
+			"prev_version":  app.Version,
+			"curr_version":  app.Version,
+			"prev_status":   string(app.Status),
+			"prev_handler":  app.CurrentHandlerName,
+			"student_name":  app.StudentName,
 		})
 		return
 	}
@@ -569,9 +588,16 @@ func ProcessApplication(c *gin.Context) {
 		tx.Rollback()
 		recordExceptionPersistence(id, "record_failed", "记录处理日志失败: "+err.Error(), userID, userName)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":        "记录处理日志失败: " + err.Error(),
-			"success":      false,
-			"curr_version": app.Version,
+			"error":         "记录处理日志失败: " + err.Error(),
+			"success":       false,
+			"exc_type":      "record_failed",
+			"client_version": req.Version,
+			"server_version": app.Version,
+			"prev_version":  app.Version,
+			"curr_version":  app.Version,
+			"prev_status":   string(app.Status),
+			"prev_handler":  app.CurrentHandlerName,
+			"student_name":  app.StudentName,
 		})
 		return
 	}
@@ -579,22 +605,34 @@ func ProcessApplication(c *gin.Context) {
 	if err := tx.Commit(); err != nil {
 		recordExceptionPersistence(id, "commit_failed", "提交事务失败: "+err.Error(), userID, userName)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":        "提交事务失败",
-			"success":      false,
-			"curr_version": app.Version,
+			"error":         "提交事务失败",
+			"success":       false,
+			"exc_type":      "commit_failed",
+			"client_version": req.Version,
+			"server_version": app.Version,
+			"prev_version":  app.Version,
+			"curr_version":  app.Version,
+			"prev_status":   string(app.Status),
+			"prev_handler":  app.CurrentHandlerName,
+			"student_name":  app.StudentName,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":       true,
-		"new_status":    newStatus,
-		"new_handler":   newHandlerName,
-		"next_handler":  nextHandlerName,
-		"new_version":   req.Version + 1,
+		"success":        true,
+		"client_version": req.Version,
+		"server_version": req.Version + 1,
+		"prev_version":   app.Version,
+		"new_version":    req.Version + 1,
+		"prev_status":    string(app.Status),
+		"new_status":     string(newStatus),
+		"prev_handler":   app.CurrentHandlerName,
+		"new_handler":    newHandlerName,
+		"next_handler":   nextHandlerName,
 		"application_id": id,
-		"message":       "操作成功",
-		"student_name":  app.StudentName,
+		"student_name":   app.StudentName,
+		"message":        "操作成功",
 	})
 }
 
@@ -815,7 +853,7 @@ func GetStatistics(c *gin.Context) {
 	query := "SELECT COUNT(*) FROM student_applications WHERE 1=1"
 	args := []interface{}{}
 	if role == models.RoleRegistrar || role == models.RoleAuditor || role == models.RoleReviewer {
-		query += " AND (current_handler = ? OR current_handler_role = ?)"
+		query += " AND (current_handler = ? AND current_handler_role = ?)"
 		args = append(args, userID, string(role))
 	}
 	database.DB.QueryRow(query, args...).Scan(&total)

@@ -57,7 +57,9 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
     await loadData();
     if (selectedId) {
       try {
-        const detail = await api.getApplication(selectedId);
+        const selectedApp = applications.find((a) => a.id === selectedId);
+        const clientVer = selectedApp?.version;
+        const detail = await api.getApplication(selectedId, clientVer);
         if (detail && !detail.error) {
           setSelectedEvidence(detail.evidence_summary);
         }
@@ -68,7 +70,7 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
   const viewDetail = async (app: StudentApplication) => {
     setSelectedId(app.id);
     try {
-      const detail = await api.getApplication(app.id);
+      const detail = await api.getApplication(app.id, app.version);
       if (detail && !detail.error) {
         setSelectedEvidence(detail.evidence_summary);
       }
@@ -78,7 +80,8 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
 
   const updateEvidenceForRow = async (appId: string) => {
     try {
-      const detail = await api.getApplication(appId);
+      const app = applications.find((a) => a.id === appId);
+      const detail = await api.getApplication(appId, app?.version);
       if (detail && !detail.error) {
         setSelectedEvidence(detail.evidence_summary);
       }
