@@ -198,6 +198,7 @@ pub struct ReturnRequest {
 pub struct BatchResult {
     pub plan_id: Uuid,
     pub plan_no: String,
+    pub elder_name: String,
     pub success: bool,
     pub message: String,
 }
@@ -221,4 +222,18 @@ pub struct PlanListQuery {
     pub status: Option<String>,
     pub warning: Option<String>,
     pub keyword: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadAttachmentRequest {
+    pub file_name: String,
+    pub file_type: String,
+    pub file_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorBody {
+    pub success: bool,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
 }

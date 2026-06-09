@@ -284,6 +284,41 @@ impl CarePlanService {
         ).unwrap();
     }
 
+    pub fn upload_attachment(&self, user: &User, plan_id: Uuid, req: &UploadAttachmentRequest) -> Result<Attachment, (u16, String)> {
+        let plan = match self.get_plan(user, plan_id) {
+            Some(p) => p,
+            None => return Err((404, "护理计划单不存在".to_string())),
+        };
+        if plan.status == PlanStatus::Closed {
+            self.write_audit(plan_id, user, "上传附件", plan.status.to_str(), plan.status.to_str(), false,
+                Some("状态冲突：已关闭计划单不可上传附件"), None);
+            return Err((409, "计划单已关闭，不可上传附件".to_string()));
+        }
+        if plan.current_handler != user.display_name && !matches!(user.role, Role::Director) {
+            self.write_audit(plan_id, user, "上传附件", plan.status.to_str(), plan.status.to_str(), false,
+                Some("越权操作：非当前处理人不可上传附件"), None);
+            return Err((403, "当前角色无权限上传附件".to_string()));
+        }
+        let conn = self.db.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        let att_id = Uuid::new_v4();
+        conn.execute(
+            "INSERT INTO attachments (id, care_plan_id, file_name, file_type, uploaded_by, uploaded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![att_id.to_string(), plan_id.to_string(), req.file_name, req.file_type, user.display_name, now],
+        ).unwrap();
+        drop(conn);
+        self.write_audit(plan_id, user, "上传附件", plan.status.to_str(), plan.status.to_str(), true, None, Some(&format!("上传：{}", req.file_name)));
+        Ok(Attachment {
+            id: att_id,
+            care_plan_id: plan_id,
+            file_name: req.file_name.clone(),
+            file_type: req.file_type.clone(),
+            uploaded_by: user.display_name.clone(),
+            uploaded_at: now,
+        })
+    }
+
     pub fn create_plan(&self, user: &User, req: &CreatePlanRequest) -> Result<CarePlan, (u16, String)> {
         if !matches!(user.role, Role::Registrar) {
             self.write_audit(Uuid::nil(), user, "发起计划单", "", "", false, Some("越权操作：非登记员角色不可发起计划单"), None);
@@ -558,30 +593,59 @@ impl CarePlanService {
         for pid in &req.plan_ids {
             let plan_opt = self.get_plan(user, *pid);
             let plan_no = plan_opt.as_ref().map(|p| p.plan_no.clone()).unwrap_or("未知".to_string());
+            let elder_name = plan_opt.as_ref().map(|p| p.elder_name.clone()).unwrap_or("未知老人".to_string());
+
+            if let Some(plan) = &plan_opt {
+                if plan.current_handler != user.display_name && !matches!(user.role, Role::Director) {
+                    self.write_audit(*pid, user, &format!("批量{}", req.action), plan.status.to_str(), plan.status.to_str(), false,
+                        Some(&format!("越权操作：非当前处理人，当前处理人为{}", plan.current_handler)), req.remark.as_deref());
+                    results.push(BatchResult {
+                        plan_id: *pid,
+                        plan_no: plan_no.clone(),
+                        elder_name: elder_name.clone(),
+                        success: false,
+                        message: format!("越权：当前处理人为{}，非本人操作被拦截", plan.current_handler),
+                    });
+                    continue;
+                }
+                if matches!(plan.warning_level, Some(WarningLevel::Overdue)) {
+                    self.write_exception(*pid, "批量逾期拦截", &format!("单据已逾期，责任人为{}", plan.responsible_person), &user.display_name);
+                    self.write_audit(*pid, user, &format!("批量{}", req.action), plan.status.to_str(), plan.status.to_str(), false,
+                        Some(&format!("逾期拦截：截止日期{}，责任人为{}", plan.deadline, plan.responsible_person)), req.remark.as_deref());
+                    results.push(BatchResult {
+                        plan_id: *pid,
+                        plan_no: plan_no.clone(),
+                        elder_name: elder_name.clone(),
+                        success: false,
+                        message: format!("逾期拦截：截止日{}，责任人{}，需先处理逾期原因再推进", plan.deadline, plan.responsible_person),
+                    });
+                    continue;
+                }
+            }
 
             let result = match req.action.as_str() {
                 "dispatch" => {
                     let ar = ActionRequest { remark: req.remark.clone(), version: plan_opt.as_ref().map(|p| p.version).unwrap_or(1) };
                     match self.dispatch_plan(user, *pid, &ar) {
-                        Ok(_) => BatchResult { plan_id: *pid, plan_no, success: true, message: "派发成功".to_string() },
-                        Err((_, msg)) => BatchResult { plan_id: *pid, plan_no, success: false, message: msg },
+                        Ok(_) => BatchResult { plan_id: *pid, plan_no, elder_name, success: true, message: "派发成功".to_string() },
+                        Err((_, msg)) => BatchResult { plan_id: *pid, plan_no, elder_name, success: false, message: msg },
                     }
                 }
                 "submit" => {
                     let ar = ActionRequest { remark: req.remark.clone(), version: plan_opt.as_ref().map(|p| p.version).unwrap_or(1) };
                     match self.submit_plan(user, *pid, &ar) {
-                        Ok(_) => BatchResult { plan_id: *pid, plan_no, success: true, message: "提交复核成功".to_string() },
-                        Err((_, msg)) => BatchResult { plan_id: *pid, plan_no, success: false, message: msg },
+                        Ok(_) => BatchResult { plan_id: *pid, plan_no, elder_name, success: true, message: "提交复核成功".to_string() },
+                        Err((_, msg)) => BatchResult { plan_id: *pid, plan_no, elder_name, success: false, message: msg },
                     }
                 }
                 "review" => {
                     let ar = ActionRequest { remark: req.remark.clone(), version: plan_opt.as_ref().map(|p| p.version).unwrap_or(1) };
                     match self.review_plan(user, *pid, &ar) {
-                        Ok(_) => BatchResult { plan_id: *pid, plan_no, success: true, message: "复核归档成功".to_string() },
-                        Err((_, msg)) => BatchResult { plan_id: *pid, plan_no, success: false, message: msg },
+                        Ok(_) => BatchResult { plan_id: *pid, plan_no, elder_name, success: true, message: "复核归档成功".to_string() },
+                        Err((_, msg)) => BatchResult { plan_id: *pid, plan_no, elder_name, success: false, message: msg },
                     }
                 }
-                _ => BatchResult { plan_id: *pid, plan_no, success: false, message: "不支持的批量操作".to_string() },
+                _ => BatchResult { plan_id: *pid, plan_no, elder_name, success: false, message: "不支持的批量操作".to_string() },
             };
             results.push(result);
         }

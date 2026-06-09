@@ -119,4 +119,11 @@ export const api = {
     a.click()
     URL.revokeObjectURL(url)
   },
+
+  async uploadAttachment(id: string, file_name: string, file_type: string, file_base64?: string) {
+    return request<Attachment>(`/api/care-plans/${id}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify({ file_name, file_type, file_base64 }),
+    })
+  },
 }

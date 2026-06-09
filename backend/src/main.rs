@@ -26,7 +26,7 @@ fn rocket() -> _ {
         .to_cors()
         .expect("Failed to create CORS fairing");
 
-    rocket::build()
+    let rkt = rocket::build()
         .attach(cors)
         .manage(service)
         .mount(
@@ -36,6 +36,7 @@ fn rocket() -> _ {
                 list_plans,
                 get_plan,
                 get_attachments,
+                upload_attachment,
                 get_records,
                 get_audit,
                 get_exceptions,
@@ -49,5 +50,6 @@ fn rocket() -> _ {
                 batch_action,
                 export_plans,
             ],
-        )
+        );
+    register_catchers(rkt)
 }

@@ -87,6 +87,7 @@ export interface ApiResponse<T> {
 export interface BatchResult {
   plan_id: string
   plan_no: string
+  elder_name?: string
   success: boolean
   message: string
 }

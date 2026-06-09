@@ -59,6 +59,8 @@ body {
 .tag-normal { background: #f0f9eb; color: #67c23a; border: 1px solid #c2e7b0; }
 .tag-approaching { background: #fdf6ec; color: #e6a23c; border: 1px solid #f5dab1; }
 .tag-overdue { background: #fef0f0; color: #f56c6c; border: 1px solid #fbc4c4; }
+.tag-warning { background: #fdf6ec; color: #e6a23c; border: 1px solid #f5dab1; }
+.tag-info { background: #ecf5ff; color: #409eff; border: 1px solid #b3d8ff; }
 
 table {
   width: 100%;

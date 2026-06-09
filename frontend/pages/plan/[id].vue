@@ -1,14 +1,17 @@
 <template>
   <div>
     <div class="flex justify-between items-center mb-16">
-      <button class="btn" @click="goBack">← 返回列表</button>
       <div class="flex gap-8">
-        <span v-if="plan" class="tag tag-pending" v-if="plan.status === '待派发'">待派发</span>
-        <span v-else-if="plan && plan.status === '处理中'" class="tag tag-progress">处理中</span>
-        <span v-else-if="plan" class="tag tag-closed">已关闭</span>
-        <span v-if="plan && plan.warning_level === '正常'" class="tag tag-normal">🟢 正常</span>
-        <span v-else-if="plan && plan.warning_level === '临期'" class="tag tag-approaching">🟡 临期</span>
-        <span v-else-if="plan && plan.warning_level === '逾期'" class="tag tag-overdue">🔴 逾期</span>
+        <button class="btn" @click="goBack">← 返回列表</button>
+        <button class="btn btn-info" @click="loadDetail">🔄 刷新队列</button>
+      </div>
+      <div class="flex gap-8" v-if="plan">
+        <span v-if="plan.status === '待派发'" class="tag tag-pending">待派发</span>
+        <span v-else-if="plan.status === '处理中'" class="tag tag-progress">处理中</span>
+        <span v-else class="tag tag-closed">已关闭</span>
+        <span v-if="plan.warning_level === '正常'" class="tag tag-normal">🟢 正常</span>
+        <span v-else-if="plan.warning_level === '临期'" class="tag tag-approaching">🟡 临期</span>
+        <span v-else-if="plan.warning_level === '逾期'" class="tag tag-overdue">🔴 逾期</span>
       </div>
     </div>
 
@@ -115,6 +118,10 @@
               <option :value="true">已完成</option>
             </select>
           </div>
+          <div class="form-item" style="flex:0 0 auto;">
+            <label>&nbsp;</label>
+            <button class="btn btn-sm" :disabled="!canEdit" @click="quickUpload('入住评估表')">📎 上传入住评估表</button>
+          </div>
         </div>
         <div class="form-row">
           <div class="form-item">
@@ -132,6 +139,10 @@
               <option :value="false">未制定</option>
               <option :value="true">已制定</option>
             </select>
+          </div>
+          <div class="form-item" style="flex:0 0 auto;">
+            <label>&nbsp;</label>
+            <button class="btn btn-sm" :disabled="!canEdit" @click="quickUpload('护理方案')">📎 上传护理方案</button>
           </div>
         </div>
         <div class="form-row">
@@ -151,6 +162,10 @@
               <option :value="true">已确认</option>
             </select>
           </div>
+          <div class="form-item" style="flex:0 0 auto;">
+            <label>&nbsp;</label>
+            <button class="btn btn-sm btn-success" :disabled="!canEdit" @click="quickUploadFamilySignature">✍️ 上传家属签字确认单</button>
+          </div>
         </div>
         <div class="form-row">
           <div class="form-item">
@@ -158,23 +173,75 @@
             <textarea v-model="form.family_note" placeholder="家属签字情况、联系方式等" :disabled="!canEdit"></textarea>
           </div>
         </div>
-        <p style="color:#e6a23c;font-size:12px;">⚠️ 勾选"已确认"需确保已上传家属签字确认单附件</p>
+        <p style="color:#e6a23c;font-size:12px;">
+          ⚠️ 勾选"已确认"需确保已上传家属签字确认单附件。当前已有
+          <strong>{{ familySignatureCount }}</strong> 份家属签字附件。
+        </p>
       </div>
     </div>
 
     <div class="card" v-if="plan">
-      <h3 class="section-title">📎 附件</h3>
-      <table v-if="attachments.length > 0">
+      <div class="flex justify-between items-center mb-16">
+        <h3 class="section-title" style="margin:0;border:none;padding:0;">📎 附件清单（共 {{ attachments.length }} 份）</h3>
+      </div>
+
+      <div class="card" style="background:#fafafa; border:1px dashed #dcdfe6;">
+        <h4 style="margin:0 0 12px 0;font-size:13px;color:#606266;">📤 上传新附件</h4>
+        <div class="form-row">
+          <div class="form-item">
+            <label>文件名 *</label>
+            <input v-model="uploadForm.file_name" placeholder="如：家属签字确认单-XXX.pdf" :disabled="!canUpload" />
+          </div>
+          <div class="form-item">
+            <label>附件类型 *</label>
+            <select v-model="uploadForm.file_type" :disabled="!canUpload">
+              <option value="">请选择类型</option>
+              <option value="assessment">入住评估表</option>
+              <option value="care_plan">护理方案</option>
+              <option value="family_signature">家属签字确认单</option>
+              <option value="medical">医疗记录</option>
+              <option value="other">其他</option>
+            </select>
+          </div>
+          <div class="form-item" style="flex:0 0 auto;">
+            <label>&nbsp;</label>
+            <button class="btn btn-primary" :disabled="!canUpload || !uploadForm.file_name || !uploadForm.file_type" @click="doUploadAttachment">
+              📤 上传附件
+            </button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:#909399;">
+          快捷上传：
+          <button class="btn btn-sm" style="margin:0 4px;" :disabled="!canUpload" @click="quickUpload('入住评估表')">入住评估表</button>
+          <button class="btn btn-sm" style="margin:0 4px;" :disabled="!canUpload" @click="quickUpload('护理方案')">护理方案</button>
+          <button class="btn btn-sm btn-success" style="margin:0 4px;" :disabled="!canUpload" @click="quickUploadFamilySignature">家属签字确认单</button>
+        </div>
+      </div>
+
+      <table v-if="attachments.length > 0" class="mt-16">
         <thead>
-          <tr><th>文件名</th><th>类型</th><th>上传人</th><th>上传时间</th></tr>
+          <tr><th>文件名</th><th>类型</th><th>上传人</th><th>上传时间</th><th>证据状态</th></tr>
         </thead>
         <tbody>
           <tr v-for="a in attachments" :key="a.id">
-            <td>{{ a.file_name }}</td><td>{{ a.file_type }}</td><td>{{ a.uploaded_by }}</td><td>{{ a.uploaded_at }}</td>
+            <td>📎 {{ a.file_name }}</td>
+            <td>
+              <span v-if="a.file_type === 'family_signature'" class="tag tag-closed">家属签字</span>
+              <span v-else-if="a.file_type === 'assessment'" class="tag tag-normal">评估表</span>
+              <span v-else-if="a.file_type === 'care_plan'" class="tag tag-progress">护理方案</span>
+              <span v-else-if="a.file_type === 'medical'" class="tag tag-info">医疗记录</span>
+              <span v-else class="tag">{{ a.file_type }}</span>
+            </td>
+            <td>{{ a.uploaded_by }}</td>
+            <td style="font-size:12px;">{{ a.uploaded_at }}</td>
+            <td>
+              <span v-if="a.file_type === 'family_signature'" class="tag tag-closed">✓ 关键证据</span>
+              <span v-else class="tag tag-normal">辅助材料</span>
+            </td>
           </tr>
         </tbody>
       </table>
-      <p v-else style="color:#909399;">暂无附件</p>
+      <p v-else style="color:#909399;margin-top:8px;">暂无附件，建议先上传家属签字确认单。</p>
     </div>
 
     <div class="card" v-if="plan">
@@ -183,8 +250,8 @@
         <div class="tab" :class="{ active: recordTab === 'audit' }" @click="recordTab = 'audit'">📜 审计轨迹</div>
         <div class="tab" :class="{ active: recordTab === 'exceptions' }" @click="recordTab = 'exceptions'">
           ⚠️ 异常原因
-          <span v-if="exceptions.filter(e => !e.resolved).length > 0" class="tag tag-overdue" style="margin-left:4px;">
-            {{ exceptions.filter(e => !e.resolved).length }}
+          <span v-if="unresolvedExceptions > 0" class="tag tag-overdue" style="margin-left:4px;">
+            {{ unresolvedExceptions }}
           </span>
         </div>
       </div>
@@ -208,10 +275,10 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="a in auditNotes" :key="a.id">
+            <tr v-for="a in auditNotes" :key="a.id" :style="!a.success ? 'background:#fef0f0;' : ''">
               <td style="font-size:12px;">{{ a.created_at }}</td>
               <td>{{ a.operator }}</td>
-              <td>{{ a.operator_role }}</td>
+              <td style="font-size:12px;">{{ a.operator_role }}</td>
               <td>{{ a.action }}</td>
               <td style="font-size:12px;">{{ a.prev_status }} → {{ a.new_status }}</td>
               <td>
@@ -232,7 +299,7 @@
             <tr><th>时间</th><th>类型</th><th>描述</th><th>操作人</th><th>状态</th><th>解决时间</th></tr>
           </thead>
           <tbody>
-            <tr v-for="e in exceptions" :key="e.id">
+            <tr v-for="e in exceptions" :key="e.id" :style="!e.resolved ? 'background:#fdf6ec;' : ''">
               <td style="font-size:12px;">{{ e.created_at }}</td>
               <td><span class="tag tag-overdue">{{ e.exception_type }}</span></td>
               <td>{{ e.description }}</td>
@@ -284,11 +351,16 @@ const attachments = ref<Attachment[]>([])
 const records = ref<ProcessingRecord[]>([])
 const auditNotes = ref<AuditNote[]>([])
 const exceptions = ref<ExceptionReason[]>([])
-const moduleTab = ref('assessment')
+const moduleTab = ref('family')
 const recordTab = ref('records')
 const remark = ref('')
 const showReturn = ref(false)
 const returnRemark = ref('')
+
+const uploadForm = reactive({
+  file_name: '',
+  file_type: '',
+})
 
 const form = reactive({
   assessment_done: false,
@@ -306,6 +378,19 @@ const canEdit = computed(() => {
   if (auth.currentRole === 'director') return false
   return true
 })
+
+const canUpload = computed(() => {
+  if (!plan.value) return false
+  if (plan.value.status === '已关闭') return false
+  if (plan.value.current_handler !== auth.displayName && auth.currentRole !== 'director') return false
+  return true
+})
+
+const familySignatureCount = computed(() =>
+  attachments.value.filter(a => a.file_type === 'family_signature' || a.file_name.includes('家属') || a.file_name.includes('签字')).length
+)
+
+const unresolvedExceptions = computed(() => exceptions.value.filter(e => !e.resolved).length)
 
 watch(() => plan.value, (p) => {
   if (p) {
@@ -328,6 +413,7 @@ async function loadDetail() {
     api.getExceptions(id),
   ])
   if (planRes.success && planRes.data) plan.value = planRes.data
+  else if (!planRes.success) alert('加载失败：' + planRes.message)
   if (attRes.success && attRes.data) attachments.value = attRes.data
   if (recRes.success && recRes.data) records.value = recRes.data
   if (audRes.success && audRes.data) auditNotes.value = audRes.data
@@ -340,6 +426,49 @@ function goBack() {
 
 function getBaseVersion(): number {
   return plan.value ? plan.value.version : 1
+}
+
+async function quickUpload(baseName: string) {
+  if (!plan.value) return
+  const fname = `${baseName}-${plan.value.elder_name}-${new Date().toISOString().slice(0, 10)}.pdf`
+  const ftype = baseName.includes('评估') ? 'assessment' : (baseName.includes('护理') ? 'care_plan' : 'other')
+  const res = await api.uploadAttachment(plan.value.id, fname, ftype)
+  if (res.success) {
+    alert(`已登记${baseName}附件：${fname}`)
+    loadDetail()
+  } else {
+    alert('上传失败：' + res.message)
+  }
+}
+
+async function quickUploadFamilySignature() {
+  if (!plan.value) return
+  const fname = `家属签字确认单-${plan.value.elder_name}.pdf`
+  const res = await api.uploadAttachment(plan.value.id, fname, 'family_signature')
+  if (res.success) {
+    alert('✅ 家属签字确认单证据已登记！可继续勾选"已确认"状态。')
+    form.family_confirmed = true
+    loadDetail()
+  } else {
+    alert('上传失败：' + res.message)
+  }
+}
+
+async function doUploadAttachment() {
+  if (!plan.value) return
+  if (!uploadForm.file_name || !uploadForm.file_type) {
+    alert('请填写文件名和类型')
+    return
+  }
+  const res = await api.uploadAttachment(plan.value.id, uploadForm.file_name, uploadForm.file_type)
+  if (res.success) {
+    alert('附件上传成功')
+    uploadForm.file_name = ''
+    uploadForm.file_type = ''
+    loadDetail()
+  } else {
+    alert('上传失败：' + res.message)
+  }
 }
 
 async function doDispatch() {
