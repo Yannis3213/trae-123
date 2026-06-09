@@ -25,6 +25,7 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
   const [batchResults, setBatchResults] = useState<BatchResult[] | null>(null);
   const [statistics, setStatistics] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -33,10 +34,11 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
         api.listApplications({ status: statusFilter, urgency: urgencyFilter }),
         api.getStatistics(),
       ]);
-      setApplications(apps);
+      const validApps = Array.isArray(apps) ? apps : [];
+      setApplications(validApps);
       setStatistics(stats);
       if (selectedId) {
-        const found = apps.find((a) => a.id === selectedId);
+        const found = validApps.find((a) => a.id === selectedId);
         if (!found) {
           setSelectedId(null);
           setSelectedEvidence(null);
@@ -56,7 +58,9 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
     if (selectedId) {
       try {
         const detail = await api.getApplication(selectedId);
-        setSelectedEvidence(detail.evidence_summary);
+        if (detail && !detail.error) {
+          setSelectedEvidence(detail.evidence_summary);
+        }
       } catch {}
     }
   };
@@ -65,7 +69,9 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
     setSelectedId(app.id);
     try {
       const detail = await api.getApplication(app.id);
-      setSelectedEvidence(detail.evidence_summary);
+      if (detail && !detail.error) {
+        setSelectedEvidence(detail.evidence_summary);
+      }
     } catch {}
     onViewDetail(app.id);
   };
@@ -73,7 +79,9 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
   const updateEvidenceForRow = async (appId: string) => {
     try {
       const detail = await api.getApplication(appId);
-      setSelectedEvidence(detail.evidence_summary);
+      if (detail && !detail.error) {
+        setSelectedEvidence(detail.evidence_summary);
+      }
       setSelectedId(appId);
     } catch {}
   };
@@ -98,15 +106,20 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
 
   const handleBatch = async () => {
     if (!batchAction || selectedIds.size === 0) return;
+    setBatchLoading(true);
     try {
       const res = await api.batchProcess([...selectedIds], batchAction, batchRemark);
-      setBatchResults(res.results);
+      if (res && res.results) {
+        setBatchResults(res.results);
+      }
       setSelectedIds(new Set());
       setBatchAction('');
       setBatchRemark('');
       await refreshAll();
     } catch (e: any) {
       alert('批量处理失败: ' + e.message);
+    } finally {
+      setBatchLoading(false);
     }
   };
 
@@ -123,11 +136,28 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
   const getStatusBadge = (s: string) => {
     const map: Record<string, { cls: string; label: string }> = {
       待分派: { cls: 'badge-pending', label: '待分派' },
-      已转办: { cls: 'badge-transferred', label: '已转办' },
+     已转办: { cls: 'badge-transferred', label: '已转办' },
       已回访: { cls: 'badge-visited', label: '已回访' },
     };
     const cfg = map[s] || map['待分派'];
     return <span className={`badge ${cfg.cls}`}>{cfg.label}</span>;
+  };
+
+  const excTypeLabels: Record<string, string> = {
+    version_conflict: '版本冲突',
+    permission_denied: '权限不足',
+    status_conflict: '状态冲突',
+    missing_evidence: '证据缺失',
+    overdue: '节点逾期',
+    missing_materials: '资料缺失',
+    return_correction: '退回补正',
+    not_found: '单据不存在',
+    query_failed: '查询失败',
+    tx_failed: '事务失败',
+    update_failed: '更新失败',
+    record_failed: '记录失败',
+    commit_failed: '提交失败',
+    invalid_action: '无效操作',
   };
 
   const batchActions =
@@ -172,9 +202,9 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
                 到期预警
               </div>
               <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                <span className="badge badge-normal">正常 {statistics.urgency.normal}</span>
-                <span className="badge badge-warning">临期 {statistics.urgency.warning}</span>
-                <span className="badge badge-overdue">逾期 {statistics.urgency.overdue}</span>
+                <span className="badge badge-normal">正常 {statistics.urgency?.normal || 0}</span>
+                <span className="badge badge-warning">临期 {statistics.urgency?.warning || 0}</span>
+                <span className="badge badge-overdue">逾期 {statistics.urgency?.overdue || 0}</span>
               </div>
             </div>
           </div>
@@ -227,14 +257,18 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
                   onChange={(e) => setBatchRemark(e.target.value)}
                   style={{ width: '160px' }}
                 />
-                <button className="btn btn-primary" onClick={handleBatch} disabled={!batchAction}>
-                  批量处理
+                <button
+                  className="btn btn-primary"
+                  onClick={handleBatch}
+                  disabled={!batchAction || batchLoading}
+                >
+                  {batchLoading ? '处理中...' : '批量处理'}
                 </button>
               </div>
             )}
           </div>
 
-          {batchResults && (
+          {batchResults && batchResults.length > 0 && (
             <div
               className="card"
               style={{
@@ -251,7 +285,11 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
                   marginBottom: '12px',
                 }}
               >
-                <h3 style={{ fontSize: '15px' }}>📋 批量处理结果（处理后已自动刷新列表）</h3>
+                <h3 style={{ fontSize: '15px' }}>
+                  📋 批量处理结果（共 {batchResults.length} 条，成功{' '}
+                  {batchResults.filter((r) => r.success).length} 条，失败{' '}
+                  {batchResults.filter((r) => !r.success).length} 条，处理后已自动刷新列表与证据）
+                </h3>
                 <button
                   className="btn btn-secondary"
                   onClick={() => setBatchResults(null)}
@@ -260,34 +298,66 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
                   关闭
                 </button>
               </div>
-              <table style={{ fontSize: '13px' }}>
-                <thead>
-                  <tr>
-                    <th>学员姓名</th>
-                    <th>单据ID</th>
-                    <th>结果</th>
-                    <th>说明</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {batchResults.map((r) => (
-                    <tr key={r.application_id}>
-                      <td>{r.student_name}</td>
-                      <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>
-                        {r.application_id.slice(0, 8)}...
-                      </td>
-                      <td>
-                        {r.success ? (
-                          <span className="badge badge-visited">✓ 成功</span>
-                        ) : (
-                          <span className="badge badge-overdue">✗ 失败</span>
-                        )}
-                      </td>
-                      <td style={{ color: r.success ? '#166534' : '#991b1b' }}>{r.reason}</td>
+              <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                <table style={{ fontSize: '13px' }}>
+                  <thead>
+                    <tr>
+                      <th>学员姓名</th>
+                      <th>单据ID</th>
+                      <th>结果</th>
+                      <th>原版本</th>
+                      <th>新版本</th>
+                      <th>新状态</th>
+                      <th>新处理人</th>
+                      <th>异常类型</th>
+                      <th>说明</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {batchResults.map((r) => (
+                      <tr key={r.application_id}>
+                        <td>{r.student_name}</td>
+                        <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>
+                          {r.application_id.slice(0, 8)}...
+                        </td>
+                        <td>
+                          {r.success ? (
+                            <span className="badge badge-visited">✓ 成功</span>
+                          ) : (
+                            <span className="badge badge-overdue">✗ 失败</span>
+                          )}
+                        </td>
+                        <td style={{ fontSize: '12px', color: '#6b7280' }}>
+                          {r.curr_version ? 'v' + r.curr_version : '-'}
+                        </td>
+                        <td style={{ fontSize: '12px', color: r.success ? '#166534' : '#6b7280' }}>
+                          {r.new_version ? 'v' + r.new_version : '-'}
+                        </td>
+                        <td>{r.new_status || '-'}</td>
+                        <td>{r.new_handler || '-'}</td>
+                        <td>
+                          {r.exc_type ? (
+                            <span
+                              style={{
+                                padding: '2px 6px',
+                                background: '#fef2f2',
+                                color: '#991b1b',
+                                borderRadius: '4px',
+                                fontSize: '12px',
+                              }}
+                            >
+                              {excTypeLabels[r.exc_type] || r.exc_type}
+                            </span>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td style={{ color: r.success ? '#166534' : '#991b1b' }}>{r.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -471,11 +541,10 @@ export default function ApplicationList({ user, onViewDetail, globalRefreshCount
           >
             <li>点击左侧单据行可查看证据摘要</li>
             <li>勾选左侧单据可批量处理</li>
-            <li>点击表头可按状态/预警筛选</li>
+            <li>批量结果显示每条的版本号和异常原因</li>
             <li>逾期单据会高亮显示责任人</li>
-            <li>右上角可快速切换角色</li>
-            <li>批量/详情处理后自动刷新列表</li>
-            <li>刷新按钮可同步最新数据</li>
+            <li>详情/批量处理后自动刷新列表与证据</li>
+            <li>右上角可快速切换角色，刷新全部数据</li>
           </ul>
         </div>
       </div>

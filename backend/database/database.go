@@ -29,7 +29,16 @@ func Init() error {
 		return fmt.Errorf("打开数据库失败: %w", err)
 	}
 
-	DB.SetMaxOpenConns(1)
+	DB.SetMaxOpenConns(5)
+	DB.SetMaxIdleConns(2)
+	DB.SetConnMaxLifetime(0)
+
+	if _, err = DB.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		log.Printf("设置 WAL 模式失败（不影响运行）: %v", err)
+	}
+	if _, err = DB.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		log.Printf("设置 busy_timeout 失败: %v", err)
+	}
 
 	if err = createTables(); err != nil {
 		return fmt.Errorf("创建表失败: %w", err)

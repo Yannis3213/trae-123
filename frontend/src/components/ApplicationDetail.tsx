@@ -8,6 +8,7 @@ import {
   type ExceptionRecord,
   type EvidenceSummary,
   type User,
+  type ProcessResponse,
 } from '../lib/api';
 
 interface Props {
@@ -35,17 +36,26 @@ export default function ApplicationDetail({
   const [actionRemark, setActionRemark] = useState('');
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState('');
+  const [lastError, setLastError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLastError(null);
     try {
       const data = await api.getApplication(applicationId);
-      setApplication(data.application);
-      setAttachments(data.attachments);
-      setRecords(data.records);
-      setNotes(data.notes);
-      setExceptions(data.exceptions);
-      setEvidenceSummary(data.evidence_summary);
+      if (data && data.error) {
+        setLastError(data.error);
+        setApplication(null);
+      } else {
+        setApplication(data.application);
+        setAttachments(data.attachments);
+        setRecords(data.records);
+        setNotes(data.notes);
+        setExceptions(data.exceptions);
+        setEvidenceSummary(data.evidence_summary);
+      }
+    } catch (e: any) {
+      setLastError(e.message || '加载失败');
     } finally {
       setLoading(false);
     }
@@ -60,24 +70,33 @@ export default function ApplicationDetail({
   const handleAction = async (action: string) => {
     if (!application) return;
     setActionLoading(action);
+    setLastError(null);
     try {
-      const res = await api.processApplication(
+      const res: ProcessResponse = await api.processApplication(
         application.id,
         action,
         actionRemark,
         application.version,
       );
-      if (res.success) {
-        alert('✅ 操作成功：' + res.message);
+      if (res && res.success) {
+        const msg = res.message || '操作成功';
+        const versionInfo = res.new_version ? `（新版本 v${res.new_version}）` : '';
+        const handlerInfo = res.new_handler ? ` → ${res.new_handler}` : '';
+        alert('✅ 操作成功：' + msg + versionInfo + handlerInfo);
         setActionRemark('');
         await loadData();
         onProcessed();
         onRefresh();
       } else {
-        alert('❌ 操作失败：' + (res.error || '未知错误'));
+        const err = res?.error || '未知错误';
+        const excType = res?.exc_type ? ` [${res.exc_type}]` : '';
+        const verInfo = res?.curr_version ? `（当前版本 v${res.curr_version}）` : '';
+        setLastError(err + excType + verInfo);
+        alert('❌ 操作失败：' + err + excType + verInfo);
         await loadData();
       }
     } catch (e: any) {
+      setLastError(e.message);
       alert('❌ 操作失败：' + e.message);
       await loadData();
     } finally {
@@ -88,9 +107,13 @@ export default function ApplicationDetail({
   const handleAddNote = async () => {
     if (!newNote.trim()) return;
     try {
-      await api.addNote(applicationId, newNote);
-      setNewNote('');
-      await loadData();
+      const res = await api.addNote(applicationId, newNote);
+      if (res && res.error) {
+        alert('❌ 添加备注失败：' + res.error);
+      } else {
+        setNewNote('');
+        await loadData();
+      }
     } catch (e: any) {
       alert(e.message);
     }
@@ -131,9 +154,46 @@ export default function ApplicationDetail({
     correct_reject: '退回补正',
   };
 
-  if (loading || !application) {
+  const excTypeLabels: Record<string, string> = {
+    version_conflict: '版本冲突',
+    permission_denied: '权限不足',
+    status_conflict: '状态冲突',
+    missing_evidence: '证据缺失',
+    overdue: '节点逾期',
+    missing_materials: '资料缺失',
+    return_correction: '退回补正',
+    not_found: '单据不存在',
+    query_failed: '查询失败',
+    tx_failed: '事务失败',
+    update_failed: '更新失败',
+    record_failed: '记录失败',
+    commit_failed: '提交失败',
+    invalid_action: '无效操作',
+  };
+
+  if (loading && !application) {
     return (
       <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>加载中...</div>
+    );
+  }
+
+  if (lastError && !application) {
+    return (
+      <div style={{ padding: '40px', maxWidth: '600px', margin: '0 auto' }}>
+        <button className="btn btn-secondary" onClick={onBack} style={{ marginBottom: '20px' }}>
+          ← 返回列表
+        </button>
+        <div className="card" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+          <h3 style={{ color: '#991b1b', marginBottom: '12px' }}>⚠ 访问被拒绝</h3>
+          <p style={{ color: '#374151' }}>{lastError}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!application) {
+    return (
+      <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>无数据</div>
     );
   }
 
@@ -185,6 +245,22 @@ export default function ApplicationDetail({
           🔄 刷新详情与列表
         </button>
       </div>
+
+      {lastError && (
+        <div
+          className="card"
+          style={{
+            marginBottom: '20px',
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            padding: '12px 16px',
+            color: '#991b1b',
+            fontSize: '14px',
+          }}
+        >
+          ⚠ {lastError}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '20px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -641,7 +717,7 @@ export default function ApplicationDetail({
                       }}
                     >
                       <span style={{ fontWeight: 600 }}>
-                        {e.resolved ? '✓' : '✗'} {e.type}
+                        {e.resolved ? '✓' : '✗'} {excTypeLabels[e.type] || e.type}
                       </span>
                       <span style={{ color: '#6b7280' }}>
                         {new Date(e.triggered_at).toLocaleString('zh-CN')}

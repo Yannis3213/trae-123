@@ -67,6 +67,10 @@ func GetCurrentUser(c *gin.Context) {
 	})
 }
 
+func checkAccess(app *models.StudentApplication, userID string, role models.Role) bool {
+	return app.CurrentHandler == userID || app.CurrentHandlerRole == role
+}
+
 func ListApplications(c *gin.Context) {
 	userID, _, _, role := middleware.GetCurrentUser(c)
 	status := c.Query("status")
@@ -119,7 +123,7 @@ func ListApplications(c *gin.Context) {
 
 func GetApplication(c *gin.Context) {
 	id := c.Param("id")
-	_, _, _, role := middleware.GetCurrentUser(c)
+	userID, _, _, role := middleware.GetCurrentUser(c)
 
 	query := `SELECT id, student_name, id_card, phone, program, status,
 		current_handler, current_handler_name, current_handler_role,
@@ -137,6 +141,11 @@ func GetApplication(c *gin.Context) {
 	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+
+	if !checkAccess(app, userID, role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足，您无权查看该报名单"})
 		return
 	}
 
@@ -267,22 +276,22 @@ func checkDeadline(app *models.StudentApplication, role models.Role) (bool, stri
 }
 
 type ValidationResult struct {
-	Pass     bool
+	Pass       bool
 	HTTPStatus int
-	ErrorMsg string
-	ExcType  string
+	ErrorMsg   string
+	ExcType    string
 }
 
 type ActionConfig struct {
-	RequiredRole          models.Role
-	RequiredStatus        models.ApplicationStatus
-	NeedsEvidence         bool
-	NeedsDeadline         bool
-	IsCorrection          bool
-	TargetStatus          models.ApplicationStatus
-	TargetHandlerRole     models.Role
-	NextHandlerRole       models.Role
-	UpdateResponsible     bool
+	RequiredRole      models.Role
+	RequiredStatus    models.ApplicationStatus
+	NeedsEvidence     bool
+	NeedsDeadline     bool
+	IsCorrection      bool
+	TargetStatus      models.ApplicationStatus
+	TargetHandlerRole models.Role
+	NextHandlerRole   models.Role
+	UpdateResponsible bool
 }
 
 var actionConfigs = map[string]ActionConfig{
@@ -446,7 +455,12 @@ func ProcessApplication(c *gin.Context) {
 	vr := validateAndPrepare(req.Action, &app, userID, userName, role, req.Version)
 	if !vr.Pass {
 		recordExceptionPersistence(id, vr.ExcType, vr.ErrorMsg, userID, userName)
-		c.JSON(vr.HTTPStatus, gin.H{"error": vr.ErrorMsg, "success": false})
+		c.JSON(vr.HTTPStatus, gin.H{
+			"error":       vr.ErrorMsg,
+			"success":     false,
+			"exc_type":    vr.ExcType,
+			"curr_version": app.Version,
+		})
 		return
 	}
 
@@ -475,7 +489,6 @@ func ProcessApplication(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "事务启动失败", "success": false})
 		return
 	}
-	defer tx.Rollback()
 
 	result, err := tx.Exec(`UPDATE student_applications SET 
 		status = ?, current_handler = ?, current_handler_name = ?, current_handler_role = ?,
@@ -489,13 +502,25 @@ func ProcessApplication(c *gin.Context) {
 		now, id, req.Version,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败: " + err.Error(), "success": false})
+		tx.Rollback()
+		recordExceptionPersistence(id, "update_failed", "更新失败: "+err.Error(), userID, userName)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":        "更新失败: " + err.Error(),
+			"success":      false,
+			"curr_version": app.Version,
+		})
 		return
 	}
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
+		tx.Rollback()
 		recordExceptionPersistence(id, "version_conflict", "版本冲突：更新时数据已变化", userID, userName)
-		c.JSON(http.StatusConflict, gin.H{"error": "版本冲突：数据已被修改，请刷新后重试", "success": false})
+		c.JSON(http.StatusConflict, gin.H{
+			"error":        "版本冲突：数据已被修改，请刷新后重试",
+			"success":      false,
+			"exc_type":     "version_conflict",
+			"curr_version": app.Version,
+		})
 		return
 	}
 
@@ -509,12 +534,23 @@ func ProcessApplication(c *gin.Context) {
 		req.Remark, now, req.Version+1, isCorrection,
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "记录处理日志失败: " + err.Error(), "success": false})
+		tx.Rollback()
+		recordExceptionPersistence(id, "record_failed", "记录处理日志失败: "+err.Error(), userID, userName)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":        "记录处理日志失败: " + err.Error(),
+			"success":      false,
+			"curr_version": app.Version,
+		})
 		return
 	}
 
 	if err := tx.Commit(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "提交事务失败", "success": false})
+		recordExceptionPersistence(id, "commit_failed", "提交事务失败: "+err.Error(), userID, userName)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":        "提交事务失败",
+			"success":      false,
+			"curr_version": app.Version,
+		})
 		return
 	}
 
@@ -526,6 +562,7 @@ func ProcessApplication(c *gin.Context) {
 		"new_version":   req.Version + 1,
 		"application_id": id,
 		"message":       "操作成功",
+		"student_name":  app.StudentName,
 	})
 }
 
@@ -576,16 +613,19 @@ func BatchProcess(c *gin.Context) {
 		app.PaymentConfirmed = paymentOK == 1
 
 		result.StudentName = app.StudentName
+		result.CurrVersion = app.Version
 
 		if err == sql.ErrNoRows {
 			result.Success = false
 			result.Reason = "报名单不存在"
+			result.ExcType = "not_found"
 			results = append(results, result)
 			continue
 		}
 		if err != nil {
 			result.Success = false
 			result.Reason = "查询失败: " + err.Error()
+			result.ExcType = "query_failed"
 			results = append(results, result)
 			continue
 		}
@@ -595,6 +635,7 @@ func BatchProcess(c *gin.Context) {
 			recordExceptionPersistence(id, vr.ExcType, vr.ErrorMsg, userID, userName)
 			result.Success = false
 			result.Reason = vr.ErrorMsg
+			result.ExcType = vr.ExcType
 			results = append(results, result)
 			continue
 		}
@@ -620,6 +661,7 @@ func BatchProcess(c *gin.Context) {
 		if err != nil {
 			result.Success = false
 			result.Reason = "事务启动失败"
+			result.ExcType = "tx_failed"
 			results = append(results, result)
 			continue
 		}
@@ -637,8 +679,10 @@ func BatchProcess(c *gin.Context) {
 		)
 		if err != nil {
 			tx.Rollback()
+			recordExceptionPersistence(id, "update_failed", "更新失败: "+err.Error(), userID, userName)
 			result.Success = false
 			result.Reason = "更新失败: " + err.Error()
+			result.ExcType = "update_failed"
 			results = append(results, result)
 			continue
 		}
@@ -648,6 +692,7 @@ func BatchProcess(c *gin.Context) {
 			recordExceptionPersistence(id, "version_conflict", "批量处理版本冲突", userID, userName)
 			result.Success = false
 			result.Reason = "版本冲突：数据已被修改"
+			result.ExcType = "version_conflict"
 			results = append(results, result)
 			continue
 		}
@@ -663,20 +708,27 @@ func BatchProcess(c *gin.Context) {
 		)
 		if err != nil {
 			tx.Rollback()
+			recordExceptionPersistence(id, "record_failed", "记录处理日志失败", userID, userName)
 			result.Success = false
 			result.Reason = "记录处理日志失败"
+			result.ExcType = "record_failed"
 			results = append(results, result)
 			continue
 		}
 
 		if err := tx.Commit(); err != nil {
+			recordExceptionPersistence(id, "commit_failed", "提交事务失败", userID, userName)
 			result.Success = false
 			result.Reason = "提交事务失败"
+			result.ExcType = "commit_failed"
 			results = append(results, result)
 			continue
 		}
 
 		result.Success = true
+		result.NewVersion = app.Version + 1
+		result.NewStatus = string(newStatus)
+		result.NewHandler = newHandlerName
 		if newHandlerName != "" {
 			result.Reason = "处理成功，流转至：" + newHandlerName
 		} else {
@@ -737,7 +789,7 @@ func GetStatistics(c *gin.Context) {
 
 func AddAuditNote(c *gin.Context) {
 	id := c.Param("id")
-	userID, userName, _, _ := middleware.GetCurrentUser(c)
+	userID, userName, _, role := middleware.GetCurrentUser(c)
 
 	var req struct {
 		Content string `json:"content" binding:"required"`
@@ -747,14 +799,43 @@ func AddAuditNote(c *gin.Context) {
 		return
 	}
 
-	var exists int
-	database.DB.QueryRow("SELECT COUNT(*) FROM student_applications WHERE id = ?", id).Scan(&exists)
-	if exists == 0 {
+	var app models.StudentApplication
+	var materialsOK, classOK, paymentOK int
+	err := database.DB.QueryRow(`SELECT id, student_name, id_card, phone, program, status,
+		current_handler, current_handler_name, current_handler_role,
+		next_handler, next_handler_name, next_handler_role,
+		assignment_deadline, audit_deadline, review_deadline,
+		created_at, updated_at, version, urgency,
+		responsible_person, responsible_person_name,
+		materials_complete, class_assigned, payment_confirmed
+		FROM student_applications WHERE id = ?`, id).Scan(
+		&app.ID, &app.StudentName, &app.IdCard, &app.Phone, &app.Program,
+		&app.Status, &app.CurrentHandler, &app.CurrentHandlerName, &app.CurrentHandlerRole,
+		&app.NextHandler, &app.NextHandlerName, &app.NextHandlerRole,
+		&app.AssignmentDeadline, &app.AuditDeadline, &app.ReviewDeadline,
+		&app.CreatedAt, &app.UpdatedAt, &app.Version, &app.Urgency,
+		&app.ResponsiblePerson, &app.ResponsiblePersonName,
+		&materialsOK, &classOK, &paymentOK,
+	)
+	app.MaterialsComplete = materialsOK == 1
+	app.ClassAssigned = classOK == 1
+	app.PaymentConfirmed = paymentOK == 1
+
+	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "报名单不存在"})
 		return
 	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
 
-	_, err := database.DB.Exec(
+	if !checkAccess(&app, userID, role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足，您无权操作该报名单"})
+		return
+	}
+
+	_, err = database.DB.Exec(
 		"INSERT INTO audit_notes (id, application_id, user_id, user_name, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		uuid.NewString(), id, userID, userName, req.Content, time.Now(),
 	)
@@ -763,7 +844,7 @@ func AddAuditNote(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "备注添加成功"})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "备注添加成功", "curr_version": app.Version})
 }
 
 func ListUsers(c *gin.Context) {

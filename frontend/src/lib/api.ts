@@ -96,6 +96,25 @@ export interface BatchResult {
   student_name: string;
   success: boolean;
   reason: string;
+  exc_type?: string;
+  curr_version?: number;
+  new_version?: number;
+  new_status?: string;
+  new_handler?: string;
+}
+
+export interface ProcessResponse {
+  success: boolean;
+  error?: string;
+  exc_type?: string;
+  curr_version?: number;
+  new_version?: number;
+  new_status?: string;
+  new_handler?: string;
+  next_handler?: string;
+  application_id?: string;
+  student_name?: string;
+  message?: string;
 }
 
 function getToken(): string {
@@ -135,11 +154,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers,
   });
 
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({ error: `请求失败 (${res.status})` }));
 
   if (!res.ok) {
-    const error = (data as any).error || `请求失败 (${res.status})`;
-    throw new Error(error);
+    return data as T;
   }
 
   return data as T;
@@ -151,8 +169,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     });
-    setToken(res.token);
-    setUser(res.user);
+    if (res && res.token) {
+      setToken(res.token);
+      setUser(res.user);
+    }
     return res;
   },
 
@@ -195,18 +215,12 @@ export const api = {
       exceptions: ExceptionRecord[];
       evidence_summary: EvidenceSummary;
       current_role: string;
+      error?: string;
     }>(`/api/applications/${id}`);
   },
 
   async processApplication(id: string, action: string, remark: string, version: number) {
-    return request<{
-      success: boolean;
-      new_status: string;
-      new_handler: string;
-      next_handler: string;
-      message: string;
-      error?: string;
-    }>(`/api/applications/${id}/process`, {
+    return request<ProcessResponse>(`/api/applications/${id}/process`, {
       method: 'POST',
       body: JSON.stringify({ action, remark, version }),
     });
@@ -225,7 +239,7 @@ export const api = {
   },
 
   async addNote(id: string, content: string) {
-    return request<{ success: boolean; message: string }>(`/api/applications/${id}/notes`, {
+    return request<{ success: boolean; message: string; curr_version?: number; error?: string }>(`/api/applications/${id}/notes`, {
       method: 'POST',
       body: JSON.stringify({ content }),
     });

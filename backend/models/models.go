@@ -117,6 +117,11 @@ type BatchResult struct {
 	StudentName     string `json:"student_name"`
 	Success         bool   `json:"success"`
 	Reason          string `json:"reason"`
+	ExcType         string `json:"exc_type,omitempty"`
+	CurrVersion     int    `json:"curr_version,omitempty"`
+	NewVersion      int    `json:"new_version,omitempty"`
+	NewStatus       string `json:"new_status,omitempty"`
+	NewHandler      string `json:"new_handler,omitempty"`
 }
 
 type EvidenceSummary struct {
