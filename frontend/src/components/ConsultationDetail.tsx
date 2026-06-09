@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { api, statusLabels, stageLabels, roleLabels, urgencyLabels, formatDateTime } from '../lib/api';
-import type { Role } from '../types';
 import type { User, Consultation, ProcessRecord, AbnormalRecord, Attachment, AuditNote, ProcessResult } from '../types';
 
 interface Props {
@@ -154,10 +153,10 @@ export default function ConsultationDetail({ id, user, onBack, onRefresh }: Prop
       )}
 
       <div className="alert info" style={{ marginBottom: 12 }}>
-        当前视图按「{roleLabels[user.role]}」角色可见范围展示。
-        {user.role === 'registrar' && ' 仅显示您本人创建的会诊申请单。'}
-        {user.role === 'auditor' && ' 仅显示核验阶段（由您处理或待认领）的会诊申请单。'}
-        {user.role === 'reviewer' && ' 可查看全部会诊申请单，复核阶段单据可操作。'}
+        当前视图按「{roleLabels[user.role]}」角色权限展示，后端已严格校验可见范围。
+        {user.role === 'registrar' && ' 仅可查看/办理您本人创建的会诊申请单。'}
+        {user.role === 'auditor' && ' 仅可查看/办理核验阶段（分配给您或待认领）的会诊申请单。'}
+        {user.role === 'reviewer' && ' 仅可查看/办理复核阶段的会诊申请单。'}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

@@ -8,7 +8,7 @@ import WarningPanel from './WarningPanel';
 import LedgerPanel from './LedgerPanel';
 import Dashboard from './Dashboard';
 
-type TabType = 'dashboard' | 'list' | 'registration' | 'verification' | 'review' | 'ledger' | 'warnings';
+type TabType = 'dashboard' | 'registration' | 'verification' | 'review' | 'ledger' | 'warnings';
 
 const roleDefaultTab: Record<string, TabType> = {
   registrar: 'registration',
@@ -80,7 +80,6 @@ export default function AppIsland() {
     getTabs.push({ key: 'review', label: '复核归档', roles: ['reviewer'] });
   }
   getTabs.push(
-    { key: 'list', label: '会诊申请单（全部可见）' },
     { key: 'warnings', label: '到期预警' },
     { key: 'ledger', label: '会诊申请单台账' },
   );
@@ -109,17 +108,6 @@ export default function AppIsland() {
     switch (tab) {
       case 'dashboard':
         return <Dashboard key={`dash-${viewKey}`} user={user} onOpen={(id) => setSelectedId(id)} />;
-      case 'list':
-        return (
-          <ConsultationList
-            key={`list-all-${viewKey}`}
-            user={user}
-            stage={null}
-            onOpen={setSelectedId}
-            onNew={() => setShowCreate(true)}
-            ignoreRoleStage
-          />
-        );
       case 'registration':
         return (
           <ConsultationList
@@ -159,7 +147,6 @@ export default function AppIsland() {
 
   const tabTitles: Record<TabType, string> = {
     dashboard: '工作台',
-    list: '会诊申请单（全部可见）',
     registration: '会诊申请单登记 - 科室秘书工作台',
     verification: '过程核验 - 质控医生工作台',
     review: '复核归档 - 医务部主任工作台',

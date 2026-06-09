@@ -343,7 +343,8 @@ func BatchProcess(req BatchProcessRequest, handlerID, handlerName string, handle
 	for _, id := range req.IDs {
 		version, ok := req.ExpectedVersions[id]
 		if !ok {
-			version = 1
+			results = append(results, ProcessResult{Success: false, Message: "缺少 expected_version", ID: id})
+			continue
 		}
 		procReq := ProcessRequest{
 			ConsultationID:  id,

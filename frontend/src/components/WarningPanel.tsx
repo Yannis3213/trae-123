@@ -46,10 +46,10 @@ export default function WarningPanel({ user, onOpen }: Props) {
   return (
     <div>
       <div className="alert info" style={{ marginBottom: 16 }}>
-        到期预警按「{roleLabels[user.role]}」角色可见范围展示。
+        到期预警按「{roleLabels[user.role]}」角色权限展示，后端已严格校验可见范围。
         {user.role === 'registrar' && ' 仅展示您本人创建单据的预警。'}
-        {user.role === 'auditor' && ' 仅展示核验阶段您处理或待认领的预警。'}
-        {user.role === 'reviewer' && ' 展示全部预警。'}
+        {user.role === 'auditor' && ' 仅展示核验阶段分配给您或待认领单据的预警。'}
+        {user.role === 'reviewer' && ' 仅展示复核阶段单据的预警。'}
         逾期责任归属按责任节点责任人计算。
       </div>
       <div className="stat-cards">

@@ -69,34 +69,30 @@ func applyRoleVisibilityFilter(user *models.User, filter *repository.Consultatio
 	case config.RoleRegistrar:
 		filter.CreatedBy = user.ID
 	case config.RoleAuditor:
-		if filter.Stage == "" {
-			filter.Stage = config.StageVerification
-		}
+		filter.Stage = config.StageVerification
 		if filter.CurrentHandler == "" {
 			filter.CurrentHandler = user.ID
 			filter.OrHandlerEmpty = true
 		}
 	case config.RoleReviewer:
-		if filter.Stage == "" {
-			filter.Stage = config.StageReview
-		}
+		filter.Stage = config.StageReview
 	}
 }
 
 func canViewConsultation(user *models.User, c *models.Consultation) bool {
-	if user.Role == config.RoleReviewer {
-		return true
-	}
-	if user.Role == config.RoleRegistrar {
+	switch user.Role {
+	case config.RoleRegistrar:
 		return c.CreatedBy == user.ID
-	}
-	if user.Role == config.RoleAuditor {
+	case config.RoleAuditor:
 		if c.CurrentStage != config.StageVerification {
-			return c.CreatedBy == user.ID
+			return false
 		}
 		return c.CurrentHandler == "" || c.CurrentHandler == user.ID
+	case config.RoleReviewer:
+		return c.CurrentStage == config.StageReview
+	default:
+		return false
 	}
-	return false
 }
 
 func GetConsultation(c *fiber.Ctx) error {
@@ -248,7 +244,10 @@ func ProcessAction(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "必须指定操作类型"})
 	}
 	if req.ExpectedVersion == 0 {
-		req.ExpectedVersion = consultation.Version
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "缺少 expected_version，请基于当前版本 v" + fmt.Sprint(consultation.Version) + " 提交",
+		})
 	}
 	if req.ExpectedVersion != consultation.Version {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
@@ -305,6 +304,10 @@ func BatchProcess(c *fiber.Ctx) error {
 		}
 		if consultation.IsArchived {
 			results = append(results, service.ProcessResult{Success: false, Message: "已归档，不可操作", ID: id})
+			continue
+		}
+		if _, ok := req.ExpectedVersions[id]; !ok {
+			results = append(results, service.ProcessResult{Success: false, Message: fmt.Sprintf("缺少 expected_version，请基于当前版本 v%d 提交", consultation.Version), ID: id})
 			continue
 		}
 	}

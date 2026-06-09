@@ -7,10 +7,9 @@ interface Props {
   stage: string | null;
   onOpen: (id: string) => void;
   onNew?: () => void;
-  ignoreRoleStage?: boolean;
 }
 
-export default function ConsultationList({ user, stage, onOpen, onNew, ignoreRoleStage = false }: Props) {
+export default function ConsultationList({ user, stage, onOpen, onNew }: Props) {
   const [list, setList] = useState<Consultation[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -42,9 +41,6 @@ export default function ConsultationList({ user, stage, onOpen, onNew, ignoreRol
         ...filters,
       };
       if (stage) params.stage = stage;
-      if (ignoreRoleStage) {
-        params.role_override = '1';
-      }
       const data: any = await api.listConsultations(params);
       setList(data.list || []);
       setTotal(data.total || 0);
@@ -156,16 +152,9 @@ export default function ConsultationList({ user, stage, onOpen, onNew, ignoreRol
 
   return (
     <div>
-      {user.role !== 'reviewer' && stage && (
-        <div className="alert info" style={{ marginBottom: 16 }}>
-          当前视图：<strong>{roleHint(user.role, stage || '')}</strong>；仅显示分配给您或待领取的单据，列表、批量操作、详情权限均已按角色收敛
-        </div>
-      )}
-      {ignoreRoleStage && (
-        <div className="alert info" style={{ marginBottom: 16 }}>
-          当前为全量会诊申请单视图（按角色可见范围过滤）；办理请切换到对应工作台（登记/核验/复核）
-        </div>
-      )}
+      <div className="alert info" style={{ marginBottom: 16 }}>
+        当前视图：<strong>{roleHint(user.role, stage || '')}</strong>；后端已按角色收敛可见范围（仅返回您有权限看到的单据），列表、批量操作、详情权限一致
+      </div>
 
       <div className="filter-bar">
         <div className="form-item">
@@ -208,7 +197,7 @@ export default function ConsultationList({ user, stage, onOpen, onNew, ignoreRol
           {onNew && user.role === 'registrar' && (stage === 'registration' || !stage) && (
             <button className="primary" onClick={onNew}>+ 新建会诊申请单</button>
           )}
-          {actions.length > 0 && !ignoreRoleStage && (
+          {actions.length > 0 && (
             <button onClick={() => setShowBatch(!showBatch)} disabled={selected.size === 0}>
               批量处理 {selected.size > 0 && `(${selected.size})`}
             </button>

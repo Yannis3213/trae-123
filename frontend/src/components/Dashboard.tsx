@@ -44,10 +44,10 @@ export default function Dashboard({ user, onOpen }: Props) {
   return (
     <div>
       <div className="alert info" style={{ marginBottom: 16 }}>
-        当前工作台按「{roleLabels[user.role]}」角色可见范围展示统计与列表。
-        {user.role === 'registrar' && ' 仅统计您本人创建的会诊申请单。'}
-        {user.role === 'auditor' && ' 仅统计核验阶段（由您处理或待认领）的会诊申请单。'}
-        {user.role === 'reviewer' && ' 统计全部会诊申请单，复核阶段单据可操作。'}
+        当前工作台按「{roleLabels[user.role]}」角色权限展示统计与列表，后端已严格校验可见范围。
+        {user.role === 'registrar' && ' 仅统计/展示您本人创建的会诊申请单。'}
+        {user.role === 'auditor' && ' 仅统计/展示核验阶段（分配给您或待认领）的会诊申请单。'}
+        {user.role === 'reviewer' && ' 仅统计/展示复核阶段的会诊申请单。'}
       </div>
       <div className="section-title" style={{ marginTop: 0 }}>处理概览</div>
       <div className="stat-cards">

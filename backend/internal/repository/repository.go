@@ -78,11 +78,21 @@ func CreateConsultation(c *models.Consultation) error {
 	if c.ID == "" {
 		c.ID = uuid.New().String()
 	}
-	c.Status = config.StatusPending
-	c.CurrentStage = config.StageRegistration
-	c.Version = 1
-	c.CreatedAt = time.Now()
-	c.UpdatedAt = time.Now()
+	if c.Status == "" {
+		c.Status = config.StatusPending
+	}
+	if c.CurrentStage == "" {
+		c.CurrentStage = config.StageRegistration
+	}
+	if c.Version == 0 {
+		c.Version = 1
+	}
+	if c.CreatedAt.IsZero() {
+		c.CreatedAt = time.Now()
+	}
+	if c.UpdatedAt.IsZero() {
+		c.UpdatedAt = time.Now()
+	}
 
 	_, err := DB.Exec(`INSERT INTO consultations 
 		(id, patient_name, patient_id, age, gender, department, attending_physician, 
