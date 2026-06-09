@@ -101,6 +101,8 @@ func createTables() error {
 			reason TEXT NOT NULL,
 			type TEXT NOT NULL,
 			operator TEXT NOT NULL,
+			responsible_person TEXT NOT NULL DEFAULT '',
+			attempt_count INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME NOT NULL,
 			FOREIGN KEY (flow_id) REFERENCES prescription_flows(id) ON DELETE CASCADE
 		)`,
@@ -280,15 +282,15 @@ func seedData() error {
 
 		if !f.materialComplete {
 			_, err := tx.Exec(
-				`INSERT INTO abnormal_reasons (flow_id, reason, type, operator, created_at) VALUES (?, ?, ?, ?, ?)`,
-				flowID, "处方开具、煎药配送信息不齐全", "material_missing", "registrar01", now,
+				`INSERT INTO abnormal_reasons (flow_id, reason, type, operator, responsible_person, attempt_count, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`,
+				flowID, "处方开具、煎药配送信息不齐全", "material_missing", "registrar01", f.currentHandler, now,
 			)
 			if err != nil {
 				return err
 			}
 			note2 := fmt.Sprintf(
-				"系统自动标记异常：处方开具、煎药配送信息不齐全，流转单停留在异常队列，操作人[%s]",
-				f.currentHandler,
+				"系统自动标记异常：处方开具、煎药配送信息不齐全，流转单停留在异常队列，操作人[%s]，责任人[%s]",
+				"registrar01", f.currentHandler,
 			)
 			_, err = tx.Exec(
 				`INSERT INTO audit_notes (flow_id, note, operator, created_at) VALUES (?, ?, ?, ?)`,
@@ -301,14 +303,15 @@ func seedData() error {
 
 		if f.status == "returned" {
 			_, err := tx.Exec(
-				`INSERT INTO abnormal_reasons (flow_id, reason, type, operator, created_at) VALUES (?, ?, ?, ?, ?)`,
-				flowID, "处方信息不完整，请补正", "returned", "supervisor01", now,
+				`INSERT INTO abnormal_reasons (flow_id, reason, type, operator, responsible_person, attempt_count, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`,
+				flowID, "处方信息不完整，请补正", "returned", "supervisor01", f.currentHandler, now,
 			)
 			if err != nil {
 				return err
 			}
 			note3 := fmt.Sprintf(
-				"操作人[supervisor01(review_supervisor)]执行动作[退回补正]，状态从[to_confirm]流转至[returned]，原因：处方信息不完整，请补正",
+				"操作人[supervisor01(review_supervisor)]执行动作[退回补正]，状态从[to_confirm]流转至[returned]，原因：处方信息不完整，请补正，责任人[%s]",
+				f.currentHandler,
 			)
 			_, err = tx.Exec(
 				`INSERT INTO audit_notes (flow_id, note, operator, created_at) VALUES (?, ?, ?, ?)`,

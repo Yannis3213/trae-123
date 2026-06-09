@@ -95,12 +95,14 @@ type AuditNote struct {
 }
 
 type AbnormalReason struct {
-	ID        int64  `json:"id"`
-	FlowID    int64  `json:"flow_id"`
-	Reason    string `json:"reason"`
-	Type      string `json:"type"`
-	Operator  string `json:"operator"`
-	CreatedAt string `json:"created_at"`
+	ID                int64  `json:"id"`
+	FlowID            int64  `json:"flow_id"`
+	Reason            string `json:"reason"`
+	Type              string `json:"type"`
+	Operator          string `json:"operator"`
+	ResponsiblePerson string `json:"responsible_person"`
+	AttemptCount      int64  `json:"attempt_count"`
+	CreatedAt         string `json:"created_at"`
 }
 
 type CreateFlowRequest struct {
@@ -141,10 +143,14 @@ type BatchProcessRequest struct {
 }
 
 type BatchResult struct {
-	FlowID   int64  `json:"flow_id"`
-	FlowNo   string `json:"flow_no"`
-	Success  bool   `json:"success"`
-	Message  string `json:"message"`
+	FlowID            int64  `json:"flow_id"`
+	FlowNo            string `json:"flow_no"`
+	Success           bool   `json:"success"`
+	Message           string `json:"message"`
+	CurrentStatus     string `json:"current_status,omitempty"`
+	CurrentHandler    string `json:"current_handler,omitempty"`
+	CurrentRole       string `json:"current_role,omitempty"`
+	ResponsiblePerson string `json:"responsible_person,omitempty"`
 }
 
 type ApiError struct {

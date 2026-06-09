@@ -254,6 +254,32 @@ export default function FlowDetailIsland({ id }: Props) {
               </div>
             </div>
             <div class="p-6 space-y-5">
+              {f.urgency === "overdue" && (
+                <div class="p-3 bg-red-50 border-2 border-red-300 rounded-md">
+                  <div class="flex items-center gap-2 text-sm text-red-700 font-bold">
+                    <span>⚠ 该处方流转单已逾期</span>
+                  </div>
+                  <div class="mt-1 text-xs text-red-600">
+                    截止时间：{formatDateTime(f.due_at)}，逾期责任人为：
+                    <span class="font-bold underline">{f.current_handler}</span>
+                    （{ROLE_LABELS[f.current_role] || f.current_role}）
+                  </div>
+                  <div class="mt-1 text-xs text-red-500">
+                    逾期后仅可执行「补正资料」或「退回补正」动作，其他操作将被后端拦截
+                  </div>
+                </div>
+              )}
+              {f.urgency === "warning" && (
+                <div class="p-3 bg-yellow-50 border border-yellow-300 rounded-md">
+                  <div class="flex items-center gap-2 text-sm text-yellow-700 font-medium">
+                    <span>⚡ 该处方流转单即将临期</span>
+                  </div>
+                  <div class="mt-1 text-xs text-yellow-600">
+                    截止时间：{formatDateTime(f.due_at)}，当前责任人：{f.current_handler}
+                  </div>
+                </div>
+              )}
+
               <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <InfoCell label="流转单号" value={f.flow_no} mono />
                 <InfoCell label="患者姓名" value={f.patient_name} />
@@ -290,9 +316,21 @@ export default function FlowDetailIsland({ id }: Props) {
                 <InfoCell
                   label="当前处理人"
                   value={
-                    f.current_handler
-                      ? `${f.current_handler} (${ROLE_LABELS[f.current_role] || f.current_role})`
-                      : "-"
+                    f.current_handler ? (
+                      <span
+                        class={
+                          f.urgency === "overdue"
+                            ? "text-red-600 font-bold underline"
+                            : f.urgency === "warning"
+                            ? "text-yellow-700 font-medium"
+                            : ""
+                        }
+                      >
+                        {f.current_handler} ({ROLE_LABELS[f.current_role] || f.current_role})
+                      </span>
+                    ) : (
+                      "-"
+                    )
                   }
                 />
               </div>
@@ -361,8 +399,22 @@ export default function FlowDetailIsland({ id }: Props) {
                           <span
                             class={r.type === "corrected" ? "text-green-700" : "text-red-700"}
                           >
-                            {r.operator}
+                            操作人：{r.operator}
                           </span>
+                          {r.responsible_person && (
+                            <span class={`text-xs font-medium ${
+                              r.type === "corrected" ? "text-green-800" : "text-red-800"
+                            }`}>
+                              · 责任人：{r.responsible_person}
+                            </span>
+                          )}
+                          {r.attempt_count > 0 && (
+                            <span class={`px-1.5 py-0.5 rounded text-white text-xs ${
+                              r.type === "corrected" ? "bg-green-500" : "bg-red-500"
+                            }`}>
+                              第 {r.attempt_count} 次
+                            </span>
+                          )}
                         </div>
                         <span class="text-gray-500">{formatDateTime(r.created_at)}</span>
                       </div>

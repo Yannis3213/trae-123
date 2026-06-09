@@ -589,35 +589,90 @@ export default function FlowListIsland() {
 
       {showBatchResults.value && (
         <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div class="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[80vh] overflow-hidden">
-            <div class="px-6 py-4 border-b">
-              <h3 class="text-lg font-medium">批量处理结果</h3>
+          <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden">
+            <div class="px-6 py-4 border-b flex items-center justify-between">
+              <div>
+                <h3 class="text-lg font-medium">批量处理结果</h3>
+                <div class="text-xs text-gray-500 mt-1">
+                  共 {batchResults.value.length} 条，
+                  <span class="text-green-600 font-medium">
+                    成功 {batchResults.value.filter((r) => r.success).length}
+                  </span>
+                  ，
+                  <span class="text-red-600 font-medium">
+                    失败 {batchResults.value.filter((r) => !r.success).length}
+                  </span>
+                </div>
+              </div>
             </div>
-            <div class="px-6 py-4 overflow-y-auto max-h-96">
-              <div class="space-y-2">
+            <div class="px-6 py-4 overflow-y-auto max-h-[65vh]">
+              <div class="space-y-3">
                 {batchResults.value.map((r) => (
                   <div
                     key={r.flow_id}
-                    class={`p-3 rounded border ${
+                    class={`p-3 rounded-lg border-2 ${
                       r.success
-                        ? "bg-green-50 border-green-200 text-green-800"
-                        : "bg-red-50 border-red-200 text-red-800"
+                        ? "bg-green-50 border-green-300 text-green-900"
+                        : "bg-red-50 border-red-300 text-red-900"
                     }`}
                   >
-                    <div class="font-medium text-sm">
-                      {r.flow_no || `#${r.flow_id}`} - {r.success ? "成功" : "失败"}
+                    <div class="flex items-center justify-between flex-wrap gap-2">
+                      <div class="flex items-center gap-2">
+                        <span
+                          class={`px-2 py-0.5 rounded text-white text-xs font-bold ${
+                            r.success ? "bg-green-600" : "bg-red-600"
+                          }`}
+                        >
+                          {r.success ? "✓ 成功" : "✗ 失败"}
+                        </span>
+                        <span class="font-mono font-medium text-sm">{r.flow_no || `#${r.flow_id}`}</span>
+                        {r.current_status && (
+                          <span
+                            class={`px-2 py-0.5 rounded text-xs font-medium ${
+                              STATUS_COLORS[r.current_status as PrescriptionStatus] || "bg-gray-200 text-gray-700"
+                            }`}
+                          >
+                            {STATUS_LABELS[r.current_status as PrescriptionStatus] || r.current_status}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div class="text-xs mt-1">{r.message}</div>
+                    <div class="mt-2 text-sm">{r.message}</div>
+                    <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                      {r.current_handler && (
+                        <div>
+                          <span class={r.success ? "text-green-700" : "text-red-700"}>
+                            当前处理人：
+                          </span>
+                          <span class="font-medium">
+                            {r.current_handler}
+                            {r.current_role && ` (${ROLE_LABELS[r.current_role] || r.current_role})`}
+                          </span>
+                        </div>
+                      )}
+                      {r.responsible_person && (
+                        <div>
+                          <span class={r.success ? "text-green-700" : "text-red-700"}>
+                            责任人：
+                          </span>
+                          <span class="font-medium">{r.responsible_person}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
-            <div class="px-6 py-4 border-t flex justify-end">
+            <div class="px-6 py-4 border-t flex justify-end gap-2">
               <button
-                onClick={() => (showBatchResults.value = false)}
+                onClick={() => {
+                  showBatchResults.value = false;
+                  loadFlows();
+                  loadStatistics();
+                }}
                 class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
               >
-                关闭
+                关闭并刷新列表
               </button>
             </div>
           </div>

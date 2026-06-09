@@ -176,9 +176,9 @@ func (s *FlowService) CreateFlow(req *models.CreateFlowRequest) (*models.Prescri
 	if !materialComplete {
 		_, err = tx.Exec(
 			`INSERT INTO abnormal_reasons 
-			(flow_id, reason, type, operator, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			flowID, abnormalReasonText, "material_missing", req.Operator, now,
+			(flow_id, reason, type, operator, responsible_person, attempt_count, created_at)
+			VALUES (?, ?, ?, ?, ?, 1, ?)`,
+			flowID, abnormalReasonText, "material_missing", req.Operator, nextHandler, now,
 		)
 		if err != nil {
 			return nil, err
@@ -215,6 +215,7 @@ func (s *FlowService) GetFlowByID(id int64) (*models.PrescriptionFlow, error) {
 		return nil, err
 	}
 	flow.IsMaterialComplete = materialCompleteInt == 1
+	flow.Urgency = s.calculateUrgency(flow.DueAt)
 	return &flow, nil
 }
 
@@ -299,7 +300,7 @@ func (s *FlowService) GetProcessRecords(flowID int64) ([]models.ProcessRecord, e
 
 func (s *FlowService) GetAbnormalReasons(flowID int64) ([]models.AbnormalReason, error) {
 	rows, err := db.GetDB().Query(
-		`SELECT id, flow_id, reason, type, operator, created_at
+		`SELECT id, flow_id, reason, type, operator, responsible_person, attempt_count, created_at
 		 FROM abnormal_reasons WHERE flow_id = ? ORDER BY id DESC`,
 		flowID,
 	)
@@ -311,13 +312,23 @@ func (s *FlowService) GetAbnormalReasons(flowID int64) ([]models.AbnormalReason,
 	var reasons []models.AbnormalReason
 	for rows.Next() {
 		var r models.AbnormalReason
-		err := rows.Scan(&r.ID, &r.FlowID, &r.Reason, &r.Type, &r.Operator, &r.CreatedAt)
+		err := rows.Scan(&r.ID, &r.FlowID, &r.Reason, &r.Type, &r.Operator,
+			&r.ResponsiblePerson, &r.AttemptCount, &r.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
 		reasons = append(reasons, r)
 	}
 	return reasons, nil
+}
+
+func (s *FlowService) countAbnormalAttempts(flowID int64) int64 {
+	var count int64
+	db.GetDB().QueryRow(
+		"SELECT COALESCE(MAX(attempt_count), 0) + 1 FROM abnormal_reasons WHERE flow_id = ?",
+		flowID,
+	).Scan(&count)
+	return count
 }
 
 func (s *FlowService) GetAuditNotes(flowID int64) ([]models.AuditNote, error) {
@@ -618,11 +629,13 @@ func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.Presc
 	}
 
 	if toStatus == models.StatusAbnormal && abnormalReason != "" {
+		attemptCount := s.countAbnormalAttempts(flow.ID)
+		responsible := nextHandler
 		_, err = tx.Exec(
 			`INSERT INTO abnormal_reasons 
-			(flow_id, reason, type, operator, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			flow.ID, abnormalReason, "material_missing", req.Operator, now,
+			(flow_id, reason, type, operator, responsible_person, attempt_count, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			flow.ID, abnormalReason, "material_missing", req.Operator, responsible, attemptCount, now,
 		)
 		if err != nil {
 			return nil, err
@@ -630,11 +643,13 @@ func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.Presc
 	}
 
 	if req.Action == "return" {
+		attemptCount := s.countAbnormalAttempts(flow.ID)
+		responsible := nextHandler
 		_, err = tx.Exec(
 			`INSERT INTO abnormal_reasons 
-			(flow_id, reason, type, operator, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			flow.ID, req.ReturnReason, "returned", req.Operator, now,
+			(flow_id, reason, type, operator, responsible_person, attempt_count, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			flow.ID, req.ReturnReason, "returned", req.Operator, responsible, attemptCount, now,
 		)
 		if err != nil {
 			return nil, err
@@ -642,11 +657,13 @@ func (s *FlowService) ProcessFlow(req *models.ProcessFlowRequest) (*models.Presc
 	}
 
 	if (req.Action == "correct" || req.Action == "supplement") && flow.AbnormalReason != "" {
+		attemptCount := s.countAbnormalAttempts(flow.ID)
+		responsible := nextHandler
 		_, err = tx.Exec(
 			`INSERT INTO abnormal_reasons 
-			(flow_id, reason, type, operator, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			flow.ID, "已补正资料："+flow.AbnormalReason, "corrected", req.Operator, now,
+			(flow_id, reason, type, operator, responsible_person, attempt_count, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			flow.ID, "已补正资料："+flow.AbnormalReason, "corrected", req.Operator, responsible, attemptCount, now,
 		)
 		if err != nil {
 			return nil, err
@@ -688,25 +705,34 @@ func (s *FlowService) BatchProcess(req *models.BatchProcessRequest) ([]models.Ba
 			DeliveryInfo:     req.DeliveryInfo,
 		}
 
+		baseResult := models.BatchResult{
+			FlowID:            flowID,
+			FlowNo:            flow.FlowNo,
+			CurrentHandler:    flow.CurrentHandler,
+			CurrentRole:       string(flow.CurrentRole),
+			ResponsiblePerson: flow.CurrentHandler,
+		}
+
 		_, err = s.ProcessFlow(processReq)
 		if err != nil {
-			results = append(results, models.BatchResult{
-				FlowID:  flowID,
-				FlowNo:  flow.FlowNo,
-				Success: false,
-				Message: err.Error(),
-			})
+			baseResult.Success = false
+			baseResult.Message = err.Error()
+			baseResult.CurrentStatus = string(flow.Status)
+			results = append(results, baseResult)
 		} else {
+			baseResult.Success = true
 			statusText := "已更新"
 			if updatedFlow, err2 := s.GetFlowByID(flowID); err2 == nil && updatedFlow != nil {
 				statusText = string(updatedFlow.Status)
+				baseResult.CurrentStatus = string(updatedFlow.Status)
+				baseResult.CurrentHandler = updatedFlow.CurrentHandler
+				baseResult.CurrentRole = string(updatedFlow.CurrentRole)
+				baseResult.ResponsiblePerson = updatedFlow.CurrentHandler
+			} else {
+				baseResult.CurrentStatus = string(flow.Status)
 			}
-			results = append(results, models.BatchResult{
-				FlowID:  flowID,
-				FlowNo:  flow.FlowNo,
-				Success: true,
-				Message: "处理成功，当前状态：" + statusText,
-			})
+			baseResult.Message = "处理成功，当前状态：" + statusText
+			results = append(results, baseResult)
 		}
 	}
 
@@ -733,22 +759,17 @@ func (s *FlowService) GetStatistics() (map[string]interface{}, error) {
 		stats[g.key] = count
 	}
 
-	urgencyGroups := []struct {
-		key     string
-		urgency string
-	}{
-		{"normal", "normal"},
-		{"warning", "warning"},
-		{"overdue", "overdue"},
-	}
-
-	urgencyStats := make(map[string]int)
-	for _, g := range urgencyGroups {
-		var count int
-		db.GetDB().QueryRow(
-			"SELECT COUNT(*) FROM prescription_flows WHERE urgency = ?", g.urgency,
-		).Scan(&count)
-		urgencyStats[g.key] = count
+	urgencyStats := map[string]int{"normal": 0, "warning": 0, "overdue": 0}
+	rows, err := db.GetDB().Query("SELECT due_at FROM prescription_flows")
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var dueAt time.Time
+			if rows.Scan(&dueAt) == nil {
+				u := s.calculateUrgency(dueAt)
+				urgencyStats[string(u)]++
+			}
+		}
 	}
 	stats["urgency"] = urgencyStats
 

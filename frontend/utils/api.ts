@@ -60,6 +60,8 @@ export interface AbnormalReason {
   reason: string;
   type: string;
   operator: string;
+  responsible_person: string;
+  attempt_count: number;
   created_at: string;
 }
 
@@ -164,6 +166,10 @@ export interface BatchResult {
   flow_no: string;
   success: boolean;
   message: string;
+  current_status?: string;
+  current_handler?: string;
+  current_role?: string;
+  responsible_person?: string;
 }
 
 const CURRENT_USER_KEY = "current_user";
