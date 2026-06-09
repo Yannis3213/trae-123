@@ -318,8 +318,19 @@ app.post('/api/records/:id/handle', authMiddleware, (req, res) => {
     return res.status(400).json({ error: '补正必须填写补正原因' });
   }
 
-  if (record.health_status === 'abnormal' && (action === 'accept' || action === 'verify')) {
-    return res.status(400).json({ error: '异常记录只能补正或退回，不能直接推进到下一环节' });
+  if (record.health_status === 'abnormal') {
+    if (action === 'accept' || action === 'verify') {
+      return res.status(400).json({ error: '异常记录只能补正或退回，不能直接推进到下一环节' });
+    }
+    if (record.status === STATUS.PENDING_REGISTRATION && user.role !== ROLES.REGISTRAR) {
+      return res.status(403).json({ error: '异常登记仅晨检登记员可发起补正' });
+    }
+    if (record.status === STATUS.PENDING_REGISTRAR_CORRECTION && user.role !== ROLES.REGISTRAR) {
+      return res.status(403).json({ error: '退回登记员的异常补正仅晨检登记员可处理' });
+    }
+    if (record.status === STATUS.PENDING_SUPERVISOR_CORRECTION && user.role !== ROLES.SUPERVISOR) {
+      return res.status(403).json({ error: '退回主管的异常补正仅晨检审核主管可处理' });
+    }
   }
 
   let newStatus;
@@ -349,7 +360,9 @@ app.post('/api/records/:id/handle', authMiddleware, (req, res) => {
         newHandlerRole = ROLES.REGISTRAR;
       } else if (record.status === STATUS.ACCEPTED) {
         newStatus = STATUS.PENDING_SUPERVISOR_CORRECTION;
-        newHandler = record.current_handler;
+        const supervisors = db.prepare("SELECT * FROM users WHERE role = 'supervisor' LIMIT 1").get();
+        if (!supervisors) return res.status(500).json({ error: '系统中未配置审核主管' });
+        newHandler = supervisors.username;
         newHandlerRole = ROLES.SUPERVISOR;
       } else {
         return res.status(400).json({ error: '当前状态不可退回' });
@@ -463,6 +476,7 @@ app.post('/api/records/:id/handle', authMiddleware, (req, res) => {
 app.post('/api/records/batch', authMiddleware, (req, res) => {
   const { record_ids, action, remark } = req.body;
   const user = req.user;
+  const now = new Date().toISOString();
 
   if (!record_ids || !Array.isArray(record_ids) || record_ids.length === 0) {
     return res.status(400).json({ error: '请选择要批量处理的记录' });
@@ -477,7 +491,39 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
     return res.status(400).json({ error: '批量处理仅支持接单(accept)或归档(verify)' });
   }
 
+  const logBatchFailure = db.prepare(`
+    INSERT INTO processing_logs
+    (id, record_id, action, action_by, action_by_role, action_by_name, previous_status, new_status,
+     remark, reject_reason, evidence_summary, created_at)
+    VALUES (?, ?, 'batch_failed', ?, ?, ?, ?, ?, ?, ?, '批量处理被拦截', ?)
+  `);
+
+  const appendAbnormalReason = db.prepare(`
+    UPDATE morning_check_records
+    SET abnormal_reason = CASE
+        WHEN abnormal_reason IS NULL OR abnormal_reason = '' THEN ?
+        ELSE abnormal_reason || '；[批量拦截] ' || ?
+      END,
+      updated_at = ?
+    WHERE id = ?
+  `);
+
   const results = [];
+
+  const pushFailure = (record, reason) => {
+    try {
+      if (record) {
+        logBatchFailure.run(
+          uuidv4(), record.id, user.username, user.role, user.name,
+          record.status, record.status, remark || '批量处理', reason, now
+        );
+        appendAbnormalReason.run(`[批量拦截${new Date().toLocaleString('zh-CN')}] ${reason}`, reason, now, record.id);
+      }
+    } catch (e) {
+      console.error('写入批量失败流水异常', e);
+    }
+    results.push({ id: record ? record.id : 'unknown', success: false, reason });
+  };
 
   for (const recordId of record_ids) {
     try {
@@ -488,77 +534,61 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
       }
 
       if (record.archived) {
-        results.push({ id: recordId, success: false, reason: '记录已归档' });
+        pushFailure(record, '记录已归档');
         continue;
       }
 
       const deadlineStatus = getDeadlineStatus(record.deadline);
       if (deadlineStatus === 'overdue') {
-        results.push({
-          id: recordId,
-          success: false,
-          reason: `记录已逾期，当前责任人：${record.current_handler_role ? ROLE_NAMES[record.current_handler_role] : '未知'}(${record.current_handler || '未分配'})，请逐条前往详情处理`,
-          deadline_status: deadlineStatus
-        });
+        const reason = `记录已逾期，当前责任人：${record.current_handler_role ? ROLE_NAMES[record.current_handler_role] : '未知'}(${record.current_handler || '未分配'})，请逐条前往详情处理`;
+        pushFailure(record, reason);
+        results[results.length - 1].deadline_status = deadlineStatus;
         continue;
       }
 
       if (!canHandleRecord(user, record)) {
-        results.push({
-          id: recordId,
-          success: false,
-          reason: `当前角色(${ROLE_NAMES[user.role]})无权处理此状态(${STATUS_NAMES[record.status]})的记录`
-        });
+        pushFailure(record, `当前角色(${ROLE_NAMES[user.role]})无权处理此状态(${STATUS_NAMES[record.status]})的记录`);
         continue;
       }
 
       if (record.health_status === 'abnormal') {
-        results.push({
-          id: recordId,
-          success: false,
-          reason: '异常记录不支持批量处理，请逐条前往详情补正或退回',
-          health_status: record.health_status
-        });
+        pushFailure(record, '异常记录不支持批量处理，请逐条前往详情补正或退回');
+        results[results.length - 1].health_status = record.health_status;
         continue;
       }
 
       if (action === 'accept' && record.status !== STATUS.PENDING_REVIEW && record.status !== STATUS.PENDING_SUPERVISOR_CORRECTION) {
-        results.push({ id: recordId, success: false, reason: `状态为"${STATUS_NAMES[record.status]}"的记录不支持批量接单` });
+        pushFailure(record, `状态为"${STATUS_NAMES[record.status]}"的记录不支持批量接单`);
         continue;
       }
 
       if (action === 'verify' && record.status !== STATUS.ACCEPTED) {
-        results.push({ id: recordId, success: false, reason: `状态为"${STATUS_NAMES[record.status]}"的记录不支持批量归档` });
+        pushFailure(record, `状态为"${STATUS_NAMES[record.status]}"的记录不支持批量归档`);
         continue;
       }
 
       if (user.role === ROLES.SUPERVISOR && action === 'accept') {
         if (record.status !== STATUS.PENDING_REVIEW && record.status !== STATUS.PENDING_SUPERVISOR_CORRECTION) {
-          results.push({ id: recordId, success: false, reason: '只有待接单状态可批量接单' });
+          pushFailure(record, '只有待接单状态可批量接单');
           continue;
         }
       } else if (user.role === ROLES.PRINCIPAL && action === 'verify') {
         if (record.status !== STATUS.ACCEPTED) {
-          results.push({ id: recordId, success: false, reason: '只有已接单状态可批量归档' });
+          pushFailure(record, '只有已接单状态可批量归档');
           continue;
         }
       } else {
-        results.push({
-          id: recordId,
-          success: false,
-          reason: `当前角色(${ROLE_NAMES[user.role]})不支持执行批量${action === 'accept' ? '接单' : '归档'}`
-        });
+        pushFailure(record, `当前角色(${ROLE_NAMES[user.role]})不支持执行批量${action === 'accept' ? '接单' : '归档'}`);
         continue;
       }
 
       let newStatus, newHandler, newHandlerRole;
-      const now = new Date().toISOString();
 
       if (action === 'accept') {
         newStatus = STATUS.ACCEPTED;
         const principal = db.prepare("SELECT * FROM users WHERE role = 'principal' LIMIT 1").get();
         if (!principal) {
-          results.push({ id: recordId, success: false, reason: '系统中未配置复核负责人' });
+          pushFailure(record, '系统中未配置复核负责人');
           continue;
         }
         newHandler = principal.username;
@@ -593,7 +623,7 @@ app.post('/api/records/batch', authMiddleware, (req, res) => {
         tx();
         results.push({ id: recordId, success: true, new_status: newStatus, new_status_name: STATUS_NAMES[newStatus] });
       } catch (err) {
-        results.push({ id: recordId, success: false, reason: err.message });
+        pushFailure(record, err.message);
       }
     } catch (err) {
       results.push({ id: recordId, success: false, reason: err.message });

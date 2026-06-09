@@ -10,7 +10,8 @@ const ACTION_LABEL = {
   reject: '退回',
   correction_submit: '补正提交',
   correction_accept: '补正通过',
-  verify: '复核归档'
+  verify: '复核归档',
+  batch_failed: '批量处理拦截'
 };
 
 export default function RecordDetail({ user, showToast }) {

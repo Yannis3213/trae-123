@@ -406,12 +406,12 @@ function initDatabase() {
 
   const insertLog = db.prepare(
     `INSERT INTO processing_logs
-      (id, record_id, action, action_by, action_by_role, action_by_name, previous_status, new_status, remark, reject_reason, evidence_summary, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      (id, record_id, action, action_by, action_by_role, action_by_name, previous_status, new_status, remark, correction_reason, reject_reason, evidence_summary, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   logs.forEach(l => insertLog.run(
     l.id, l.record_id, l.action, l.action_by, l.action_by_role, l.action_by_name,
-    l.previous_status, l.new_status, l.remark, l.reject_reason, l.evidence_summary, l.created_at
+    l.previous_status, l.new_status, l.remark, l.correction_reason, l.reject_reason, l.evidence_summary, l.created_at
   ));
 
   const auditNotes = [

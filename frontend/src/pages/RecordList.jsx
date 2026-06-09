@@ -28,8 +28,18 @@ export default function RecordList({ user, showToast }) {
       setRecords(listRes.records);
       setStats(listRes.stats);
       setConstants(constRes);
-      if (listRes.records.length > 0 && !activeRecord) {
-        setActiveRecord(listRes.records[0]);
+      if (listRes.records.length > 0) {
+        const currentActiveId = activeRecord ? activeRecord.id : null;
+        const stillExists = currentActiveId && listRes.records.find(r => r.id === currentActiveId);
+        setActiveRecord(stillExists || listRes.records[0]);
+        const nextSelected = new Set();
+        selectedIds.forEach(id => {
+          if (listRes.records.find(r => r.id === id)) nextSelected.add(id);
+        });
+        setSelectedIds(nextSelected);
+      } else {
+        setActiveRecord(null);
+        setSelectedIds(new Set());
       }
     } catch (err) {
       showToast(err.message || '加载失败', 'error');
@@ -40,11 +50,23 @@ export default function RecordList({ user, showToast }) {
 
   useEffect(() => { loadData(); }, [filters]);
 
+  useEffect(() => {
+    const onFocus = () => loadData();
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('hashchange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('hashchange', onFocus);
+    };
+  }, []);
+
   const toggleSelect = (id, e) => {
     if (e) e.stopPropagation();
     const next = new Set(selectedIds);
     if (next.has(id)) next.delete(id); else next.add(id);
     setSelectedIds(next);
+    const rec = records.find(r => r.id === id);
+    if (rec) setActiveRecord(rec);
   };
 
   const toggleSelectAll = () => {
@@ -52,6 +74,7 @@ export default function RecordList({ user, showToast }) {
       setSelectedIds(new Set());
     } else {
       setSelectedIds(new Set(records.map(r => r.id)));
+      if (records.length > 0) setActiveRecord(records[records.length - 1]);
     }
   };
 
@@ -159,8 +182,8 @@ export default function RecordList({ user, showToast }) {
                   <tbody>
                     {records.map(r => (
                       <tr key={r.id}
-                        class={selectedIds.has(r.id) ? 'selected' : ''}
-                        onClick={() => navigate(`/record/${r.id}`)}>
+                        class={activeRecord && activeRecord.id === r.id ? 'selected' : ''}
+                        onClick={() => { setActiveRecord(r); navigate(`/record/${r.id}`); }}>
                         <td class="checkbox-cell" onClick={(e) => toggleSelect(r.id, e)}>
                           <input type="checkbox" checked={selectedIds.has(r.id)}
                             onChange={() => {}} onClick={(e) => e.stopPropagation()} />
