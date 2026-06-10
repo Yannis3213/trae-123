@@ -140,6 +140,16 @@ impl ApplicationService {
             .ok_or_else(|| AppError::NotFound(format!("申请单 {} 不存在", req.application_id)))?;
 
         if !WorkflowService::can_user_perform_action(current_user, &app, &req.action) {
+            TraceService::log_exception(
+                pool,
+                &app.id,
+                "越权尝试",
+                &format!(
+                    "用户 {}({:?}) 尝试在状态 {:?} 下执行 {}，被权限规则拦截",
+                    current_user.display_name, current_user.role, app.status, req.action
+                ),
+                Some(&current_user.id),
+            );
             return Err(AppError::Forbidden(format!(
                 "用户 {}({:?}) 无权在状态 {:?} 下执行 {}",
                 current_user.display_name, current_user.role, app.status, req.action
@@ -147,18 +157,54 @@ impl ApplicationService {
         }
 
         if app.status == ApplicationStatus::Archived {
+            TraceService::log_exception(
+                pool,
+                &app.id,
+                "状态冲突-已归档",
+                &format!(
+                    "用户 {} 尝试对已归档单据执行 {}",
+                    current_user.display_name, req.action
+                ),
+                Some(&current_user.id),
+            );
             return Err(AppError::StatusConflict("已归档的申请不能再操作".into()));
         }
 
         let attachments = AttachmentDao::list_by_application(pool, &app.id)?;
-        WorkflowService::validate_evidence_for_action(&req.action, &req, &attachments)?;
+        if let Err(e) = WorkflowService::validate_evidence_for_action(&req.action, &req, &attachments)
+        {
+            TraceService::log_exception(
+                pool,
+                &app.id,
+                "缺证据/缺材料",
+                &format!("动作 {} 校验失败：{}", req.action, e),
+                Some(&current_user.id),
+            );
+            return Err(e);
+        }
 
-        let (new_status, new_handler) = WorkflowService::next_handler_for_transition(
+        let transition = WorkflowService::next_handler_for_transition(
             pool,
             app.status,
             &req.action,
             &app,
-        )?;
+        );
+        let (new_status, new_handler) = match transition {
+            Ok(t) => t,
+            Err(e) => {
+                TraceService::log_exception(
+                    pool,
+                    &app.id,
+                    "状态流转冲突",
+                    &format!(
+                        "从 {:?} 执行 {} 不被允许：{}",
+                        app.status, req.action, e
+                    ),
+                    Some(&current_user.id),
+                );
+                return Err(e);
+            }
+        };
 
         let mut new_tags = app.exception_tags.clone();
         if req.action == "return" {
@@ -169,14 +215,44 @@ impl ApplicationService {
             new_tags.push("已补正".to_string());
         }
 
-        let new_version = ApplicationDao::update_status_and_version(
+        let update_result = ApplicationDao::update_status_and_version(
             pool,
             &app.id,
             new_status,
             &new_handler,
             req.current_version,
             Some(new_tags),
-        )?;
+        );
+        let new_version = match update_result {
+            Ok(v) => v,
+            Err(AppError::VersionConflict(given, expected)) => {
+                TraceService::log_exception(
+                    pool,
+                    &app.id,
+                    "版本冲突(乐观锁)",
+                    &format!(
+                        "用户 {} 提交旧版本 {}，DB 已到版本 {}，拦截避免静默覆盖",
+                        current_user.display_name, given, expected
+                    ),
+                    Some(&current_user.id),
+                );
+                return Err(AppError::VersionConflict(given, expected));
+            }
+            Err(e) => return Err(e),
+        };
+
+        if app.is_overdue && req.action != "correct" {
+            TraceService::log_exception(
+                pool,
+                &app.id,
+                "逾期操作",
+                &format!(
+                    "用户 {} 在截止时间已过的情况下执行 {}（仍允许，但已留痕）",
+                    current_user.display_name, req.action
+                ),
+                Some(&current_user.id),
+            );
+        }
 
         let record = ProcessingRecord {
             id: new_uuid(),
@@ -467,5 +543,249 @@ impl SeedService {
         }
 
         Ok(())
+    }
+}
+
+pub struct ScopeService;
+
+impl ScopeService {
+    pub fn get_visible_scope(user: &User) -> VisibleScope {
+        use UserRole::*;
+        let can_create = matches!(
+            user.role,
+            StoreManager | ReplenishmentRegistrar | OperationsSupervisor
+        );
+        let can_process = matches!(
+            user.role,
+            StoreManager
+                | OperationsSupervisor
+                | HeadquartersOperations
+                | ReplenishmentRegistrar
+                | ReplenishmentAuditor
+                | ChainReviewLead
+        );
+        let can_view_all = matches!(
+            user.role,
+            HeadquartersOperations | ReplenishmentAuditor | ChainReviewLead
+        );
+        let mut allowed_actions: Vec<String> = Vec::new();
+        match user.role {
+            StoreManager | ReplenishmentRegistrar => {
+                allowed_actions.push("submit".into());
+                allowed_actions.push("correct".into());
+                allowed_actions.push("create".into());
+            }
+            OperationsSupervisor => {
+                allowed_actions.push("sign".into());
+                allowed_actions.push("return".into());
+                allowed_actions.push("recheck".into());
+                allowed_actions.push("create".into());
+            }
+            HeadquartersOperations => {
+                allowed_actions.push("complete".into());
+                allowed_actions.push("return".into());
+            }
+            ReplenishmentAuditor => {
+                allowed_actions.push("recheck".into());
+            }
+            ChainReviewLead => {
+                allowed_actions.push("archive".into());
+            }
+        }
+        VisibleScope {
+            can_create,
+            can_process,
+            can_view_all,
+            allowed_actions,
+        }
+    }
+}
+
+pub struct TraceService;
+
+impl TraceService {
+    pub fn log_exception(
+        pool: &DbPool,
+        application_id: &str,
+        exception_type: &str,
+        description: &str,
+        operator_id: Option<&str>,
+    ) {
+        let log = ExceptionLog {
+            id: new_uuid(),
+            application_id: application_id.into(),
+            exception_type: exception_type.into(),
+            description: description.into(),
+            operator_id: operator_id.map(|s| s.into()),
+            created_at: Utc::now(),
+        };
+        let _ = ExceptionLogDao::create(pool, &log);
+    }
+
+    pub fn record_timeline(
+        pool: &DbPool,
+        application_id: &str,
+        from_status: Option<ApplicationStatus>,
+        to_status: ApplicationStatus,
+        action: &str,
+        operator: &User,
+        result: Option<String>,
+        return_reason: Option<String>,
+    ) -> AppResult<()> {
+        let record = ProcessingRecord {
+            id: new_uuid(),
+            application_id: application_id.into(),
+            from_status,
+            to_status,
+            action: action.into(),
+            operator_id: operator.id.clone(),
+            operator_name: operator.display_name.clone(),
+            result,
+            return_reason,
+            processed_at: Utc::now(),
+        };
+        ProcessingRecordDao::create(pool, &record)
+    }
+}
+
+impl ApplicationService {
+    pub fn create_application(
+        pool: &DbPool,
+        current_user: &User,
+        req: CreateApplicationRequest,
+    ) -> AppResult<ReplenishmentApplication> {
+        use UserRole::*;
+        if !matches!(
+            current_user.role,
+            StoreManager | ReplenishmentRegistrar | OperationsSupervisor
+        ) {
+            return Err(AppError::Forbidden(format!(
+                "角色 {:?} 无权创建补货申请",
+                current_user.role
+            )));
+        }
+        if req.title.trim().is_empty() {
+            return Err(AppError::Validation("标题不能为空".into()));
+        }
+        if req.store_id.trim().is_empty() || req.store_name.trim().is_empty() {
+            return Err(AppError::Validation("门店信息不能为空".into()));
+        }
+        let deadline = DateTime::parse_from_rfc3339(&req.deadline)
+            .map(|d| d.with_timezone(&Utc))
+            .map_err(|_| AppError::Validation("截止时间格式错误，请使用 RFC3339".into()))?;
+        if deadline <= Utc::now() {
+            return Err(AppError::Validation("截止时间必须晚于当前时间".into()));
+        }
+
+        let application_no = next_application_no(pool)?;
+        let now = Utc::now();
+        let id = new_uuid();
+        let app = ReplenishmentApplication {
+            id: id.clone(),
+            application_no,
+            store_id: req.store_id,
+            store_name: req.store_name,
+            title: req.title,
+            description: req.description,
+            status: ApplicationStatus::Draft,
+            priority: req.priority,
+            responsible_person: current_user.id.clone(),
+            current_handler: current_user.id.clone(),
+            deadline,
+            version: 1,
+            created_by: current_user.id.clone(),
+            created_at: now,
+            updated_at: now,
+            exception_tags: vec![],
+            is_overdue: false,
+            is_near_deadline: false,
+        };
+        ApplicationDao::create(pool, &app)?;
+
+        TraceService::record_timeline(
+            pool,
+            &id,
+            None,
+            ApplicationStatus::Draft,
+            "创建",
+            current_user,
+            Some("已创建新补货申请".into()),
+            None,
+        )?;
+
+        ApplicationDao::get_by_id(pool, &id)?
+            .ok_or_else(|| AppError::NotFound("创建后读取失败".into()))
+    }
+
+    pub fn upload_attachment(
+        pool: &DbPool,
+        current_user: &User,
+        req: AttachmentUploadRequest,
+    ) -> AppResult<Attachment> {
+        let app = ApplicationDao::get_by_id(pool, &req.application_id)?
+            .ok_or_else(|| AppError::NotFound(format!("申请单 {} 不存在", req.application_id)))?;
+        if app.current_handler != current_user.id {
+            return Err(AppError::Forbidden(format!(
+                "只有当前处理人 {} 可以上传附件，当前用户 {}",
+                app.current_handler, current_user.id
+            )));
+        }
+        if app.status == ApplicationStatus::Archived {
+            return Err(AppError::StatusConflict("已归档单据不能再上传附件".into()));
+        }
+        if req.file_name.trim().is_empty() {
+            return Err(AppError::Validation("文件名不能为空".into()));
+        }
+        if matches!(app.status, ApplicationStatus::ExceptionReturned | ApplicationStatus::CorrectionPending)
+            && req.file_content_base64.is_none()
+        {
+            return Err(AppError::MissingEvidence(
+                "补正/异常状态下必须提供文件内容作为补正证据".into(),
+            ));
+        }
+
+        let att = Attachment {
+            id: new_uuid(),
+            application_id: req.application_id.clone(),
+            file_name: req.file_name,
+            file_type: req.file_type,
+            uploaded_by: current_user.id.clone(),
+            uploaded_at: Utc::now(),
+        };
+        AttachmentDao::create(pool, &att)?;
+
+        TraceService::record_timeline(
+            pool,
+            &req.application_id,
+            Some(app.status),
+            app.status,
+            "上传附件",
+            current_user,
+            Some(format!("上传附件：{}", att.file_name)),
+            None,
+        )?;
+
+        if matches!(app.status, ApplicationStatus::ExceptionReturned) {
+            let mut tags = app.exception_tags.clone();
+            tags.retain(|t| t != "异常退回");
+            tags.push("已补正附件".into());
+            let _ = ApplicationDao::update_status_and_version(
+                pool,
+                &app.id,
+                app.status,
+                &app.current_handler,
+                app.version,
+                Some(tags),
+            );
+            TraceService::log_exception(
+                pool,
+                &app.id,
+                "补正附件上传",
+                &format!("{} 上传了补正附件 {}", current_user.display_name, att.file_name),
+                Some(&current_user.id),
+            );
+        }
+
+        Ok(att)
     }
 }

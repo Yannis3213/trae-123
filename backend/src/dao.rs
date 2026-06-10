@@ -465,3 +465,41 @@ impl ExceptionLogDao {
 pub fn new_uuid() -> String {
     Uuid::new_v4().to_string()
 }
+
+pub fn next_application_no(pool: &DbPool) -> AppResult<String> {
+    use chrono::Datelike;
+    let now = Utc::now();
+    let prefix = format!("RP-{}-{:02}", now.year(), now.month());
+    let conn = pool.get()?;
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM replenishment_applications WHERE application_no LIKE ?1",
+            params![format!("{}%", prefix)],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    Ok(format!("{}-{:03}", prefix, count + 1))
+}
+
+impl ApplicationDao {
+    pub fn update_handler_only(
+        pool: &DbPool,
+        id: &str,
+        new_handler: &str,
+        expected_version: i64,
+    ) -> AppResult<i64> {
+        let conn = pool.get()?;
+        let current = Self::get_by_id(pool, id)?
+            .ok_or_else(|| crate::errors::AppError::NotFound(format!("Application {}", id)))?;
+        if current.version != expected_version {
+            return Err(crate::errors::AppError::VersionConflict(expected_version, current.version));
+        }
+        let new_version = expected_version + 1;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE replenishment_applications SET current_handler = ?1, version = ?2, updated_at = ?3 WHERE id = ?4 AND version = ?5",
+            params![new_handler, new_version, now, id, expected_version],
+        )?;
+        Ok(new_version)
+    }
+}

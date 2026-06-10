@@ -12,6 +12,8 @@ import {
   PRIORITY_DISPLAY,
   PRIORITY_COLOR,
 } from '../types';
+import { useAuthStore } from '../store/auth';
+import CreateApplicationModal from './CreateApplicationModal';
 
 interface ApplicationListProps {
   users: User[];
@@ -19,13 +21,15 @@ interface ApplicationListProps {
 }
 
 export default function ApplicationList({ users, onSelect }: ApplicationListProps) {
+  const { visibleScope } = useAuthStore();
   const [apps, setApps] = useState<ReplenishmentApplication[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<ApplicationStatus | ''>('');
   const [priorityFilter, setPriorityFilter] = useState<Priority | ''>('');
   const [keyword, setKeyword] = useState('');
-  const [onlyMine, setOnlyMine] = useState(true);
+  const [onlyMine, setOnlyMine] = useState(visibleScope?.can_view_all ? false : true);
   const [stats, setStats] = useState({ total: 0, pending: 0, near: 0, overdue: 0 });
+  const [createOpen, setCreateOpen] = useState(false);
 
   const fetchData = () => {
     setLoading(true);
@@ -136,7 +140,16 @@ export default function ApplicationList({ users, onSelect }: ApplicationListProp
             />
             只看我的待办
           </label>
-          <button className="btn" onClick={fetchData} style={{ marginLeft: 'auto' }}>
+          {visibleScope?.can_create && (
+            <button
+              className="btn btn-success"
+              onClick={() => setCreateOpen(true)}
+              style={{ marginLeft: 'auto' }}
+            >
+              ➕ 新建补货申请
+            </button>
+          )}
+          <button className="btn" onClick={fetchData} style={visibleScope?.can_create ? {} : { marginLeft: 'auto' }}>
             🔄 刷新
           </button>
         </div>
@@ -224,6 +237,11 @@ export default function ApplicationList({ users, onSelect }: ApplicationListProp
           </table>
         </div>
       </div>
+      <CreateApplicationModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={fetchData}
+      />
     </div>
   );
 }

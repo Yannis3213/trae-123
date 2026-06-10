@@ -185,4 +185,29 @@ export const ACTION_LABELS: Record<string, string> = {
   correct: '补正提交',
   recheck: '复核通过',
   archive: '归档',
+  '上传附件': '上传附件',
+  创建: '创建',
 };
+
+export interface CreateApplicationRequest {
+  store_id: string;
+  store_name: string;
+  title: string;
+  description: string;
+  priority: Priority;
+  deadline: string;
+}
+
+export interface AttachmentUploadRequest {
+  application_id: string;
+  file_name: string;
+  file_type: string;
+  file_content_base64?: string;
+}
+
+export interface VisibleScope {
+  can_create: boolean;
+  can_process: boolean;
+  can_view_all: boolean;
+  allowed_actions: string[];
+}

@@ -238,6 +238,32 @@ pub struct ApplicationDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateApplicationRequest {
+    pub store_id: String,
+    pub store_name: String,
+    pub title: String,
+    pub description: String,
+    pub priority: Priority,
+    pub deadline: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentUploadRequest {
+    pub application_id: String,
+    pub file_name: String,
+    pub file_type: String,
+    pub file_content_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisibleScope {
+    pub can_create: bool,
+    pub can_process: bool,
+    pub can_view_all: bool,
+    pub allowed_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
 }

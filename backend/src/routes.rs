@@ -117,6 +117,32 @@ pub fn add_audit_note(
     ApplicationService::add_audit_note(pool, id, note, &user.0).map(Json)
 }
 
+#[get("/api/auth/scope")]
+pub fn get_scope(user: AuthenticatedUser) -> Json<VisibleScope> {
+    Json(ScopeService::get_visible_scope(&user.0))
+}
+
+#[post("/api/applications", data = "<body>")]
+pub fn create_application(
+    pool: &State<DbPool>,
+    user: AuthenticatedUser,
+    body: Json<CreateApplicationRequest>,
+) -> AppResult<Json<ReplenishmentApplication>> {
+    ApplicationService::create_application(pool, &user.0, body.into_inner()).map(Json)
+}
+
+#[post("/api/applications/<id>/attachments", data = "<body>")]
+pub fn upload_attachment(
+    pool: &State<DbPool>,
+    user: AuthenticatedUser,
+    id: &str,
+    body: Json<AttachmentUploadRequest>,
+) -> AppResult<Json<Attachment>> {
+    let mut req = body.into_inner();
+    req.application_id = id.into();
+    ApplicationService::upload_attachment(pool, &user.0, req).map(Json)
+}
+
 #[get("/api/health")]
 pub fn health() -> &'static str {
     "OK"

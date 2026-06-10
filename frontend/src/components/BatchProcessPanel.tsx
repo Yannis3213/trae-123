@@ -27,6 +27,7 @@ export default function BatchProcessPanel({ users }: BatchProcessPanelProps) {
   const [resultText, setResultText] = useState('');
   const [processing, setProcessing] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchProcessResponse | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const fetchData = () => {
     setLoading(true);
@@ -47,6 +48,35 @@ export default function BatchProcessPanel({ users }: BatchProcessPanelProps) {
 
   const getUserName = (id: string) =>
     users.find((u) => u.id === id)?.display_name || id;
+
+  const classifyFailure = (msg: string): { label: string; color: string; detail: string } => {
+    if (msg.includes('版本') || msg.includes('version') || msg.includes('旧版本')) {
+      return { label: '版本冲突', color: '#ea580c', detail: '数据已被其他用户更新，请刷新页面后重试。后端使用乐观锁 version 字段拦截并发修改。' };
+    }
+    if (msg.includes('越权') || msg.includes('无权') || msg.includes('权限') || msg.includes('permission')) {
+      return { label: '越权操作', color: '#dc2626', detail: '当前账号不是该单据的处理人，或角色不在动作白名单内。请切换到正确账号后办理。' };
+    }
+    if (msg.includes('证据') || msg.includes('材料') || msg.includes('附件') || msg.includes('必填')) {
+      return { label: '缺材料', color: '#b45309', detail: '该操作要求上传附件或填写办理结果作为必填证据。请进入详情页补正后再试。' };
+    }
+    if (msg.includes('逾期') || msg.includes('overdue') || msg.includes('截止')) {
+      return { label: '已逾期', color: '#991b1b', detail: '单据已超过截止时间，批量处理被自动拦截。请进入详情页逐条处理，留下补正动作与异常原因。' };
+    }
+    if (msg.includes('状态') || msg.includes('status') || msg.includes('冲突')) {
+      return { label: '状态冲突', color: '#c026d3', detail: '当前状态不允许执行该操作，或单据已被他人流转。请刷新列表确认最新状态。' };
+    }
+    if (msg.includes('归档') || msg.includes('archived')) {
+      return { label: '已归档', color: '#64748b', detail: '该单据已归档，禁止任何修改。' };
+    }
+    return { label: '办理失败', color: '#dc2626', detail: msg };
+  };
+
+  const toggleExpand = (id: string) => {
+    const next = new Set(expandedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setExpandedIds(next);
+  };
 
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds);
@@ -153,16 +183,73 @@ export default function BatchProcessPanel({ users }: BatchProcessPanelProps) {
               <span style={{ margin: '0 16px', color: '#d1d5db' }}>|</span>
               <span>共 {batchResult.results.length} 条</span>
             </div>
-            {batchResult.results.map((r) => (
-              <div
-                key={r.application_id}
-                className={`batch-result-item ${r.success ? 'success' : 'failed'}`}
-              >
-                <strong>{r.application_no}</strong>
-                <span style={{ marginLeft: '10px' }}>{r.success ? '✅' : '❌'}</span>
-                <span style={{ marginLeft: '10px' }}>{r.message}</span>
-              </div>
-            ))}
+            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', marginBottom: '12px' }}>
+              失败原因已按「版本冲突 / 越权 / 缺材料 / 逾期 / 状态冲突」自动分类，所有拦截均已同时写入对应补货申请的统一审计轨迹。
+            </div>
+            {batchResult.results.map((r) => {
+              const failure = !r.success ? classifyFailure(r.message) : null;
+              const expanded = expandedIds.has(r.application_id);
+              return (
+                <div
+                  key={r.application_id}
+                  className={`batch-result-item ${r.success ? 'success' : 'failed'}`}
+                  style={{ flexWrap: 'wrap' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px', flex: 1 }}>
+                    <strong>{r.application_no}</strong>
+                    <span>{r.success ? '✅' : '❌'}</span>
+                    {failure && (
+                      <span
+                        className="tag tag-red"
+                        style={{ background: failure.color, color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}
+                      >
+                        {failure.label}
+                      </span>
+                    )}
+                    <span style={{ color: r.success ? '#166534' : '#b91c1c' }}>{r.message}</span>
+                  </div>
+                  {failure && (
+                    <button
+                      className="btn"
+                      style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: '12px', minWidth: 'auto' }}
+                      onClick={() => toggleExpand(r.application_id)}
+                    >
+                      {expanded ? '收起详情' : '查看详情'}
+                    </button>
+                  )}
+                  {expanded && failure && (
+                    <div
+                      style={{
+                        width: '100%',
+                        marginTop: '8px',
+                        padding: '10px 14px',
+                        background: '#fff',
+                        border: '1px solid #fecaca',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        color: '#374151',
+                      }}
+                    >
+                      <div style={{ marginBottom: '6px' }}>
+                        <strong style={{ color: failure.color }}>异常类型：</strong>
+                        {failure.label}
+                      </div>
+                      <div style={{ marginBottom: '6px' }}>
+                        <strong>服务端消息：</strong>
+                        {r.message}
+                      </div>
+                      <div>
+                        <strong>处理建议：</strong>
+                        {failure.detail}
+                      </div>
+                      <div style={{ marginTop: '8px', fontSize: '12px', color: '#92400e' }}>
+                        ℹ️ 该异常已自动写入单据 {r.application_no} 的「异常日志」统一轨迹，可在详情页查看完整审计记录。
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 

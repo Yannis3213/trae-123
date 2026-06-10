@@ -3,6 +3,7 @@ import { applicationApi } from '../api/client';
 import type { ReplenishmentApplication, User, ApplicationDetail as AppDetail } from '../types';
 import { STATUS_DISPLAY, STATUS_COLOR, PRIORITY_DISPLAY, PRIORITY_COLOR, ACTION_LABELS, ROLE_DISPLAY } from '../types';
 import { useAuthStore } from '../store/auth';
+import AttachmentUploader from './AttachmentUploader';
 
 interface ApplicationDetailProps {
   application: ReplenishmentApplication;
@@ -22,7 +23,7 @@ const AVAILABLE_ACTIONS: Record<string, ActionKey[]> = {
 };
 
 export default function ApplicationDetail({ application, users, onUpdated }: ApplicationDetailProps) {
-  const { user } = useAuthStore();
+  const { user, visibleScope } = useAuthStore();
   const [detail, setDetail] = useState<AppDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
@@ -48,8 +49,10 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
   if (!detail || !user) return <div>加载中...</div>;
 
   const app = detail.application;
-  const availableActions = AVAILABLE_ACTIONS[app.status] || [];
-  const canAct = user.id === app.current_handler && app.status !== 'archived';
+  const stateActions = AVAILABLE_ACTIONS[app.status] || [];
+  const scopeAllowed = visibleScope?.allowed_actions || [];
+  const availableActions = stateActions.filter((a) => scopeAllowed.includes(a));
+  const canAct = user.id === app.current_handler && app.status !== 'archived' && visibleScope?.can_process;
   const getUserName = (id: string) => users.find((u) => u.id === id)?.display_name || id;
   const getUserRole = (id: string) => {
     const u = users.find((x) => x.id === id);
@@ -200,8 +203,15 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
             ))}
           </div>
         )}
+        <AttachmentUploader
+          applicationId={app.id}
+          applicationStatus={app.status}
+          currentHandler={app.current_handler}
+          currentUserId={user.id}
+          onUploaded={loadDetail}
+        />
 
-        <div className="section-title">处理结果 / 退回原因（办理表单）</div>
+        <div className="section-title" style={{ marginTop: '24px' }}>处理结果 / 退回原因（办理表单）</div>
         {!canAct ? (
           <div style={{ padding: '12px', background: '#fef3c7', color: '#92400e', borderRadius: '6px', fontSize: '14px', marginBottom: '16px' }}>
             ⚠️ 当前处理人为 <strong>{getUserName(app.current_handler)}</strong>（{getUserRole(app.current_handler)}），您无权办理此单据。
@@ -238,10 +248,22 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
                 {needsReturnReason && (
                   <div className="form-group">
                     <label>退回原因 <span style={{ color: '#dc2626' }}>*</span></label>
+                    <div
+                      style={{
+                        padding: '8px 12px',
+                        background: '#fef2f2',
+                        color: '#b91c1c',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        marginBottom: '8px',
+                      }}
+                    >
+                      ⚠️ 退回原因将同时写入「处理记录时间线」和「异常日志」统一轨迹，作为该补货申请的永久审计证据，不可删除。
+                    </div>
                     <textarea
                       value={returnReason}
                       onChange={(e) => setReturnReason(e.target.value)}
-                      placeholder="请填写退回补正原因，必填证据"
+                      placeholder="请填写退回补正原因，必填证据（将记入申请轨迹）"
                     />
                   </div>
                 )}
@@ -336,20 +358,25 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
           ))}
         </div>
 
-        {detail.exception_logs.length > 0 && (
+        {(detail.exception_logs.length > 0 || true) && (
           <>
-            <div className="section-title" style={{ marginTop: '24px' }}>异常日志（证据）</div>
+            <div className="section-title" style={{ marginTop: '24px' }}>异常日志（统一轨迹）</div>
             <div style={{ padding: '10px', background: '#fff7ed', borderRadius: '6px', marginBottom: '10px', fontSize: '12px', color: '#92400e' }}>
-              ⚠️ 异常日志仅作为证据，不替代详情页真实处理结果
+              ⚠️ 缺材料、逾期、退回补正、旧版本状态冲突、越权、批量拦截等所有异常均记录于此，
+              与上方「处理记录时间线」同属该补货申请的<strong>统一审计轨迹</strong>，不可删除。
             </div>
-            {detail.exception_logs.map((l) => (
-              <div key={l.id} style={{ padding: '8px 12px', background: '#fef2f2', borderRadius: '6px', marginBottom: '6px', fontSize: '13px' }}>
-                <strong style={{ color: '#b91c1c' }}>[{l.exception_type}]</strong>
-                {l.operator_id && <span style={{ marginLeft: '6px' }}>by {getUserName(l.operator_id)}</span>}
-                <span style={{ color: '#6b7280', marginLeft: '8px', fontSize: '12px' }}>{formatDate(l.created_at)}</span>
-                <div style={{ marginTop: '4px', color: '#374151' }}>{l.description}</div>
-              </div>
-            ))}
+            {detail.exception_logs.length === 0 ? (
+              <div style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '16px' }}>暂无异常记录</div>
+            ) : (
+              detail.exception_logs.map((l) => (
+                <div key={l.id} style={{ padding: '8px 12px', background: '#fef2f2', borderRadius: '6px', marginBottom: '6px', fontSize: '13px' }}>
+                  <strong style={{ color: '#b91c1c' }}>[{l.exception_type}]</strong>
+                  {l.operator_id && <span style={{ marginLeft: '6px' }}>by {getUserName(l.operator_id)}</span>}
+                  <span style={{ color: '#6b7280', marginLeft: '8px', fontSize: '12px' }}>{formatDate(l.created_at)}</span>
+                  <div style={{ marginTop: '4px', color: '#374151' }}>{l.description}</div>
+                </div>
+              ))
+            )}
           </>
         )}
       </div>

@@ -9,6 +9,10 @@ import type {
   BatchProcessRequest,
   BatchProcessResponse,
   AuditNote,
+  CreateApplicationRequest,
+  AttachmentUploadRequest,
+  Attachment,
+  VisibleScope,
 } from '../types';
 
 const backendPort = (import.meta as any).env.VITE_BACKEND_PORT
@@ -42,6 +46,7 @@ export const authApi = {
   login: (data: LoginRequest) =>
     api.post<LoginResponse>('/api/auth/login', data).then((r) => r.data),
   listUsers: () => api.get<User[]>('/api/auth/users').then((r) => r.data),
+  getScope: () => api.get<VisibleScope>('/api/auth/scope').then((r) => r.data),
 };
 
 export const applicationApi = {
@@ -69,4 +74,10 @@ export const applicationApi = {
     api
       .post<AuditNote>(`/api/applications/${id}/audit-notes`, { note })
       .then((r) => r.data),
+
+  create: (data: CreateApplicationRequest) =>
+    api.post<ReplenishmentApplication>('/api/applications', data).then((r) => r.data),
+
+  uploadAttachment: (id: string, data: AttachmentUploadRequest) =>
+    api.post<Attachment>(`/api/applications/${id}/attachments`, data).then((r) => r.data),
 };
