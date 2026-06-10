@@ -1,7 +1,7 @@
 import { useState, useEffect } from "preact/hooks";
-import { useSignal } from "@preact/signals";
+import { useSignal, useSignalEffect } from "@preact/signals";
 import { currentUser, isLoggedIn } from "../utils/store.ts";
-import { apiFetch } from "../utils/api.ts";
+import { apiFetch, type ApiError } from "../utils/api.ts";
 import {
   STATUS_LABELS, STATUS_COLORS,
   PRIORITY_LABELS, PRIORITY_COLORS,
@@ -36,7 +36,16 @@ export default function OrderDetailIsland({ orderId }: Props) {
   const [order, setOrder] = useState<FreshPurchaseOrder | null>(null);
   const [records, setRecords] = useState<ProcessingRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [msg, setMsg] = useState<{
+    type: "success" | "error";
+    text: string;
+    errorBody?: {
+      order_no?: string;
+      current_status?: string;
+      exception_type?: string;
+      exception_label?: string;
+    } | null;
+  } | null>(null);
   const [showTransition, setShowTransition] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
 
@@ -180,7 +189,17 @@ export default function OrderDetailIsland({ orderId }: Props) {
       setShowTransition(false);
       setOrder(result);
     } catch (err: any) {
-      setMsg({ type: "error", text: err.message });
+      const apiErr = err as ApiError;
+      setMsg({
+        type: "error",
+        text: err.message,
+        errorBody: apiErr.errorBody ? {
+          order_no: apiErr.errorBody.order_no,
+          current_status: apiErr.errorBody.current_status,
+          exception_type: apiErr.errorBody.exception_type,
+          exception_label: apiErr.errorBody.exception_label,
+        } : null,
+      });
     } finally {
       processing.value = false;
     }
@@ -254,9 +273,29 @@ export default function OrderDetailIsland({ orderId }: Props) {
       </div>
 
       {msg && (
-        <div class={`alert alert-${msg.type}`}>
-          {msg.text}
-          <span class="close" onClick={() => setMsg(null)}>×</span>
+        <div class={`alert alert-${msg.type}`} style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              {msg.errorBody?.exception_type && (
+                <span
+                  class="tag"
+                  style={`background:${EXCEPTION_TYPE_COLORS[msg.errorBody.exception_type] || "#be123c"}20;color:${EXCEPTION_TYPE_COLORS[msg.errorBody.exception_type] || "#be123c"};font-weight:600`}
+                >
+                  🔴 {msg.errorBody.exception_label || EXCEPTION_TYPE_LABELS[msg.errorBody.exception_type] || msg.errorBody.exception_type}
+                </span>
+              )}
+              {msg.errorBody?.order_no && (
+                <span class="muted" style="font-size:12px">单号：{msg.errorBody.order_no}</span>
+              )}
+              {msg.errorBody?.current_status && (
+                <span class="tag" style="font-size:12px">
+                  当前状态：{STATUS_LABELS[msg.errorBody.current_status as PurchaseStatus] || msg.errorBody.current_status}
+                </span>
+              )}
+            </div>
+            <span class="close" onClick={() => setMsg(null)}>×</span>
+          </div>
+          <div>{msg.text}</div>
         </div>
       )}
 

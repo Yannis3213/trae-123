@@ -490,6 +490,48 @@ def seed_database(db: Session):
             )
             db.add(audit_overdue)
 
+            record_batch_fail_evidence = ProcessingRecord(
+                order_id=order.id,
+                action="批量-复核归档",
+                from_status=PurchaseStatus.PROCESSING.value,
+                to_status=PurchaseStatus.CLOSED.value,
+                handler_id=created_users["supervisor1"].id,
+                handler_name=created_users["supervisor1"].full_name,
+                handler_role=created_users["supervisor1"].role.value,
+                result="failed",
+                comment="批量处理失败：缺少到货验收证据，逐条拦截未整批放行",
+                exception_reason="到货验收单尚未签收，批量处理逐条校验后拦截",
+                exception_type="missing_arrival_evidence",
+                timestamp=now - timedelta(hours=2)
+            )
+            db.add(record_batch_fail_evidence)
+
+            record_batch_fail_overdue = ProcessingRecord(
+                order_id=order.id,
+                action="批量-复核归档",
+                from_status=PurchaseStatus.PROCESSING.value,
+                to_status=PurchaseStatus.CLOSED.value,
+                handler_id=created_users["supervisor1"].id,
+                handler_name=created_users["supervisor1"].full_name,
+                handler_role=created_users["supervisor1"].role.value,
+                result="failed",
+                comment="批量处理失败：已超过截止时间，逐条拦截未整批放行",
+                exception_reason="已超过约定到货日期2天，批量处理逐条校验后拦截",
+                exception_type="deadline_overdue",
+                timestamp=now - timedelta(hours=1, minutes=50)
+            )
+            db.add(record_batch_fail_overdue)
+
+            audit_batch = AuditNote(
+                order_id=order.id,
+                note="批量处理：尝试批量复核归档时被逐条拦截——缺少到货验收证据且已超过截止时间，未整批放行。请单独补正后再提交。",
+                note_type="批量处理",
+                author_id=created_users["supervisor1"].id,
+                author_name=created_users["supervisor1"].full_name,
+                author_role=created_users["supervisor1"].role.value
+            )
+            db.add(audit_batch)
+
         if o_data.get("type") == "状态冲突":
             supervisor = created_users.get("supervisor1")
             order.version = 2

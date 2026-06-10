@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from litestar import Router, get, post, put, delete
 from litestar.connection import ASGIConnection
-from litestar.exceptions import NotAuthorizedException, NotFoundException, ValidationException
+from litestar.exceptions import NotAuthorizedException, NotFoundException, ValidationException, HTTPException
 from litestar.params import Parameter
 from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
@@ -17,7 +17,7 @@ from ..schemas import (
     FreshPurchaseOrderCreate, FreshPurchaseOrderUpdate, FreshPurchaseOrderOut,
     FreshPurchaseOrderListResponse, StatusTransitionRequest, BatchActionRequest,
     BatchActionResult, PurchaseOrderStats, ProcessingRecordOut, AuditNoteCreate,
-    AuditNoteOut
+    AuditNoteOut, EXCEPTION_TYPE_TO_AUDIT_NOTE_TYPE
 )
 from ..permissions import (
     can_view_order, can_edit_order, validate_status_transition,
@@ -322,7 +322,17 @@ async def transition_status(
                 note=message,
             )
             db.commit()
-            raise ValidationException(message)
+            exception_label = EXCEPTION_TYPE_TO_AUDIT_NOTE_TYPE.get(exception_type, None)
+            error_body = {
+                "success": False,
+                "message": message,
+                "order_id": order.id,
+                "order_no": order.order_no,
+                "current_status": order.status.value,
+                "exception_type": exception_type,
+                "exception_label": exception_label,
+            }
+            raise HTTPException(status_code=400, detail=error_body, extra=error_body)
 
         old_status = order.status.value
         order.status = data.target_status

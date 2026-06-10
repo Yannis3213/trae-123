@@ -291,7 +291,7 @@ export default function BatchProcessIsland() {
               <th>预警</th>
               <th>截止时间</th>
               <th>当前处理人</th>
-              <th>异常</th>
+              <th>异常类型</th>
               <th>证据</th>
             </tr>
           </thead>
@@ -348,10 +348,25 @@ export default function BatchProcessIsland() {
                     )}
                   </td>
                   <td>
-                    {o.has_exception
-                      ? <span class="tag tag-exception" title={o.exception_reason || ""}>⚠️ 异常</span>
-                      : <span class="muted">-</span>
-                    }
+                    {o.exception_types && o.exception_types.length > 0 ? (
+                      <div style="display:flex;flex-direction:column;gap:4px;min-width:160px">
+                        {o.exception_types.slice(0, 2).map((et) => (
+                          <span
+                            key={et}
+                            class="tag"
+                            style={`background:${EXCEPTION_TYPE_COLORS[et] || "#be123c"}20;color:${EXCEPTION_TYPE_COLORS[et] || "#be123c"};font-size:11px;padding:2px 6px`}
+                            title={o.exception_reason || EXCEPTION_TYPE_LABELS[et] || et}
+                          >
+                            {EXCEPTION_TYPE_LABELS[et] || et}
+                          </span>
+                        ))}
+                        {o.exception_types.length > 2 && (
+                          <span class="muted" style="font-size:11px">+{o.exception_types.length - 2} 更多</span>
+                        )}
+                      </div>
+                    ) : (
+                      <span class="muted">-</span>
+                    )}
                   </td>
                   <td>
                     <div class="evidence-checks">

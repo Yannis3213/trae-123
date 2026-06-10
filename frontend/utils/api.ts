@@ -12,6 +12,25 @@ function getToken(): string | null {
   return null;
 }
 
+export interface ApiErrorBody {
+  success?: boolean;
+  message: string;
+  order_id?: number;
+  order_no?: string;
+  current_status?: string;
+  exception_type?: string;
+  exception_label?: string;
+}
+
+export class ApiError extends Error {
+  errorBody: ApiErrorBody;
+  constructor(message: string, body: ApiErrorBody) {
+    super(message);
+    this.name = "ApiError";
+    this.errorBody = body;
+  }
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
@@ -39,7 +58,7 @@ export async function apiFetch<T>(
         window.location.href = "/login";
       }
     }
-    throw new Error("未授权，请先登录");
+    throw new ApiError("未授权，请先登录", { message: "未授权，请先登录" });
   }
 
   const text = await response.text();
@@ -51,8 +70,18 @@ export async function apiFetch<T>(
   }
 
   if (!response.ok) {
-    const err = (data as any)?.detail || (data as any)?.message || `请求失败: ${response.status}`;
-    throw new Error(err);
+    const detail = (data as any)?.detail;
+    const rawMessage = (data as any)?.message || `请求失败: ${response.status}`;
+    const body: ApiErrorBody = {
+      message: rawMessage,
+    };
+    if (detail && typeof detail === "object") {
+      Object.assign(body, detail);
+      if (detail.message) body.message = detail.message;
+    } else if (typeof detail === "string") {
+      body.message = detail;
+    }
+    throw new ApiError(body.message, body);
   }
 
   return data;

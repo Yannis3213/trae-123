@@ -208,6 +208,16 @@ class BatchActionRequest(BaseModel):
     expected_versions: Optional[dict] = None
 
 
+class ErrorResponse(BaseModel):
+    success: bool = False
+    message: str
+    order_id: Optional[int] = None
+    order_no: Optional[str] = None
+    current_status: Optional[PurchaseStatus] = None
+    exception_type: Optional[str] = None
+    exception_label: Optional[str] = None
+
+
 class BatchActionResult(BaseModel):
     order_id: int
     order_no: str
