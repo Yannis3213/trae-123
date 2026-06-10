@@ -86,7 +86,7 @@ export async function rejectPlan(id: string, data: { reason: string; version: nu
   });
 }
 
-export async function batchAdvance(data: { planIds: string[]; action: string; comment?: string; versions: Record<string, number> }) {
+export async function batchAdvance(data: { planIds: string[]; action: string; comment?: string; versions: Record<string, number>; actions?: Record<string, string> }) {
   return request<{ planId: string; success: boolean; reason?: string }[]>('/plans/batch-advance', {
     method: 'POST',
     body: JSON.stringify(data),

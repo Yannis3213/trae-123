@@ -93,7 +93,7 @@ export default function PlanDetailApp({ planId }: PlanDetailAppProps) {
     if (!currentUser || !plan) return false;
     const { role } = currentUser;
     const { status } = plan;
-    if (role === 'dispatcher' && (status === 'draft' || status === 'returned')) return true;
+    if (role === 'dispatcher' && status === 'draft') return true;
     if (role === 'route_supervisor' && (status === 'pending_review' || status === 'reviewing')) return true;
     if (role === 'ops_center' && (status === 'pending_approval' || status === 'approving')) return true;
     return false;

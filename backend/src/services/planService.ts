@@ -91,17 +91,17 @@ export function advancePlan(
     return { success: false, reason: "版本冲突，请刷新后重试" };
   }
 
-  if (plan.expiryStatus === "overdue") {
+  if (plan.expiryStatus === "overdue" && action !== "reject") {
     planRepo.createExceptionReason({
       planId,
       reasonCode: "OVERDUE",
-      reasonDetail: `计划已逾期，截止日期 ${plan.dueDate}`,
+      reasonDetail: `计划已逾期，截止日期 ${plan.dueDate}，操作 ${action} 被拦截`,
       responsibleRole: plan.currentRole,
       responsibleUserId: plan.currentHandler,
       action,
       status: plan.status,
     });
-    return { success: false, reason: "计划已逾期，请先处理逾期责任人后再推进" };
+    return { success: false, reason: "计划已逾期，仅允许退回操作，禁止推进" };
   }
 
   if (plan.currentHandler !== userId) {
@@ -333,14 +333,16 @@ export function batchAdvance(
   comment: string | null,
   userId: string,
   role: Role,
-  versions: Record<string, number>
+  versions: Record<string, number>,
+  actions?: Record<string, string>
 ): { planId: string; success: boolean; reason?: string }[] {
   return planIds.map((planId) => {
     const version = versions[planId];
     if (version === undefined) {
       return { planId, success: false, reason: "缺少版本号" };
     }
-    const result = advancePlan(planId, action, comment, userId, role, version);
+    const perPlanAction = actions?.[planId] || action;
+    const result = advancePlan(planId, perPlanAction, comment, userId, role, version);
     return { planId, success: result.success, reason: result.reason };
   });
 }

@@ -5,11 +5,12 @@ import type { Role, AttachmentCategory } from "../types/index.js";
 const router = new Router({ prefix: "/api/plans" });
 
 router.post("/batch-advance", async (ctx) => {
-  const { planIds, action, comment, versions } = ctx.request.body as {
+  const { planIds, action, comment, versions, actions } = ctx.request.body as {
     planIds: string[];
     action: string;
     comment?: string;
     versions: Record<string, number>;
+    actions?: Record<string, string>;
   };
   const { userId, role } = ctx.state.user;
 
@@ -29,7 +30,7 @@ router.post("/batch-advance", async (ctx) => {
     return;
   }
 
-  const results = planService.batchAdvance(planIds, action, comment || null, userId, role, versions);
+  const results = planService.batchAdvance(planIds, action, comment || null, userId, role, versions, actions);
   ctx.body = { data: results };
 });
 
