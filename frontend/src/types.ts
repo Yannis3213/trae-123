@@ -78,6 +78,7 @@ export interface EntryDetail {
 
 export interface BatchResult {
   entry_id: number;
+  entry_title: string;
   success: boolean;
   reason: string;
 }

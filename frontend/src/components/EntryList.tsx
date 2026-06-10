@@ -253,14 +253,26 @@ export function EntryList({ user, onEntryClick, onRefresh }: EntryListProps) {
             {batchResults ? (
               <div>
                 <p style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>处理结果</p>
-                {batchResults.map((r, i) => (
-                  <div key={i} className={`batch-result-item ${r.success ? 'success' : 'fail'}`}>
-                    <span>单据 #{r.entry_id}</span>
-                    <span>{r.success ? '✓ ' : '✕ '}{r.reason}</span>
-                  </div>
-                ))}
+                <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+                  {batchResults.map((r, i) => (
+                    <div key={i} className={`batch-result-item ${r.success ? 'success' : 'fail'}`}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 500, fontSize: 13 }}>{r.entry_title || `单据 #${r.entry_id}`}</span>
+                        <span style={{ fontSize: 12 }}>{r.success ? '✓ ' : '✕ '}{r.reason}</span>
+                      </div>
+                      {!r.success && (
+                        <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+                          单据 #{r.entry_id}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 12, fontSize: 12, color: '#8c8c8c' }}>
+                  成功 {batchResults.filter(r => r.success).length} 条，失败 {batchResults.filter(r => !r.success).length} 条
+                </div>
                 <div className="modal-actions">
-                  <button className="btn btn-primary" onClick={() => setShowBatchModal(false)}>确定</button>
+                  <button className="btn btn-primary" onClick={() => { setShowBatchModal(false); onRefresh(); }}>确定</button>
                 </div>
               </div>
             ) : (

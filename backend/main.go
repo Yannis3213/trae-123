@@ -131,9 +131,10 @@ type CreateAuditNoteRequest struct {
 }
 
 type BatchResult struct {
-	EntryID int    `json:"entry_id"`
-	Success bool   `json:"success"`
-	Reason  string `json:"reason"`
+	EntryID    int    `json:"entry_id"`
+	EntryTitle string `json:"entry_title"`
+	Success    bool   `json:"success"`
+	Reason     string `json:"reason"`
 }
 
 var ROLE_LABELS = map[string]string{
@@ -787,13 +788,13 @@ func processEntryHandler(c echo.Context) error {
 			actionName = req.Action
 		}
 
-		returnReason := ""
-		if req.Action == "return" {
-			returnReason = req.ReturnReason
+		failReturnReason := vr.Reason
+		if req.Action == "return" && req.ReturnReason != "" {
+			failReturnReason = req.ReturnReason + "；" + vr.Reason
 		}
 
 		db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason)
-			VALUES (?, ?, ?, ?, '处理失败', ?)`, id, handlerRole, user.Name, actionName, vr.Reason)
+			VALUES (?, ?, ?, ?, '处理失败', ?)`, id, handlerRole, user.Name, actionName, failReturnReason)
 		db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
 			VALUES (?, 'exception', ?, ?)`, id, fmt.Sprintf("处理失败：%s", vr.Reason), user.ID)
 
@@ -888,17 +889,17 @@ func batchProcessHandler(c echo.Context) error {
 		entryID := entry.ID
 		submittedVersion := entry.Version
 
-		var status, exceptionTags string
+		var status, exceptionTags, entryTitle string
 		var dbVersion int
 		var deadline string
 		var currentHandlerRole sql.NullString
 
-		err := db.QueryRow(`SELECT status, version, deadline, exception_tags, current_handler_role
+		err := db.QueryRow(`SELECT status, version, deadline, exception_tags, current_handler_role, title
 			FROM subcontractor_entries WHERE id = ?`, entryID).
-			Scan(&status, &dbVersion, &deadline, &exceptionTags, &currentHandlerRole)
+			Scan(&status, &dbVersion, &deadline, &exceptionTags, &currentHandlerRole, &entryTitle)
 
 		if err != nil {
-			results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "分包进场单不存在"})
+			results = append(results, BatchResult{EntryID: entryID, EntryTitle: "", Success: false, Reason: "分包进场单不存在"})
 			continue
 		}
 
@@ -949,7 +950,7 @@ func batchProcessHandler(c echo.Context) error {
 			db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
 				VALUES (?, 'exception', ?, ?)`, entryID, fmt.Sprintf("批量处理失败：%s", vr.Reason), user.ID)
 
-			results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: vr.Reason})
+			results = append(results, BatchResult{EntryID: entryID, EntryTitle: entryTitle, Success: false, Reason: vr.Reason})
 			continue
 		}
 
@@ -1011,7 +1012,7 @@ func batchProcessHandler(c echo.Context) error {
 		} else if req.Action == "return" {
 			successReason = "已退回"
 		}
-		results = append(results, BatchResult{EntryID: entryID, Success: true, Reason: successReason})
+		results = append(results, BatchResult{EntryID: entryID, EntryTitle: entryTitle, Success: true, Reason: successReason})
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
