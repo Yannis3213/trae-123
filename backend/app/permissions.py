@@ -54,13 +54,12 @@ def can_view_order(user: User, order: FreshPurchaseOrder) -> bool:
     if user.role == UserRole.REVIEWER:
         return True
     if user.role == UserRole.REGISTRAR:
-        if order.status == PurchaseStatus.PENDING_DISPATCH:
-            return order.creator_id == user.id or order.current_handler_id == user.id
-        return order.creator_id == user.id
+        return (
+            order.creator_id == user.id
+            or order.current_handler_id == user.id
+        )
     if user.role == UserRole.SUPERVISOR:
-        if order.status == PurchaseStatus.PROCESSING:
-            return order.current_handler_id == user.id or order.store == user.store
-        return order.store == user.store
+        return order.current_handler_id == user.id
     return False
 
 
@@ -70,12 +69,14 @@ def can_edit_order(user: User, order: FreshPurchaseOrder) -> bool:
     if user.role == UserRole.REVIEWER:
         return True
     if user.role == UserRole.REGISTRAR:
-        return order.status == PurchaseStatus.PENDING_DISPATCH and (
-            order.creator_id == user.id or order.current_handler_id == user.id
+        return (
+            order.status == PurchaseStatus.PENDING_DISPATCH
+            and order.current_handler_id == user.id
         )
     if user.role == UserRole.SUPERVISOR:
-        return order.status == PurchaseStatus.PROCESSING and (
-            order.current_handler_id == user.id or order.store == user.store
+        return (
+            order.status == PurchaseStatus.PROCESSING
+            and order.current_handler_id == user.id
         )
     return False
 
@@ -92,11 +93,7 @@ def check_current_handler(user: User, order: FreshPurchaseOrder) -> Tuple[bool, 
         return False, f"当前状态「{order.status.value}」需要「{required_role.value}」角色处理，当前角色为「{user.role.value}」"
 
     if order.current_handler_id and order.current_handler_id != user.id:
-        if user.role == UserRole.SUPERVISOR and order.store == user.store:
-            return True, ""
-        if user.role == UserRole.REGISTRAR and order.creator_id == user.id:
-            return True, ""
-        return False, f"当前处理人为「{order.current_handler_id}」，您无权操作此单据"
+        return False, f"当前处理人为「{order.current_handler_id}」，请由指定处理人操作，您无权直接办理此单据"
 
     return True, ""
 

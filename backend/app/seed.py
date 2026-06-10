@@ -350,8 +350,65 @@ def seed_database(db: Session):
             )
             db.add(record3)
 
+        if o_data.get("type") == "缺材料":
+            record_build = ProcessingRecord(
+                order_id=order.id,
+                action="建单",
+                from_status=None,
+                to_status=PurchaseStatus.PENDING_DISPATCH.value,
+                handler_id=creator.id if creator else None,
+                handler_name=creator.full_name if creator else None,
+                handler_role=creator.role.value if creator else None,
+                result="success",
+                comment="新建采购单，供应商报价材料不完整",
+                timestamp=now - timedelta(days=1)
+            )
+            db.add(record_build)
+
+            record_fail_dispatch = ProcessingRecord(
+                order_id=order.id,
+                action="派发处理",
+                from_status=PurchaseStatus.PENDING_DISPATCH.value,
+                to_status=PurchaseStatus.PROCESSING.value,
+                handler_id=creator.id if creator else None,
+                handler_name=creator.full_name if creator else None,
+                handler_role=creator.role.value if creator else None,
+                result="failed",
+                comment="缺少供应商报价材料证据，不能派发处理",
+                exception_reason="供应商报价材料缺失，仅提供品名未附详细报价单",
+                exception_type="missing_quotation_evidence",
+                timestamp=now - timedelta(hours=8)
+            )
+            db.add(record_fail_dispatch)
+
+            audit_missing = AuditNote(
+                order_id=order.id,
+                note="证据缺失：供应商报价材料不完整，仅提供品名未附详细报价单，请补充完整后再提交派发。",
+                note_type="证据缺失",
+                author_id=created_users["supervisor2"].id,
+                author_name=created_users["supervisor2"].full_name,
+                author_role=created_users["supervisor2"].role.value
+            )
+            db.add(audit_missing)
+
         if o_data.get("type") == "退回补正":
             supervisor = created_users.get("supervisor2")
+
+            record_dispatch = ProcessingRecord(
+                order_id=order.id,
+                action="派发处理",
+                from_status=PurchaseStatus.PENDING_DISPATCH.value,
+                to_status=PurchaseStatus.PROCESSING.value,
+                handler_id=creator.id if creator else None,
+                handler_name=creator.full_name if creator else None,
+                handler_role=creator.role.value if creator else None,
+                result="success",
+                comment="供应商报价材料已齐全，派发至门店主管处理",
+                evidence_checked="供应商报价单",
+                timestamp=now - timedelta(hours=20)
+            )
+            db.add(record_dispatch)
+
             record_reject = ProcessingRecord(
                 order_id=order.id,
                 action="退回补正",
@@ -363,6 +420,7 @@ def seed_database(db: Session):
                 result="reject",
                 comment=o_data.get("reject_reason"),
                 exception_reason=o_data.get("exception_reason"),
+                exception_type="state_conflict",
                 timestamp=now - timedelta(hours=6)
             )
             db.add(record_reject)
@@ -378,9 +436,53 @@ def seed_database(db: Session):
             db.add(audit)
 
         if o_data.get("type") == "超时逾期":
+            supervisor = created_users.get("supervisor1")
+
+            record_fail_arrival = ProcessingRecord(
+                order_id=order.id,
+                action="复核归档",
+                from_status=PurchaseStatus.PROCESSING.value,
+                to_status=PurchaseStatus.CLOSED.value,
+                handler_id=supervisor.id if supervisor else None,
+                handler_name=supervisor.full_name if supervisor else None,
+                handler_role=supervisor.role.value if supervisor else None,
+                result="failed",
+                comment="缺少到货验收证据，不能关闭归档",
+                exception_reason="到货验收单尚未签收",
+                exception_type="missing_arrival_evidence",
+                timestamp=now - timedelta(hours=5)
+            )
+            db.add(record_fail_arrival)
+
+            record_fail_overdue = ProcessingRecord(
+                order_id=order.id,
+                action="复核归档",
+                from_status=PurchaseStatus.PROCESSING.value,
+                to_status=PurchaseStatus.CLOSED.value,
+                handler_id=supervisor.id if supervisor else None,
+                handler_name=supervisor.full_name if supervisor else None,
+                handler_role=supervisor.role.value if supervisor else None,
+                result="failed",
+                comment=f"已超过截止时间，请先处理逾期标记",
+                exception_reason="已超过约定到货日期2天",
+                exception_type="deadline_overdue",
+                timestamp=now - timedelta(hours=4)
+            )
+            db.add(record_fail_overdue)
+
+            audit_missing_arrival = AuditNote(
+                order_id=order.id,
+                note="证据缺失：到货验收凭证尚未签收，请主管联系供应商补充到货验收单后再申请归档。",
+                note_type="证据缺失",
+                author_id=created_users["reviewer1"].id,
+                author_name=created_users["reviewer1"].full_name,
+                author_role=created_users["reviewer1"].role.value
+            )
+            db.add(audit_missing_arrival)
+
             audit_overdue = AuditNote(
                 order_id=order.id,
-                note="已超过约定到货日期2天，请主管尽快联系供应商确认发货情况，并补充到货验收凭证。",
+                note="逾期预警：已超过约定到货日期2天，请主管尽快联系供应商确认发货情况，并补充到货验收凭证。",
                 note_type="逾期预警",
                 author_id=created_users["reviewer1"].id,
                 author_name=created_users["reviewer1"].full_name,

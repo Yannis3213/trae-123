@@ -34,14 +34,10 @@ def build_visible_query(db: Session, user: User):
             or_(
                 FreshPurchaseOrder.creator_id == user.id,
                 FreshPurchaseOrder.current_handler_id == user.id,
-                and_(
-                    FreshPurchaseOrder.store == user.store,
-                    FreshPurchaseOrder.status == PurchaseStatus.PENDING_DISPATCH
-                )
             )
         )
     elif user.role == UserRole.SUPERVISOR:
-        query = query.filter(FreshPurchaseOrder.store == user.store)
+        query = query.filter(FreshPurchaseOrder.current_handler_id == user.id)
     return query
 
 
@@ -91,23 +87,8 @@ async def list_orders(
 
         query = build_visible_query(db, user)
 
-        if user.role == UserRole.REGISTRAR and only_mine:
-            query = query.filter(
-                or_(
-                    FreshPurchaseOrder.creator_id == user.id,
-                    FreshPurchaseOrder.current_handler_id == user.id
-                )
-            )
-        elif user.role == UserRole.SUPERVISOR and only_mine:
-            query = query.filter(
-                or_(
-                    FreshPurchaseOrder.current_handler_id == user.id,
-                    and_(
-                        FreshPurchaseOrder.store == user.store,
-                        FreshPurchaseOrder.status == PurchaseStatus.PROCESSING
-                    )
-                )
-            )
+        if only_mine:
+            query = query.filter(FreshPurchaseOrder.current_handler_id == user.id)
 
         if status:
             query = query.filter(FreshPurchaseOrder.status == status)
@@ -356,6 +337,11 @@ async def transition_status(
 
         update_warning_level(order)
 
+        is_reject = (
+            data.target_status == PurchaseStatus.PENDING_DISPATCH
+            and old_status == PurchaseStatus.PROCESSING.value
+        )
+
         add_processing_record(
             db=db,
             order=order,
@@ -363,10 +349,23 @@ async def transition_status(
             action=data.action,
             from_status=old_status,
             to_status=data.target_status.value,
-            result="success",
+            result="reject" if is_reject else "success",
             comment=data.comment,
+            exception_reason=data.comment if is_reject else None,
+            exception_type="state_conflict" if is_reject else None,
             evidence_checked="、".join(evidence_list) if evidence_list else None
         )
+
+        if is_reject:
+            audit_reject = AuditNote(
+                order_id=order.id,
+                note=data.comment or f"退回补正：{data.action}",
+                note_type="退回补正",
+                author_id=user.id,
+                author_name=user.full_name,
+                author_role=user.role.value
+            )
+            db.add(audit_reject)
 
         if data.audit_note:
             audit = AuditNote(
@@ -421,6 +420,11 @@ async def batch_action(
                     order.status = data.target_status
                     order.version += 1
 
+                    is_reject = (
+                        data.target_status == PurchaseStatus.PENDING_DISPATCH
+                        and old_status == PurchaseStatus.PROCESSING.value
+                    )
+
                     if data.target_status == PurchaseStatus.CLOSED:
                         order.closed_at = datetime.utcnow()
                         order.current_handler_id = None
@@ -432,6 +436,9 @@ async def batch_action(
                         order.current_handler_id = next_handler
                     elif data.target_status == PurchaseStatus.PENDING_DISPATCH:
                         order.current_handler_id = order.creator_id
+                        if data.comment:
+                            order.has_exception = True
+                            order.exception_reason = data.comment
 
                     update_warning_level(order)
 
@@ -442,19 +449,32 @@ async def batch_action(
                         action=f"批量-{data.action}",
                         from_status=old_status,
                         to_status=data.target_status.value,
-                        result="success",
-                        comment=data.comment
+                        result="reject" if is_reject else "success",
+                        comment=data.comment,
+                        exception_reason=data.comment if is_reject else None,
+                        exception_type="state_conflict" if is_reject else None,
                     )
 
-                    audit = AuditNote(
-                        order_id=order.id,
-                        note=data.comment or f"批量操作：{data.action}，状态由 {old_status} 变更为 {data.target_status.value}",
-                        note_type="批量处理",
-                        author_id=user.id,
-                        author_name=user.full_name,
-                        author_role=user.role.value,
-                    )
-                    db.add(audit)
+                    if is_reject:
+                        audit_reject = AuditNote(
+                            order_id=order.id,
+                            note=data.comment or f"批量退回补正：{data.action}",
+                            note_type="退回补正",
+                            author_id=user.id,
+                            author_name=user.full_name,
+                            author_role=user.role.value,
+                        )
+                        db.add(audit_reject)
+                    else:
+                        audit = AuditNote(
+                            order_id=order.id,
+                            note=data.comment or f"批量操作：{data.action}，状态由 {old_status} 变更为 {data.target_status.value}",
+                            note_type="批量处理",
+                            author_id=user.id,
+                            author_name=user.full_name,
+                            author_role=user.role.value,
+                        )
+                        db.add(audit)
 
                 results.append(BatchActionResult(
                     order_id=order.id,
