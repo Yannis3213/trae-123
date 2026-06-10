@@ -48,8 +48,12 @@ func main() {
 				r.Get("/", h.GetWorkOrderDetail)
 				r.Post("/process", h.ProcessWorkOrder)
 				r.Post("/notes", h.AddAuditNote)
+				r.Post("/attachments", h.UploadAttachment)
+				r.Get("/attachments", h.GetAttachments)
 			})
 		})
+
+		r.Get("/api/attachments/{attachId}/download", h.DownloadAttachment)
 	})
 
 	addr := fmt.Sprintf(":%d", config.AppConfig.BackendPort)

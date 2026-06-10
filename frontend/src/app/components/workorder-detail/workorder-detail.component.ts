@@ -95,9 +95,44 @@ import {
           </div>
 
           <div style="background:#fff;padding:24px;border-radius:8px;margin-bottom:20px">
-            <h4 style="margin:0 0 20px 0;padding-bottom:10px;border-bottom:1px solid #f0f0f0">
-              证据附件 ({{order.attachments.length}})
-            </h4>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:10px;border-bottom:1px solid #f0f0f0">
+              <h4 style="margin:0">证据附件 ({{order.attachments.length}})</h4>
+              <button (click)="showUploadForm = !showUploadForm"
+                style="padding:6px 16px;background:#1890ff;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">
+                {{showUploadForm ? '收起上传' : '📤 上传附件'}}
+              </button>
+            </div>
+
+            <div *ngIf="showUploadForm" style="background:#f0f5ff;padding:20px;border-radius:8px;margin-bottom:20px;border:1px solid #d6e4ff">
+              <div style="font-size:14px;font-weight:bold;color:#1890ff;margin-bottom:15px">上传证据附件</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                  <label style="display:block;margin-bottom:6px;color:#333;font-size:13px">证据类型 <span style="color:#ff4d4f">*</span></label>
+                  <select [(ngModel)]="uploadEvidenceType"
+                    style="width:100%;padding:8px 12px;border:1px solid #d9d9d9;border-radius:4px">
+                    <option value="">请选择证据类型</option>
+                    <option *ngFor="let ev of EVIDENCE_TYPES" [value]="ev.value">{{ev.label}}</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="display:block;margin-bottom:6px;color:#333;font-size:13px">选择文件 <span style="color:#ff4d4f">*</span></label>
+                  <input type="file" (change)="onFileSelected($event)"
+                    style="width:100%;padding:6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px">
+                </div>
+              </div>
+              <div *ngIf="selectedFile" style="margin-top:8px;font-size:12px;color:#666">
+                已选择: {{selectedFile.name}} ({{formatFileSize(selectedFile.size)}})
+              </div>
+              <div *ngIf="uploadError" style="margin-top:8px;color:#ff4d4f;font-size:12px">{{uploadError}}</div>
+              <div *ngIf="uploadSuccess" style="margin-top:8px;color:#52c41a;font-size:12px">{{uploadSuccess}}</div>
+              <div style="margin-top:12px;text-align:right">
+                <button (click)="uploadFile()" [disabled]="!uploadEvidenceType || !selectedFile || uploading"
+                  style="padding:8px 20px;background:#52c41a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">
+                  {{uploading ? '上传中...' : '确认上传'}}
+                </button>
+              </div>
+            </div>
+
             <div *ngIf="order.attachments.length === 0" style="color:#999;text-align:center;padding:30px">
               暂无附件
             </div>
@@ -111,16 +146,35 @@ import {
                   </div>
                 </div>
               </div>
-              <span style="font-size:12px;color:#888">{{formatFileSize(att.file_size)}}</span>
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:12px;color:#888">{{formatFileSize(att.file_size)}}</span>
+                <a [href]="getDownloadUrl(att.id)" target="_blank"
+                  style="padding:4px 10px;background:#e6f7ff;color:#1890ff;border:none;border-radius:4px;cursor:pointer;font-size:12px;text-decoration:none">
+                  下载
+                </a>
+              </div>
             </div>
-            <div style="margin-top:15px;padding:15px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px">
-              <div style="font-size:13px;color:#d48806;font-weight:bold;margin-bottom:5px">📋 必填证据清单</div>
-              <div style="font-size:12px;color:#888;line-height:2">
-                <span *ngFor="let ev of requiredEvidence" style="margin-right:15px">
+
+            <div *ngIf="requiredEvidence.length > 0" style="margin-top:15px;padding:15px;border-radius:6px"
+              [style.background]="allEvidenceFulfilled ? '#f6ffed' : '#fffbe6'"
+              [style.border]="allEvidenceFulfilled ? '1px solid #b7eb8f' : '1px solid #ffe58f'">
+              <div style="font-size:13px;font-weight:bold;margin-bottom:8px"
+                [style.color]="allEvidenceFulfilled ? '#389e0d' : '#d48806'">
+                {{allEvidenceFulfilled ? '✅ 必填证据已齐全' : '📋 必填证据清单（当前步骤推进所需）'}}
+              </div>
+              <div style="font-size:12px;color:#888;line-height:2.2">
+                <span *ngFor="let ev of requiredEvidence" style="margin-right:15px;display:inline-block">
                   <span [style.color]="hasEvidence(ev.value) ? '#52c41a' : '#ff4d4f'">
                     {{hasEvidence(ev.value) ? '✅' : '❌'}} {{ev.label}}
                   </span>
+                  <button *ngIf="!hasEvidence(ev.value)" (click)="quickUpload(ev.value)"
+                    style="margin-left:4px;padding:2px 8px;background:#ff4d4f;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px">
+                    上传
+                  </button>
                 </span>
+              </div>
+              <div *ngIf="!allEvidenceFulfilled && canProcess" style="margin-top:10px;font-size:12px;color:#ff4d4f">
+                ⚠️ 缺少必填证据，无法推进到下一环节。请先上传缺失的证据附件。
               </div>
             </div>
           </div>
@@ -129,6 +183,9 @@ import {
             <h4 style="margin:0 0 20px 0;padding-bottom:10px;border-bottom:1px solid #f0f0f0">
               处理记录 ({{order.processing_logs.length}})
             </h4>
+            <div *ngIf="order.processing_logs.length === 0" style="color:#999;text-align:center;padding:30px;font-size:13px">
+              暂无处理记录
+            </div>
             <div *ngFor="let log of order.processing_logs" style="display:flex;gap:15px;padding:15px 0;border-bottom:1px dashed #f0f0f0">
               <div style="width:40px;height:40px;border-radius:50%;background:#e6f7ff;color:#1890ff;display:flex;align-items:center;justify-content:center;font-weight:bold;flex-shrink:0">
                 {{log.operator.charAt(0)}}
@@ -154,8 +211,16 @@ import {
         <div>
           <div *ngIf="canProcess" style="background:#fff;padding:24px;border-radius:8px;margin-bottom:20px">
             <h4 style="margin:0 0 20px 0;padding-bottom:10px;border-bottom:1px solid #f0f0f0">办理操作</h4>
+            <div style="margin-bottom:12px;padding:10px;background:#f0f5ff;border-radius:6px;font-size:12px;color:#1890ff">
+              当前环节: <b>{{STATUS_LABELS[order.status]}}</b> | 您的角色: <b>{{ROLE_LABELS[currentUser!.role]}}</b>
+            </div>
+
             <div *ngIf="error" style="color:#ff4d4f;margin-bottom:15px;padding:10px;background:#fff2f0;border-radius:4px;font-size:13px">
               {{error}}
+            </div>
+
+            <div *ngIf="!allEvidenceFulfilled && availableActions.length > 0" style="color:#fa8c16;margin-bottom:15px;padding:10px;background:#fff7e6;border:1px solid #ffe58f;border-radius:4px;font-size:13px">
+              ⚠️ 必填证据尚未齐全，推进类操作将被后端拦截。建议先上传缺失证据。
             </div>
 
             <div style="margin-bottom:15px">
@@ -165,18 +230,36 @@ import {
             </div>
 
             <div *ngIf="needExceptionReason" style="margin-bottom:15px">
-              <label style="display:block;margin-bottom:8px;color:#333;font-size:14px">异常原因 <span style="color:#ff4d4f">*</span></label>
-              <textarea [(ngModel)]="processForm.exception_reason" rows="3" placeholder="请输入异常/退回原因"
+              <label style="display:block;margin-bottom:8px;color:#333;font-size:14px">异常/退回原因 <span style="color:#ff4d4f">*</span></label>
+              <textarea [(ngModel)]="processForm.exception_reason" rows="3" placeholder="请输入异常/退回原因（必填）"
                 style="width:100%;padding:10px;border:1px solid #d9d9d9;border-radius:4px;resize:vertical"></textarea>
             </div>
 
             <div style="display:flex;flex-direction:column;gap:10px">
               <button *ngFor="let action of availableActions" (click)="executeAction(action.value)"
-                [disabled]="loading"
-                [style.background]="action.danger ? '#ff4d4f' : '#1890ff'"
-                style="padding:12px;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px">
+                [disabled]="loading || (action.evidenceRequired && !allEvidenceFulfilled) || (action.needReason && !processForm.exception_reason?.trim())"
+                [style.background]="getActionButtonStyle(action)"
+                style="padding:12px;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;opacity:1"
+                [style.opacity]="(action.evidenceRequired && !allEvidenceFulfilled) || (action.needReason && !processForm.exception_reason?.trim()) ? '0.5' : '1'">
                 {{loading ? '处理中...' : action.label}}
+                <span *ngIf="action.evidenceRequired && !allEvidenceFulfilled" style="font-size:11px;margin-left:5px">(证据不足)</span>
+                <span *ngIf="action.needReason && !processForm.exception_reason?.trim()" style="font-size:11px;margin-left:5px">(需填原因)</span>
               </button>
+            </div>
+          </div>
+
+          <div *ngIf="!canProcess && order.status !== 'completed' && order.status !== 'rejected'" style="background:#fff;padding:24px;border-radius:8px;margin-bottom:20px">
+            <div style="text-align:center;color:#999;padding:20px">
+              <div style="font-size:32px;margin-bottom:10px">🔒</div>
+              <div>当前工单处理人为 <b>{{order.current_handler_name}}</b></div>
+              <div style="font-size:13px;margin-top:5px">您无权操作此工单</div>
+            </div>
+          </div>
+
+          <div *ngIf="order.status === 'completed'" style="background:#f6ffed;padding:24px;border-radius:8px;margin-bottom:20px;border:1px solid #b7eb8f">
+            <div style="text-align:center;color:#52c41a">
+              <div style="font-size:32px;margin-bottom:10px">✅</div>
+              <div style="font-weight:bold;font-size:16px">工单已办结归档</div>
             </div>
           </div>
 
@@ -220,6 +303,12 @@ export class WorkorderDetailComponent implements OnInit {
   loading = false;
   error = '';
   newAuditNote = '';
+  showUploadForm = false;
+  uploadEvidenceType = '';
+  selectedFile: File | null = null;
+  uploading = false;
+  uploadError = '';
+  uploadSuccess = '';
 
   processForm: WorkOrderProcessRequest = {
     action: '',
@@ -232,6 +321,11 @@ export class WorkorderDetailComponent implements OnInit {
   WARNING_LABELS = WARNING_LABELS;
   WARNING_COLORS = WARNING_COLORS;
   EVIDENCE_TYPES = EVIDENCE_TYPES;
+  ROLE_LABELS: Record<string, string> = {
+    registrar: '维修登记员',
+    supervisor: '维修审核主管',
+    manager: '复核负责人'
+  };
 
   constructor(
     private route: ActivatedRoute,
@@ -260,25 +354,25 @@ export class WorkorderDetailComponent implements OnInit {
     return ['reject', 'send_back'].includes(this.processForm.action);
   }
 
-  get availableActions(): { value: string; label: string; danger?: boolean }[] {
+  get availableActions(): { value: string; label: string; danger?: boolean; evidenceRequired?: boolean; needReason?: boolean }[] {
     if (!this.order || !this.currentUser) return [];
-    const actions: { value: string; label: string; danger?: boolean }[] = [];
+    const actions: { value: string; label: string; danger?: boolean; evidenceRequired?: boolean; needReason?: boolean }[] = [];
     const status = this.order.status;
     const role = this.currentUser.role;
 
     if (status === 'draft' && role === 'registrar') {
-      actions.push({ value: 'submit', label: '提交审核' });
+      actions.push({ value: 'submit', label: '提交审核', evidenceRequired: true });
     }
     if (status === 'pending_audit' && role === 'supervisor') {
-      actions.push({ value: 'approve', label: '审核通过，提交复核' });
-      actions.push({ value: 'reject', label: '退回补正', danger: true });
+      actions.push({ value: 'approve', label: '审核通过，提交复核', evidenceRequired: true });
+      actions.push({ value: 'reject', label: '退回补正', danger: true, needReason: true });
     }
     if (status === 'correction' && role === 'registrar') {
-      actions.push({ value: 'resubmit', label: '重新提交审核' });
+      actions.push({ value: 'resubmit', label: '重新提交审核', evidenceRequired: true });
     }
     if (status === 'pending_review' && role === 'manager') {
-      actions.push({ value: 'archive', label: '复核通过，归档办结' });
-      actions.push({ value: 'send_back', label: '退回补正', danger: true });
+      actions.push({ value: 'archive', label: '复核通过，归档办结', evidenceRequired: true });
+      actions.push({ value: 'send_back', label: '退回补正', danger: true, needReason: true });
     }
 
     return actions;
@@ -304,6 +398,11 @@ export class WorkorderDetailComponent implements OnInit {
     return [];
   }
 
+  get allEvidenceFulfilled(): boolean {
+    if (this.requiredEvidence.length === 0) return true;
+    return this.requiredEvidence.every(ev => this.hasEvidence(ev.value));
+  }
+
   hasEvidence(type: string): boolean {
     if (!this.order) return false;
     return this.order.attachments.some(a => a.evidence_type === type);
@@ -312,6 +411,53 @@ export class WorkorderDetailComponent implements OnInit {
   getEvidenceLabel(type: string): string {
     const ev = EVIDENCE_TYPES.find(e => e.value === type);
     return ev ? ev.label : type;
+  }
+
+  getActionButtonStyle(action: { danger?: boolean }): string {
+    return action.danger ? '#ff4d4f' : '#1890ff';
+  }
+
+  onFileSelected(event: any): void {
+    const file = event.target.files[0];
+    if (file) {
+      this.selectedFile = file;
+      this.uploadError = '';
+      this.uploadSuccess = '';
+    }
+  }
+
+  quickUpload(evidenceType: string): void {
+    this.showUploadForm = true;
+    this.uploadEvidenceType = evidenceType;
+    this.uploadError = '';
+    this.uploadSuccess = '';
+  }
+
+  uploadFile(): void {
+    if (!this.order || !this.selectedFile || !this.uploadEvidenceType) return;
+
+    this.uploading = true;
+    this.uploadError = '';
+    this.uploadSuccess = '';
+
+    this.apiService.uploadAttachment(this.order.id, this.selectedFile, this.uploadEvidenceType).subscribe({
+      next: () => {
+        this.uploading = false;
+        this.uploadSuccess = '上传成功！';
+        this.selectedFile = null;
+        this.uploadEvidenceType = '';
+        this.loadDetail(this.order!.id);
+        setTimeout(() => { this.uploadSuccess = ''; }, 3000);
+      },
+      error: err => {
+        this.uploading = false;
+        this.uploadError = err.error?.error || '上传失败';
+      }
+    });
+  }
+
+  getDownloadUrl(attachmentId: number): string {
+    return this.apiService.getAttachmentDownloadUrl(attachmentId);
   }
 
   loadDetail(id: number): void {
@@ -332,8 +478,14 @@ export class WorkorderDetailComponent implements OnInit {
   executeAction(action: string): void {
     if (!this.order) return;
 
-    if (this.needExceptionReason && !this.processForm.exception_reason?.trim()) {
-      this.error = '请输入异常原因';
+    if (['reject', 'send_back'].includes(action) && !this.processForm.exception_reason?.trim()) {
+      this.error = '退回补正操作必须填写异常原因';
+      return;
+    }
+
+    const actionDef = this.availableActions.find(a => a.value === action);
+    if (actionDef?.evidenceRequired && !this.allEvidenceFulfilled) {
+      this.error = '必填证据尚未齐全，无法推进。请先上传缺失的证据附件。';
       return;
     }
 

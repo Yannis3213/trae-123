@@ -4,9 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"workshop-system/internal/config"
 	"workshop-system/internal/database"
 	"workshop-system/internal/models"
 	"workshop-system/internal/utils"
@@ -363,7 +368,14 @@ func (s *WorkOrderService) Process(id int64, req *models.WorkOrderProcessRequest
 		return nil, ErrPermissionDenied
 	}
 
+	if req.Action == "reject" || req.Action == "send_back" {
+		if req.ExceptionReason == "" {
+			return nil, fmt.Errorf("退回补正操作必须填写异常原因")
+		}
+	}
+
 	if transition.RequiredEvidence != nil && len(transition.RequiredEvidence) > 0 {
+		var missingEvidence []string
 		for _, evidenceType := range transition.RequiredEvidence {
 			var count int
 			tx.QueryRow(`
@@ -371,8 +383,11 @@ func (s *WorkOrderService) Process(id int64, req *models.WorkOrderProcessRequest
 				WHERE work_order_id = ? AND evidence_type = ?
 			`, id, evidenceType).Scan(&count)
 			if count == 0 {
-				return nil, fmt.Errorf("%w: 缺少 %s 类型证据", ErrMissingEvidence, getEvidenceName(evidenceType))
+				missingEvidence = append(missingEvidence, getEvidenceName(evidenceType))
 			}
+		}
+		if len(missingEvidence) > 0 {
+			return nil, fmt.Errorf("%w: 缺少 %s", ErrMissingEvidence, strings.Join(missingEvidence, "、"))
 		}
 	}
 
@@ -404,16 +419,24 @@ func (s *WorkOrderService) Process(id int64, req *models.WorkOrderProcessRequest
 		if err != nil {
 			return nil, fmt.Errorf("failed to get registrar: %w", err)
 		}
-		if req.ExceptionReason != "" {
-			_, err = tx.Exec(`
-				INSERT INTO exception_records (
-					work_order_id, exception_type, reason,
-					operator_id, operator, current_status
-				) VALUES (?, ?, ?, ?, ?, ?)
-			`, id, "correction", req.ExceptionReason, user.ID, user.Name, currentStatus)
-			if err != nil {
-				return nil, err
-			}
+		reason := req.ExceptionReason
+		if reason == "" {
+			reason = "退回补正"
+		}
+		exceptionType := "correction"
+		if req.Action == "reject" {
+			exceptionType = "rejected"
+		} else if req.Action == "send_back" {
+			exceptionType = "send_back"
+		}
+		_, err = tx.Exec(`
+			INSERT INTO exception_records (
+				work_order_id, exception_type, reason,
+				operator_id, operator, current_status
+			) VALUES (?, ?, ?, ?, ?, ?)
+		`, id, exceptionType, reason, user.ID, user.Name, currentStatus)
+		if err != nil {
+			return nil, err
 		}
 	case models.StatusCompleted:
 		newHandlerID = user.ID
@@ -475,10 +498,14 @@ func (s *WorkOrderService) BatchProcess(req *models.BatchOperationRequest, user 
 	}
 
 	for _, id := range req.IDs {
+		var orderNo string
+		database.DB.QueryRow("SELECT order_no FROM work_orders WHERE id = ?", id).Scan(&orderNo)
+
 		processReq := &models.WorkOrderProcessRequest{
-			Action:  req.Action,
-			Remark:  req.AuditNote,
-			Version: 0,
+			Action:          req.Action,
+			Remark:          req.AuditNote,
+			ExceptionReason: req.ExceptionReason,
+			Version:         0,
 		}
 
 		_, err := s.Process(id, processReq, user)
@@ -486,6 +513,7 @@ func (s *WorkOrderService) BatchProcess(req *models.BatchOperationRequest, user 
 			response.Failed++
 			response.Results = append(response.Results, models.BatchResultItem{
 				ID:      id,
+				OrderNo: orderNo,
 				Success: false,
 				Message: err.Error(),
 			})
@@ -493,6 +521,7 @@ func (s *WorkOrderService) BatchProcess(req *models.BatchOperationRequest, user 
 			response.Success++
 			response.Results = append(response.Results, models.BatchResultItem{
 				ID:      id,
+				OrderNo: orderNo,
 				Success: true,
 				Message: "处理成功",
 			})
@@ -598,4 +627,117 @@ func getEvidenceName(evidenceType string) string {
 		return name
 	}
 	return evidenceType
+}
+
+func (s *WorkOrderService) UploadAttachment(workOrderID int64, file *multipart.FileHeader, evidenceType string, user *models.User) (*models.Attachment, error) {
+	var count int
+	database.DB.QueryRow("SELECT COUNT(*) FROM work_orders WHERE id = ?", workOrderID).Scan(&count)
+	if count == 0 {
+		return nil, ErrWorkOrderNotFound
+	}
+
+	uploadPath := config.AppConfig.UploadPath
+	if err := os.MkdirAll(uploadPath, 0755); err != nil {
+		return nil, fmt.Errorf("创建上传目录失败: %w", err)
+	}
+
+	subDir := filepath.Join(uploadPath, fmt.Sprintf("order_%d", workOrderID))
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		return nil, fmt.Errorf("创建工单目录失败: %w", err)
+	}
+
+	ext := filepath.Ext(file.Filename)
+	if ext == "" {
+		ext = ".bin"
+	}
+	fileName := fmt.Sprintf("%s_%d%s", evidenceType, time.Now().UnixNano(), ext)
+	filePath := filepath.Join(subDir, fileName)
+
+	src, err := file.Open()
+	if err != nil {
+		return nil, fmt.Errorf("打开上传文件失败: %w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.Create(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("创建目标文件失败: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return nil, fmt.Errorf("保存文件失败: %w", err)
+	}
+
+	relPath := filepath.Join(fmt.Sprintf("order_%d", workOrderID), fileName)
+
+	result, err := database.DB.Exec(`
+		INSERT INTO attachments (work_order_id, file_name, file_type, file_size, file_path, uploaded_by, uploader, evidence_type)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, workOrderID, file.Filename, file.Header.Get("Content-Type"), file.Size, relPath, user.ID, user.Name, evidenceType)
+	if err != nil {
+		os.Remove(filePath)
+		return nil, fmt.Errorf("保存附件记录失败: %w", err)
+	}
+
+	id, _ := result.LastInsertId()
+
+	_, err = database.DB.Exec(`
+		INSERT INTO processing_logs (work_order_id, operator_id, operator, action, from_status, to_status, remark)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, workOrderID, user.ID, user.Name, "上传附件", "", "", fmt.Sprintf("上传证据附件: %s (%s)", getEvidenceName(evidenceType), file.Filename))
+	if err != nil {
+		return nil, err
+	}
+
+	attachment := &models.Attachment{
+		ID:           id,
+		WorkOrderID:  workOrderID,
+		FileName:     file.Filename,
+		FileType:     file.Header.Get("Content-Type"),
+		FileSize:     file.Size,
+		FilePath:     relPath,
+		UploadedBy:   user.ID,
+		Uploader:     user.Name,
+		EvidenceType: evidenceType,
+	}
+	return attachment, nil
+}
+
+func (s *WorkOrderService) GetAttachments(workOrderID int64) ([]models.Attachment, error) {
+	rows, err := database.DB.Query(`
+		SELECT id, work_order_id, file_name, file_type, file_size, file_path,
+			uploaded_by, uploader, evidence_type, created_at
+		FROM attachments WHERE work_order_id = ? ORDER BY created_at DESC
+	`, workOrderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var attachments []models.Attachment
+	for rows.Next() {
+		a := models.Attachment{}
+		rows.Scan(&a.ID, &a.WorkOrderID, &a.FileName, &a.FileType, &a.FileSize,
+			&a.FilePath, &a.UploadedBy, &a.Uploader, &a.EvidenceType, &a.CreatedAt)
+		attachments = append(attachments, a)
+	}
+	return attachments, nil
+}
+
+func (s *WorkOrderService) GetAttachmentByID(attachmentID int64) (*models.Attachment, error) {
+	a := &models.Attachment{}
+	err := database.DB.QueryRow(`
+		SELECT id, work_order_id, file_name, file_type, file_size, file_path,
+			uploaded_by, uploader, evidence_type, created_at
+		FROM attachments WHERE id = ?
+	`, attachmentID).Scan(&a.ID, &a.WorkOrderID, &a.FileName, &a.FileType, &a.FileSize,
+		&a.FilePath, &a.UploadedBy, &a.Uploader, &a.EvidenceType, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("附件不存在")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
 }

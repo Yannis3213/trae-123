@@ -93,10 +93,12 @@ export interface BatchOperationRequest {
   ids: number[];
   action: string;
   audit_note?: string;
+  exception_reason?: string;
 }
 
 export interface BatchResultItem {
   id: number;
+  order_no: string;
   success: boolean;
   message: string;
 }

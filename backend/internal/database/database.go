@@ -347,11 +347,51 @@ func seedWorkOrders() error {
 		}
 	}
 
+	if err := seedAttachments(tx); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 
 	log.Println("Demo work orders created successfully")
+	return nil
+}
+
+func seedAttachments(tx *sql.Tx) error {
+	attachments := []struct {
+		orderID      int64
+		fileName     string
+		fileType     string
+		fileSize     int64
+		evidenceType string
+		uploadedBy   int64
+		uploader     string
+	}{
+		{1, "工单登记表_宝马530Li.pdf", "application/pdf", 102400, "registration_form", 1, "张登记"},
+		{1, "车辆检测清单_宝马530Li.pdf", "application/pdf", 89600, "vehicle_checklist", 1, "张登记"},
+		{1, "检测报告_宝马530Li.pdf", "application/pdf", 153600, "inspection_report", 2, "李主管"},
+		{1, "维修报价单_宝马530Li.pdf", "application/pdf", 76800, "repair_quote", 2, "李主管"},
+		{1, "配件确认单_宝马530Li.pdf", "application/pdf", 64000, "parts_confirmation", 2, "李主管"},
+		{2, "工单登记表_奔驰E300.pdf", "application/pdf", 98000, "registration_form", 1, "张登记"},
+		{2, "车辆检测清单_奔驰E300.pdf", "application/pdf", 87000, "vehicle_checklist", 1, "张登记"},
+		{3, "工单登记表_奥迪A6L.pdf", "application/pdf", 112000, "registration_form", 1, "张登记"},
+		{4, "工单登记表_丰田凯美瑞.pdf", "application/pdf", 95000, "registration_form", 1, "张登记"},
+	}
+
+	for _, a := range attachments {
+		_, err := tx.Exec(`
+			INSERT INTO attachments (work_order_id, file_name, file_type, file_size, file_path, uploaded_by, uploader, evidence_type)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, a.orderID, a.fileName, a.fileType, a.fileSize,
+			fmt.Sprintf("seed/order_%d/%s", a.orderID, a.fileName),
+			a.uploadedBy, a.uploader, a.evidenceType)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

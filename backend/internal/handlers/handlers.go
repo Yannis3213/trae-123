@@ -2,10 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"workshop-system/internal/config"
 	"workshop-system/internal/models"
 	"workshop-system/internal/services"
 	"workshop-system/internal/utils"
@@ -209,4 +213,81 @@ func (h *Handler) AddAuditNote(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	user := utils.GetUserFromContext(r)
 	utils.JSONResponse(w, http.StatusOK, user)
+}
+
+func (h *Handler) UploadAttachment(w http.ResponseWriter, r *http.Request) {
+	user := utils.GetUserFromContext(r)
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		utils.ErrorResponse(w, http.StatusBadRequest, "文件解析失败")
+		return
+	}
+
+	_, header, err := r.FormFile("file")
+	if err != nil {
+		utils.ErrorResponse(w, http.StatusBadRequest, "请选择要上传的文件")
+		return
+	}
+
+	evidenceType := r.FormValue("evidence_type")
+	if evidenceType == "" {
+		utils.ErrorResponse(w, http.StatusBadRequest, "请选择证据类型")
+		return
+	}
+
+	validEvidenceTypes := map[string]bool{
+		"registration_form": true, "vehicle_checklist": true,
+		"inspection_report": true, "repair_quote": true,
+		"parts_confirmation": true, "final_inspection": true,
+		"delivery_note": true, "customer_confirmation": true,
+	}
+	if !validEvidenceTypes[evidenceType] {
+		utils.ErrorResponse(w, http.StatusBadRequest, "无效的证据类型")
+		return
+	}
+
+	attachment, err := h.workOrderService.UploadAttachment(id, header, evidenceType, user)
+	if err != nil {
+		if err == services.ErrWorkOrderNotFound {
+			utils.ErrorResponse(w, http.StatusNotFound, err.Error())
+		} else {
+			utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	utils.JSONResponse(w, http.StatusCreated, attachment)
+}
+
+func (h *Handler) GetAttachments(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+
+	attachments, err := h.workOrderService.GetAttachments(id)
+	if err != nil {
+		utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.JSONResponse(w, http.StatusOK, attachments)
+}
+
+func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
+	attachID, _ := strconv.ParseInt(chi.URLParam(r, "attachId"), 10, 64)
+
+	attachment, err := h.workOrderService.GetAttachmentByID(attachID)
+	if err != nil {
+		utils.ErrorResponse(w, http.StatusNotFound, "附件不存在")
+		return
+	}
+
+	fullPath := filepath.Join(config.AppConfig.UploadPath, attachment.FilePath)
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		utils.ErrorResponse(w, http.StatusNotFound, "文件不存在")
+		return
+	}
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", attachment.FileName))
+	w.Header().Set("Content-Type", attachment.FileType)
+	http.ServeFile(w, r, fullPath)
 }

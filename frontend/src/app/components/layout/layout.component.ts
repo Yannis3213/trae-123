@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import { Router } from '@angular/router';
+import { Router, NavigationEnd } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
 import { ApiService } from '../../services/api.service';
 import { User, Statistics, ROLE_LABELS } from '../../models/models';
@@ -14,10 +14,10 @@ import { User, Statistics, ROLE_LABELS } from '../../models/models';
         </div>
         <nav style="padding:10px 0">
           <div *ngFor="let menu of menus" (click)="router.navigate([menu.path])"
-            [style.background]="router.url === menu.path ? '#1890ff' : 'transparent'"
+            [style.background]="router.url.startsWith(menu.path) ? '#1890ff' : 'transparent'"
             style="padding:12px 24px;cursor:pointer;display:flex;align-items:center;gap:10px"
             (mouseenter)="menu.hover = true" (mouseleave)="menu.hover = false"
-            [style.background]="menu.hover && router.url !== menu.path ? '#112240' : null">
+            [style.background]="menu.hover && !router.url.startsWith(menu.path) ? '#112240' : null">
             <span>{{menu.icon}}</span>
             <span>{{menu.label}}</span>
           </div>
@@ -88,6 +88,12 @@ export class LayoutComponent implements OnInit {
       this.currentUser = user;
     });
     this.loadStatistics();
+
+    this.router.events.subscribe(event => {
+      if (event instanceof NavigationEnd) {
+        this.loadStatistics();
+      }
+    });
   }
 
   get currentPageTitle(): string {

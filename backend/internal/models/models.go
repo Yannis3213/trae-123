@@ -123,13 +123,15 @@ type ExceptionRecord struct {
 }
 
 type BatchOperationRequest struct {
-	IDs         []int64 `json:"ids"`
-	Action      string  `json:"action"`
-	AuditNote   string  `json:"audit_note,omitempty"`
+	IDs             []int64 `json:"ids"`
+	Action          string  `json:"action"`
+	AuditNote       string  `json:"audit_note,omitempty"`
+	ExceptionReason string  `json:"exception_reason,omitempty"`
 }
 
 type BatchResultItem struct {
 	ID      int64  `json:"id"`
+	OrderNo string `json:"order_no"`
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }

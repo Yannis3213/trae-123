@@ -23,6 +23,7 @@ import {
               <option value="pending_review">复核中</option>
               <option value="completed">办结</option>
               <option value="pending_audit">待审核</option>
+              <option value="draft">草稿</option>
             </select>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -49,7 +50,7 @@ import {
           </div>
           <button (click)="loadList()"
             style="padding:8px 20px;background:#1890ff;color:#fff;border:none;border-radius:4px;cursor:pointer">
-            🔍 查询
+            查询
           </button>
           <button (click)="resetFilters()"
             style="padding:8px 20px;background:#fff;color:#666;border:1px solid #d9d9d9;border-radius:4px;cursor:pointer">
@@ -58,43 +59,51 @@ import {
         </div>
       </div>
 
-      <div *ngIf="showBatch && moduleType !== 'ledger'" style="background:#fff;padding:15px 20px;border-radius:8px;margin-bottom:15px;display:flex;align-items:center;gap:15px">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" [checked]="allSelected" (change)="toggleAll()"
-            style="width:16px;height:16px">
-          <span style="color:#666">全选 ({{selectedIds.length}}/{{orders.length}})</span>
-        </label>
-        <select *ngIf="batchActions.length > 0" [(ngModel)]="selectedBatchAction"
-          style="padding:8px 12px;border:1px solid #d9d9d9;border-radius:4px">
-          <option value="">选择批量操作</option>
-          <option *ngFor="let action of batchActions" [value]="action.value">
-            {{action.label}}
-          </option>
-        </select>
-        <input *ngIf="selectedBatchAction && needAuditNote" type="text"
-          [(ngModel)]="batchAuditNote" placeholder="请输入审核备注"
-          style="padding:8px 12px;border:1px solid #d9d9d9;border-radius:4px;flex:1;min-width:300px">
-        <button *ngIf="selectedBatchAction && selectedIds.length > 0" (click)="executeBatch()"
-          [disabled]="batchLoading"
-          style="padding:8px 20px;background:#52c41a;color:#fff;border:none;border-radius:4px;cursor:pointer">
-          {{batchLoading ? '处理中...' : '批量处理'}}
-        </button>
+      <div *ngIf="showBatch && moduleType !== 'ledger'" style="background:#fff;padding:15px 20px;border-radius:8px;margin-bottom:15px">
+        <div style="display:flex;align-items:center;gap:15px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" [checked]="allSelected" (change)="toggleAll()"
+              style="width:16px;height:16px">
+            <span style="color:#666">全选 ({{selectedIds.length}}/{{orders.length}})</span>
+          </label>
+          <select *ngIf="batchActions.length > 0" [(ngModel)]="selectedBatchAction"
+            style="padding:8px 12px;border:1px solid #d9d9d9;border-radius:4px">
+            <option value="">选择批量操作</option>
+            <option *ngFor="let action of batchActions" [value]="action.value">
+              {{action.label}}
+            </option>
+          </select>
+          <input *ngIf="selectedBatchAction" type="text"
+            [(ngModel)]="batchAuditNote" placeholder="审核备注（可选）"
+            style="padding:8px 12px;border:1px solid #d9d9d9;border-radius:4px;flex:1;min-width:200px">
+          <input *ngIf="selectedBatchAction && needExceptionReason" type="text"
+            [(ngModel)]="batchExceptionReason" placeholder="异常/退回原因（必填）"
+            style="padding:8px 12px;border:1px solid #ff4d4f;border-radius:4px;flex:1;min-width:250px">
+          <button *ngIf="selectedBatchAction && selectedIds.length > 0" (click)="executeBatch()"
+            [disabled]="batchLoading || (needExceptionReason && !batchExceptionReason.trim())"
+            style="padding:8px 20px;background:#52c41a;color:#fff;border:none;border-radius:4px;cursor:pointer">
+            {{batchLoading ? '处理中...' : '批量处理'}}
+          </button>
+        </div>
+        <div *ngIf="needExceptionReason && selectedBatchAction && !batchExceptionReason.trim()" style="margin-top:8px;font-size:12px;color:#ff4d4f">
+          退回补正操作必须填写异常原因
+        </div>
       </div>
 
       <div *ngIf="batchResult" style="background:#fff;padding:20px;border-radius:8px;margin-bottom:20px;border:2px solid #1890ff">
         <h4 style="margin:0 0 15px 0;color:#1890ff">
           批量处理结果 - 共{{batchResult.total}}条，成功{{batchResult.success}}条，失败{{batchResult.failed}}条
         </h4>
-        <div style="max-height:200px;overflow:auto">
-          <div *ngFor="let item of batchResult.results" style="padding:8px;border-bottom:1px solid #f0f0f0;font-size:13px">
-            <span style="margin-right:15px">工单ID: {{item.id}}</span>
-            <span [style.color]="item.success ? '#52c41a' : '#ff4d4f'" style="font-weight:bold">
+        <div style="max-height:250px;overflow:auto">
+          <div *ngFor="let item of batchResult.results" style="padding:10px;border-bottom:1px solid #f0f0f0;font-size:13px;display:flex;align-items:center;gap:10px">
+            <span style="font-family:monospace;color:#1890ff;min-width:130px">{{item.order_no || 'ID:' + item.id}}</span>
+            <span [style.color]="item.success ? '#52c41a' : '#ff4d4f'" style="font-weight:bold;min-width:60px">
               {{item.success ? '✅ 成功' : '❌ 失败'}}
             </span>
-            <span style="margin-left:15px;color:#888">{{item.message}}</span>
+            <span [style.color]="item.success ? '#888' : '#ff4d4f'">{{item.message}}</span>
           </div>
         </div>
-        <button (click)="batchResult = null; loadList()"
+        <button (click)="closeBatchResult()"
           style="margin-top:10px;padding:6px 16px;background:#1890ff;color:#fff;border:none;border-radius:4px;cursor:pointer">
           关闭并刷新
         </button>
@@ -203,6 +212,7 @@ export class WorkorderListComponent implements OnInit {
   allSelected = false;
   selectedBatchAction = '';
   batchAuditNote = '';
+  batchExceptionReason = '';
   batchLoading = false;
   batchResult: BatchOperationResponse | null = null;
 
@@ -226,7 +236,7 @@ export class WorkorderListComponent implements OnInit {
     return this.moduleType !== 'warning' && this.moduleType !== 'ledger';
   }
 
-  get needAuditNote(): boolean {
+  get needExceptionReason(): boolean {
     return ['reject', 'send_back'].includes(this.selectedBatchAction);
   }
 
@@ -307,8 +317,8 @@ export class WorkorderListComponent implements OnInit {
 
   executeBatch(): void {
     if (!this.selectedBatchAction || this.selectedIds.length === 0) return;
-    if (this.needAuditNote && !this.batchAuditNote.trim()) {
-      alert('请输入审核备注');
+    if (this.needExceptionReason && !this.batchExceptionReason.trim()) {
+      alert('退回补正操作必须填写异常原因');
       return;
     }
 
@@ -316,7 +326,8 @@ export class WorkorderListComponent implements OnInit {
     const req: BatchOperationRequest = {
       ids: this.selectedIds,
       action: this.selectedBatchAction,
-      audit_note: this.batchAuditNote
+      audit_note: this.batchAuditNote,
+      exception_reason: this.batchExceptionReason
     };
 
     this.apiService.batchProcess(req).subscribe({
@@ -325,11 +336,19 @@ export class WorkorderListComponent implements OnInit {
         this.batchLoading = false;
         this.selectedBatchAction = '';
         this.batchAuditNote = '';
+        this.batchExceptionReason = '';
+        this.refresh.emit();
       },
       error: () => {
         this.batchLoading = false;
       }
     });
+  }
+
+  closeBatchResult(): void {
+    this.batchResult = null;
+    this.loadList();
+    this.refresh.emit();
   }
 
   viewDetail(id: number): void {

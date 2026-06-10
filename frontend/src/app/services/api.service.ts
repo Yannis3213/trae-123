@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import {
-  WorkOrder, WorkOrderDetail, Statistics,
+  WorkOrder, WorkOrderDetail, Statistics, Attachment,
   BatchOperationRequest, BatchOperationResponse,
   WorkOrderCreateRequest, WorkOrderProcessRequest
 } from '../models/models';
@@ -57,5 +57,20 @@ export class ApiService {
 
   getCurrentUser(): Observable<any> {
     return this.http.get('/api/user/me');
+  }
+
+  uploadAttachment(workOrderId: number, file: File, evidenceType: string): Observable<Attachment> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('evidence_type', evidenceType);
+    return this.http.post<Attachment>(`/api/workorders/${workOrderId}/attachments`, formData);
+  }
+
+  getAttachments(workOrderId: number): Observable<Attachment[]> {
+    return this.http.get<Attachment[]>(`/api/workorders/${workOrderId}/attachments`);
+  }
+
+  getAttachmentDownloadUrl(attachmentId: number): string {
+    return `/api/attachments/${attachmentId}/download`;
   }
 }
