@@ -76,6 +76,7 @@ class OrderDetailSchema(Schema):
     last_approve_time: Optional[datetime]
 
     version: int
+    current_handler_id: Optional[int]
     created_at: datetime
     updated_at: datetime
 
@@ -470,6 +471,7 @@ def get_order_detail(request: HttpRequest, order_id: int):
         'deadline': order.deadline,
         'last_approve_time': order.last_approve_time,
         'version': order.version,
+        'current_handler_id': order.current_handler_id,
         'created_at': order.created_at,
         'updated_at': order.updated_at,
         'current_handler': {

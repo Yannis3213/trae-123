@@ -64,10 +64,13 @@
       </div>
       <nav class="menu">
         {#each menuItems as item}
-          <a class="menu-item {isActive(item.path) ? 'active' : ''}" href={item.path}>
+          <button
+            class="menu-item {isActive(item.path) ? 'active' : ''}"
+            on:click={() => goto(item.path)}
+          >
             <span class="menu-icon">{item.icon}</span>
             <span class="menu-text">{item.name}</span>
-          </a>
+          </button>
         {/each}
       </nav>
     </aside>
@@ -135,9 +138,13 @@
     gap: 10px;
     padding: 12px 20px;
     color: #d1d5db;
-    text-decoration: none;
+    background: none;
+    border: none;
+    width: 100%;
+    text-align: left;
     font-size: 14px;
     transition: all 0.2s;
+    cursor: pointer;
   }
   .menu-item:hover {
     background: #374151;

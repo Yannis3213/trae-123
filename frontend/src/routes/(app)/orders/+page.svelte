@@ -155,14 +155,22 @@
     return dayjs(d).format('YYYY-MM-DD HH:mm');
   }
 
+  function handleVisibility() {
+    if (!document.hidden) {
+      loadData();
+    }
+  }
+
   onMount(() => {
     loadMeta();
     loadData();
     refreshTimer = setInterval(loadData, 60000);
+    document.addEventListener('visibilitychange', handleVisibility);
   });
 
   onDestroy(() => {
     if (refreshTimer) clearInterval(refreshTimer);
+    document.removeEventListener('visibilitychange', handleVisibility);
   });
 
   let newOrder = {

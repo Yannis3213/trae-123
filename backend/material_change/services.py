@@ -157,12 +157,16 @@ class OrderService:
             roles = RETURN_ROLES.get(status, [])
             if profile.role not in roles:
                 return False, '当前角色无退回权限'
+            if order.current_handler_id and order.current_handler_id != profile.id:
+                return False, '当前处理人不是你，无法退回'
             return True, ''
         if action == 'correct':
             if status not in ['returned', 'draft']:
                 return False, '只有退回或草稿状态可补正'
             if profile.role != 'registrar':
                 return False, '只有登记员可补正'
+            if order.current_handler_id and order.current_handler_id != profile.id:
+                return False, '当前处理人不是你，无法补正'
             return True, ''
         if not flow:
             return False, '当前状态无可用操作'
@@ -277,7 +281,14 @@ class OrderService:
             'status_change'
         )
 
-        return {'success': True, 'message': f'{action_display}成功', 'order_id': order.id, 'new_status': next_status, 'version': order.version}
+        return {
+            'success': True,
+            'message': f'{action_display}成功',
+            'order_id': order.id,
+            'new_status': next_status,
+            'version': order.version,
+            'current_handler_id': order.current_handler_id,
+        }
 
     @staticmethod
     def _do_return(order, profile, data):
@@ -310,7 +321,14 @@ class OrderService:
             'return'
         )
 
-        return {'success': True, 'message': '退回成功', 'order_id': order.id, 'new_status': 'returned', 'version': order.version}
+        return {
+            'success': True,
+            'message': '退回成功',
+            'order_id': order.id,
+            'new_status': 'returned',
+            'version': order.version,
+            'current_handler_id': order.current_handler_id,
+        }
 
     @staticmethod
     def _do_correct(order, profile, data):
@@ -356,7 +374,14 @@ class OrderService:
             'correction'
         )
 
-        return {'success': True, 'message': '补正成功', 'order_id': order.id, 'version': order.version, 'new_status': from_status}
+        return {
+            'success': True,
+            'message': '补正成功',
+            'order_id': order.id,
+            'version': order.version,
+            'new_status': from_status,
+            'current_handler_id': order.current_handler_id,
+        }
 
     @staticmethod
     @transaction.atomic

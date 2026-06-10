@@ -2,7 +2,7 @@
   import { goto, page } from '$app/stores';
   import { orderApi } from '$lib/api';
   import { userStore, statusColors, warnColors } from '$lib/stores';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import dayjs from 'dayjs';
 
   let orderId = null;
@@ -150,6 +150,7 @@
       const res = await orderApi.action(orderId, {
         action: 'correct',
         correction_reason: editData.correction_reason,
+        expected_version: order.version,
         ...data,
       });
       editLoading = false;
@@ -157,7 +158,16 @@
         showEditModal = false;
         loadAll();
       } else {
-        alert(res.message);
+        let msg = res.message;
+        if (res.code === 'VERSION_CONFLICT') {
+          msg += '\n\n版本已变更，即将刷新页面';
+        } else if (res.code === 'PERMISSION_DENIED') {
+          msg += '\n\n请确认您的角色和处理人是否正确';
+        }
+        alert(msg);
+        if (res.code === 'VERSION_CONFLICT') {
+          loadAll();
+        }
       }
     } catch (e) {
       editLoading = false;
@@ -237,8 +247,22 @@
     { key: 'exception', label: '异常记录' },
   ];
 
+  let detailRefreshTimer = null;
+  function handleDetailVisibility() {
+    if (!document.hidden) {
+      loadAll();
+    }
+  }
+
   onMount(() => {
     loadAll();
+    detailRefreshTimer = setInterval(loadAll, 30000);
+    document.addEventListener('visibilitychange', handleDetailVisibility);
+  });
+
+  onDestroy(() => {
+    if (detailRefreshTimer) clearInterval(detailRefreshTimer);
+    document.removeEventListener('visibilitychange', handleDetailVisibility);
   });
 
   function goBack() {
