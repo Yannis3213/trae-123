@@ -252,18 +252,28 @@
               失败 {{ batchResult.fail_count }} 条
             </div>
             <div style="max-height: 300px; overflow-y: auto; margin-top: 12px;">
-              <div v-for="r in batchResult.results" :key="r.id" class="text-sm" style="padding: 6px 0; border-bottom: 1px solid #f3f4f6;">
-                <span class="text-success" v-if="r.success">✓</span>
-                <span class="text-danger" v-else>✗</span>
-                {{ r.code || r.id }} -
-                <span v-if="r.success">{{ r.message }}</span>
-                <span v-else class="text-danger">{{ r.error }}</span>
-                <span v-if="!r.success && r.missing?.length > 0" class="text-danger" style="margin-left: 8px;">
-                  （缺少：{{ r.missing.join('、') }}）
-                </span>
-                <span v-if="!r.success && r.error_code" class="text-muted" style="margin-left: 8px; font-size: 11px;">
-                  [{{ r.error_code }}]
-                </span>
+              <div v-for="r in batchResult.results" :key="r.id" class="text-sm" style="padding: 8px 0; border-bottom: 1px solid #f3f4f6;">
+                <div>
+                  <span class="text-success" v-if="r.success">✓</span>
+                  <span class="text-danger" v-else>✗</span>
+                  <strong>{{ r.code || r.id }}</strong> -
+                  <span v-if="r.success">{{ r.message }}</span>
+                  <span v-else class="text-danger">{{ r.error }}</span>
+                </div>
+                <div v-if="!r.success" style="margin-left: 18px; margin-top: 4px; color: #6b7280;">
+                  <span v-if="r.missing?.length > 0" class="text-danger">
+                    缺少：{{ r.missing.join('、') }}
+                  </span>
+                  <span v-if="r.current_node" style="margin-left: 12px;">
+                    当前节点：{{ r.current_node }}
+                  </span>
+                  <span v-if="r.responsible_person" style="margin-left: 12px;">
+                    责任人：{{ r.responsible_person }}
+                  </span>
+                  <span v-if="r.error_code" style="margin-left: 12px; font-size: 11px;">
+                    [{{ r.error_code }}]
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -345,18 +355,28 @@
               失败 {{ batchResult.fail_count }} 条
             </div>
             <div style="max-height: 300px; overflow-y: auto; margin-top: 12px;">
-              <div v-for="r in batchResult.results" :key="r.id" class="text-sm" style="padding: 6px 0; border-bottom: 1px solid #f3f4f6;">
-                <span class="text-success" v-if="r.success">✓</span>
-                <span class="text-danger" v-else>✗</span>
-                {{ r.code || r.id }} -
-                <span v-if="r.success">{{ r.message }}</span>
-                <span v-else class="text-danger">{{ r.error }}</span>
-                <span v-if="!r.success && r.missing?.length > 0" class="text-danger" style="margin-left: 8px;">
-                  （缺少：{{ r.missing.join('、') }}）
-                </span>
-                <span v-if="!r.success && r.error_code" class="text-muted" style="margin-left: 8px; font-size: 11px;">
-                  [{{ r.error_code }}]
-                </span>
+              <div v-for="r in batchResult.results" :key="r.id" class="text-sm" style="padding: 8px 0; border-bottom: 1px solid #f3f4f6;">
+                <div>
+                  <span class="text-success" v-if="r.success">✓</span>
+                  <span class="text-danger" v-else>✗</span>
+                  <strong>{{ r.code || r.id }}</strong> -
+                  <span v-if="r.success">{{ r.message }}</span>
+                  <span v-else class="text-danger">{{ r.error }}</span>
+                </div>
+                <div v-if="!r.success" style="margin-left: 18px; margin-top: 4px; color: #6b7280;">
+                  <span v-if="r.missing?.length > 0" class="text-danger">
+                    缺少：{{ r.missing.join('、') }}
+                  </span>
+                  <span v-if="r.current_node" style="margin-left: 12px;">
+                    当前节点：{{ r.current_node }}
+                  </span>
+                  <span v-if="r.responsible_person" style="margin-left: 12px;">
+                    责任人：{{ r.responsible_person }}
+                  </span>
+                  <span v-if="r.error_code" style="margin-left: 12px; font-size: 11px;">
+                    [{{ r.error_code }}]
+                  </span>
+                </div>
               </div>
             </div>
           </div>

@@ -60,18 +60,29 @@ function getWarningList(req, res) {
   const userRole = req.user.role;
   const username = req.user.username;
 
-  let whereClause = `WHERE status != ?`;
-  const params = [STATUS.COMPLETED];
+  const buildLevelWhere = (alias = 'w') => {
+    const base = `${alias}.status != ?`;
+    const params = [STATUS.COMPLETED];
 
-  if (level === 'overdue') {
-    whereClause += ` AND deadline < datetime('now')`;
-  } else if (level === 'warning') {
-    whereClause += ` AND deadline >= datetime('now') AND deadline <= datetime('now', '+' || ? || ' days')`;
-    params.push(WARNING_THRESHOLD_DAYS);
-  }
+    if (level === 'overdue') {
+      return { clause: `${base} AND ${alias}.deadline < datetime('now')`, params };
+    } else if (level === 'warning') {
+      return {
+        clause: `${base} AND ${alias}.deadline >= datetime('now') AND ${alias}.deadline <= datetime('now', '+' || ? || ' days')`,
+        params: [...params, WARNING_THRESHOLD_DAYS]
+      };
+    } else if (level === 'normal') {
+      return {
+        clause: `${base} AND ${alias}.deadline > datetime('now', '+' || ? || ' days')`,
+        params: [...params, WARNING_THRESHOLD_DAYS]
+      };
+    }
+    return { clause: base, params };
+  };
 
-  const query = `SELECT * FROM workorders ${whereClause} ORDER BY deadline ASC LIMIT ? OFFSET ?`;
-  const listParams = [...params, parseInt(pageSize), parseInt((page - 1) * pageSize)];
+  const listWhere = buildLevelWhere('w');
+  const listQuery = `SELECT w.* FROM workorders w WHERE ${listWhere.clause} ORDER BY w.deadline ASC LIMIT ? OFFSET ?`;
+  const listParams = [...listWhere.params, parseInt(pageSize), parseInt((page - 1) * pageSize)];
 
   const getExceptions = db.prepare(`
     SELECT * FROM exceptions WHERE workorder_id = ? ORDER BY created_at DESC
@@ -80,7 +91,7 @@ function getWarningList(req, res) {
     SELECT * FROM audit_notes WHERE workorder_id = ? ORDER BY created_at DESC
   `);
 
-  const workorders = db.prepare(query).all(...listParams).map(wo => {
+  const workorders = db.prepare(listQuery).all(...listParams).map(wo => {
     const formatted = formatWorkorder(wo);
     const responsible = getNodeResponsible(wo);
     const exceptions = getExceptions.all(wo.id);
@@ -97,17 +108,20 @@ function getWarningList(req, res) {
     };
   });
 
-  const countQuery = `SELECT COUNT(*) as total FROM workorders ${whereClause}`;
-  const { total } = db.prepare(countQuery).get(...params);
+  const countWhere = buildLevelWhere('w');
+  const countQuery = `SELECT COUNT(*) as total FROM workorders w WHERE ${countWhere.clause}`;
+  const { total } = db.prepare(countQuery).get(...countWhere.params);
 
-  const groupStats = db.prepare(`
+  const groupBaseWhere = buildLevelWhere('w');
+  const groupQuery = `
     SELECT
       SUM(CASE WHEN deadline < datetime('now') THEN 1 ELSE 0 END) as overdue,
       SUM(CASE WHEN deadline >= datetime('now') AND deadline <= datetime('now', '+' || ? || ' days') THEN 1 ELSE 0 END) as warning,
       SUM(CASE WHEN deadline > datetime('now', '+' || ? || ' days') THEN 1 ELSE 0 END) as normal
-    FROM workorders
+    FROM workorders w
     WHERE status != ?
-  `).get(WARNING_THRESHOLD_DAYS, WARNING_THRESHOLD_DAYS, STATUS.COMPLETED);
+  `;
+  const groupStats = db.prepare(groupQuery).get(WARNING_THRESHOLD_DAYS, WARNING_THRESHOLD_DAYS, STATUS.COMPLETED);
 
   res.json({
     success: true,

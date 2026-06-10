@@ -370,6 +370,7 @@ function seedData() {
   updateWoCompletion.run(completionData, 'wo_002');
   updateWoCompletion.run(completionData, 'wo_005');
   updateWoCompletion.run(completionData, 'wo_009');
+  updateWoCompletion.run(completionData, 'wo_006');
 
   const insertMoreRecords = db.prepare(`
     INSERT INTO processing_records (
@@ -399,6 +400,10 @@ function seedData() {
   addRecord('rec_wo_005_04', 'wo_005', '完工报工', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '陈刚', '完成完工报工', 3, 4);
   addRecord('rec_wo_005_05', 'wo_005', '提交复核', STATUS.PENDING_CORRECTION, STATUS.UNDER_REVIEW, ROLES.PLANNER, '刘芳', '提交车间主任复核', 4, 5);
 
+  addRecord('rec_wo_006_02', 'wo_006', '生产排程', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.PLANNER, '张伟', '完成生产排程', 1, 2);
+  addRecord('rec_wo_006_03', 'wo_006', '领料确认', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成领料确认', 2, 3);
+  addRecord('rec_wo_006_04', 'wo_006', '完工报工', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成完工报工', 3, 4);
+
   addRecord('rec_wo_007_02', 'wo_007', '生产排程', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.PLANNER, '刘芳', '完成生产排程', 1, 2);
   addRecord('rec_wo_007_03', 'wo_007', '领料确认', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成领料确认', 2, 3);
   addRecord('rec_wo_007_04', 'wo_007', '完工报工', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成完工报工', 3, 4);
@@ -414,6 +419,7 @@ function seedData() {
   updateWoVersion.run(5, 'wo_002');
   updateWoVersion.run(7, 'wo_003');
   updateWoVersion.run(5, 'wo_005');
+  updateWoVersion.run(4, 'wo_006');
   updateWoVersion.run(6, 'wo_007');
   updateWoVersion.run(5, 'wo_009');
 

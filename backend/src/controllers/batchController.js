@@ -78,7 +78,10 @@ function batchSubmitForReview(req, res) {
           code: wo.code,
           success: false,
           error: overdueCheck.error,
-          error_code: overdueCheck.code
+          error_code: overdueCheck.code,
+          current_node: overdueCheck.current_node,
+          responsible_role: overdueCheck.responsible_role,
+          responsible_person: overdueCheck.responsible_person
         };
       }
 
@@ -244,7 +247,10 @@ function batchReview(req, res) {
           results.push({
             id, code: wo.code, success: false,
             error: overdueCheck.error,
-            error_code: overdueCheck.code
+            error_code: overdueCheck.code,
+            current_node: overdueCheck.current_node,
+            responsible_role: overdueCheck.responsible_role,
+            responsible_person: overdueCheck.responsible_person
           });
           continue;
         }
@@ -374,7 +380,10 @@ function batchFactoryConfirm(req, res) {
         results.push({
           id, code: wo.code, success: false,
           error: overdueCheck.error,
-          error_code: overdueCheck.code
+          error_code: overdueCheck.code,
+          current_node: overdueCheck.current_node,
+          responsible_role: overdueCheck.responsible_role,
+          responsible_person: overdueCheck.responsible_person
         });
         continue;
       }
