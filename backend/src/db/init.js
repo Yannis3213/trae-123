@@ -298,7 +298,7 @@ function seedDemoOrders(db) {
   insertRecord.run('r_007_2', 'o_007', 'transfer', '转办至审核主管', 'pending', 'transferred',
     'u_registrar', '王登记', 'registrar', 'u_registrar', 'u_supervisor',
     fmt(addDays(now, 0.5)), fmt(addDays(now, 0.5)),
-    'deposit_slip,review_note', 'deposit_slip', '押金单已上传，核验记录待补齐（临期+可能触发状态冲突）', 1, 2, fmt(addDays(now,-1.5)));
+    'id_card,registration_form', 'id_card,registration_form,deposit_slip', '押金单已上传，核验记录待补齐（临期+可能触发状态冲突）', 1, 2, fmt(addDays(now,-1.5)));
 
   const insertAttachment = db.prepare(`
     INSERT INTO attachments (id, order_id, file_name, file_type, evidence_type, uploaded_by, uploaded_at)

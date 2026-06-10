@@ -22,6 +22,10 @@ export function requireRole(auth, roles) {
       ok: false,
       code: 'PERMISSION_DENIED',
       message: `当前角色【${ROLE_LABEL[auth.user.role]}】无权执行此操作，需要：${roles.map(r => ROLE_LABEL[r]).join('/')}`,
+      current_role: auth.user.role,
+      current_role_label: ROLE_LABEL[auth.user.role],
+      required_roles: roles,
+      required_roles_label: roles.map(r => ROLE_LABEL[r]),
     };
   }
   return auth;
@@ -34,6 +38,8 @@ export function requireHandler(auth, order) {
       ok: false,
       code: 'NOT_YOUR_HANDLER',
       message: `当前订单处理人为【${order.current_handler}】，您【${auth.user.id}】不是指定处理人`,
+      current_handler: order.current_handler,
+      your_id: auth.user.id,
     };
   }
   if (order.current_role && order.current_role !== auth.user.role) {
@@ -41,6 +47,10 @@ export function requireHandler(auth, order) {
       ok: false,
       code: 'ROLE_MISMATCH',
       message: `订单当前处于【${ROLE_LABEL[order.current_role]}】处理环节，您的角色【${ROLE_LABEL[auth.user.role]}】不匹配`,
+      order_role: order.current_role,
+      order_role_label: ROLE_LABEL[order.current_role],
+      your_role: auth.user.role,
+      your_role_label: ROLE_LABEL[auth.user.role],
     };
   }
   return auth;
@@ -55,6 +65,8 @@ export function verifyVersion(order, submittedVersion) {
       ok: false,
       code: 'VERSION_CONFLICT',
       message: `版本冲突：您基于 v${submittedVersion} 提交，但当前后端记录已是 v${order.version}，请刷新后重试`,
+      submitted_version: submittedVersion,
+      current_version: order.version,
     };
   }
   return { ok: true };
@@ -73,6 +85,9 @@ export function checkStatusTransition(order, targetStatus, action) {
       ok: false,
       code: 'STATUS_CONFLICT',
       message: `状态冲突：订单当前为【${order.status}】，无法流转到【${targetStatus}】`,
+      current_status: order.status,
+      target_status: targetStatus,
+      allowed_transitions: allowed,
     };
   }
   return { ok: true };
@@ -86,6 +101,8 @@ export function checkEvidence(order, providedEvidence, requiredTypes) {
       code: 'MISSING_EVIDENCE',
       message: `缺少必填证据：${missing.join('、')}`,
       missing,
+      provided: providedEvidence,
+      required: requiredTypes,
     };
   }
   return { ok: true };
@@ -102,6 +119,8 @@ export function checkDuplicateAction(order, action, operatorId) {
       ok: false,
       code: 'DUPLICATE_ACTION',
       message: `重复提交：您刚刚已执行过【${action}】操作，请刷新页面后查看最新状态`,
+      action,
+      last_action_time: last.created_at,
     };
   }
   return { ok: true };

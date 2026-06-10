@@ -40,6 +40,7 @@ export default function OrdersListPage() {
 
   const load = async () => {
     setLoading(true);
+    setMessage(null);
     const res = await api.listOrders({
       status: tab,
       keyword: keyword || undefined,
@@ -61,17 +62,17 @@ export default function OrdersListPage() {
 
   useEffect(() => { setPage(1); }, [tab, keyword, urgencyFilter, handlerScope, orderType]);
   useEffect(() => { load(); }, [tab, keyword, urgencyFilter, handlerScope, orderType, page]);
-  // ====== 关键修复：监听角色切换事件主动刷新 ======
+  // ====== 统一事件监听：角色切换 / 订单变更 触发重置 + 刷新 ======
   useEffect(() => {
-    const handler = () => { setPage(1); load(); };
+    const handleRefresh = () => { setPage(1); setMessage(null); load(); };
     if (typeof window !== 'undefined') {
-      window.addEventListener('hotel:user-switched', handler);
-      window.addEventListener('hotel:order-changed', handler);
+      window.addEventListener('hotel:user-switched', handleRefresh);
+      window.addEventListener('hotel:order-changed', handleRefresh);
     }
     return () => {
       if (typeof window !== 'undefined') {
-        window.removeEventListener('hotel:user-switched', handler);
-        window.removeEventListener('hotel:order-changed', handler);
+        window.removeEventListener('hotel:user-switched', handleRefresh);
+        window.removeEventListener('hotel:order-changed', handleRefresh);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

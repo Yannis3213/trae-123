@@ -17,6 +17,9 @@ export default function BatchPage() {
 
   const load = async () => {
     setLoading(true);
+    setMessage(null);
+    setBatchResults(null);
+    setSelectedIds([]);
     const r = await api.listOrders({ handler_scope: 'all', page_size: 200 });
     setLoading(false);
     if (!r.ok) {
@@ -24,20 +27,20 @@ export default function BatchPage() {
       return;
     }
     setOrders(r.data!.list);
-    setBatchResults(null);
   };
 
   useEffect(() => { load(); }, []);
+  // ====== 统一事件监听：角色切换 / 订单变更 触发重置 + 刷新 ======
   useEffect(() => {
-    const handler = () => load();
+    const handleRefresh = () => { setSelectedIds([]); setBatchResults(null); load(); };
     if (typeof window !== 'undefined') {
-      window.addEventListener('hotel:user-switched', handler);
-      window.addEventListener('hotel:order-changed', handler);
+      window.addEventListener('hotel:user-switched', handleRefresh);
+      window.addEventListener('hotel:order-changed', handleRefresh);
     }
     return () => {
       if (typeof window !== 'undefined') {
-        window.removeEventListener('hotel:user-switched', handler);
-        window.removeEventListener('hotel:order-changed', handler);
+        window.removeEventListener('hotel:user-switched', handleRefresh);
+        window.removeEventListener('hotel:order-changed', handleRefresh);
       }
     };
   }, []);
@@ -85,6 +88,9 @@ export default function BatchPage() {
       text: `批量推进完成：成功 ${ok} 条，失败 ${fail} 条，队列将刷新`,
     });
     setSelectedIds([]);
+    if (typeof window !== 'undefined' && ok > 0) {
+      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
+    }
     await load();
   };
 

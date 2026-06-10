@@ -3,11 +3,11 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { api } from '../../lib/api';
+import { api } from '../../../lib/api';
 import type {
   OrderDetailResult, Attachment, ProcessingRecord, AuditNote, ExceptionReason,
-} from '../../lib/types';
-import { fmtAmount, fmtDate, fmtTime, relativeDeadline, statusBadge, urgencyBadge } from '../../lib/format';
+} from '../../../lib/types';
+import { fmtAmount, fmtDate, fmtTime, relativeDeadline, statusBadge, urgencyBadge } from '../../../lib/format';
 
 const EVIDENCE_LABEL: Record<string, string> = {
   id_card: '身份证凭证', registration_form: '入住登记单',
@@ -36,6 +36,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
   const load = async () => {
     setLoading(true);
+    setMessage(null);
+    setActionDialog(null);
+    setForm({
+      evidence_types: [] as string[], remark: '', note_content: '',
+      exception_label: '', exception_desc: '', exception_severity: 'medium',
+    });
     const r = await api.getOrderDetail(id);
     setLoading(false);
     if (!r.ok) {
@@ -49,17 +55,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   };
 
   useEffect(() => { load(); }, [id]);
-  // ====== 关键修复：监听角色切换 / 订单变更事件刷新详情 ======
+  // ====== 统一事件监听：角色切换 / 订单变更 触发重置 + 刷新 ======
   useEffect(() => {
-    const handler = () => load();
+    const handleRefresh = () => { setActionDialog(null); setMessage(null); load(); };
     if (typeof window !== 'undefined') {
-      window.addEventListener('hotel:user-switched', handler);
-      window.addEventListener('hotel:order-changed', handler);
+      window.addEventListener('hotel:user-switched', handleRefresh);
+      window.addEventListener('hotel:order-changed', handleRefresh);
     }
     return () => {
       if (typeof window !== 'undefined') {
-        window.removeEventListener('hotel:user-switched', handler);
-        window.removeEventListener('hotel:order-changed', handler);
+        window.removeEventListener('hotel:user-switched', handleRefresh);
+        window.removeEventListener('hotel:order-changed', handleRefresh);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,6 +130,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     }
     setMessage({ type: 'ok', text: '证据已上传并记录到审计轨迹' });
     setAddAttachmentForm({ open: false, file_name: '', evidence_type: 'id_card', remark: '' });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
+    }
     await load();
   };
 
@@ -137,12 +146,18 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       return;
     }
     setAddNoteForm({ open: false, note_type: 'normal', content: '' });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
+    }
     await load();
   };
 
   const resolveEx = async (eid: string) => {
     const r = await api.resolveException(id, eid);
     if (!r.ok) { setMessage({ type: 'err', text: r.message || '解决异常失败' }); return; }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
+    }
     await load();
   };
 

@@ -405,7 +405,10 @@ export default async function orderRoutes(fastify) {
       return reply.code(409).send({
         ok: false, code: 'STATUS_SYNC_CONFLICT',
         message: `角色边界校验失败：页面显示状态【${STATUS_LABEL[page_status] || page_status}】与后端记录【${STATUS_LABEL[order.status]}】不一致，请刷新队列或详情后再操作，避免静默覆盖`,
-        page_status, backend_status: order.status,
+        page_status,
+        page_status_label: STATUS_LABEL[page_status] || page_status,
+        backend_status: order.status,
+        backend_status_label: STATUS_LABEL[order.status] || order.status,
       });
     }
 
