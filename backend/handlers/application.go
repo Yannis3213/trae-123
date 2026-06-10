@@ -158,32 +158,32 @@ func GetApplication(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response{Code: 0, Data: gin.H{
-		"id":                        app.ID,
-		"application_no":            app.ApplicationNo,
-		"tenant_name":               app.TenantName,
-		"tenant_phone":              app.TenantPhone,
-		"room_number":               app.RoomNumber,
-		"building_name":             app.BuildingName,
-		"lease_start_date":          app.LeaseStartDate,
-		"lease_end_date":            app.LeaseEndDate,
-		"monthly_rent":              app.MonthlyRent,
-		"deposit":                   app.Deposit,
-		"status":                    app.Status,
-		"current_handler_id":        app.CurrentHandlerID,
-		"current_handler_name":      app.CurrentHandlerName,
-		"current_handler_role":      app.CurrentHandlerRole,
-		"version":                   app.Version,
-		"confirmed":                 app.Confirmed,
-		"tenant_signing_status":     app.TenantSigningStatus,
-		"room_confirmation_status":  app.RoomConfirmationStatus,
-		"move_in_handover_status":   app.MoveInHandoverStatus,
-		"exception_reason":          app.ExceptionReason,
-		"expiry_status":             expiryStatus,
-		"overdue_days":              overdueDays,
-		"created_at":                app.CreatedAt,
-		"updated_at":                app.UpdatedAt,
-		"attachments":               attachments,
-		"processing_records":        records,
+		"id":                       app.ID,
+		"application_no":           app.ApplicationNo,
+		"tenant_name":              app.TenantName,
+		"tenant_phone":             app.TenantPhone,
+		"room_number":              app.RoomNumber,
+		"building_name":            app.BuildingName,
+		"lease_start_date":         app.LeaseStartDate,
+		"lease_end_date":           app.LeaseEndDate,
+		"monthly_rent":             app.MonthlyRent,
+		"deposit":                  app.Deposit,
+		"status":                   app.Status,
+		"current_handler_id":       app.CurrentHandlerID,
+		"current_handler_name":     app.CurrentHandlerName,
+		"current_handler_role":     app.CurrentHandlerRole,
+		"version":                  app.Version,
+		"confirmed":                app.Confirmed,
+		"tenant_signing_status":    app.TenantSigningStatus,
+		"room_confirmation_status": app.RoomConfirmationStatus,
+		"move_in_handover_status":  app.MoveInHandoverStatus,
+		"exception_reason":         app.ExceptionReason,
+		"expiry_status":            expiryStatus,
+		"overdue_days":             overdueDays,
+		"created_at":               app.CreatedAt,
+		"updated_at":               app.UpdatedAt,
+		"attachments":              attachments,
+		"processing_records":       records,
 	}})
 }
 
@@ -384,10 +384,15 @@ func ProcessApplication(c *gin.Context) {
 	}
 	app.Confirmed = confirmed == 1
 
+	if req.Version > 0 && req.Version != app.Version {
+		c.JSON(http.StatusConflict, response{Code: 40901, Message: fmt.Sprintf("版本冲突，请求版本v%d，当前版本v%d，请刷新后重试", req.Version, app.Version)})
+		return
+	}
+
 	validActions := map[string][]string{
-		"lease_clerk":            {"correct"},
+		"lease_clerk":             {"correct"},
 		"maintenance_coordinator": {"verify_pass", "verify_fail"},
-		"store_manager":          {"confirm"},
+		"store_manager":           {"confirm"},
 	}
 	allowed, exists := validActions[role]
 	if !exists {
@@ -408,9 +413,9 @@ func ProcessApplication(c *gin.Context) {
 
 	if app.CurrentHandlerRole != "" && app.CurrentHandlerRole != role {
 		roleNames := map[string]string{
-			"lease_clerk":            "租务专员",
+			"lease_clerk":             "租务专员",
 			"maintenance_coordinator": "维修协调员",
-			"store_manager":          "门店经理",
+			"store_manager":           "门店经理",
 		}
 		c.JSON(http.StatusForbidden, response{Code: 40302, Message: fmt.Sprintf("当前申请应由%s处理", roleNames[app.CurrentHandlerRole])})
 		return
@@ -544,23 +549,31 @@ func ProcessApplication(c *gin.Context) {
 	}
 
 	_, err = tx.Exec(`INSERT INTO processing_records
-		(id, application_id, handler_id, handler_name, handler_role, action, from_status, to_status, remark, exception_reason, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		models.GenerateID(), id, userID, userName, role, req.Action, app.Status, newStatus, req.Remark, req.ExceptionReason, now)
+		(id, application_id, handler_id, handler_name, handler_role, action, from_status, to_status, remark, exception_reason, version, next_handler_role, next_handler_id, next_handler_name, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		models.GenerateID(), id, userID, userName, role, req.Action, app.Status, newStatus, req.Remark, req.ExceptionReason, app.Version, nextHandlerRole, nextHandlerID, nextHandlerName, now)
 	if err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, response{Code: 500, Message: "写入处理记录失败"})
 		return
 	}
 
-	auditDetail := fmt.Sprintf("执行操作: %s", req.Action)
+	auditDetail := fmt.Sprintf("执行操作: %s, 版本: v%d→v%d", req.Action, app.Version, app.Version+1)
 	if req.Remark != "" {
 		auditDetail += fmt.Sprintf(", 备注: %s", req.Remark)
 	}
+	if nextHandlerRole != "" {
+		roleNames := map[string]string{
+			"lease_clerk":             "租务专员",
+			"maintenance_coordinator": "维修协调员",
+			"store_manager":           "门店经理",
+		}
+		auditDetail += fmt.Sprintf(", 下一处理: %s", roleNames[nextHandlerRole])
+	}
 	_, err = tx.Exec(`INSERT INTO audit_logs
-		(id, application_id, operator_id, operator_name, operator_role, action, before_status, after_status, detail, failure_reason, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		models.GenerateID(), id, userID, userName, role, req.Action, app.Status, newStatus, auditDetail, req.ExceptionReason, now)
+		(id, application_id, operator_id, operator_name, operator_role, action, before_status, after_status, detail, failure_reason, version, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		models.GenerateID(), id, userID, userName, role, req.Action, app.Status, newStatus, auditDetail, req.ExceptionReason, app.Version, now)
 	if err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, response{Code: 500, Message: "写入审计日志失败"})
@@ -572,7 +585,12 @@ func ProcessApplication(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response{Code: 0, Data: gin.H{"status": newStatus, "version": app.Version + 1, "confirmed": req.Action == "confirm"}})
+	c.JSON(http.StatusOK, response{Code: 0, Data: gin.H{
+		"status": newStatus, "version": app.Version + 1, "confirmed": req.Action == "confirm",
+		"next_handler_role": nextHandlerRole,
+		"next_handler_id":   nextHandlerID,
+		"next_handler_name": nextHandlerName,
+	}})
 }
 
 func UploadAttachment(c *gin.Context) {

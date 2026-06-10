@@ -81,6 +81,10 @@ type ProcessingRecord struct {
 	ToStatus        string `json:"to_status"`
 	Remark          string `json:"remark"`
 	ExceptionReason string `json:"exception_reason"`
+	Version         int    `json:"version"`
+	NextHandlerRole string `json:"next_handler_role"`
+	NextHandlerID   string `json:"next_handler_id"`
+	NextHandlerName string `json:"next_handler_name"`
 	CreatedAt       string `json:"created_at"`
 }
 
@@ -95,6 +99,20 @@ type AuditLog struct {
 	AfterStatus   string `json:"after_status"`
 	Detail        string `json:"detail"`
 	FailureReason string `json:"failure_reason"`
+	Version       int    `json:"version"`
+	CreatedAt     string `json:"created_at"`
+}
+
+type BatchFailureRecord struct {
+	ID            string `json:"id"`
+	BatchID       string `json:"batch_id"`
+	ApplicationID string `json:"application_id"`
+	ApplicationNo string `json:"application_no"`
+	Reason        string `json:"reason"`
+	HandlerRole   string `json:"handler_role"`
+	HandlerID     string `json:"handler_id"`
+	HandlerName   string `json:"handler_name"`
+	Action        string `json:"action"`
 	CreatedAt     string `json:"created_at"`
 }
 
@@ -127,15 +145,24 @@ type UpdateApplicationRequest struct {
 
 type ProcessRequest struct {
 	Action          string `json:"action" binding:"required"`
+	Version         int    `json:"version"`
 	Remark          string `json:"remark"`
 	ExceptionReason string `json:"exception_reason"`
 	SubModule       string `json:"sub_module"`
 	SubModuleStatus string `json:"sub_module_status"`
 }
 
+type BatchApplicationItem struct {
+	ID      string `json:"id" binding:"required"`
+	Version int    `json:"version"`
+}
+
 type BatchProcessRequest struct {
-	ApplicationIDs []string `json:"application_ids" binding:"required"`
-	Action         string   `json:"action" binding:"required"`
+	ApplicationIDs   []string               `json:"application_ids"`
+	ApplicationItems []BatchApplicationItem `json:"application_items"`
+	Action           string                 `json:"action" binding:"required"`
+	Remark           string                 `json:"remark"`
+	ExceptionReason  string                 `json:"exception_reason"`
 }
 
 type BatchResultItem struct {

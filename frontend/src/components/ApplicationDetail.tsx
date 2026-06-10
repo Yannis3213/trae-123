@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Descriptions, Tag, Steps, Button, Space, Modal, Input, Upload, message, Divider, Alert, Badge } from 'antd';
-import { ArrowLeftOutlined, UploadOutlined, CheckCircleTwoTone, ExclamationCircleOutlined } from '@ant-design/icons';
+import { Card, Descriptions, Tag, Steps, Button, Space, Modal, Input, Upload, message, Divider, Alert, Badge, Tooltip } from 'antd';
+import { ArrowLeftOutlined, UploadOutlined, CheckCircleTwoTone, ExclamationCircleOutlined, FileTextOutlined, VersionOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getApplication, processApplication, getAuditTrail, uploadAttachment } from '../api/application';
 import {
@@ -30,6 +30,7 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
   const [correctRemark, setCorrectRemark] = useState('');
   const [verifyFailOpen, setVerifyFailOpen] = useState(false);
   const [exceptionReason, setExceptionReason] = useState('');
+  const [failRemark, setFailRemark] = useState('');
   const [confirmLoading, setConfirmLoading] = useState(false);
 
   const userInfo = getUserInfo();
@@ -61,12 +62,16 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
     onRefresh?.();
   };
 
-  const handleProcess = async (action: string, data?: Record<string, string>) => {
+  const handleProcess = async (action: string, data?: Record<string, string | number>) => {
     if (!detail) return;
     setConfirmLoading(true);
     try {
-      await processApplication(id, { action, version: detail.version, ...data });
-      message.success('操作成功');
+      const resp = await processApplication(id, { action, version: detail.version, ...data });
+      if (resp?.next_handler_role) {
+        message.success(`操作成功，下一处理：${ROLE_LABELS[resp.next_handler_role] || resp.next_handler_role}`);
+      } else {
+        message.success('操作成功');
+      }
       afterAction();
     } finally {
       setConfirmLoading(false);
@@ -88,9 +93,10 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
       message.warning('请填写异常原因');
       return;
     }
-    handleProcess('verify_fail', { exception_reason: exceptionReason });
+    handleProcess('verify_fail', { exception_reason: exceptionReason, remark: failRemark });
     setVerifyFailOpen(false);
     setExceptionReason('');
+    setFailRemark('');
   };
 
   const handleUpload = async (file: File) => {
@@ -141,9 +147,9 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
   const needAttachment = detail.status === 'pending_verification' && currentRole === 'maintenance_coordinator';
   const hasAttachment = attachmentCount > 0;
 
-  const showCorrect = currentRole === 'lease_clerk' && detail.status === 'verification_failed';
-  const showVerify = currentRole === 'maintenance_coordinator' && detail.status === 'pending_verification';
-  const showConfirm = currentRole === 'store_manager' && detail.status === 'verification_complete' && !detail.confirmed;
+  const showCorrect = currentRole === 'lease_clerk' && detail.status === 'verification_failed' && isHandlerMatch();
+  const showVerify = currentRole === 'maintenance_coordinator' && detail.status === 'pending_verification' && isHandlerMatch();
+  const showConfirm = currentRole === 'store_manager' && detail.status === 'verification_complete' && !detail.confirmed && isHandlerMatch();
 
   return (
     <div>
@@ -155,13 +161,25 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
         title={
           <Space>
             <span>租约申请详情</span>
+            <Tooltip title={`版本号 v${detail.version}，每次操作版本号自增`}>
+              <Tag color="blue" icon={<VersionOutlined />}>v{detail.version}</Tag>
+            </Tooltip>
             {detail.confirmed && (
               <Badge status="success" text={<span style={{ color: '#52c41a' }}><CheckCircleTwoTone twoToneColor="#52c41a" /> 门店经理已确认</span>} />
             )}
           </Space>
         }
         style={{ marginBottom: 16 }}
-        extra={<Tag color="blue">v{detail.version}</Tag>}
+        extra={
+          <Space>
+            <Tag color={STATUS_COLORS[detail.status]} style={{ fontSize: 14 }}>{STATUS_LABELS[detail.status]}</Tag>
+            {hasAttachment
+              ? <Tag color="green" icon={<FileTextOutlined />}>证据齐全 ({attachmentCount}份)</Tag>
+              : needAttachment
+                ? <Tag color="orange" icon={<ExclamationCircleOutlined />}>缺少核验证据</Tag>
+                : null}
+          </Space>
+        }
       >
         <Descriptions column={{ xs: 1, sm: 2, md: 3 }} bordered size="small">
           <Descriptions.Item label="申请编号">{detail.application_no}</Descriptions.Item>
@@ -182,13 +200,18 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
           </Descriptions.Item>
           <Descriptions.Item label="当前处理人">
             {detail.current_handler_name
-              ? `${detail.current_handler_name}（${ROLE_LABELS[detail.current_handler_role]}）`
+              ? `${detail.current_handler_name}（${ROLE_LABELS[detail.current_handler_role]}）${detail.current_handler_id === currentUserId ? ' <Tag color="blue">您负责</Tag>' : ''}`
               : detail.current_handler_role
                 ? `待${ROLE_LABELS[detail.current_handler_role]}处理`
                 : '-'}
           </Descriptions.Item>
           <Descriptions.Item label="创建时间">{dayjs(detail.created_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
           <Descriptions.Item label="更新时间">{dayjs(detail.updated_at).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.Item>
+          <Descriptions.Item label="版本号">
+            <Tooltip title="每次操作版本号自增，用于并发控制">
+              <span style={{ fontWeight: 500, color: '#1890ff' }}>v{detail.version}</span>
+            </Tooltip>
+          </Descriptions.Item>
         </Descriptions>
 
         {detail.exception_reason && (
@@ -198,6 +221,7 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
             description={detail.exception_reason}
             type="error"
             showIcon
+            icon={<ExclamationCircleOutlined />}
           />
         )}
 
@@ -239,6 +263,7 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
             description="确认后的租约申请不可再次确认"
             type="success"
             showIcon
+            icon={<CheckCircleTwoTone twoToneColor="#52c41a" />}
           />
         )}
       </Card>
@@ -264,30 +289,37 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
             )}
             {showVerify && (
               <>
-                <Button
-                  type="primary"
-                  loading={confirmLoading}
-                  disabled={!hasAttachment}
-                  onClick={() => handleProcess('verify_pass')}
-                >
-                  {ACTION_LABELS.verify_pass}
-                </Button>
+                <Tooltip title={hasAttachment ? '' : '请先上传核验证据附件'}>
+                  <Button
+                    type="primary"
+                    loading={confirmLoading}
+                    disabled={!hasAttachment}
+                    onClick={() => handleProcess('verify_pass')}
+                  >
+                    {ACTION_LABELS.verify_pass}
+                  </Button>
+                </Tooltip>
                 <Button danger loading={confirmLoading} onClick={() => setVerifyFailOpen(true)}>
                   {ACTION_LABELS.verify_fail}
                 </Button>
               </>
             )}
             {showConfirm && (
-              <Button type="primary" loading={confirmLoading} onClick={() => handleProcess('confirm')}>
-                {ACTION_LABELS.confirm}
-              </Button>
+              <Tooltip title="确认结果，操作后不可重复确认">
+                <Button type="primary" loading={confirmLoading} onClick={() => handleProcess('confirm')}>
+                  {ACTION_LABELS.confirm}
+                </Button>
+              </Tooltip>
             )}
           </Space>
           {showVerify && !hasAttachment && (
             <div style={{ color: '#faad14', marginTop: 8, fontSize: 12 }}>
-              <ExclamationCircleOutlined /> 核验通过前请先上传证据附件
+              <ExclamationCircleOutlined /> 核验通过前请先上传证据附件（当前 {attachmentCount} 份）
             </div>
           )}
+          <div style={{ color: '#888', marginTop: 12, fontSize: 12 }}>
+            <VersionOutlined /> 提交请求携带当前版本 v{detail.version}，若数据已被他人修改将拦截并提示刷新
+          </div>
         </Card>
       )}
 
@@ -317,37 +349,69 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
       </Card>
 
       <Modal
-        title="补正操作"
+        title={
+          <Space>
+            <span>补正操作</span>
+            <Tag color="blue">v{detail.version}</Tag>
+          </Space>
+        }
         open={correctOpen}
         onOk={handleCorrect}
         confirmLoading={confirmLoading}
         onCancel={() => { setCorrectOpen(false); setCorrectRemark(''); }}
         okText="提交补正"
       >
-        <div style={{ marginBottom: 8, color: '#666' }}>当前版本：v{detail.version}</div>
+        <Alert
+          style={{ marginBottom: 16 }}
+          type="info"
+          showIcon
+          message="补正后申请状态：待核验 → 流转至维修协调员继续核验"
+          description={`当前版本 v${detail.version}，提交后版本将自增为 v${detail.version + 1}`}
+        />
+        <div style={{ marginBottom: 8, fontWeight: 500 }}>补正说明 / 备注（必填）</div>
         <Input.TextArea
           rows={4}
-          placeholder="请填写补正说明"
+          placeholder="请填写补正说明，说明补正内容、修正的异常点等"
           value={correctRemark}
           onChange={(e) => setCorrectRemark(e.target.value)}
         />
       </Modal>
 
       <Modal
-        title="核验失败"
+        title={
+          <Space>
+            <span>核验失败</span>
+            <Tag color="red">v{detail.version}</Tag>
+          </Space>
+        }
         open={verifyFailOpen}
         onOk={handleVerifyFail}
         confirmLoading={confirmLoading}
-        onCancel={() => { setVerifyFailOpen(false); setExceptionReason(''); }}
+        onCancel={() => { setVerifyFailOpen(false); setExceptionReason(''); setFailRemark(''); }}
         okText="提交失败"
         okButtonProps={{ danger: true }}
       >
-        <div style={{ marginBottom: 8, color: '#666' }}>当前版本：v{detail.version}</div>
+        <Alert
+          style={{ marginBottom: 16 }}
+          type="warning"
+          showIcon
+          message="核验失败后申请状态：核验失败 → 流转至租务专员补正"
+          description={`当前版本 v${detail.version}，提交后版本将自增为 v${detail.version + 1}`}
+        />
+        <div style={{ marginBottom: 8, fontWeight: 500 }}>异常原因（必填）</div>
         <Input.TextArea
-          rows={4}
-          placeholder="请填写异常原因（必填）"
+          rows={3}
+          placeholder="请填写异常原因，例如：租客签约资料不全、房间存在未处理维修项等"
           value={exceptionReason}
           onChange={(e) => setExceptionReason(e.target.value)}
+          style={{ marginBottom: 16 }}
+        />
+        <div style={{ marginBottom: 8, fontWeight: 500 }}>备注说明（选填）</div>
+        <Input.TextArea
+          rows={2}
+          placeholder="补充说明或处理建议"
+          value={failRemark}
+          onChange={(e) => setFailRemark(e.target.value)}
         />
       </Modal>
     </div>

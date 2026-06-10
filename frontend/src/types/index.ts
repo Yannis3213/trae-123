@@ -54,6 +54,10 @@ export interface ProcessingRecord {
   to_status: string;
   remark: string;
   exception_reason: string;
+  version: number;
+  next_handler_role: Role | '';
+  next_handler_id: string;
+  next_handler_name: string;
   created_at: string;
 }
 
@@ -68,7 +72,22 @@ export interface AuditLog {
   after_status: string;
   detail: string;
   failure_reason: string;
+  version: number;
   created_at: string;
+}
+
+export interface BatchApplicationItem {
+  id: string;
+  version: number;
+}
+
+export interface BatchProcessResultData {
+  batch_id: string;
+  total: number;
+  success_count: number;
+  failure_count: number;
+  failures_saved: boolean;
+  results: BatchResult[];
 }
 
 export interface BatchResult {

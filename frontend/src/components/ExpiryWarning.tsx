@@ -2,9 +2,9 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Tabs, Table, Tag, Button, Modal, message } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { getExpiryWarnings } from '../api/application';
+import { getExpiryWarnings, batchProcess } from '../api/application';
+import type { BatchProcessResultData } from '../api/application';
 import { STATUS_LABELS, STATUS_COLORS, ROLE_LABELS } from '../constants';
-import { batchProcess } from '../api/application';
 import type { Application, ExpiryStatus, BatchResult } from '../types';
 
 const TAB_CONFIG: { key: ExpiryStatus; label: string; color: string }[] = [
@@ -13,7 +13,11 @@ const TAB_CONFIG: { key: ExpiryStatus; label: string; color: string }[] = [
   { key: 'overdue', label: '逾期', color: 'red' },
 ];
 
-const ExpiryWarning: React.FC = () => {
+interface ExpiryWarningProps {
+  onRefresh?: () => void;
+}
+
+const ExpiryWarning: React.FC<ExpiryWarningProps> = ({ onRefresh }) => {
   const [activeTab, setActiveTab] = useState<ExpiryStatus>('normal');
   const [data, setData] = useState<Application[]>([]);
   const [total, setTotal] = useState(0);
@@ -47,15 +51,20 @@ const ExpiryWarning: React.FC = () => {
   }, [activeTab]);
 
   const handleBatchPush = async () => {
+    if (selectedRowKeys.length === 0) return;
     try {
-      const res = await batchProcess({
-        application_ids: selectedRowKeys as string[],
+      const items = data
+        .filter((r) => selectedRowKeys.includes(r.id as React.Key))
+        .map((r) => ({ id: r.id, version: r.version }));
+      const res: BatchProcessResultData = await batchProcess({
+        application_items: items,
         action: 'verify_pass',
       });
-      setResults(res);
+      setResults(res?.results || []);
       setResultOpen(true);
       setSelectedRowKeys([]);
       fetchData();
+      onRefresh?.();
     } catch {
       message.error('批量推进失败');
     }

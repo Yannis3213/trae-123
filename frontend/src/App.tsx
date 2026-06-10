@@ -1,9 +1,10 @@
 import React, { useState, useCallback } from 'react';
-import { Layout, Menu, Button } from 'antd';
+import { Layout, Menu, Button, Tag, Space } from 'antd';
 import {
   FileTextOutlined,
   WarningOutlined,
   BarChartOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import RoleSwitcher from './components/RoleSwitcher';
 import ApplicationList from './components/ApplicationList';
@@ -12,6 +13,7 @@ import ExpiryWarning from './components/ExpiryWarning';
 import StatisticsPanel from './components/StatisticsPanel';
 import BatchProcess from './components/BatchProcess';
 import type { Application } from './types';
+import { ROLE_LABELS, getUserInfo } from './constants';
 
 const { Header, Sider, Content } = Layout;
 
@@ -23,14 +25,21 @@ const App: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedRecords, setSelectedRecords] = useState<Application[]>([]);
   const [batchOpen, setBatchOpen] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [globalRefreshKey, setGlobalRefreshKey] = useState(0);
   const [roleKey, setRoleKey] = useState(0);
+  const [userSnap, setUserSnap] = useState(getUserInfo());
+
+  const bumpRefresh = useCallback(() => {
+    setGlobalRefreshKey((v) => v + 1);
+  }, []);
 
   const handleRoleChange = () => {
     setRoleKey((v) => v + 1);
     setDetailId(null);
     setSelectedIds([]);
     setSelectedRecords([]);
+    setUserSnap(getUserInfo());
+    bumpRefresh();
   };
 
   const handleViewDetail = (id: string) => {
@@ -46,36 +55,39 @@ const App: React.FC = () => {
     setSelectedRecords(records);
   }, []);
 
-  const refreshList = () => {
-    setRefreshKey((v) => v + 1);
-  };
-
   const renderContent = () => {
     if (currentPage === 'applications') {
       if (detailId) {
         return (
           <ApplicationDetail
-            key={detailId}
+            key={`${detailId}-${globalRefreshKey}`}
             id={detailId}
             onBack={handleBack}
-            onRefresh={refreshList}
+            onRefresh={bumpRefresh}
           />
         );
       }
       return (
         <div>
           {selectedIds.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <Button type="primary" onClick={() => setBatchOpen(true)}>
                 批量处理（已选 {selectedIds.length} 条）
               </Button>
+              <Space size={8}>
+                <Tag color="blue">{ROLE_LABELS[userSnap.role] || userSnap.role}</Tag>
+                <Tag>{userSnap.userName}</Tag>
+                <Tag icon={<SyncOutlined />} onClick={bumpRefresh} style={{ cursor: 'pointer' }}>
+                  全局刷新 #{globalRefreshKey}
+                </Tag>
+              </Space>
             </div>
           )}
           <ApplicationList
-            key={roleKey}
+            key={`${roleKey}-${globalRefreshKey}`}
             onViewDetail={handleViewDetail}
             onBatchSelect={handleBatchSelect}
-            refreshKey={refreshKey}
+            refreshKey={globalRefreshKey}
           />
           <BatchProcess
             selectedIds={selectedIds}
@@ -85,7 +97,7 @@ const App: React.FC = () => {
             onSuccess={() => {
               setSelectedIds([]);
               setSelectedRecords([]);
-              refreshList();
+              bumpRefresh();
             }}
           />
         </div>
@@ -93,11 +105,11 @@ const App: React.FC = () => {
     }
 
     if (currentPage === 'expiry') {
-      return <ExpiryWarning key={roleKey} />;
+      return <ExpiryWarning key={`expiry-${roleKey}-${globalRefreshKey}`} onRefresh={bumpRefresh} />;
     }
 
     if (currentPage === 'statistics') {
-      return <StatisticsPanel key={roleKey} />;
+      return <StatisticsPanel key={`stats-${roleKey}-${globalRefreshKey}`} onRefresh={bumpRefresh} />;
     }
 
     return null;
@@ -115,7 +127,12 @@ const App: React.FC = () => {
         <div style={{ color: '#fff', fontSize: 18, fontWeight: 600, whiteSpace: 'nowrap' }}>
           长租公寓-租约申请处理系统
         </div>
-        <RoleSwitcher onRoleChange={handleRoleChange} />
+        <Space>
+          <Tag color="blue">{ROLE_LABELS[userSnap.role] || userSnap.role}</Tag>
+          <Tag color="geekblue">{userSnap.userName}</Tag>
+          <Tag icon={<SyncOutlined spin={false} />}>全局数据版本 #{globalRefreshKey}</Tag>
+          <RoleSwitcher onRoleChange={handleRoleChange} />
+        </Space>
       </Header>
       <Layout>
         <Sider width={200} theme="light" style={{ borderRight: '1px solid #f0f0f0' }}>

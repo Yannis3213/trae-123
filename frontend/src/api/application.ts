@@ -3,6 +3,8 @@ import type {
   Application,
   AuditLog,
   BatchResult,
+  BatchApplicationItem,
+  BatchProcessResultData,
   Statistics,
   PaginatedResponse,
   ExpiryStatus,
@@ -27,8 +29,11 @@ interface ProcessData {
 }
 
 interface BatchProcessData {
-  application_ids: string[];
+  application_ids?: string[];
+  application_items?: BatchApplicationItem[];
   action: string;
+  remark?: string;
+  exception_reason?: string;
 }
 
 interface CreateApplicationData {
@@ -66,14 +71,23 @@ export async function updateApplication(id: string, data: UpdateApplicationData)
   return res.data.data;
 }
 
+export interface ProcessResponse {
+  status: ApplicationStatus;
+  version: number;
+  confirmed: boolean;
+  next_handler_role: string;
+  next_handler_id: string;
+  next_handler_name: string;
+}
+
 export async function processApplication(id: string, data: ProcessData) {
-  const res = await client.post<{ data: Application }>(`/applications/${id}/process`, data);
+  const res = await client.post<{ data: ProcessResponse }>(`/applications/${id}/process`, data);
   return res.data.data;
 }
 
 export async function batchProcess(data: BatchProcessData) {
-  const res = await client.post<{ data: { results: BatchResult[] } }>('/applications/batch', data);
-  return res.data.data.results;
+  const res = await client.post<{ data: BatchProcessResultData }>('/applications/batch', data);
+  return res.data.data;
 }
 
 export async function getAuditTrail(id: string) {

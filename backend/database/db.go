@@ -41,16 +41,43 @@ func InitDB(dbPath string) error {
 }
 
 func migrateSchema() error {
-	columns := map[string]string{
+	applicationsColumns := map[string]string{
 		"confirmed": "INTEGER NOT NULL DEFAULT 0",
 	}
-
-	for col, def := range columns {
+	for col, def := range applicationsColumns {
 		var exists bool
 		DB.QueryRow("SELECT 1 FROM pragma_table_info('lease_applications') WHERE name = ?", col).Scan(&exists)
 		if !exists {
-			_, err := DB.Exec(fmt.Sprintf("ALTER TABLE lease_applications ADD COLUMN %s %s", col, def))
-			if err != nil {
+			if _, err := DB.Exec(fmt.Sprintf("ALTER TABLE lease_applications ADD COLUMN %s %s", col, def)); err != nil {
+				return err
+			}
+		}
+	}
+
+	procColumns := map[string]string{
+		"version":           "INTEGER NOT NULL DEFAULT 0",
+		"next_handler_role": "TEXT DEFAULT ''",
+		"next_handler_id":   "TEXT DEFAULT ''",
+		"next_handler_name": "TEXT DEFAULT ''",
+	}
+	for col, def := range procColumns {
+		var exists bool
+		DB.QueryRow("SELECT 1 FROM pragma_table_info('processing_records') WHERE name = ?", col).Scan(&exists)
+		if !exists {
+			if _, err := DB.Exec(fmt.Sprintf("ALTER TABLE processing_records ADD COLUMN %s %s", col, def)); err != nil {
+				return err
+			}
+		}
+	}
+
+	auditColumns := map[string]string{
+		"version": "INTEGER NOT NULL DEFAULT 0",
+	}
+	for col, def := range auditColumns {
+		var exists bool
+		DB.QueryRow("SELECT 1 FROM pragma_table_info('audit_logs') WHERE name = ?", col).Scan(&exists)
+		if !exists {
+			if _, err := DB.Exec(fmt.Sprintf("ALTER TABLE audit_logs ADD COLUMN %s %s", col, def)); err != nil {
 				return err
 			}
 		}
@@ -105,6 +132,10 @@ func createTables() error {
 			to_status TEXT DEFAULT '',
 			remark TEXT DEFAULT '',
 			exception_reason TEXT DEFAULT '',
+			version INTEGER NOT NULL DEFAULT 0,
+			next_handler_role TEXT DEFAULT '',
+			next_handler_id TEXT DEFAULT '',
+			next_handler_name TEXT DEFAULT '',
 			created_at TEXT DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS audit_logs (
@@ -118,6 +149,19 @@ func createTables() error {
 			after_status TEXT DEFAULT '',
 			detail TEXT DEFAULT '',
 			failure_reason TEXT DEFAULT '',
+			version INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT DEFAULT ''
+		)`,
+		`CREATE TABLE IF NOT EXISTS batch_failure_records (
+			id TEXT PRIMARY KEY,
+			batch_id TEXT NOT NULL,
+			application_id TEXT NOT NULL,
+			application_no TEXT DEFAULT '',
+			reason TEXT NOT NULL,
+			handler_role TEXT DEFAULT '',
+			handler_id TEXT DEFAULT '',
+			handler_name TEXT DEFAULT '',
+			action TEXT DEFAULT '',
 			created_at TEXT DEFAULT ''
 		)`,
 	}
