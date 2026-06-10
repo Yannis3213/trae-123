@@ -21,7 +21,7 @@ class OrderCreate(BaseModel):
     deadline: Optional[str] = None
 
 
-class OrderUpdate(BaseModel):
+class OrderCorrection(BaseModel):
     title: Optional[str] = None
     owner_name: Optional[str] = None
     owner_phone: Optional[str] = None
@@ -30,13 +30,14 @@ class OrderUpdate(BaseModel):
     description: Optional[str] = None
     priority: Optional[str] = None
     deadline: Optional[str] = None
+    version: int
+    correction_opinion: Optional[str] = None
 
 
 class OrderAction(BaseModel):
     action: str
     version: int
     opinion: Optional[str] = None
-    has_evidence: bool = False
     target_handler: Optional[str] = None
 
 
@@ -44,7 +45,6 @@ class BatchAction(BaseModel):
     action: str
     order_ids: List[int]
     opinion: Optional[str] = None
-    has_evidence: bool = False
 
 
 class OrderOut(BaseModel):
@@ -91,6 +91,7 @@ class AttachmentOut(BaseModel):
     id: int
     order_id: int
     file_name: str
+    file_path: Optional[str] = None
     uploaded_by: Optional[str]
     uploaded_by_role: Optional[str]
     uploaded_at: str

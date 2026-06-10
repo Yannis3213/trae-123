@@ -22,7 +22,7 @@ const OrderList = (props) => {
   const [selectedIds, setSelectedIds] = createSignal(new Set())
   const [batchAction, setBatchAction] = createSignal('')
   const [batchOpinion, setBatchOpinion] = createSignal('')
-  const [batchHasEvidence, setBatchHasEvidence] = createSignal(false)
+
   const [batchResult, setBatchResult] = createSignal(null)
   const [showBatchModal, setShowBatchModal] = createSignal(false)
 
@@ -86,14 +86,12 @@ const OrderList = (props) => {
         action: batchAction(),
         order_ids: Array.from(selectedIds()),
         opinion: batchOpinion(),
-        has_evidence: batchHasEvidence(),
       })
       setBatchResult(result)
       setShowBatchModal(false)
       setSelectedIds(new Set())
       setBatchAction('')
       setBatchOpinion('')
-      setBatchHasEvidence(false)
       fetchData()
     } catch (e) {
       setError(e.message)
@@ -227,14 +225,9 @@ const OrderList = (props) => {
                 />
               </div>
               <div class="detail-field">
-                <label class="checkbox-field">
-                  <input
-                    type="checkbox"
-                    checked={batchHasEvidence()}
-                    onChange={(e) => setBatchHasEvidence(e.target.checked)}
-                  />
-                  已提供证据附件
-                </label>
+                <div class="hint" style="font-size:12px;color:#64748b;">
+                  ⚠️ 完成维修、回访、复核归档等动作会校验每条工单下真实附件数量，缺证据的工单会被拦截并写入审计备注。
+                </div>
               </div>
             </div>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>

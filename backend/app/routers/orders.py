@@ -1,28 +1,35 @@
+import os
+import json
+import uuid
+import aiofiles
 from datetime import datetime
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.routing import Route, Mount
-from starlette.endpoints import HTTPEndpoint
+from starlette.routing import Route
+from starlette.datastructures import UploadFile
 from ..database import get_conn
 from ..schemas import (
-    OrderCreate, OrderUpdate, OrderAction, BatchAction,
-    OrderOut, ProcessingRecordOut, AttachmentOut,
-    AuditNoteOut, ExceptionReasonOut, BatchResult, BatchResultItem,
+    OrderCreate, OrderCorrection, OrderAction, BatchAction,
+    BatchResult, BatchResultItem,
 )
 from ..constants import (
-    Role, OrderStatus, Action, SourceModule, ExceptionCode,
+    Role, OrderStatus, Action, ExceptionCode,
     STATUS_NAMES, ACTION_NAMES, ROLE_NAMES, SOURCE_MODULE_NAMES,
     STATUS_LIST_GROUPS, EXCEPTION_NAMES,
 )
 from ..services import (
-    ValidationError, validate_role_action, validate_status_transition,
-    validate_version, validate_evidence, validate_handler,
+    ValidationError, validate_all, validate_role_action, validate_version,
+    validate_handler, validate_status_transition, validate_evidence,
     check_overdue_and_near, add_audit_note, add_exception,
-    add_processing_record, detect_field_exceptions, action_to_status,
+    add_processing_record, add_attachment, count_attachments,
+    detect_field_exceptions, resolve_field_exceptions, action_to_status,
     get_next_handler_role,
 )
 from ..auth import DEMO_USERS
-import json
+
+
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 async def list_orders(request: Request):
@@ -110,6 +117,8 @@ async def list_orders(request: Request):
 
 async def get_order(request: Request):
     order_id = int(request.path_params["order_id"])
+    user = request.state.user
+
     with get_conn() as conn:
         check_overdue_and_near(conn)
         row = conn.execute("SELECT * FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
@@ -137,6 +146,12 @@ async def get_order(request: Request):
             (order_id,),
         ).fetchall()]
 
+        add_audit_note(
+            conn, order_id, "view",
+            f"[{ROLE_NAMES.get(user['role'], user['role'])}] {user['name']} 查看工单详情",
+            user["name"], user["role"],
+        )
+
     return JSONResponse({
         "order": order,
         "records": records,
@@ -151,10 +166,15 @@ async def create_order(request: Request):
     body = await request.json()
     data = OrderCreate(**body)
 
+    try:
+        validate_role_action(user, Action.CREATE)
+    except ValidationError as e:
+        return JSONResponse({"detail": e.message, "error_code": e.code}, status_code=403)
+
     with get_conn() as conn:
         check_overdue_and_near(conn)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        order_no = f"WX{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        order_no = f"WX{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
 
         cur = conn.execute(
             """
@@ -188,18 +208,28 @@ async def create_order(request: Request):
         }, user)
         if exceptions:
             msgs = "; ".join([e[1] for e in exceptions])
-            add_audit_note(conn, order_id, "exception", f"创建时检测异常：{msgs}", user["name"], user["role"])
+            add_audit_note(
+                conn, order_id, "exception",
+                f"创建工单时检测到字段缺项：{msgs}",
+                user["name"], user["role"],
+            )
+        else:
+            add_audit_note(
+                conn, order_id, "create",
+                f"工单创建成功，来源：{data.source_module}",
+                user["name"], user["role"],
+            )
 
         row = conn.execute("SELECT * FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
 
     return JSONResponse({"order": dict(row)}, status_code=201)
 
 
-async def update_order(request: Request):
+async def correct_order(request: Request):
     order_id = int(request.path_params["order_id"])
     user = request.state.user
     body = await request.json()
-    data = OrderUpdate(**body)
+    data = OrderCorrection(**body)
 
     with get_conn() as conn:
         check_overdue_and_near(conn)
@@ -207,47 +237,101 @@ async def update_order(request: Request):
         if not row:
             return JSONResponse({"detail": "工单不存在"}, status_code=404)
         order = dict(row)
+        order_no = order["order_no"]
 
-        if order["status"] in [OrderStatus.ARCHIVED]:
-            return JSONResponse({"detail": "已归档工单不可修改"}, status_code=400)
+        try:
+            if user["role"] != Role.REGISTRAR:
+                raise ValidationError(
+                    ExceptionCode.ROLE_VIOLATION,
+                    "仅报修登记员可执行补正操作",
+                )
 
-        new_data = {
-            "title": data.title if data.title is not None else order["title"],
-            "owner_name": data.owner_name if data.owner_name is not None else order["owner_name"],
-            "owner_phone": data.owner_phone if data.owner_phone is not None else order["owner_phone"],
-            "address": data.address if data.address is not None else order["address"],
-            "repair_type": data.repair_type if data.repair_type is not None else order["repair_type"],
-            "description": data.description if data.description is not None else order["description"],
-            "priority": data.priority if data.priority is not None else order["priority"],
-            "deadline": data.deadline if data.deadline is not None else order["deadline"],
-        }
+            validate_version(order["version"], data.version)
 
-        conn.execute(
-            """
-            UPDATE repair_orders SET
-                title = ?, owner_name = ?, owner_phone = ?, address = ?,
-                repair_type = ?, description = ?, priority = ?, deadline = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                new_data["title"], new_data["owner_name"], new_data["owner_phone"],
-                new_data["address"], new_data["repair_type"], new_data["description"],
-                new_data["priority"], new_data["deadline"],
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), order_id,
-            ),
-        )
+            if order["status"] == OrderStatus.ARCHIVED:
+                raise ValidationError(
+                    ExceptionCode.STATUS_CONFLICT,
+                    "已归档工单不可补正",
+                )
 
-        if order["status"] == OrderStatus.RETURNED_FOR_CORRECTION:
+            new_data = {
+                "title": data.title if data.title is not None else order["title"],
+                "owner_name": data.owner_name if data.owner_name is not None else order["owner_name"],
+                "owner_phone": data.owner_phone if data.owner_phone is not None else order["owner_phone"],
+                "address": data.address if data.address is not None else order["address"],
+                "repair_type": data.repair_type if data.repair_type is not None else order["repair_type"],
+                "description": data.description if data.description is not None else order["description"],
+                "priority": data.priority if data.priority is not None else order["priority"],
+                "deadline": data.deadline if data.deadline is not None else order["deadline"],
+            }
+
             conn.execute(
-                "UPDATE exception_reasons SET resolved = 1, resolved_by = ?, resolved_at = ? WHERE order_id = ? AND resolved = 0",
-                (user["name"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), order_id),
+                """
+                UPDATE repair_orders SET
+                    title = ?, owner_name = ?, owner_phone = ?, address = ?,
+                    repair_type = ?, description = ?, priority = ?, deadline = ?,
+                    version = version + 1, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    new_data["title"], new_data["owner_name"], new_data["owner_phone"],
+                    new_data["address"], new_data["repair_type"], new_data["description"],
+                    new_data["priority"], new_data["deadline"],
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"), order_id,
+                ),
             )
-            add_audit_note(conn, order_id, "correction", f"补正记录：{user['name']}更新了工单信息", user["name"], user["role"])
 
-        row = conn.execute("SELECT * FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
+            resolved = resolve_field_exceptions(conn, order_id, new_data, user)
 
-    return JSONResponse({"order": dict(row)})
+            if order["status"] == OrderStatus.RETURNED_FOR_CORRECTION:
+                add_processing_record(
+                    conn, order_id, Action.CORRECT,
+                    OrderStatus.RETURNED_FOR_CORRECTION, OrderStatus.CORRECTED,
+                    user["name"], user["role"],
+                    data.correction_opinion or "已补正缺项信息",
+                    count_attachments(conn, order_id), order["version"] + 1,
+                )
+                conn.execute(
+                    """
+                    UPDATE repair_orders SET status = ?, current_handler_role = ?, current_handler = ?,
+                        last_opinion = ? WHERE id = ?
+                    """,
+                    (OrderStatus.CORRECTED, Role.REGISTRAR, user["name"],
+                     data.correction_opinion or "已补正", order_id),
+                )
+                add_audit_note(
+                    conn, order_id, "correction",
+                    f"补正完成，已解决字段：{', '.join(resolved) if resolved else '无'}；补正意见：{data.correction_opinion or '无'}",
+                    user["name"], user["role"],
+                )
+            else:
+                add_processing_record(
+                    conn, order_id, Action.CORRECT,
+                    order["status"], order["status"],
+                    user["name"], user["role"],
+                    data.correction_opinion or "更新工单信息",
+                    count_attachments(conn, order_id), order["version"] + 1,
+                )
+                add_audit_note(
+                    conn, order_id, "correction",
+                    f"工单信息补正（非退回状态），已解决：{', '.join(resolved) if resolved else '无'}",
+                    user["name"], user["role"],
+                )
+
+            row = conn.execute("SELECT * FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
+
+        except ValidationError as e:
+            add_audit_note(
+                conn, order_id, "intercept",
+                f"补正操作拦截：{e.message}",
+                user["name"], user["role"],
+            )
+            return JSONResponse(
+                {"detail": e.message, "error_code": e.code, "order_no": order_no},
+                status_code=400,
+            )
+
+    return JSONResponse({"order": dict(row), "message": "补正成功"})
 
 
 async def process_action(request: Request):
@@ -270,17 +354,15 @@ async def process_action(request: Request):
         order_no = order["order_no"]
 
         try:
-            validate_role_action(user, action)
-            validate_version(order["version"], data.version)
-            validate_handler(user, order)
-
             to_status = action_to_status(action, order["status"])
+            validate_all(
+                conn, user, order, action, data.version, to_status,
+                uploaded_attachment_ids=None, check_duplicate=True,
+            )
+
+            ev_attachments = count_attachments(conn, order_id)
+
             if to_status and to_status != order["status"]:
-                validate_status_transition(OrderStatus(order["status"]), to_status)
-
-            validate_evidence(order_id, to_status, data.has_evidence, conn) if to_status else None
-
-            if to_status:
                 next_role = get_next_handler_role(to_status)
                 next_handler = DEMO_USERS.get(next_role, {}).get("name") if next_role else None
                 conn.execute(
@@ -305,15 +387,34 @@ async def process_action(request: Request):
                 conn, order_id, action, order["status"],
                 to_status.value if to_status else None,
                 user["name"], user["role"], data.opinion,
-                1 if data.has_evidence else 0, order["version"] + 1,
+                ev_attachments, order["version"] + 1,
             )
 
             if action in [Action.REVIEW_APPROVE, Action.ARCHIVE]:
-                add_audit_note(conn, order_id, "review", f"复核通过/归档：{data.opinion or '无意见'}", user["name"], user["role"])
+                add_audit_note(
+                    conn, order_id, "review",
+                    f"复核通过/归档：{data.opinion or '无意见'}",
+                    user["name"], user["role"],
+                )
             elif action == Action.REVIEW_REJECT:
-                add_audit_note(conn, order_id, "review", f"复核驳回：{data.opinion or '无意见'}", user["name"], user["role"])
+                add_audit_note(
+                    conn, order_id, "review",
+                    f"复核驳回，退回补正：{data.opinion or '无意见'}",
+                    user["name"], user["role"],
+                )
             elif action == Action.RETURN_FOR_CORRECTION:
                 detect_field_exceptions(conn, order_id, order, user)
+                add_audit_note(
+                    conn, order_id, "review",
+                    f"退回补正：{data.opinion or '缺项或不合规'}",
+                    user["name"], user["role"],
+                )
+            else:
+                add_audit_note(
+                    conn, order_id, "action",
+                    f"执行[{ACTION_NAMES.get(action, action)}]：{data.opinion or '无意见'}",
+                    user["name"], user["role"],
+                )
 
             row = conn.execute("SELECT * FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
 
@@ -329,6 +430,47 @@ async def process_action(request: Request):
             )
 
     return JSONResponse({"order": dict(row), "message": "操作成功"})
+
+
+async def upload_attachment(request: Request):
+    order_id = int(request.path_params["order_id"])
+    user = request.state.user
+
+    form = await request.form()
+    files = form.getlist("file")
+    if not files:
+        return JSONResponse({"detail": "未上传文件"}, status_code=400)
+
+    saved = []
+    with get_conn() as conn:
+        row = conn.execute("SELECT id, order_no, status FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
+        if not row:
+            return JSONResponse({"detail": "工单不存在"}, status_code=404)
+
+        for f in files:
+            if not isinstance(f, UploadFile):
+                continue
+            ext = os.path.splitext(f.filename or "file")[1] or ".bin"
+            safe_name = f"{uuid.uuid4().hex}{ext}"
+            file_path = os.path.join(UPLOAD_DIR, safe_name)
+
+            async with aiofiles.open(file_path, "wb") as out:
+                while True:
+                    chunk = await f.read(65536)
+                    if not chunk:
+                        break
+                    await out.write(chunk)
+
+            aid = add_attachment(conn, order_id, f.filename or safe_name, file_path, user["name"], user["role"])
+            saved.append({"id": aid, "file_name": f.filename or safe_name})
+
+        add_audit_note(
+            conn, order_id, "evidence",
+            f"上传证据附件 {len(saved)} 份：{', '.join([s['file_name'] for s in saved])}",
+            user["name"], user["role"],
+        )
+
+    return JSONResponse({"attachments": saved, "message": f"成功上传 {len(saved)} 个附件"})
 
 
 async def batch_process(request: Request):
@@ -359,22 +501,19 @@ async def batch_process(request: Request):
             order_info = dict(row)
 
             try:
-                validate_role_action(user, action)
-
                 full_row = conn.execute("SELECT * FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
                 order = dict(full_row)
-
-                pass
-                validate_handler(user, order)
-
                 to_status = action_to_status(action, order["status"])
+
+                validate_role_action(user, action)
+                validate_handler(user, order)
                 if to_status and to_status != order["status"]:
                     validate_status_transition(OrderStatus(order["status"]), to_status)
+                validate_evidence(order_id, to_status, conn, None)
 
-                if to_status:
-                    validate_evidence(order_id, to_status, data.has_evidence, conn)
+                ev_attachments = count_attachments(conn, order_id)
 
-                if to_status:
+                if to_status and to_status != order["status"]:
                     next_role = get_next_handler_role(to_status)
                     next_handler = DEMO_USERS.get(next_role, {}).get("name") if next_role else None
                     conn.execute(
@@ -399,7 +538,7 @@ async def batch_process(request: Request):
                     conn, order_id, action, order["status"],
                     to_status.value if to_status else None,
                     user["name"], user["role"], data.opinion,
-                    1 if data.has_evidence else 0, order["version"] + 1,
+                    ev_attachments, order["version"] + 1,
                 )
 
                 success_count += 1
@@ -439,7 +578,8 @@ routes = [
     Route("/api/orders", list_orders, methods=["GET"]),
     Route("/api/orders", create_order, methods=["POST"]),
     Route("/api/orders/{order_id:int}", get_order, methods=["GET"]),
-    Route("/api/orders/{order_id:int}", update_order, methods=["PUT"]),
+    Route("/api/orders/{order_id:int}", correct_order, methods=["PUT"]),
     Route("/api/orders/{order_id:int}/action", process_action, methods=["POST"]),
+    Route("/api/orders/{order_id:int}/attachments", upload_attachment, methods=["POST"]),
     Route("/api/orders/batch", batch_process, methods=["POST"]),
 ]

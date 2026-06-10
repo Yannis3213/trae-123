@@ -1,6 +1,6 @@
-const getHeaders = () => {
+const getBaseHeaders = () => {
   const userStr = localStorage.getItem('repair_user')
-  const headers = { 'Content-Type': 'application/json' }
+  const headers = {}
   if (userStr) {
     try {
       const user = JSON.parse(userStr)
@@ -12,6 +12,8 @@ const getHeaders = () => {
   return headers
 }
 
+const getJsonHeaders = () => ({ ...getBaseHeaders(), 'Content-Type': 'application/json' })
+
 const handleResponse = async (res) => {
   const text = await res.text()
   let data = {}
@@ -21,20 +23,24 @@ const handleResponse = async (res) => {
     data = { detail: text }
   }
   if (!res.ok) {
-    throw new Error(data.detail || `请求失败 (${res.status})`)
+    const err = new Error(data.detail || `请求失败 (${res.status})`)
+    err.errorCode = data.error_code
+    err.orderNo = data.order_no
+    err.data = data
+    throw err
   }
   return data
 }
 
 export const api = {
   get: async (url) => {
-    const res = await fetch(url, { headers: getHeaders() })
+    const res = await fetch(url, { headers: getJsonHeaders() })
     return handleResponse(res)
   },
   post: async (url, body) => {
     const res = await fetch(url, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getJsonHeaders(),
       body: JSON.stringify(body || {}),
     })
     return handleResponse(res)
@@ -42,7 +48,7 @@ export const api = {
   put: async (url, body) => {
     const res = await fetch(url, {
       method: 'PUT',
-      headers: getHeaders(),
+      headers: getJsonHeaders(),
       body: JSON.stringify(body || {}),
     })
     return handleResponse(res)
@@ -50,7 +56,17 @@ export const api = {
   delete: async (url) => {
     const res = await fetch(url, {
       method: 'DELETE',
-      headers: getHeaders(),
+      headers: getJsonHeaders(),
+    })
+    return handleResponse(res)
+  },
+  upload: async (url, fileList) => {
+    const fd = new FormData()
+    fileList.forEach(f => fd.append('file', f))
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: getBaseHeaders(),
+      body: fd,
     })
     return handleResponse(res)
   },
