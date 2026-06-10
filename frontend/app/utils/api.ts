@@ -42,6 +42,25 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  postFile: <T>(path: string, formData: FormData) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      body: formData,
+      headers,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(error.detail || res.statusText);
+      }
+      return res.json() as Promise<T>;
+    });
+  },
+
   delete: <T>(path: string) =>
     request<T>(path, { method: "DELETE" }),
 };

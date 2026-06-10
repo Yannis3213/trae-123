@@ -1,7 +1,7 @@
 type ExpiryStatus = "normal" | "approaching" | "overdue";
 
 interface ExpiryIndicatorProps {
-  status: ExpiryStatus;
+  expiry: ExpiryStatus;
   label?: string;
 }
 
@@ -23,12 +23,12 @@ const LABELS: Record<ExpiryStatus, string> = {
   overdue: "逾期",
 };
 
-export default function ExpiryIndicator({ status, label }: ExpiryIndicatorProps) {
+export default function ExpiryIndicator({ expiry, label }: ExpiryIndicatorProps) {
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className={`w-2.5 h-2.5 rounded-full ${DOT_COLORS[status]}`} />
-      <span className={`text-xs font-medium ${TEXT_COLORS[status]}`}>
-        {label || LABELS[status]}
+      <span className={`w-2.5 h-2.5 rounded-full ${DOT_COLORS[expiry]}`} />
+      <span className={`text-xs font-medium ${TEXT_COLORS[expiry]}`}>
+        {label || LABELS[expiry]}
       </span>
     </span>
   );

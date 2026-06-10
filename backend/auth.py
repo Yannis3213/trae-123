@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -47,9 +47,10 @@ def get_current_user(
     return user
 
 
-def check_permission(user: User, required_role: str) -> None:
-    if user.role != required_role:
+def check_permission(user: User, required_role: Union[str, list]) -> None:
+    roles = [required_role] if isinstance(required_role, str) else required_role
+    if user.role not in roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"权限不足：需要角色 {required_role}，当前角色 {user.role}",
+            detail=f"权限不足：需要角色 {roles}，当前角色 {user.role}",
         )

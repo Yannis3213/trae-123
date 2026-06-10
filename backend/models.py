@@ -58,6 +58,10 @@ class Inspection(Base):
         "ExceptionReason", backref="inspection",
         foreign_keys="ExceptionReason.inspection_id", lazy="select",
     )
+    attachments = relationship(
+        "Attachment", backref="inspection",
+        foreign_keys="Attachment.inspection_id", lazy="select",
+    )
 
 
 class ChargingPileInspection(Base):

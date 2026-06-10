@@ -3,6 +3,7 @@ import os
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 
 from database import engine, SessionLocal, Base
@@ -23,6 +24,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+ATTACHMENTS_DIR = os.path.join(DATA_DIR, "attachments")
+os.makedirs(ATTACHMENTS_DIR, exist_ok=True)
+app.mount("/data", StaticFiles(directory=DATA_DIR), name="data")
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(inspections.router, prefix="/api")

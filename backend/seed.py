@@ -1,12 +1,38 @@
 from datetime import datetime, timedelta
 from uuid import uuid4
+import os
 
 from sqlalchemy.orm import Session
 
 from models import (
     User, Inspection, ChargingPileInspection, FaultReport,
     ProcessingRecord, AuditRemark, CorrectionRecord, ExceptionReason,
+    Attachment,
 )
+
+ATTACHMENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "attachments")
+os.makedirs(ATTACHMENTS_DIR, exist_ok=True)
+
+
+def _create_demo_attachment(db: Session, insp_id: str, user_id: str,
+                            file_name: str, created_at: datetime) -> Attachment:
+    insp_dir = os.path.join(ATTACHMENTS_DIR, insp_id)
+    os.makedirs(insp_dir, exist_ok=True)
+    safe_name = f"{uuid4()}_{file_name}"
+    save_path = os.path.join(insp_dir, safe_name)
+    with open(save_path, "w", encoding="utf-8") as f:
+        f.write(f"演示附件文件: {file_name}\n巡检单ID: {insp_id}\n上传时间: {created_at}\n")
+    rel_path = f"data/attachments/{insp_id}/{safe_name}"
+    att = Attachment(
+        id=str(uuid4()),
+        inspection_id=insp_id,
+        file_name=file_name,
+        file_path=rel_path,
+        uploaded_by=user_id,
+        created_at=created_at,
+    )
+    db.add(att)
+    return att
 
 
 def seed_demo_data(db: Session) -> None:
@@ -96,6 +122,10 @@ def seed_demo_data(db: Session) -> None:
         remark="运营经理审核通过", created_at=now - timedelta(days=1),
     )
     db.add_all([ar1_1, ar1_2, ar1_3])
+
+    _create_demo_attachment(db, insp1_id, "user_002", "充电接口紧固前照片.jpg", now - timedelta(days=2, hours=1))
+    _create_demo_attachment(db, insp1_id, "user_002", "充电接口紧固后照片.jpg", now - timedelta(days=2))
+    _create_demo_attachment(db, insp1_id, "user_002", "处理报告.pdf", now - timedelta(days=2))
 
     # Inspection 2: Missing material (pending_process with exception)
     insp2_id = str(uuid4())
@@ -301,5 +331,8 @@ def seed_demo_data(db: Session) -> None:
         created_at=now - timedelta(hours=2),
     )
     db.add(cr4_1)
+
+    _create_demo_attachment(db, insp4_id, "user_002", "传感器检查记录表.pdf", now - timedelta(days=4))
+    _create_demo_attachment(db, insp4_id, "user_001", "补正说明.pdf", now - timedelta(hours=2))
 
     db.commit()

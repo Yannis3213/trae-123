@@ -24,6 +24,27 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
+class AttachmentResponse(BaseModel):
+    id: str
+    inspection_id: str
+    file_name: str
+    file_path: str
+    uploaded_by: str
+    uploaded_by_name: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PreviousOpinionResponse(BaseModel):
+    operator_name: Optional[str] = None
+    operator_role: Optional[str] = None
+    opinion: Optional[str] = None
+    attachments: List[AttachmentResponse] = []
+    created_at: Optional[datetime] = None
+
+
 class ChargingPileInspectionCreate(BaseModel):
     pile_code: str
     inspection_items: Optional[str] = None
@@ -102,6 +123,7 @@ class ProcessingRecordResponse(BaseModel):
     inspection_id: str
     operator_id: str
     operator_role: str
+    operator_name: Optional[str] = None
     from_status: str
     to_status: str
     opinion: Optional[str] = None
@@ -117,6 +139,7 @@ class AuditRemarkResponse(BaseModel):
     inspection_id: str
     processing_record_id: Optional[str] = None
     operator_id: str
+    operator_name: Optional[str] = None
     from_status: str
     to_status: str
     remark: Optional[str] = None
@@ -130,6 +153,7 @@ class CorrectionRecordResponse(BaseModel):
     id: str
     inspection_id: str
     corrector_id: str
+    corrector_name: Optional[str] = None
     reason: str
     field: str
     old_value: Optional[str] = None
@@ -157,12 +181,17 @@ class InspectionResponse(BaseModel):
     description: Optional[str] = None
     status: str
     creator_id: str
+    creator_name: Optional[str] = None
     processor_id: Optional[str] = None
+    processor_name: Optional[str] = None
     reviewer_id: Optional[str] = None
+    reviewer_name: Optional[str] = None
     version: int
     deadline: str
     created_at: datetime
     updated_at: datetime
+    previous_opinion: Optional[PreviousOpinionResponse] = None
+    attachments: List[AttachmentResponse] = []
     charging_pile_inspections: List[ChargingPileInspectionResponse] = []
     fault_reports: List[FaultReportResponse] = []
     processing_records: List[ProcessingRecordResponse] = []
@@ -180,8 +209,11 @@ class InspectionListItem(BaseModel):
     description: Optional[str] = None
     status: str
     creator_id: str
+    creator_name: Optional[str] = None
     processor_id: Optional[str] = None
+    processor_name: Optional[str] = None
     reviewer_id: Optional[str] = None
+    reviewer_name: Optional[str] = None
     version: int
     deadline: str
     created_at: datetime
