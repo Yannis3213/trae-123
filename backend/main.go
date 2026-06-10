@@ -934,14 +934,11 @@ type batchItem struct {
 }
 
 type batchProcessRequest struct {
-	Items        []batchItem `json:"items"`
-	IDs          []string    `json:"ids"`
-	Action       string      `json:"action"`
-	Version      int         `json:"version"`
-	Remark       string      `json:"remark"`
-	Reason       string      `json:"reason"`
-	TargetStatus string      `json:"targetStatus"`
-	HandlerID    string      `json:"handlerId"`
+	Items     []batchItem `json:"items"`
+	Action    string      `json:"action"`
+	Remark    string      `json:"remark"`
+	Reason    string      `json:"reason"`
+	HandlerID string      `json:"handlerId"`
 }
 
 type batchResultItem struct {
@@ -952,6 +949,8 @@ type batchResultItem struct {
 	Status         string `json:"status"`
 	PreviousStatus string `json:"previousStatus"`
 	NewStatus      string `json:"newStatus"`
+	NodeName       string `json:"nodeName"`
+	HandlerID      string `json:"handlerId"`
 }
 
 func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request) {
@@ -963,14 +962,7 @@ func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	items := req.Items
-	if len(items) == 0 && len(req.IDs) > 0 {
-		for _, id := range req.IDs {
-			items = append(items, batchItem{ID: id, Version: 0, Status: ""})
-		}
-	}
-
-	if len(items) == 0 {
+	if len(req.Items) == 0 {
 		writeError(w, http.StatusBadRequest, "请选择要处理的申请")
 		return
 	}
@@ -981,7 +973,7 @@ func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request
 	}
 
 	batchNo := generateBatchNo()
-	results := make([]batchResultItem, 0, len(items))
+	results := make([]batchResultItem, 0, len(req.Items))
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -990,27 +982,27 @@ func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request
 	}
 	defer tx.Rollback()
 
-	for _, item := range items {
-		result := processSingleBatchItem(tx, item, req, user)
+	for _, item := range req.Items {
+		result := processSingleBatchItem(tx, item, req, user, batchNo)
 		result.ID = item.ID
 		results = append(results, result)
 
-		newStatus := result.NewStatus
 		successInt := 0
 		if result.Success {
 			successInt = 1
 		}
-
 		_, dbErr := tx.Exec(`
 			INSERT INTO batch_results
 			(id, batch_no, action, operator, application_id, application_no,
 			 success, previous_status, new_status, reason, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		`, generateUUID(), batchNo, req.Action, user.ID, item.ID, result.ApplicationNo,
-			successInt, result.PreviousStatus, newStatus, result.Reason)
+			successInt, result.PreviousStatus, result.NewStatus, result.Reason)
 		if dbErr != nil {
 			result.Success = false
-			result.Reason = "记录批量结果失败: " + dbErr.Error()
+			if result.Reason == "" {
+				result.Reason = "记录批量结果失败: " + dbErr.Error()
+			}
 		}
 	}
 
@@ -1028,15 +1020,70 @@ func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"batchNo":      batchNo,
-		"total":        len(items),
+		"total":        len(req.Items),
 		"successCount": successCount,
-		"failCount":    len(items) - successCount,
+		"failCount":    len(req.Items) - successCount,
 		"results":      results,
 	})
 }
 
-func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest, user *auth.User) batchResultItem {
+func getActionNodeName(action string) string {
+	switch action {
+	case "batch_dispatch":
+		return "资料审核"
+	case "batch_close":
+		return "营业经理复核"
+	case "batch_overdue_advance":
+		return "装表派工"
+	default:
+		return "批量处理"
+	}
+}
+
+func writeFailedRecords(tx *sql.Tx, item batchItem, user *auth.User, result *batchResultItem, action, failReasonType string) {
+	nodeName := getActionNodeName(action)
+	result.NodeName = nodeName
+	if result.NewStatus == "" {
+		result.NewStatus = result.PreviousStatus
+	}
+
+	_, dbErr := tx.Exec(`
+		INSERT INTO processing_records
+		(id, application_id, node_name, operator, previous_status, new_status,
+		 action, remark, exception_reason, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+	`, generateUUID(), item.ID, nodeName, user.ID, result.PreviousStatus, result.NewStatus,
+		action, "处理失败", result.Reason)
+	if dbErr != nil {
+		result.Reason = result.Reason + "（日志写入失败）"
+	}
+
+	if result.Reason != "" {
+		rType := failReasonType
+		if rType == "" {
+			rType = "批量处理失败"
+		}
+		_, dbErr = tx.Exec(`
+			INSERT INTO exception_reasons
+			(id, application_id, reason_type, description, reported_by, created_at)
+			VALUES (?, ?, ?, ?, ?, datetime('now'))
+		`, generateUUID(), item.ID, rType, result.Reason, user.ID)
+		if dbErr != nil {
+			result.Reason = result.Reason + "（异常记录写入失败）"
+		}
+	}
+}
+
+func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest, user *auth.User, batchNo string) batchResultItem {
 	result := batchResultItem{ID: item.ID, Success: false}
+
+	if item.ID == "" {
+		result.Reason = "缺参数：申请ID为空"
+		result.PreviousStatus = ""
+		result.NewStatus = ""
+		writeFailedRecords(tx, item, user, &result, req.Action, "参数缺失")
+		return result
+	}
 
 	var currentStatus string
 	var currentVersion int
@@ -1052,11 +1099,19 @@ func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest,
 	`, item.ID).Scan(&applicationNo, &currentStatus, &currentVersion,
 		&currentHandler, &materialStatus, &meterNo, &installationAddr)
 	if err == sql.ErrNoRows {
-		result.Reason = "申请不存在"
+		result.ApplicationNo = item.ID
+		result.Reason = "申请不存在：ID=" + item.ID
+		result.PreviousStatus = ""
+		result.NewStatus = ""
+		writeFailedRecords(tx, item, user, &result, req.Action, "数据缺失")
 		return result
 	}
 	if err != nil {
+		result.ApplicationNo = item.ID
 		result.Reason = "查询申请信息失败"
+		result.PreviousStatus = ""
+		result.NewStatus = ""
+		writeFailedRecords(tx, item, user, &result, req.Action, "系统错误")
 		return result
 	}
 
@@ -1064,18 +1119,32 @@ func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest,
 	result.Status = currentStatus
 	result.PreviousStatus = currentStatus
 
-	if item.Version != 0 && item.Version != currentVersion {
-		result.Reason = fmt.Sprintf("旧版本冲突：页面版本%d，最新版本%d", item.Version, currentVersion)
+	if item.Version == 0 {
+		result.Reason = "缺版本：页面未提交版本号，请刷新列表后重试"
+		writeFailedRecords(tx, item, user, &result, req.Action, "版本缺失")
+		return result
+	}
+	if item.Status == "" {
+		result.Reason = "缺页面状态：页面未提交当前状态，请刷新列表后重试"
+		writeFailedRecords(tx, item, user, &result, req.Action, "状态缺失")
 		return result
 	}
 
-	if item.Status != "" && item.Status != currentStatus {
-		result.Reason = fmt.Sprintf("状态冲突：页面显示'%s'，实际为'%s'", item.Status, currentStatus)
+	if item.Version != currentVersion {
+		result.Reason = fmt.Sprintf("旧版本冲突：页面版本%d，最新版本%d，请刷新后重试", item.Version, currentVersion)
+		writeFailedRecords(tx, item, user, &result, req.Action, "版本冲突")
+		return result
+	}
+
+	if item.Status != currentStatus {
+		result.Reason = fmt.Sprintf("状态冲突：页面显示'%s'，实际为'%s'，请刷新后重试", item.Status, currentStatus)
+		writeFailedRecords(tx, item, user, &result, req.Action, "状态冲突")
 		return result
 	}
 
 	if currentStatus == "已关闭" {
-		result.Reason = "申请已关闭"
+		result.Reason = "申请已关闭，无法批量处理"
+		writeFailedRecords(tx, item, user, &result, req.Action, "状态异常")
 		return result
 	}
 
@@ -1092,18 +1161,22 @@ func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest,
 	case "batch_dispatch":
 		if user.Role != "meter_supervisor" {
 			result.Reason = "越权：只有抄表主管可以派发"
+			writeFailedRecords(tx, item, user, &result, req.Action, "权限越权")
 			return result
 		}
 		if currentStatus != "待派发" {
-			result.Reason = fmt.Sprintf("状态冲突：当前为'%s'，只能派发'待派发'", currentStatus)
+			result.Reason = fmt.Sprintf("状态不匹配：当前为'%s'，只能派发'待派发'", currentStatus)
+			writeFailedRecords(tx, item, user, &result, req.Action, "状态冲突")
 			return result
 		}
 		if req.HandlerID == "" {
 			result.Reason = "缺证据：未指定处理人"
+			writeFailedRecords(tx, item, user, &result, req.Action, "参数缺失")
 			return result
 		}
 		nodeName, newStatus = "资料审核", "处理中"
 		newHandler = sql.NullString{String: req.HandlerID, Valid: true}
+		result.HandlerID = req.HandlerID
 		updateFields = append(updateFields, "status = ?", "current_handler = ?", "version = version + 1", "updated_at = datetime('now')")
 		updateArgs = append(updateArgs, newStatus, req.HandlerID)
 		actionRemark = req.Remark
@@ -1111,22 +1184,27 @@ func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest,
 	case "batch_close":
 		if user.Role != "business_manager" {
 			result.Reason = "越权：只有营业经理可以关闭"
+			writeFailedRecords(tx, item, user, &result, req.Action, "权限越权")
 			return result
 		}
 		if currentStatus != "处理中" {
-			result.Reason = fmt.Sprintf("状态冲突：当前为'%s'，只能关闭'处理中'", currentStatus)
+			result.Reason = fmt.Sprintf("状态不匹配：当前为'%s'，只能关闭'处理中'", currentStatus)
+			writeFailedRecords(tx, item, user, &result, req.Action, "状态冲突")
 			return result
 		}
 		if !materialStatus.Valid || materialStatus.String != "审核通过" {
 			result.Reason = "缺证据：资料审核未通过"
+			writeFailedRecords(tx, item, user, &result, req.Action, "资料缺证")
 			return result
 		}
 		if !meterNo.Valid || meterNo.String == "" {
 			result.Reason = "缺证据：未分配水表编号"
+			writeFailedRecords(tx, item, user, &result, req.Action, "资料缺证")
 			return result
 		}
 		if !installationAddr.Valid || installationAddr.String == "" {
 			result.Reason = "缺证据：未填写安装地址"
+			writeFailedRecords(tx, item, user, &result, req.Action, "资料缺证")
 			return result
 		}
 		nodeName, newStatus = "营业经理复核", "已关闭"
@@ -1137,18 +1215,22 @@ func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest,
 	case "batch_overdue_advance":
 		if user.Role != "meter_supervisor" {
 			result.Reason = "越权：只有抄表主管可以逾期推进"
+			writeFailedRecords(tx, item, user, &result, req.Action, "权限越权")
 			return result
 		}
 		if currentStatus != "处理中" {
-			result.Reason = fmt.Sprintf("状态冲突：当前为'%s'，只能推进'处理中'", currentStatus)
+			result.Reason = fmt.Sprintf("状态不匹配：当前为'%s'，只能推进'处理中'", currentStatus)
+			writeFailedRecords(tx, item, user, &result, req.Action, "状态冲突")
 			return result
 		}
 		if currentHandler.Valid && currentHandler.String != user.ID {
 			result.Reason = "越权：您不是当前处理人"
+			writeFailedRecords(tx, item, user, &result, req.Action, "权限越权")
 			return result
 		}
 		if req.Reason == "" {
 			result.Reason = "缺证据：逾期推进必须填写原因"
+			writeFailedRecords(tx, item, user, &result, req.Action, "参数缺失")
 			return result
 		}
 		nodeName, newStatus = "装表派工", "处理中"
@@ -1160,6 +1242,7 @@ func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest,
 
 	default:
 		result.Reason = fmt.Sprintf("未知操作: %s", req.Action)
+		writeFailedRecords(tx, item, user, &result, req.Action, "参数缺失")
 		return result
 	}
 
@@ -1168,25 +1251,28 @@ func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest,
 		updateArgs = append(updateArgs, item.ID, currentVersion)
 		updateResult, dbErr := tx.Exec(updateSQL, updateArgs...)
 		if dbErr != nil {
-			result.Reason = "更新状态失败"
+			result.Reason = "更新状态失败：" + dbErr.Error()
+			writeFailedRecords(tx, item, user, &result, req.Action, "系统错误")
 			return result
 		}
 		rowsAffected, _ := updateResult.RowsAffected()
 		if rowsAffected == 0 {
-			result.Reason = fmt.Sprintf("版本冲突：页面版本%d，最新已变更", item.Version)
+			result.Reason = fmt.Sprintf("版本冲突：页面版本%d，最新已变更，请刷新", item.Version)
+			writeFailedRecords(tx, item, user, &result, req.Action, "版本冲突")
 			return result
 		}
 	}
 
 	_, dbErr := tx.Exec(`
 		INSERT INTO processing_records
-		(id, application_id, node_name, operator, previous_status, new_status, 
+		(id, application_id, node_name, operator, previous_status, new_status,
 		 action, remark, exception_reason, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	`, generateUUID(), item.ID, nodeName, user.ID, currentStatus, newStatus,
 		req.Action, actionRemark, excReason)
 	if dbErr != nil {
-		result.Reason = "记录处理日志失败"
+		result.Reason = "记录处理日志失败：" + dbErr.Error()
+		writeFailedRecords(tx, item, user, &result, req.Action, "系统错误")
 		return result
 	}
 
@@ -1200,7 +1286,8 @@ func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest,
 			VALUES (?, ?, ?, ?, ?, datetime('now'))
 		`, generateUUID(), item.ID, reasonType, excReason, user.ID)
 		if dbErr != nil {
-			result.Reason = "记录异常原因失败"
+			result.Reason = "记录异常原因失败：" + dbErr.Error()
+			writeFailedRecords(tx, item, user, &result, req.Action, "系统错误")
 			return result
 		}
 	}
@@ -1208,6 +1295,10 @@ func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest,
 	result.Success = true
 	result.Reason = "操作成功"
 	result.NewStatus = newStatus
+	result.NodeName = nodeName
+	if newHandler.Valid {
+		result.HandlerID = newHandler.String
+	}
 	return result
 }
 

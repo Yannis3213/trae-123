@@ -589,6 +589,16 @@ class BatchProcess extends LitElement {
     return map[level] || '';
   }
 
+  _getHandlerName(handlerId) {
+    const map = {
+      u003: '王主管（抄表主管）',
+      u004: '赵抄表（抄表主管）',
+      u002: '李窗口（窗口人员）',
+      u001: '张经理（营业经理）',
+    };
+    return map[handlerId] || handlerId;
+  }
+
   _getWarningLabel(level) {
     const map = {
       normal: '正常',
@@ -642,14 +652,23 @@ class BatchProcess extends LitElement {
                         <div class="result-item-info">
                           <div class="result-item-app">
                             ${item.applicationNo || this.applications.find((a) => a.id === item.id)?.applicationNo || item.id}
+                            ${item.nodeName
+                              ? html`<span style="font-size: 11px; color: #8c8c8c; margin-left: 6px; font-weight: normal;">[${item.nodeName}]</span>`
+                              : ''}
                           </div>
                           <div class="result-item-status">
                             ${item.previousStatus || item.status}
-                            ${item.success && item.newStatus
+                            ${item.success && item.newStatus && item.newStatus !== (item.previousStatus || item.status)
                               ? html` → ${item.newStatus}`
+                              : ''}
+                            ${!item.success && item.newStatus && item.newStatus === (item.previousStatus || item.status)
+                              ? html`（状态未变更）`
                               : ''}
                           </div>
                         </div>
+                        ${item.handlerId
+                          ? html`<div style="font-size: 12px; color: #595959; margin-bottom: 4px;">派发处理人: ${this._getHandlerName(item.handlerId)}</div>`
+                          : ''}
                         <div class="result-item-reason">${item.reason}</div>
                       </div>
                     `
