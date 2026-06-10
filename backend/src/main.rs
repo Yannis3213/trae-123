@@ -37,11 +37,11 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api/docs", ui)
         .nest("/api/openapi.json", spec)
         .with(
-            CorsConfig::new()
+            Cors::new(CorsConfig::new()
                 .allow_origin("http://localhost:3001")
                 .allow_methods(vec![Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
                 .allow_headers(vec!["Content-Type", "X-User-ID", "X-User-Role", "Authorization"])
-                .allow_credentials(true)
+                .allow_credentials(true))
         )
         .data(state.clone());
 

@@ -8,11 +8,18 @@ use crate::middleware::{UserContext, check_version};
 use crate::models::*;
 
 fn row_to_patrol_order(row: &rusqlite::Row) -> Result<PatrolOrder, rusqlite::Error> {
-    let evidence_val = row.get::<_, rusqlite::types::Value>(14)?;
+    let evidence_val = row.get::<_, rusqlite::types::Value>(15)?;
     let patrol_evidence: Option<Vec<String>> = if matches!(evidence_val, rusqlite::types::Value::Null) {
         None
     } else {
         json_from_row(&evidence_val).ok()
+    };
+
+    let current_handler_name_val = row.get::<_, rusqlite::types::Value>(13)?;
+    let current_handler_name: Option<String> = if matches!(current_handler_name_val, rusqlite::types::Value::Null) {
+        None
+    } else {
+        row.get(13).ok()
     };
 
     Ok(PatrolOrder {
@@ -29,34 +36,45 @@ fn row_to_patrol_order(row: &rusqlite::Row) -> Result<PatrolOrder, rusqlite::Err
         manager_id: row.get(10).ok(),
         manager_name: row.get(11).ok(),
         current_handler: row.get(12)?,
-        patrol_date: row.get(13)?,
-        due_date: row.get(15)?,
-        patrol_content: row.get(16).ok(),
-        weather: row.get(17).ok(),
-        temperature: row.get(18).ok(),
+        current_handler_name,
+        patrol_date: row.get(14)?,
+        due_date: row.get(16)?,
+        patrol_content: row.get(17).ok(),
+        weather: row.get(18).ok(),
+        temperature: row.get(19).ok(),
         patrol_evidence,
-        defect_count: row.get(19)?,
-        version: row.get(20)?,
-        previous_handler_id: row.get(21).ok(),
-        previous_opinion: row.get(22).ok(),
-        previous_attachment: row.get(23).ok(),
-        audit_remark: row.get(24).ok(),
-        anomaly_reason: row.get(25).ok(),
-        is_overdue: row.get(26)?,
-        overdue_level: row.get(27).ok(),
-        created_at: row.get(28)?,
-        updated_at: row.get(29)?,
+        defect_count: row.get(20)?,
+        version: row.get(21)?,
+        previous_handler_id: row.get(22).ok(),
+        previous_opinion: row.get(23).ok(),
+        previous_attachment: row.get(24).ok(),
+        audit_remark: row.get(25).ok(),
+        anomaly_reason: row.get(26).ok(),
+        is_overdue: row.get(27)?,
+        overdue_level: row.get(28).ok(),
+        created_at: row.get(29)?,
+        updated_at: row.get(30)?,
     })
+}
+
+fn current_handler_name_sql() -> &'static str {
+    "CASE po.current_handler \
+        WHEN 'inspector' THEN ui.name \
+        WHEN 'engineer' THEN ue.name \
+        WHEN 'manager' THEN um.name \
+        ELSE NULL \
+    END"
 }
 
 fn get_patrol_order(
     conn: &rusqlite::Connection,
     id: i64,
 ) -> Result<PatrolOrder, AppError> {
-    let sql = "
+    let ch_name = current_handler_name_sql();
+    let sql = format!("
         SELECT po.id, po.order_no, po.station_id, s.name, po.status, po.priority,
                po.inspector_id, ui.name, po.engineer_id, ue.name, po.manager_id, um.name,
-               po.current_handler, po.patrol_date, po.patrol_evidence, po.due_date,
+               po.current_handler, {ch_name}, po.patrol_date, po.patrol_evidence, po.due_date,
                po.patrol_content, po.weather, po.temperature,
                po.defect_count, po.version, po.previous_handler_id, po.previous_opinion,
                po.previous_attachment, po.audit_remark, po.anomaly_reason,
@@ -67,8 +85,8 @@ fn get_patrol_order(
         LEFT JOIN users ue ON po.engineer_id = ue.id
         LEFT JOIN users um ON po.manager_id = um.id
         WHERE po.id = ?1
-    ";
-    let mut stmt = conn.prepare(sql)?;
+    ");
+    let mut stmt = conn.prepare(&sql)?;
     stmt.query_row([id], |row| row_to_patrol_order(row))
         .map_err(|_| AppError::not_found(format!("巡检单 {} 不存在", id)))
 }
@@ -128,6 +146,15 @@ fn record_anomaly(
     Ok(())
 }
 
+struct UpdateStepParams {
+    status_val: Option<String>,
+    handler_id_val: Option<i64>,
+    handler_role_val: Option<String>,
+    opinion_val: Option<String>,
+    evidence_val: Option<String>,
+    correction_note_val: Option<String>,
+}
+
 fn update_process_record_step(
     conn: &rusqlite::Connection,
     patrol_order_id: i64,
@@ -142,28 +169,29 @@ fn update_process_record_step(
     correction_note: Option<&str>,
 ) -> Result<(), AppError> {
     let mut sets: Vec<String> = Vec::new();
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    let params_data = UpdateStepParams {
+        status_val: status.map(|s| s.to_string()),
+        handler_id_val: handler_id,
+        handler_role_val: handler_role.map(|s| s.to_string()),
+        opinion_val: opinion.map(|s| s.to_string()),
+        evidence_val: evidence.map(|e| serde_json::to_string(e).unwrap_or_default()),
+        correction_note_val: correction_note.map(|s| format!("\n{}", s)),
+    };
 
-    if let Some(s) = status {
+    if params_data.status_val.is_some() {
         sets.push("status = ?".to_string());
-        params.push(Box::new(s.to_string()));
     }
-    if let Some(hid) = handler_id {
+    if params_data.handler_id_val.is_some() {
         sets.push("handler_id = ?".to_string());
-        params.push(Box::new(hid));
     }
-    if let Some(hr) = handler_role {
+    if params_data.handler_role_val.is_some() {
         sets.push("handler_role = ?".to_string());
-        params.push(Box::new(hr.to_string()));
     }
-    if let Some(o) = opinion {
+    if params_data.opinion_val.is_some() {
         sets.push("opinion = ?".to_string());
-        params.push(Box::new(o.to_string()));
     }
-    if let Some(e) = evidence {
+    if params_data.evidence_val.is_some() {
         sets.push("evidence = ?".to_string());
-        let evidence_json = serde_json::to_string(e).unwrap_or_default();
-        params.push(Box::new(evidence_json));
     }
     if started_at {
         sets.push("started_at = datetime('now')".to_string());
@@ -171,22 +199,29 @@ fn update_process_record_step(
     if finished_at {
         sets.push("finished_at = datetime('now')".to_string());
     }
-    if let Some(cn) = correction_note {
+    if params_data.correction_note_val.is_some() {
         sets.push("correction_note = COALESCE(correction_note, '') || ?".to_string());
-        params.push(Box::new(format!("\n{}", cn)));
     }
 
     if sets.is_empty() {
         return Ok(());
     }
 
-    params.push(Box::new(patrol_order_id));
-    params.push(Box::new(step_order));
-
     let sql = format!(
         "UPDATE process_records SET {} WHERE patrol_order_id = ? AND step_order = ?",
         sets.join(", ")
     );
+
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    if let Some(v) = &params_data.status_val { params.push(v); }
+    if let Some(v) = &params_data.handler_id_val { params.push(v); }
+    if let Some(v) = &params_data.handler_role_val { params.push(v); }
+    if let Some(v) = &params_data.opinion_val { params.push(v); }
+    if let Some(v) = &params_data.evidence_val { params.push(v); }
+    if let Some(v) = &params_data.correction_note_val { params.push(v); }
+    params.push(&patrol_order_id);
+    params.push(&step_order);
+
     conn.execute(&sql, rusqlite::params_from_iter(params))?;
     Ok(())
 }
@@ -216,28 +251,26 @@ impl PatrolOrdersApi {
         let offset = (page - 1) * page_size;
 
         let mut conditions: Vec<String> = Vec::new();
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let status_s = status.clone();
+        let overdue_level_s = overdue_level.clone();
+        let handler_s = handler.clone();
+        let kw1 = keyword.as_ref().map(|k| format!("%{}%", k));
+        let kw2 = keyword.as_ref().map(|k| format!("%{}%", k));
 
-        if let Some(s) = &status {
+        if status_s.is_some() {
             conditions.push("po.status = ?".to_string());
-            params.push(Box::new(s.clone()));
         }
-        if let Some(ol) = &overdue_level {
+        if overdue_level_s.is_some() {
             conditions.push("po.overdue_level = ?".to_string());
-            params.push(Box::new(ol.clone()));
         }
-        if let Some(sid) = station_id {
+        if station_id.is_some() {
             conditions.push("po.station_id = ?".to_string());
-            params.push(Box::new(sid));
         }
-        if let Some(h) = &handler {
+        if handler_s.is_some() {
             conditions.push("po.current_handler = ?".to_string());
-            params.push(Box::new(h.clone()));
         }
-        if let Some(kw) = &keyword {
+        if keyword.is_some() {
             conditions.push("(po.order_no LIKE ? OR s.name LIKE ?)".to_string());
-            params.push(Box::new(format!("%{}%", kw)));
-            params.push(Box::new(format!("%{}%", kw)));
         }
 
         let where_clause = if conditions.is_empty() {
@@ -246,21 +279,31 @@ impl PatrolOrdersApi {
             format!("WHERE {}", conditions.join(" AND "))
         };
 
-        let sql_base = "
+        let ch_name = current_handler_name_sql();
+        let sql_base = format!("
             FROM patrol_orders po
             LEFT JOIN stations s ON po.station_id = s.id
             LEFT JOIN users ui ON po.inspector_id = ui.id
             LEFT JOIN users ue ON po.engineer_id = ue.id
             LEFT JOIN users um ON po.manager_id = um.id
-        ";
+        ");
 
         let count_sql = format!("SELECT COUNT(*) {}{}", sql_base, where_clause);
-        let total: i64 = conn.query_row(&count_sql, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |r| r.get(0))?;
+
+        let mut count_params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+        if let Some(v) = &status_s { count_params.push(v); }
+        if let Some(v) = &overdue_level_s { count_params.push(v); }
+        if let Some(v) = &station_id { count_params.push(v); }
+        if let Some(v) = &handler_s { count_params.push(v); }
+        if let Some(v) = &kw1 { count_params.push(v); }
+        if let Some(v) = &kw2 { count_params.push(v); }
+
+        let total: i64 = conn.query_row(&count_sql, rusqlite::params_from_iter(count_params.iter().copied()), |r| r.get(0))?;
 
         let select_sql = format!(
             "SELECT po.id, po.order_no, po.station_id, s.name, po.status, po.priority,
                     po.inspector_id, ui.name, po.engineer_id, ue.name, po.manager_id, um.name,
-                    po.current_handler, po.patrol_date, po.patrol_evidence, po.due_date,
+                    po.current_handler, {ch_name}, po.patrol_date, po.patrol_evidence, po.due_date,
                     po.patrol_content, po.weather, po.temperature,
                     po.defect_count, po.version, po.previous_handler_id, po.previous_opinion,
                     po.previous_attachment, po.audit_remark, po.anomaly_reason,
@@ -269,12 +312,18 @@ impl PatrolOrdersApi {
             sql_base, where_clause
         );
 
-        let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = params.clone();
-        query_params.push(Box::new(page_size));
-        query_params.push(Box::new(offset));
+        let mut query_params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+        if let Some(v) = &status_s { query_params.push(v); }
+        if let Some(v) = &overdue_level_s { query_params.push(v); }
+        if let Some(v) = &station_id { query_params.push(v); }
+        if let Some(v) = &handler_s { query_params.push(v); }
+        if let Some(v) = &kw1 { query_params.push(v); }
+        if let Some(v) = &kw2 { query_params.push(v); }
+        query_params.push(&page_size);
+        query_params.push(&offset);
 
         let mut stmt = conn.prepare(&select_sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(query_params.iter().map(|p| p.as_ref())), |row| row_to_patrol_order(row))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(query_params.iter().copied()), |row| row_to_patrol_order(row))?;
         let items: Result<Vec<PatrolOrder>, _> = rows.collect();
         let mut items = items?;
 
@@ -293,9 +342,17 @@ impl PatrolOrdersApi {
             sql_base, where_clause
         );
 
+        let mut stats_params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+        if let Some(v) = &status_s { stats_params.push(v); }
+        if let Some(v) = &overdue_level_s { stats_params.push(v); }
+        if let Some(v) = &station_id { stats_params.push(v); }
+        if let Some(v) = &handler_s { stats_params.push(v); }
+        if let Some(v) = &kw1 { stats_params.push(v); }
+        if let Some(v) = &kw2 { stats_params.push(v); }
+
         let stats: DueGroupStats = conn.query_row(
             &group_stats_sql,
-            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+            rusqlite::params_from_iter(stats_params.iter().copied()),
             |row| {
                 Ok(DueGroupStats {
                     normal: row.get(0)?,

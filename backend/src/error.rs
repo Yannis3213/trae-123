@@ -1,3 +1,4 @@
+use poem::IntoResponse;
 use poem_openapi::payload::Json;
 use poem_openapi::{ApiError, Object};
 use serde::Serialize;

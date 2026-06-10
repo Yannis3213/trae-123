@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 pub struct AppState {
@@ -10,25 +11,40 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Result<Self> {
-        let db_path = PathBuf::from("data/patrol.db");
-        if let Some(parent) = db_path.parent() {
-            fs::create_dir_all(parent).ok();
-        }
+        let cwd = env::current_dir().context("Failed to get current directory")?;
+        let data_dir = cwd.join("data");
+        fs::create_dir_all(&data_dir).ok();
+
+        let db_path = data_dir.join("patrol.db");
+        let db_exists = Path::new(&db_path).exists();
 
         let conn = Connection::open(&db_path)
             .with_context(|| format!("Failed to open database at {:?}", db_path))?;
 
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
-        let schema = fs::read_to_string("data/schema.sql")
-            .context("Failed to read schema.sql")?;
+        let schema_path = data_dir.join("schema.sql");
+        let schema = fs::read_to_string(&schema_path)
+            .with_context(|| format!("Failed to read schema.sql at {:?}", schema_path))?;
         conn.execute_batch(&schema)
             .context("Failed to execute schema.sql")?;
 
-        let seed = fs::read_to_string("data/seed.sql")
-            .context("Failed to read seed.sql")?;
-        conn.execute_batch(&seed)
-            .context("Failed to execute seed.sql")?;
+        let should_seed = if db_exists {
+            let user_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
+                .unwrap_or(0);
+            user_count == 0
+        } else {
+            true
+        };
+
+        if should_seed {
+            let seed_path = data_dir.join("seed.sql");
+            if let Ok(seed) = fs::read_to_string(&seed_path) {
+                conn.execute_batch(&seed)
+                    .context("Failed to execute seed.sql")?;
+            }
+        }
 
         Ok(Self {
             db: Mutex::new(conn),

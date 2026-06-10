@@ -225,9 +225,13 @@ export default component$(() => {
           processRecords.value = detailRes.data.process_records || [];
           defects.value = detailRes.data.defects || [];
           attachments.value = detailRes.data.attachments || [];
-          acceptanceRecords.value = detailRes.data.acceptance_records || [];
+          acceptanceRecords.value = detailRes.data.acceptance_records || detailRes.data.order.acceptance_records || [];
         } else {
           order.value = detailRes.data;
+          acceptanceRecords.value = detailRes.data.acceptance_records || [];
+          processRecords.value = detailRes.data.process_records || [];
+          defects.value = detailRes.data.defects || [];
+          attachments.value = detailRes.data.attachments || [];
         }
       } else {
         order.value = MOCK_ORDER;
@@ -361,7 +365,13 @@ export default component$(() => {
     handleResult.value = action;
     handleOpinion.value = '';
     if (action === 'dispatch' && order.value) {
-      dispatchEngineerId.value = order.value.engineer_id || '';
+      if (order.value.engineer_id) {
+        dispatchEngineerId.value = order.value.engineer_id;
+      } else if (engineers.value.length > 0) {
+        dispatchEngineerId.value = engineers.value[0].id;
+      } else {
+        dispatchEngineerId.value = '';
+      }
     }
     showHandleDialog.value = true;
   });
@@ -372,6 +382,14 @@ export default component$(() => {
     const version = order.value.version || 1;
     try {
       const action = handleResult.value;
+
+      if (action === 'dispatch') {
+        if (!dispatchEngineerId.value) {
+          showToast('请选择工程师', 'error');
+          return;
+        }
+      }
+
       let success = false;
       let message = '';
 
@@ -611,7 +629,24 @@ export default component$(() => {
             <button onClick$={() => handleAction$('submit')} class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium">提交</button>
           )}
           {actions.dispatch && (
-            <button onClick$={() => handleAction$('dispatch')} class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium">派发</button>
+            <button
+              onClick$={() => {
+                if (engineers.value.length === 0) {
+                  showToast('暂无可用工程师', 'error');
+                  return;
+                }
+                handleAction$('dispatch');
+              }}
+              disabled={engineers.value.length === 0}
+              class={[
+                'px-4 py-2 rounded-md font-medium transition-colors',
+                engineers.value.length === 0
+                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  : 'bg-blue-600 text-white hover:bg-blue-700',
+              ].join(' ')}
+            >
+              派发
+            </button>
           )}
           {actions.handle && (
             <button onClick$={() => handleAction$('handle')} class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium">办理</button>
@@ -1079,7 +1114,7 @@ export default component$(() => {
                             return (
                               <tr key={r.id} class="hover:bg-gray-50">
                                 <td class="px-3 py-2 text-sm text-blue-600 font-medium">
-                                  {defect?.defect_no || `-`}
+                                  {defect?.defect_no || '已归档'}
                                 </td>
                                 <td class="px-3 py-2">
                                   <span class={[
@@ -1106,7 +1141,7 @@ export default component$(() => {
                                   {r.remark || '-'}
                                 </td>
                                 <td class="px-3 py-2 text-sm text-gray-900">
-                                  {r.acceptor_name || '-'}
+                                  {r.acceptor_name || r.acceptor_id || '-'}
                                 </td>
                                 <td class="px-3 py-2 text-sm text-gray-500">
                                   {r.accepted_at}

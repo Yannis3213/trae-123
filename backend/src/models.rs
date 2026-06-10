@@ -49,6 +49,7 @@ pub struct PatrolOrder {
     pub manager_id: Option<i64>,
     pub manager_name: Option<String>,
     pub current_handler: String,
+    pub current_handler_name: Option<String>,
     pub patrol_date: String,
     pub due_date: String,
     pub patrol_content: Option<String>,

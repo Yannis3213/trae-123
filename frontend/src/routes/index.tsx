@@ -198,50 +198,89 @@ export default component$(() => {
   });
 
   const handleBatchProcess$ = $(async () => {
-    if (selectedIds.value.size === 0) return;
-    try {
-      const ids = Array.from(selectedIds.value);
-      const itemsPromises = ids.map(async (id) => {
-        const order = orders.value.find(o => o.id === id);
-        let defectNos: string[] = [];
-        try {
-          const detailRes = await api.get<any>(`/api/patrol-orders/${id}`);
-          if (detailRes.success && detailRes.data) {
-            const defects = detailRes.data.defects || detailRes.data.order?.defects || [];
-            defectNos = defects.map((d: any) => d.defect_no).filter(Boolean);
-          }
-        } catch {
-        }
-        const defect_evidences: Record<string, string[]> = {};
-        defectNos.forEach((defect_no: string) => {
-          defect_evidences[defect_no] = [`消缺证据_${defect_no}.pdf`];
-        });
-        return { id, version: order?.version || 1, opinion: '批量办理', defect_evidences };
-      });
-      const items = await Promise.all(itemsPromises);
-      const res = await api.post<any>('/api/patrol-orders/batch-process', { items });
-      if (res.success && res.data) {
-        const mapped: BatchResultItem[] = (res.data as any[]).map((r: any) => {
-          const order = orders.value.find(o => o.id === r.id);
-          return {
-            order_no: order?.order_no || String(r.id),
-            success: r.success,
-            message: r.message,
-          };
-        });
-        batchResults.value = mapped;
-      } else {
-        batchResults.value = Array.from(selectedIds.value).map(id => {
-          const order = orders.value.find(o => o.id === id);
-          return { order_no: order?.order_no || String(id), success: false, message: res.message || '处理失败' };
-        });
+    if (selectedIds.value.size === 0) {
+      return;
+    }
+    const ids = Array.from(selectedIds.value);
+    const results: BatchResultItem[] = [];
+    const processItems: any[] = [];
+
+    for (const id of ids) {
+      const order = orders.value.find(o => o.id === id);
+      const orderNo = order?.order_no || String(id);
+
+      if (!order?.version) {
+        console.warn(`巡检单 ${orderNo} 缺少 version，使用默认值 1`);
       }
-    } catch (e: any) {
-      batchResults.value = Array.from(selectedIds.value).map(id => {
-        const order = orders.value.find(o => o.id === id);
-        return { order_no: order?.order_no || String(id), success: false, message: e?.message || '网络错误' };
+
+      let defectNos: string[] = [];
+      try {
+        const detailRes = await api.get<any>(`/api/patrol-orders/${id}`);
+        if (detailRes.success && detailRes.data) {
+          const defects = detailRes.data.defects || detailRes.data.order?.defects || [];
+          defectNos = defects.map((d: any) => d.defect_no).filter(Boolean);
+        }
+      } catch {
+      }
+
+      if (defectNos.length === 0) {
+        results.push({
+          order_no: orderNo,
+          success: false,
+          message: '该巡检单无缺陷，无需办理',
+        });
+        continue;
+      }
+
+      const defect_evidences: Record<string, string[]> = {};
+      defectNos.forEach((defect_no: string) => {
+        defect_evidences[defect_no] = [`消缺证据_${defect_no}.pdf`];
+      });
+
+      processItems.push({
+        id,
+        version: order?.version || 1,
+        opinion: '批量办理',
+        defect_evidences,
       });
     }
+
+    if (processItems.length > 0) {
+      try {
+        const res = await api.post<any>('/api/patrol-orders/batch-process', { items: processItems });
+        if (res.success && res.data) {
+          const mapped: BatchResultItem[] = (res.data as any[]).map((r: any) => {
+            const order = orders.value.find(o => o.id === r.id);
+            return {
+              order_no: order?.order_no || String(r.id),
+              success: r.success,
+              message: r.message,
+            };
+          });
+          results.push(...mapped);
+        } else {
+          for (const item of processItems) {
+            const order = orders.value.find(o => o.id === item.id);
+            results.push({
+              order_no: order?.order_no || String(item.id),
+              success: false,
+              message: res.message || '处理失败',
+            });
+          }
+        }
+      } catch (e: any) {
+        for (const item of processItems) {
+          const order = orders.value.find(o => o.id === item.id);
+          results.push({
+            order_no: order?.order_no || String(item.id),
+            success: false,
+            message: e?.message || '网络错误',
+          });
+        }
+      }
+    }
+
+    batchResults.value = results;
     showBatchResult.value = true;
     selectedIds.value = new Set();
     if (typeof window !== 'undefined') {
