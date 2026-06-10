@@ -597,6 +597,10 @@ pub fn validate_and_process(
         (Some(assign.clone()), req.assign_to_role)
     } else {
         match req.target_status {
+            BorrowStatus::PendingAssignment => (
+                Some(Role::CirculationLibrarian.default_operator().to_string()),
+                Some(Role::CirculationLibrarian),
+            ),
             BorrowStatus::Transferred => (
                 Some(Role::CatalogingLibrarian.default_operator().to_string()),
                 Some(Role::CatalogingLibrarian),
@@ -617,7 +621,6 @@ pub fn validate_and_process(
                 Some(Role::CirculationLibrarian.default_operator().to_string()),
                 Some(Role::CirculationLibrarian),
             ),
-            _ => (record.current_handler.clone(), record.current_handler_role),
         }
     };
 
@@ -651,9 +654,24 @@ pub fn validate_and_process(
         &req.evidence,
     )?;
 
+    let handler_info = if let Some(handler_name) = &record.current_handler {
+        if let Some(handler_role) = record.current_handler_role {
+            format!("，下一处理人：{}（{}）", handler_name, handler_role.as_str())
+        } else {
+            format!("，下一处理人：{}", handler_name)
+        }
+    } else {
+        String::new()
+    };
+    let correction_info = if from_status == BorrowStatus::ReturnedForCorrection
+        && req.target_status == BorrowStatus::PendingAssignment {
+        format!("；补正人：{}（{}）", req.operator, req.operator_role.as_str())
+    } else {
+        String::new()
+    };
     add_audit_note(
         conn, record_id, req.target_status,
-        &format!("状态由 {} 变更为 {}", from_status.as_str(), req.target_status.as_str()),
+        &format!("状态由 {} 变更为 {}{}{}", from_status.as_str(), req.target_status.as_str(), handler_info, correction_info),
         &req.operator, req.operator_role,
         None, None,
     )?;

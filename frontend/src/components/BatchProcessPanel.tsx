@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { BorrowRecord, BorrowStatus, STATUS_DISPLAY, BatchProcessResponse, Role } from '@/types';
+import { BorrowRecord, BorrowStatus, STATUS_DISPLAY, BatchProcessResponse, Role, ROLE_DISPLAY, NEXT_HANDLER_BY_STATUS, ROLE_OPERATORS } from '@/types';
 import { api } from '@/lib/api';
 import { useRole } from '@/context/RoleContext';
 
@@ -155,6 +155,22 @@ export default function BatchProcessPanel({ records, selectedIds, onClear, onDon
                   placeholder="可选"
                 />
               </div>
+              {targetStatus && NEXT_HANDLER_BY_STATUS[targetStatus as BorrowStatus] && (
+                <div className="text-xs bg-library-50 p-3 rounded border border-library-200">
+                  <span className="text-library-600">下一处理人：</span>
+                  <span className="font-medium text-library-800 ml-1">
+                    {NEXT_HANDLER_BY_STATUS[targetStatus as BorrowStatus]!.name}
+                  </span>
+                  <span className="text-library-500 ml-1">
+                    （{ROLE_DISPLAY[NEXT_HANDLER_BY_STATUS[targetStatus as BorrowStatus]!.role]}）
+                  </span>
+                  {targetStatus === 'pending_assignment' && (
+                    <span className="block text-library-500 mt-1">
+                      补正材料齐全后，所有选中记录将交回流通馆员重新分派
+                    </span>
+                  )}
+                </div>
+              )}
               <div>
                 <label className="label">证据材料（多选）</label>
                 <div className="grid grid-cols-3 gap-2">

@@ -155,6 +155,15 @@ export const ROLE_OPERATORS: Record<Role, string> = {
   library_director: '刘馆长',
 };
 
+export const NEXT_HANDLER_BY_STATUS: Record<BorrowStatus, { role: Role; name: string } | null> = {
+  pending_assignment: { role: 'circulation_librarian', name: ROLE_OPERATORS['circulation_librarian'] },
+  transferred: { role: 'cataloging_librarian', name: ROLE_OPERATORS['cataloging_librarian'] },
+  revisited: { role: 'audit_supervisor', name: ROLE_OPERATORS['audit_supervisor'] },
+  reviewed_archived: { role: 'library_director', name: ROLE_OPERATORS['library_director'] },
+  returned_for_correction: { role: 'registration_clerk', name: ROLE_OPERATORS['registration_clerk'] },
+  overdue: { role: 'circulation_librarian', name: ROLE_OPERATORS['circulation_librarian'] },
+};
+
 export const STATUS_DISPLAY: Record<BorrowStatus, string> = {
   pending_assignment: '待分派',
   transferred: '已转办',

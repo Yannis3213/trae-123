@@ -6,6 +6,7 @@ import Link from 'next/link';
 import {
   BorrowRecord, ProcessRecord, AuditNote, BorrowStatus, Role,
   STATUS_DISPLAY, STATUS_COLOR, OVERDUE_COLOR, OVERDUE_DISPLAY, ROLE_DISPLAY,
+  NEXT_HANDLER_BY_STATUS, ROLE_OPERATORS,
 } from '@/types';
 import { api } from '@/lib/api';
 import { useRole } from '@/context/RoleContext';
@@ -355,6 +356,22 @@ export default function RecordDetailClient() {
                       onChange={(e) => setCorrectionItems(e.target.value)}
                       placeholder="例如：借阅凭证、身份证明"
                     />
+                  </div>
+                )}
+                {targetStatus && NEXT_HANDLER_BY_STATUS[targetStatus] && (
+                  <div className="text-xs bg-library-50 p-3 rounded border border-library-200">
+                    <span className="text-library-600">下一处理人：</span>
+                    <span className="font-medium text-library-800 ml-1">
+                      {NEXT_HANDLER_BY_STATUS[targetStatus]!.name}
+                    </span>
+                    <span className="text-library-500 ml-1">
+                      （{ROLE_DISPLAY[NEXT_HANDLER_BY_STATUS[targetStatus]!.role]}）
+                    </span>
+                    {targetStatus === 'pending_assignment' && (
+                      <span className="block text-library-500 mt-1">
+                        补正材料齐全后，将交回流通馆员重新分派
+                      </span>
+                    )}
                   </div>
                 )}
                 <div>
