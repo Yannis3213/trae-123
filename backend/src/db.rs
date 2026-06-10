@@ -191,6 +191,7 @@ async fn seed_demo_data(pool: &SqlitePool) -> Result<()> {
         OrderStatus, Option<Uuid>, Option<&str>, i32, bool,
         Option<chrono::DateTime<Utc>>, bool, bool, bool,
         Uuid,
+        Option<&str>, Option<&str>,
     )> = vec![
         (
             Uuid::new_v4(),
@@ -210,6 +211,7 @@ async fn seed_demo_data(pool: &SqlitePool) -> Result<()> {
             Some(now + chrono::Duration::days(3)),
             true, false, false,
             registrar_id,
+            None, None,
         ),
         (
             Uuid::new_v4(),
@@ -228,6 +230,7 @@ async fn seed_demo_data(pool: &SqlitePool) -> Result<()> {
             Some(now + chrono::Duration::days(1)),
             true, true, false,
             registrar_id,
+            None, None,
         ),
         (
             Uuid::new_v4(),
@@ -247,6 +250,8 @@ async fn seed_demo_data(pool: &SqlitePool) -> Result<()> {
             Some(now - chrono::Duration::days(1)),
             true, false, false,
             registrar_id,
+            Some("出团日期临近，需重新确认行程细节和客户需求"),
+            Some("审核退回：行程细节不完整，缺少身份证登记信息"),
         ),
         (
             Uuid::new_v4(),
@@ -265,6 +270,48 @@ async fn seed_demo_data(pool: &SqlitePool) -> Result<()> {
             Some(now + chrono::Duration::days(2)),
             true, true, true,
             registrar_id,
+            None, None,
+        ),
+        (
+            Uuid::new_v4(),
+            "TO-20260611-005",
+            "西藏拉萨-林芝-纳木错全景九日游",
+            "孙七",
+            "13800138005",
+            5,
+            now + chrono::Duration::days(25),
+            now + chrono::Duration::days(34),
+            32800.0,
+            OrderStatus::PendingCorrection,
+            Some(registrar_id),
+            Some("旅游登记员"),
+            5,
+            false,
+            Some(now + chrono::Duration::days(4)),
+            true, true, false,
+            registrar_id,
+            Some("复核退回：缺少高反健康告知书和保险单；部分行程酒店未确认"),
+            Some("复核负责人要求 48 小时内补正高反健康告知书、旅游意外险保单，并出具拉萨酒店确认函"),
+        ),
+        (
+            Uuid::new_v4(),
+            "TO-20260611-006",
+            "泰国曼谷-芭提雅七日跟团游",
+            "周八",
+            "13800138006",
+            6,
+            now + chrono::Duration::days(45),
+            now + chrono::Duration::days(52),
+            46800.0,
+            OrderStatus::Archived,
+            None, None,
+            6,
+            false,
+            Some(now - chrono::Duration::hours(2)),
+            true, true, true,
+            registrar_id,
+            None,
+            Some("已归档：线路报价、报名确认、出团审核三类证据齐全，签证机票酒店均已落实"),
         ),
     ];
 
@@ -273,6 +320,7 @@ async fn seed_demo_data(pool: &SqlitePool) -> Result<()> {
         traveler_count, departure_date, return_date, quoted_price,
         status, handler_id, handler_name, version, is_overdue, deadline,
         route_quote, registration, tour_audit, created_by,
+        exception_reason, correction_note,
     ) in sample_orders
     {
         sqlx::query(
@@ -282,8 +330,9 @@ async fn seed_demo_data(pool: &SqlitePool) -> Result<()> {
                 traveler_count, departure_date, return_date, quoted_price,
                 status, current_handler_id, current_handler_name, version, is_overdue, deadline,
                 route_quote_evidence, registration_confirm_evidence, tour_audit_evidence,
+                exception_reason, correction_note,
                 created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#
         )
         .bind(id.to_string())
@@ -304,13 +353,16 @@ async fn seed_demo_data(pool: &SqlitePool) -> Result<()> {
         .bind(if route_quote { 1 } else { 0 })
         .bind(if registration { 1 } else { 0 })
         .bind(if tour_audit { 1 } else { 0 })
+        .bind(exception_reason)
+        .bind(correction_note)
         .bind(created_by.to_string())
         .bind(fmt(now))
         .bind(fmt(now))
         .execute(pool)
         .await?;
 
-        add_seed_records(pool, &id, &status, &created_by, &users, version).await?;
+        add_seed_records(pool, &id, &status, &created_by, &users, version, &auditor_id, &reviewer_id).await?;
+        add_seed_audit_notes(pool, &id, &status, &version, &auditor_id, &reviewer_id, &users).await?;
     }
 
     Ok(())
@@ -319,10 +371,12 @@ async fn seed_demo_data(pool: &SqlitePool) -> Result<()> {
 async fn add_seed_records(
     pool: &SqlitePool,
     order_id: &Uuid,
-    status: &OrderStatus,
+    _status: &OrderStatus,
     created_by: &Uuid,
     users: &[(Uuid, &'static str, &'static str, UserRole)],
     version: i32,
+    auditor_id: &Uuid,
+    reviewer_id: &Uuid,
 ) -> Result<()> {
     let find_user = |uid: &Uuid| -> (String, String, String) {
         users.iter()
@@ -332,9 +386,11 @@ async fn add_seed_records(
     };
 
     let now = Utc::now().to_rfc3339();
-    let (handler_id, handler_name, handler_role) = find_user(created_by);
+    let (reg_id, reg_name, reg_role) = find_user(created_by);
+    let (aud_id, aud_name, aud_role) = find_user(auditor_id);
+    let (rev_id, rev_name, rev_role) = find_user(reviewer_id);
 
-    let push = |from: Option<&OrderStatus>, to: &OrderStatus, action: &str| -> String {
+    let push = |from: Option<&OrderStatus>, to: &OrderStatus, action: &str, hi: &str, hn: &str, hr: &str| -> String {
         format!(
             "INSERT INTO processing_records \
             (id, order_id, from_status, to_status, action, handler_id, handler_name, handler_role, created_at) \
@@ -344,48 +400,199 @@ async fn add_seed_records(
             from.map(|s| format!("'{}'", s.as_str())).unwrap_or_else(|| "NULL".to_string()),
             to.as_str(),
             action,
-            &handler_id,
-            &handler_name,
-            &handler_role,
+            hi, hn, hr,
             &now,
+        )
+    };
+
+    let push_with_meta = |from: Option<&OrderStatus>, to: &OrderStatus, action: &str, hi: &str, hn: &str, hr: &str, note: Option<&str>, exc: Option<&str>| -> String {
+        let note_sql = note.map(|s| format!("'{}'", s.replace('\'', "''"))).unwrap_or_else(|| "NULL".to_string());
+        let exc_sql = exc.map(|s| format!("'{}'", s.replace('\'', "''"))).unwrap_or_else(|| "NULL".to_string());
+        format!(
+            "INSERT INTO processing_records \
+            (id, order_id, from_status, to_status, action, handler_id, handler_name, handler_role, created_at, note, exception_reason) \
+            VALUES ('{}', '{}', {}, '{}', '{}', '{}', '{}', '{}', '{}', {}, {})",
+            Uuid::new_v4().to_string(),
+            order_id.to_string(),
+            from.map(|s| format!("'{}'", s.as_str())).unwrap_or_else(|| "NULL".to_string()),
+            to.as_str(),
+            action,
+            hi, hn, hr,
+            &now, note_sql, exc_sql,
         )
     };
 
     match version {
         1 => {
-            sqlx::query(&push(None, status, "创建草稿")).execute(pool).await?;
+            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
         }
         2 => {
-            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿")).execute(pool).await?;
-            sqlx::query(&push(Some(&OrderStatus::Draft), status, "提交审核")).execute(pool).await?;
+            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
         }
         3 => {
-            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿")).execute(pool).await?;
-            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核")).execute(pool).await?;
-            sqlx::query(&push(Some(&OrderStatus::PendingAudit), status, "退回补正（逾期）")).execute(pool).await?;
-
-            sqlx::query(
-                r#"
-                UPDATE processing_records
-                SET exception_reason = ?, note = ?
-                WHERE order_id = ? AND to_status = ?
-                "#
-            )
-            .bind("出团日期临近，需重新确认行程细节和客户需求")
-            .bind("请登记员在24小时内补正行程细节和客户身份证信息")
-            .bind(order_id.to_string())
-            .bind(OrderStatus::PendingCorrection.as_str())
-            .execute(pool)
-            .await?;
+            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push_with_meta(
+                Some(&OrderStatus::PendingAudit),
+                &OrderStatus::PendingCorrection,
+                "退回补正（逾期）",
+                &aud_id, &aud_name, &aud_role,
+                Some("请登记员在24小时内补正行程细节和客户身份证信息"),
+                Some("出团日期临近，需重新确认行程细节和客户需求"),
+            )).execute(pool).await?;
         }
         4 => {
-            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿")).execute(pool).await?;
-            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核")).execute(pool).await?;
-            sqlx::query(&push(Some(&OrderStatus::PendingAudit), &OrderStatus::PendingReview, "审核通过，待复核")).execute(pool).await?;
+            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push_with_meta(
+                Some(&OrderStatus::PendingAudit),
+                &OrderStatus::PendingReview,
+                "审核通过，待复核",
+                &aud_id, &aud_name, &aud_role,
+                Some("线路报价和报名确认证据齐全，转复核负责人归档前终校"),
+                None,
+            )).execute(pool).await?;
+        }
+        5 => {
+            // 西藏九日游：草稿→提交审核→审核通过（待复核）→复核退回（待补正）
+            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push_with_meta(
+                Some(&OrderStatus::PendingAudit),
+                &OrderStatus::PendingReview,
+                "审核通过，待复核",
+                &aud_id, &aud_name, &aud_role,
+                Some("基础材料齐全，转复核前终校；注意高反项目需补充"),
+                None,
+            )).execute(pool).await?;
+            sqlx::query(&push_with_meta(
+                Some(&OrderStatus::PendingReview),
+                &OrderStatus::PendingCorrection,
+                "复核退回补正",
+                &rev_id, &rev_name, &rev_role,
+                Some("要求 48 小时内补正高反健康告知书、旅游意外险保单，并出具拉萨酒店确认函"),
+                Some("缺少高反健康告知书和保险单；部分行程酒店未确认"),
+            )).execute(pool).await?;
+        }
+        6 => {
+            // 泰国跟团游：草稿→提交审核→审核通过（待复核）→复核通过（已归档）
+            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push_with_meta(
+                Some(&OrderStatus::PendingAudit),
+                &OrderStatus::PendingReview,
+                "审核通过，待复核",
+                &aud_id, &aud_name, &aud_role,
+                Some("线路报价+报名确认+出团审核三类证据齐全，可归档"),
+                None,
+            )).execute(pool).await?;
+            sqlx::query(&push_with_meta(
+                Some(&OrderStatus::PendingReview),
+                &OrderStatus::Archived,
+                "复核通过，订单归档",
+                &rev_id, &rev_name, &rev_role,
+                Some("三类证据终校通过；签证机票酒店均已落实，正式归档"),
+                None,
+            )).execute(pool).await?;
         }
         _ => {}
     }
 
+    Ok(())
+}
+
+async fn add_seed_audit_notes(
+    pool: &SqlitePool,
+    order_id: &Uuid,
+    _status: &OrderStatus,
+    version: &i32,
+    auditor_id: &Uuid,
+    reviewer_id: &Uuid,
+    users: &[(Uuid, &'static str, &'static str, UserRole)],
+) -> Result<()> {
+    let find_user = |uid: &Uuid| -> (String, String, String) {
+        users.iter()
+            .find(|(id, _, _, _)| id == uid)
+            .map(|(_, _, name, role)| (uid.to_string(), name.to_string(), role.as_str().to_string()))
+            .unwrap_or_else(|| (uid.to_string(), "系统".to_string(), "registrar".to_string()))
+    };
+    let now = Utc::now().to_rfc3339();
+
+    match version {
+        3 => {
+            // 003 逾期样例：审核主管备注
+            let (uid, name, _) = find_user(auditor_id);
+            let aid1 = Uuid::new_v4().to_string();
+            sqlx::query(&format!(
+                "INSERT INTO audit_notes (id, order_id, content, created_by, created_by_name, created_at) VALUES \
+                 ('{}', '{}', '{}', '{}', '{}', '{}')",
+                aid1, order_id.to_string(),
+                "该订单已逾期1天，请登记员优先处理补正，否则将影响出团排期。".replace('\'', "''"),
+                uid, name.replace('\'', "''"),
+                &now,
+            )).execute(pool).await?;
+        }
+        4 => {
+            let (uid, name, _) = find_user(reviewer_id);
+            let aid1 = Uuid::new_v4().to_string();
+            sqlx::query(&format!(
+                "INSERT INTO audit_notes (id, order_id, content, created_by, created_by_name, created_at) VALUES \
+                 ('{}', '{}', '{}', '{}', '{}', '{}')",
+                aid1, order_id.to_string(),
+                "三类证据齐全，预计 24 小时内完成归档复核。".replace('\'', "''"),
+                uid, name.replace('\'', "''"),
+                &now,
+            )).execute(pool).await?;
+        }
+        5 => {
+            // 005 复核退回：审核主管 + 复核负责人双备注
+            let (aid_uid, aid_name, _) = find_user(auditor_id);
+            let (rev_uid, rev_name, _) = find_user(reviewer_id);
+            let aid1 = Uuid::new_v4().to_string();
+            let aid2 = Uuid::new_v4().to_string();
+            sqlx::query(&format!(
+                "INSERT INTO audit_notes (id, order_id, content, created_by, created_by_name, created_at) VALUES \
+                 ('{}', '{}', '{}', '{}', '{}', '{}')",
+                aid1, order_id.to_string(),
+                "审核通过时已提醒高反和高原保险注意事项，请复核时重点检查。".replace('\'', "''"),
+                aid_uid, aid_name.replace('\'', "''"),
+                &now,
+            )).execute(pool).await?;
+            sqlx::query(&format!(
+                "INSERT INTO audit_notes (id, order_id, content, created_by, created_by_name, created_at) VALUES \
+                 ('{}', '{}', '{}', '{}', '{}', '{}')",
+                aid2, order_id.to_string(),
+                "复核时发现缺少高反健康告知书+旅游意外险+拉萨酒店确认函，已退回补正。".replace('\'', "''"),
+                rev_uid, rev_name.replace('\'', "''"),
+                &now,
+            )).execute(pool).await?;
+        }
+        6 => {
+            // 006 已归档：审核主管 + 复核负责人双备注
+            let (aid_uid, aid_name, _) = find_user(auditor_id);
+            let (rev_uid, rev_name, _) = find_user(reviewer_id);
+            let aid1 = Uuid::new_v4().to_string();
+            let aid2 = Uuid::new_v4().to_string();
+            sqlx::query(&format!(
+                "INSERT INTO audit_notes (id, order_id, content, created_by, created_by_name, created_at) VALUES \
+                 ('{}', '{}', '{}', '{}', '{}', '{}')",
+                aid1, order_id.to_string(),
+                "签证、机票、酒店、出团通知、三类证据全部齐全，出境团标准件。".replace('\'', "''"),
+                aid_uid, aid_name.replace('\'', "''"),
+                &now,
+            )).execute(pool).await?;
+            sqlx::query(&format!(
+                "INSERT INTO audit_notes (id, order_id, content, created_by, created_by_name, created_at) VALUES \
+                 ('{}', '{}', '{}', '{}', '{}', '{}')",
+                aid2, order_id.to_string(),
+                "归档复核通过：线路报价单/报名确认单/出团审核单三单齐全，客户签字回传完整。".replace('\'', "''"),
+                rev_uid, rev_name.replace('\'', "''"),
+                &now,
+            )).execute(pool).await?;
+        }
+        _ => {}
+    }
     Ok(())
 }
 

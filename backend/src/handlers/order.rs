@@ -652,6 +652,7 @@ async fn process_one(
             success: false,
             code: "MISSING_VERSION".to_string(),
             message: "缺少版本号（请通过 version_map 传入）".to_string(),
+            ..Default::default()
         },
     };
 
@@ -667,6 +668,7 @@ async fn process_one(
             success: false,
             code: "NOT_FOUND".to_string(),
             message: "订单不存在".to_string(),
+            ..Default::default()
         },
         Err(e) => return BatchProcessResult {
             order_id: order_id_str.to_string(),
@@ -674,60 +676,64 @@ async fn process_one(
             success: false,
             code: "DB_ERROR".to_string(),
             message: format!("读取失败: {}", e),
+            ..Default::default()
         },
     };
 
     let order = get_order(&row);
     let order_no = order.order_no.clone();
+    let base = BatchProcessResult {
+        order_id: order_id_str.to_string(),
+        order_no: order_no.clone(),
+        old_status: Some(order.status.as_str().to_string()),
+        old_version: Some(order.version),
+        old_handler_name: order.current_handler_name.clone(),
+        ..Default::default()
+    };
 
     if matches!(auth.role, UserRole::Registrar) && order.created_by != auth.id {
         return BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
             success: false,
             code: "AUTH_ERR".to_string(),
             message: "仅创建人（登记员）可操作此订单".to_string(),
+            ..base.clone()
         };
     }
 
     if order.version != version {
         return BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
             success: false,
             code: "VERSION_CONFLICT".to_string(),
             message: format!("版本冲突: 当前 v{}, 提交 v{}", order.version, version),
+            ..base.clone()
         };
     }
 
     if order.is_overdue && matches!(target, OrderStatus::PendingAudit | OrderStatus::PendingReview) {
         return BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
             success: false,
             code: "OVERDUE".to_string(),
             message: "订单已逾期，禁止批量推进".to_string(),
+            ..base.clone()
         };
     }
 
     let transition = match find_transition(&order.status, target) {
         Some(t) => t,
         None => return BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
             success: false,
             code: "STATE_CONFLICT".to_string(),
             message: format!("流转不合法: {} → {}", order.status.label(), target.label()),
+            ..base.clone()
         },
     };
 
     if !transition.allowed_roles.contains(&auth.role) {
         return BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
             success: false,
             code: "ROLE_FORBIDDEN".to_string(),
             message: format!("角色「{}」无权执行此操作", auth.role.label()),
+            ..base.clone()
         };
     }
 
@@ -743,22 +749,20 @@ async fn process_one(
         .collect();
     if !missing.is_empty() {
         return BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
             success: false,
             code: "MISSING_EVIDENCE".to_string(),
             message: format!("缺少证据: {}", missing.join("、")),
+            ..base.clone()
         };
     }
 
     let mut tx = match pool.begin().await {
         Ok(t) => t,
         Err(e) => return BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
             success: false,
             code: "DB_ERROR".to_string(),
             message: format!("启动事务失败: {}", e),
+            ..base.clone()
         },
     };
 
@@ -789,25 +793,28 @@ async fn process_one(
 
     match result {
         Ok(r) if r.rows_affected() == 0 => {
+            let _ = tx.rollback().await;
             return BatchProcessResult {
-                order_id: order_id_str.to_string(),
-                order_no,
                 success: false,
                 code: "VERSION_CONFLICT".to_string(),
                 message: "并发更新冲突".to_string(),
+                ..base.clone()
             };
         }
-        Err(e) => return BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
-            success: false,
-            code: "DB_ERROR".to_string(),
-            message: format!("更新失败: {}", e),
-        },
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return BatchProcessResult {
+                success: false,
+                code: "DB_ERROR".to_string(),
+                message: format!("更新失败: {}", e),
+                ..base.clone()
+            };
+        }
         _ => {}
     }
 
-    let _ = insert_record_tx(
+    // 留痕写入：失败则回滚整个事务，返回 TRACE_FAILED
+    match insert_record_tx(
         &mut tx,
         order_id,
         Some(&order.status),
@@ -816,22 +823,37 @@ async fn process_one(
         auth,
         req.note.as_deref(),
         None,
-    ).await;
+    ).await {
+        Ok(_) => {}
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return BatchProcessResult {
+                success: false,
+                code: "TRACE_FAILED".to_string(),
+                message: format!("处理记录写入失败，已回滚: {}", e),
+                trace_saved: Some(false),
+                ..base.clone()
+            };
+        }
+    }
 
     match tx.commit().await {
         Ok(_) => BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
             success: true,
             code: "OK".to_string(),
             message: format!("成功: {}（v{} → v{}）", transition.action_name, version, new_version),
+            new_status: Some(target.as_str().to_string()),
+            new_version: Some(new_version),
+            new_handler_name: handler_name.clone(),
+            trace_saved: Some(true),
+            ..base.clone()
         },
         Err(e) => BatchProcessResult {
-            order_id: order_id_str.to_string(),
-            order_no,
             success: false,
             code: "DB_ERROR".to_string(),
             message: format!("提交事务失败: {}", e),
+            trace_saved: Some(false),
+            ..base.clone()
         },
     }
 }

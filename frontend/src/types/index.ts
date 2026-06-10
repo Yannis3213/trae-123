@@ -172,6 +172,13 @@ export interface BatchProcessResult {
   success: boolean;
   code: string;
   message: string;
+  old_status?: OrderStatus | null;
+  new_status?: OrderStatus | null;
+  old_version?: number | null;
+  new_version?: number | null;
+  old_handler_name?: string | null;
+  new_handler_name?: string | null;
+  trace_saved?: boolean | null;
 }
 
 export const STATUS_LABELS: Record<OrderStatus, string> = {

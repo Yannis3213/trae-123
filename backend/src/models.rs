@@ -181,6 +181,32 @@ pub struct BatchProcessResult {
     pub success: bool,
     pub code: String,
     pub message: String,
+    pub old_status: Option<String>,
+    pub new_status: Option<String>,
+    pub old_version: Option<i32>,
+    pub new_version: Option<i32>,
+    pub old_handler_name: Option<String>,
+    pub new_handler_name: Option<String>,
+    pub trace_saved: Option<bool>,
+}
+
+impl Default for BatchProcessResult {
+    fn default() -> Self {
+        Self {
+            order_id: String::new(),
+            order_no: String::new(),
+            success: false,
+            code: String::new(),
+            message: String::new(),
+            old_status: None,
+            new_status: None,
+            old_version: None,
+            new_version: None,
+            old_handler_name: None,
+            new_handler_name: None,
+            trace_saved: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

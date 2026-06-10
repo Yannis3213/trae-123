@@ -578,38 +578,114 @@ export default component$(() => {
 
         {state.showBatchResult && (
           <div class="modal-overlay" onClick$={e => { if ((e.target as HTMLElement).className === 'modal-overlay') state.showBatchResult = false; }}>
-            <div class="modal" style="max-width: 720px;">
+            <div class="modal" style="max-width: 960px;">
               <div class="modal-header">
-                <h3 class="modal-title">批量处理结果（逐条校验）</h3>
+                <h3 class="modal-title">批量处理结果（逐条校验 · 共 {state.batchResults.length} 条）</h3>
                 <button class="btn btn-sm" onClick$={() => (state.showBatchResult = false)}>×</button>
               </div>
               <div class="modal-body">
-                <div style="margin-bottom: 10px; font-size: 13px; color: var(--text-secondary);">
-                  成功: {state.batchResults.filter(r => r.success).length} · 失败: {state.batchResults.filter(r => !r.success).length}
+                <div style="margin-bottom: 12px; font-size: 13px; color: var(--text-secondary); display: flex; gap: 20px; flex-wrap: wrap;">
+                  <span>✓ 成功: <b style="color:#16a34a;">{state.batchResults.filter(r => r.success).length}</b></span>
+                  <span>✗ 失败: <b style="color:#dc2626;">{state.batchResults.filter(r => !r.success).length}</b></span>
+                  <span>📝 留痕成功: <b>{state.batchResults.filter(r => r.trace_saved === true).length}</b></span>
                 </div>
-                {state.batchResults.map(r => (
-                  <div
-                    key={r.order_id}
-                    class={`batch-result-item ${r.success ? 'batch-success' : 'batch-fail'}`}
-                    style={{ marginBottom: '6px', padding: '8px 12px', borderRadius: '6px', border: r.success ? '1px solid #bbf7d0' : '1px solid #fecaca', background: r.success ? '#f0fdf4' : '#fef2f2' }}
-                  >
-                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
-                      <div>
-                        <span style={{
-                          padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 600,
-                          background: r.success ? '#16a34a' : '#dc2626', color: '#fff', marginRight: '8px'
-                        }}>{r.success ? '✓ 成功' : '✗ 失败'}</span>
-                        <span style="font-family: monospace; font-weight: 600;">{r.order_no}</span>
-                        {r.code !== 'OK' && <span style="margin-left: 8px; font-size: 12px; color: #991b1b;">[错误码: {r.code}]</span>}
+                <div style="max-height: 520px; overflow-y: auto;">
+                  {state.batchResults.map(r => {
+                    const statusChange = (r.old_status && r.new_status) ? (
+                      <span style="font-size: 12px; color: #0f766e; font-weight: 500;">
+                        {STATUS_LABELS[r.old_status as OrderStatus] || r.old_status} → {STATUS_LABELS[r.new_status as OrderStatus] || r.new_status}
+                      </span>
+                    ) : r.old_status ? (
+                      <span style="font-size: 12px; color: #7f1d1d; font-weight: 500;">
+                        状态未变更（{STATUS_LABELS[r.old_status as OrderStatus] || r.old_status}）
+                      </span>
+                    ) : null;
+                    const versionTag = (r.old_version != null && r.new_version != null) ? (
+                      <span style="font-size: 12px; color: #1d4ed8; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: #eff6ff;">
+                        v{r.old_version} → v{r.new_version}
+                      </span>
+                    ) : r.old_version != null ? (
+                      <span style="font-size: 12px; color: #6b7280; padding: 1px 6px; border-radius: 4px; background: #f3f4f6;">
+                        当前 v{r.old_version}
+                      </span>
+                    ) : null;
+                    const handlerTag = r.new_handler_name ? (
+                      <span style="font-size: 12px; color: #92400e; font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #fef3c7;">
+                        责任人：{r.new_handler_name}
+                      </span>
+                    ) : r.old_handler_name ? (
+                      <span style="font-size: 12px; color: #4b5563; padding: 1px 6px; border-radius: 4px; background: #f3f4f6;">
+                        责任人：{r.old_handler_name}
+                      </span>
+                    ) : null;
+                    const traceTag = (r.trace_saved != null) ? (
+                      r.trace_saved ? (
+                        <span style="font-size: 12px; color: #166534; font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #dcfce7;">
+                          📝 留痕已写
+                        </span>
+                      ) : (
+                        <span style="font-size: 12px; color: #7c2d12; font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #ffedd5;">
+                          📝 留痕失败
+                        </span>
+                      )
+                    ) : null;
+                    return (
+                      <div
+                        key={r.order_id}
+                        class={`batch-result-item ${r.success ? 'batch-success' : 'batch-fail'}`}
+                        style={{ marginBottom: '8px', padding: '12px 14px', borderRadius: '8px', border: r.success ? '1px solid #86efac' : '1px solid #fca5a5', background: r.success ? '#f0fdf4' : '#fef2f2' }}
+                      >
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
+                          <div style="flex: 1; min-width: 320px;">
+                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;">
+                              <span style={{
+                                padding: '3px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: 700,
+                                background: r.success ? '#16a34a' : '#dc2626', color: '#fff'
+                              }}>{r.success ? '✓ 成功' : '✗ 失败'}</span>
+                              <span style="font-family: monospace; font-weight: 700; font-size: 14px; color: #1f2937;">{r.order_no}</span>
+                              {r.code !== 'OK' && <span style="font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #fee2e2; color: #991b1b; font-weight: 600;">错误码: {r.code}</span>}
+                              {r.code === 'OK' && <span style="font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #dcfce7; color: #166534; font-weight: 600;">code: OK</span>}
+                            </div>
+                            <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px;">
+                              {statusChange}
+                              {versionTag}
+                              {handlerTag}
+                              {traceTag}
+                            </div>
+                            <div style="font-size: 13px; line-height: 1.7; color: #1f2937;">{r.message}</div>
+                          </div>
+                          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
+                            {r.success && (
+                              <button
+                                class="btn btn-primary btn-sm"
+                                onClick$={() => { state.showBatchResult = false; nav(`/orders/${r.order_id}`); }}
+                              >→ 查看详情</button>
+                            )}
+                            <div style="font-size: 11px; color: #9ca3af; font-family: monospace;">{r.order_id.substring(0, 12)}…</div>
+                          </div>
+                        </div>
                       </div>
-                      <div style="font-size: 11px; color: var(--text-secondary); opacity: 0.8;">{r.order_id.substring(0, 8)}…</div>
-                    </div>
-                    <div style="margin-top: 4px; font-size: 13px; line-height: 1.6;">{r.message}</div>
-                  </div>
-                ))}
+                    );
+                  })}
+                </div>
               </div>
-              <div class="modal-footer">
-                <button class="btn btn-primary" onClick$={() => (state.showBatchResult = false)}>确定</button>
+              <div class="modal-footer" style="display: flex; justify-content: space-between; gap: 8px;">
+                <div style="font-size: 12px; color: var(--text-secondary);">
+                  💡 列表已自动刷新；如有失败订单，可点击「查看详情」进入单独办理。
+                </div>
+                <div style="display: flex; gap: 8px;">
+                  <button class="btn" onClick$={() => (state.showBatchResult = false)}>关闭</button>
+                  {state.batchResults.some(r => r.success) && (
+                    <button
+                      class="btn btn-primary"
+                      onClick$={() => {
+                        const firstSuccess = state.batchResults.find(r => r.success)!;
+                        state.showBatchResult = false;
+                        nav(`/orders/${firstSuccess.order_id}`);
+                      }}
+                    >查看首个成功订单</button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
