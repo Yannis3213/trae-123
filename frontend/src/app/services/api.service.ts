@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpParams, HttpResponse } from '@angular/common/http';
+import { HttpClient, HttpParams, HttpResponse, HttpErrorResponse } from '@angular/common/http';
 import { Observable, of } from 'rxjs';
-import { map, catchError } from 'rxjs/operators';
+import { map, catchError, switchMap } from 'rxjs/operators';
 import {
   WorkOrder, WorkOrderDetail, Statistics, Attachment,
   BatchOperationRequest, BatchOperationResponse,
@@ -71,7 +71,7 @@ export class ApiService {
     return this.http.get<Attachment[]>(`/api/workorders/${workOrderId}/attachments`);
   }
 
-  downloadAttachment(attachmentId: number): Observable<{ success: boolean; blob?: Blob; fileName?: string; error?: string }> {
+  downloadAttachment(attachmentId: number): Observable<{ success: boolean; blob?: Blob; fileName?: string; error?: string; status?: number }> {
     return this.http.get(`/api/attachments/${attachmentId}/download`, {
       observe: 'response',
       responseType: 'blob'
@@ -89,24 +89,46 @@ export class ApiService {
             }
           }
         }
-        return { success: true, blob: resp.body!, fileName };
+        return { success: true, blob: resp.body!, fileName, status: resp.status };
       }),
-      catchError(async (err) => {
-        let errorMsg = '下载失败';
-        try {
-          if (err.error instanceof Blob) {
-            const text = await err.error.text();
-            const parsed = JSON.parse(text);
-            if (parsed.error) errorMsg = parsed.error;
-          } else if (err.error?.error) {
-            errorMsg = err.error.error;
-          }
-        } catch {}
-        if (err.status === 401) errorMsg = '请先登录后再下载';
-        else if (err.status === 403) errorMsg = errorMsg || '无权限下载此附件';
-        else if (err.status === 404) errorMsg = errorMsg || '附件不存在';
-        return of({ success: false, error: errorMsg });
+      catchError((err: HttpErrorResponse) => {
+        return this.parseBlobError(err).pipe(
+          switchMap(errorMsg => of({
+            success: false,
+            error: errorMsg || '下载失败',
+            status: err.status
+          }))
+        );
       })
-    ) as Observable<{ success: boolean; blob?: Blob; fileName?: string; error?: string }>;
+    );
+  }
+
+  private parseBlobError(err: HttpErrorResponse): Observable<string> {
+    if (err.error instanceof Blob) {
+      return new Observable<string>(subscriber => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const parsed = JSON.parse(reader.result as string);
+            subscriber.next(parsed.error || err.statusText || '');
+          } catch {
+            subscriber.next(err.statusText || '');
+          }
+          subscriber.complete();
+        };
+        reader.onerror = () => {
+          subscriber.next(err.statusText || '');
+          subscriber.complete();
+        };
+        reader.readAsText(err.error);
+      });
+    }
+    if (typeof err.error === 'string') {
+      return of(err.error);
+    }
+    if (err.error?.error) {
+      return of(err.error.error);
+    }
+    return of(err.statusText || '');
   }
 }

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -140,16 +141,15 @@ func (h *Handler) ProcessWorkOrder(w http.ResponseWriter, r *http.Request) {
 
 	detail, err := h.workOrderService.Process(id, &req, user)
 	if err != nil {
-		switch err {
-		case services.ErrWorkOrderNotFound:
+		if errors.Is(err, services.ErrWorkOrderNotFound) {
 			utils.ErrorResponse(w, http.StatusNotFound, err.Error())
-		case services.ErrPermissionDenied, services.ErrInvalidHandler:
+		} else if errors.Is(err, services.ErrPermissionDenied) || errors.Is(err, services.ErrInvalidHandler) {
 			utils.ErrorResponse(w, http.StatusForbidden, err.Error())
-		case services.ErrVersionMismatch, services.ErrStatusConflict:
+		} else if errors.Is(err, services.ErrVersionMismatch) || errors.Is(err, services.ErrStatusConflict) {
 			utils.ErrorResponse(w, http.StatusConflict, err.Error())
-		case services.ErrMissingEvidence, services.ErrInvalidStatus, services.ErrExceptionReasonMissing:
+		} else if errors.Is(err, services.ErrMissingEvidence) || errors.Is(err, services.ErrInvalidStatus) || errors.Is(err, services.ErrExceptionReasonMissing) {
 			utils.ErrorResponse(w, http.StatusBadRequest, err.Error())
-		default:
+		} else {
 			utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 		return
@@ -246,12 +246,11 @@ func (h *Handler) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 
 	attachment, err := h.workOrderService.UploadAttachment(id, header, evidenceType, user)
 	if err != nil {
-		switch err {
-		case services.ErrWorkOrderNotFound:
+		if errors.Is(err, services.ErrWorkOrderNotFound) {
 			utils.ErrorResponse(w, http.StatusNotFound, err.Error())
-		case services.ErrPermissionDenied:
+		} else if errors.Is(err, services.ErrPermissionDenied) {
 			utils.ErrorResponse(w, http.StatusForbidden, err.Error())
-		default:
+		} else {
 			utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 		return
@@ -266,12 +265,11 @@ func (h *Handler) GetAttachments(w http.ResponseWriter, r *http.Request) {
 
 	attachments, err := h.workOrderService.GetAttachments(id, user)
 	if err != nil {
-		switch err {
-		case services.ErrWorkOrderNotFound:
+		if errors.Is(err, services.ErrWorkOrderNotFound) {
 			utils.ErrorResponse(w, http.StatusNotFound, err.Error())
-		case services.ErrPermissionDenied:
+		} else if errors.Is(err, services.ErrPermissionDenied) {
 			utils.ErrorResponse(w, http.StatusForbidden, err.Error())
-		default:
+		} else {
 			utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 		return
@@ -286,12 +284,11 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.workOrderService.DownloadAttachment(attachID, user)
 	if err != nil {
-		switch err {
-		case services.ErrPermissionDenied, services.ErrInvalidHandler:
+		if errors.Is(err, services.ErrPermissionDenied) || errors.Is(err, services.ErrInvalidHandler) {
 			utils.ErrorResponse(w, http.StatusForbidden, err.Error())
-		case services.ErrWorkOrderNotFound, services.ErrAttachmentNotFound, services.ErrFileNotFound:
+		} else if errors.Is(err, services.ErrWorkOrderNotFound) || errors.Is(err, services.ErrAttachmentNotFound) || errors.Is(err, services.ErrFileNotFound) {
 			utils.ErrorResponse(w, http.StatusNotFound, err.Error())
-		default:
+		} else {
 			utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 		return

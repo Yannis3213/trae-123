@@ -842,9 +842,30 @@ type DownloadResult struct {
 }
 
 func (s *WorkOrderService) DownloadAttachment(attachmentID int64, user *models.User) (*DownloadResult, error) {
-	a, err := s.GetAttachmentByID(attachmentID, user)
+	a := &models.Attachment{}
+	err := database.DB.QueryRow(`
+		SELECT a.id, a.work_order_id, a.file_name, a.file_type, a.file_size, a.file_path,
+			a.uploaded_by, a.uploader, a.evidence_type, a.created_at
+		FROM attachments a
+		INNER JOIN work_orders w ON w.id = a.work_order_id
+		WHERE a.id = ?
+	`, attachmentID).Scan(&a.ID, &a.WorkOrderID, &a.FileName, &a.FileType, &a.FileSize,
+		&a.FilePath, &a.UploadedBy, &a.Uploader, &a.EvidenceType, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, ErrAttachmentNotFound
+	}
 	if err != nil {
 		return nil, err
+	}
+
+	var currentHandlerID int64
+	database.DB.QueryRow("SELECT current_handler_id FROM work_orders WHERE id = ?", a.WorkOrderID).Scan(&currentHandlerID)
+	if user.Role != models.RoleManager && currentHandlerID != user.ID {
+		logErr := s.writeDownloadLog(a, user, false, ErrPermissionDenied.Error())
+		if logErr != nil {
+			return nil, fmt.Errorf("%w; 审计日志写入失败: %v", ErrPermissionDenied, logErr)
+		}
+		return nil, ErrPermissionDenied
 	}
 
 	fullPath := filepath.Join(config.AppConfig.UploadPath, a.FilePath)
@@ -853,21 +874,37 @@ func (s *WorkOrderService) DownloadAttachment(attachmentID int64, user *models.U
 			placeholder := fmt.Sprintf(
 				"===== 演示占位附件 =====\n文件名: %s\n证据类型: %s\n下载人: %s\n下载时间: %s\n\n这是演示数据生成的占位文件。\n请通过前端详情页上传真实文件后重新下载。\n",
 				a.FileName, getEvidenceName(a.EvidenceType), user.Name, time.Now().Format("2006-01-02 15:04:05"))
-			s.writeDownloadLog(a, user)
+			logErr := s.writeDownloadLog(a, user, true, "")
+			if logErr != nil {
+				return nil, fmt.Errorf("下载审计日志写入失败: %w", logErr)
+			}
 			return &DownloadResult{Attachment: a, IsPlaceholder: true, Placeholder: placeholder}, nil
+		}
+		logErr := s.writeDownloadLog(a, user, false, ErrFileNotFound.Error())
+		if logErr != nil {
+			return nil, fmt.Errorf("%w; 审计日志写入失败: %v", ErrFileNotFound, logErr)
 		}
 		return nil, ErrFileNotFound
 	}
 
-	s.writeDownloadLog(a, user)
+	logErr := s.writeDownloadLog(a, user, true, "")
+	if logErr != nil {
+		return nil, fmt.Errorf("下载审计日志写入失败: %w", logErr)
+	}
 	return &DownloadResult{Attachment: a, FullPath: fullPath}, nil
 }
 
-func (s *WorkOrderService) writeDownloadLog(a *models.Attachment, user *models.User) {
-	database.DB.Exec(`
+func (s *WorkOrderService) writeDownloadLog(a *models.Attachment, user *models.User, success bool, failureReason string) error {
+	action := "下载附件"
+	remark := fmt.Sprintf("下载证据附件: %s (%s)", getEvidenceName(a.EvidenceType), a.FileName)
+	if !success {
+		action = "下载附件失败"
+		remark = fmt.Sprintf("%s，失败原因: %s", remark, failureReason)
+	}
+	_, err := database.DB.Exec(`
 		INSERT INTO processing_logs (
 			work_order_id, operator_id, operator, action, from_status, to_status, remark
 		) VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, a.WorkOrderID, user.ID, user.Name, "下载附件", "", "",
-		fmt.Sprintf("下载证据附件: %s (%s)", getEvidenceName(a.EvidenceType), a.FileName))
+	`, a.WorkOrderID, user.ID, user.Name, action, "", "", remark)
+	return err
 }

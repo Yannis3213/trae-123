@@ -482,6 +482,7 @@ export class WorkorderDetailComponent implements OnInit {
       this.downloadingId = null;
       if (!res.success || !res.blob) {
         this.downloadError = res.error || '下载失败';
+        this.loadDetail(this.order!.id);
         return;
       }
 
@@ -497,6 +498,7 @@ export class WorkorderDetailComponent implements OnInit {
         window.URL.revokeObjectURL(url);
         this.downloadSuccess = `已下载：${fileName}`;
         setTimeout(() => { this.downloadSuccess = ''; }, 3000);
+        this.loadDetail(this.order!.id);
       } catch (e) {
         this.downloadError = '文件保存失败';
       }
