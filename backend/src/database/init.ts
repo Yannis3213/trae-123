@@ -75,6 +75,20 @@ db.exec(`
     FOREIGN KEY (created_by) REFERENCES users(id)
   );
 
+  CREATE TABLE IF NOT EXISTS exception_reasons (
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    record_id TEXT,
+    reason_code TEXT,
+    reason_detail TEXT NOT NULL,
+    responsible_role TEXT NOT NULL CHECK(responsible_role IN ('dispatcher','route_supervisor','ops_center')),
+    responsible_user_id TEXT,
+    action TEXT,
+    status TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (plan_id) REFERENCES dispatch_plans(id) ON DELETE CASCADE
+  );
+
   CREATE INDEX IF NOT EXISTS idx_plans_status ON dispatch_plans(status);
   CREATE INDEX IF NOT EXISTS idx_plans_handler ON dispatch_plans(current_handler);
   CREATE INDEX IF NOT EXISTS idx_plans_role ON dispatch_plans(current_role);

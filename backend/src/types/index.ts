@@ -24,6 +24,19 @@ export type NoteType = "pending_sign" | "exception_return" | "sign_complete";
 
 export type AttachmentCategory = "vehicle_schedule" | "driver_checkin" | "dispatch_confirm" | "other";
 
+export interface ExceptionReason {
+  id: string;
+  planId: string;
+  recordId?: string;
+  reasonCode: string;
+  reasonDetail: string;
+  responsibleRole: Role;
+  responsibleUserId: string;
+  action: string;
+  status: string;
+  createdAt: string;
+}
+
 export interface DispatchPlan {
   id: string;
   planNumber: string;
@@ -44,6 +57,7 @@ export interface DispatchPlan {
   attachments?: Attachment[];
   processingRecords?: ProcessingRecord[];
   auditNotes?: AuditNote[];
+  exceptionReasons?: ExceptionReason[];
 }
 
 export interface Attachment {

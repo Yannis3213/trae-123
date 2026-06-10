@@ -105,3 +105,10 @@ export async function getQueueStats(role?: string) {
 export async function getEvidenceSummary() {
   return request<{ vehicleSchedule: number; driverCheckin: number; dispatchConfirm: number }>('/evidence/summary');
 }
+
+export async function uploadAttachment(planId: string, data: { fileType: 'vehicle_schedule' | 'driver_checkin' | 'dispatch_confirm' | 'other'; fileName: string }) {
+  return request<any>(`/plans/${planId}/attachments`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}

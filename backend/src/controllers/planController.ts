@@ -1,6 +1,6 @@
 import Router from "@koa/router";
 import * as planService from "../services/planService.js";
-import type { Role } from "../types/index.js";
+import type { Role, AttachmentCategory } from "../types/index.js";
 
 const router = new Router({ prefix: "/api/plans" });
 
@@ -45,16 +45,6 @@ router.get("/", async (ctx) => {
   ctx.body = { data: result };
 });
 
-router.get("/:id", async (ctx) => {
-  const plan = planService.getPlanDetail(ctx.params.id);
-  if (!plan) {
-    ctx.status = 404;
-    ctx.body = { error: "计划不存在" };
-    return;
-  }
-  ctx.body = { data: plan };
-});
-
 router.post("/", async (ctx) => {
   const { planNumber, routeName, planDate, vehicleId, driverId, dueDate, notes } = ctx.request.body as {
     planNumber: string; routeName: string; planDate: string; vehicleId: string; driverId: string; dueDate: string; notes?: string;
@@ -70,6 +60,22 @@ router.post("/", async (ctx) => {
   const plan = planService.createPlan({ planNumber, routeName, planDate, vehicleId: vehicleId || "", driverId: driverId || "", dueDate, notes: notes || "" }, userId);
   ctx.status = 201;
   ctx.body = { data: plan };
+});
+
+router.post("/:id/attachments", async (ctx) => {
+  const planId = ctx.params.id;
+  const { fileType, fileName } = ctx.request.body as { fileType: AttachmentCategory; fileName: string };
+  const userId = ctx.state.user.userId;
+
+  if (!fileType || !fileName) {
+    ctx.status = 400;
+    ctx.body = { error: "缺少必填字段" };
+    return;
+  }
+
+  const attachment = planService.createAttachment({ planId, fileType, fileName, uploadedBy: userId });
+  ctx.status = 201;
+  ctx.body = { data: attachment };
 });
 
 router.put("/:id/advance", async (ctx) => {
@@ -148,6 +154,16 @@ router.put("/:id/reject", async (ctx) => {
   }
 
   ctx.body = { data: result.plan };
+});
+
+router.get("/:id", async (ctx) => {
+  const plan = planService.getPlanDetail(ctx.params.id);
+  if (!plan) {
+    ctx.status = 404;
+    ctx.body = { error: "计划不存在" };
+    return;
+  }
+  ctx.body = { data: plan };
 });
 
 export default router;

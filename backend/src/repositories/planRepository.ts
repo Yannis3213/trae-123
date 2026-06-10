@@ -1,6 +1,6 @@
 import db from "../database/init.js";
 import { v4 as uuidv4 } from "uuid";
-import type { DispatchPlan, Attachment, ProcessingRecord, AuditNote, Role, ExpiryStatus, AuditAction, NoteType, AttachmentCategory } from "../types/index.js";
+import type { DispatchPlan, Attachment, ProcessingRecord, AuditNote, Role, ExpiryStatus, AuditAction, NoteType, AttachmentCategory, ExceptionReason } from "../types/index.js";
 
 function mapPlan(row: Record<string, unknown>): DispatchPlan {
   return {
@@ -53,6 +53,21 @@ function mapAuditNote(row: Record<string, unknown>): AuditNote {
     noteType: row.note_type as NoteType,
     content: row.content as string,
     createdBy: row.created_by as string,
+    createdAt: row.created_at as string,
+  };
+}
+
+function mapExceptionReason(row: Record<string, unknown>): ExceptionReason {
+  return {
+    id: row.id as string,
+    planId: row.plan_id as string,
+    recordId: row.record_id as string | undefined,
+    reasonCode: row.reason_code as string,
+    reasonDetail: row.reason_detail as string,
+    responsibleRole: row.responsible_role as Role,
+    responsibleUserId: row.responsible_user_id as string,
+    action: row.action as string,
+    status: row.status as string,
     createdAt: row.created_at as string,
   };
 }
@@ -131,6 +146,9 @@ export function findById(id: string): DispatchPlan | undefined {
 
   const notes = db.prepare("SELECT * FROM audit_notes WHERE plan_id = ? ORDER BY created_at ASC").all(id) as Record<string, unknown>[];
   plan.auditNotes = notes.map(mapAuditNote);
+
+  const exceptionReasons = db.prepare("SELECT * FROM exception_reasons WHERE plan_id = ? ORDER BY created_at ASC").all(id) as Record<string, unknown>[];
+  plan.exceptionReasons = exceptionReasons.map(mapExceptionReason);
 
   return plan;
 }
@@ -247,4 +265,27 @@ export function hasAttachment(planId: string, fileType: string): boolean {
 export function hasProcessingRecord(planId: string, handlerId: string, action: string): boolean {
   const row = db.prepare("SELECT COUNT(*) as count FROM processing_records WHERE plan_id = ? AND handler_id = ? AND action = ?").get(planId, handlerId, action) as { count: number };
   return row.count > 0;
+}
+
+export function createExceptionReason(data: {
+  planId: string;
+  recordId?: string;
+  reasonCode: string;
+  reasonDetail: string;
+  responsibleRole: Role;
+  responsibleUserId: string;
+  action: string;
+  status: string;
+}): ExceptionReason {
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  db.prepare(
+    "INSERT INTO exception_reasons (id, plan_id, record_id, reason_code, reason_detail, responsible_role, responsible_user_id, action, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(id, data.planId, data.recordId || null, data.reasonCode, data.reasonDetail, data.responsibleRole, data.responsibleUserId, data.action, data.status, now);
+  return { id, ...data, createdAt: now };
+}
+
+export function findExceptionReasonsByPlanId(planId: string): ExceptionReason[] {
+  const rows = db.prepare("SELECT * FROM exception_reasons WHERE plan_id = ? ORDER BY created_at ASC").all(planId) as Record<string, unknown>[];
+  return rows.map(mapExceptionReason);
 }
