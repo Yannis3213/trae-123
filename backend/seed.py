@@ -35,7 +35,7 @@ def seed():
 
         customers = [
             (1, "CUS001", "京东方光电科技有限公司", "刘经理", "13800138001", "北京市海淀区中关村大街1号", "10kV", 500000.0, "电子制造"),
-            (2, "CUS002", "美的集团股份有限公司（北京工厂）", "赵总", "13800138002", "北京市顺义区工业开发区", "35kV", 2000000.0, "家电制造"),
+            (2, "CUS002", "美的集团股份有限公司（北京工厂）", "赵总", None, "北京市顺义区工业开发区", "35kV", 2000000.0, "家电制造"),
             (3, "CUS003", "物美商业集团（北京大区）", "孙主管", None, "北京市西城区", None, 120000.0, "零售"),
             (4, "CUS004", "比亚迪汽车有限公司", "钱采购", "13800138004", "北京市通州区", "10kV", 1500000.0, "汽车制造"),
         ]
@@ -79,7 +79,7 @@ def seed():
                 "美的集团北京工厂两年期购售电合同",
                 2, None, 0.0,
                 None, None, None,
-                str(today - timedelta(days=1)),
+                str(today + timedelta(days=15)),
                 "customer_manager",
                 "待提交",
                 1,
@@ -196,7 +196,7 @@ def seed():
 
         exceptions = [
             (3, "时限问题", "E_DEADLINE_OVERDUE", f"合同单已逾期5天未完成交易专员审核", json.dumps({"overdue_days": 5, "responsible": "李娜"}, ensure_ascii=False), "trade_specialist", 4),
-            (2, "材料问题", "E_MISSING_MATERIAL", "提交前检测缺项：用电客户(无)、报价测算未关联", json.dumps({"customer": [], "pricing": ["报价测算未关联"]}, ensure_ascii=False), "customer_manager", 1),
+            (2, "材料问题", "E_MISSING_MATERIAL", "提交前检测缺项：用电客户(联系电话)、报价测算未关联", json.dumps({"customer": ["contact_phone"], "pricing": ["报价测算未关联"]}, ensure_ascii=False), "customer_manager", 1),
             (4, "状态问题", "E_STATUS_ACTION_INVALID", "风控阶段检测到状态冲突：期限条款与附件不一致", json.dumps({"conflict_fields": ["term_start_date", "附件期限条款"]}, ensure_ascii=False), "risk_manager", 3),
         ]
         cur.executemany(
@@ -213,13 +213,13 @@ def seed():
         print("")
         print("📋 四类演示单据：")
         print("   1. HT2026CASE001 [正常流转]    京东方光电 → 已到风控待复核（材料齐全）")
-        print("   2. HT2026CASE002 [缺材料]      美的集团 → 客户经理待提交（缺报价测算、联系人电话空）")
+        print("   2. HT2026CASE002 [缺材料]      美的集团 → 客户经理待提交（缺联系电话、未关联报价测算，未逾期可补正）")
         print("   3. HT2026CASE003 [超时逾期]    物美商业 → 交易专员待审核（已逾期5天）")
         print("   4. HT2026CASE004 [退回补正/状态冲突] 比亚迪 → 客户经理重新提交（风控退回）")
         print("")
         print("⚠️  异常样例（exception_records 表可查）：")
         print("   1. HT2026CASE003 时限问题 - 已逾期5天，责任人李娜")
-        print("   2. HT2026CASE002 材料问题 - 缺报价测算关联")
+        print("   2. HT2026CASE002 材料问题 - 缺联系电话、未关联报价测算")
         print("   3. HT2026CASE004 状态问题 - 期限条款与附件不一致")
 
 

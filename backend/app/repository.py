@@ -92,6 +92,25 @@ def _validate_process(conn, contract: dict, action: ProcessAction, user: dict) -
     if action.pricing_patch and not effective_pricing_id:
         raise WorkflowException("合同未关联报价测算，无法补正报价字段", "E_NO_PRICING", "材料问题")
 
+    if action.pricing_id:
+        pricing_row = conn.execute(
+            "SELECT id, customer_id FROM pricing_calculations WHERE id = ?",
+            (action.pricing_id,),
+        ).fetchone()
+        if not pricing_row:
+            raise WorkflowException(
+                f"报价测算不存在：id={action.pricing_id}",
+                "E_PRICING_NOT_FOUND",
+                "材料问题",
+            )
+        if pricing_row["customer_id"] != contract.get("customer_id"):
+            raise WorkflowException(
+                f"报价测算(id={action.pricing_id})的客户与合同客户不一致，无法绑定",
+                "E_PRICING_CUSTOMER_MISMATCH",
+                "材料问题",
+                {"pricing_customer_id": pricing_row["customer_id"], "contract_customer_id": contract.get("customer_id")},
+            )
+
     merged_customer = {**(contract.get("customer") or {}), **(action.customer_patch or {})}
     merged_pricing = None
     if effective_pricing_id:

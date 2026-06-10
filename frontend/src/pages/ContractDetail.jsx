@@ -80,7 +80,11 @@ export default function ContractDetail() {
     }
     if (prcPatch && Object.keys(prcPatch).length) {
       setPricingPatch(prev => prev ? { ...prev, ...prcPatch } : prcPatch);
-      setC(prev => prev && prev.pricing ? { ...prev, pricing: { ...prev.pricing, ...prcPatch } } : prev);
+      setC(prev => {
+        if (!prev) return prev;
+        const base = prev.pricing || (bindPricingId() ? allPricing().find(p => p.id === bindPricingId()) : null) || {};
+        return { ...prev, pricing: { ...base, ...prcPatch } };
+      });
     }
   }
 
@@ -279,13 +283,13 @@ export default function ContractDetail() {
           <div class="card">
             <div class="card-title">
               <span>报价测算</span>
-              <Show when={c().pricing}>
+              <Show when={c().pricing || bindPricingId()}>
                 <button class="btn btn-default btn-sm" onClick={() => setShowPricingPatch(true)}>
                   ✏️ 补正报价资料
                 </button>
               </Show>
             </div>
-            <Show when={c().missing_fields?.pricing?.length}>
+            <Show when={c().missing_fields?.pricing?.length && !bindPricingId()}>
               <div class="alert alert-danger mb-3">
                 <span class="alert-icon">⚠️</span>
                 <div><b>检测到缺项：</b>{c().missing_fields.pricing.join('、')}</div>
@@ -311,7 +315,7 @@ export default function ContractDetail() {
                 ))}
               </div>
             </Show>
-            <Show when={!c().pricing}>
+            <Show when={!c().pricing && !bindPricingId()}>
               <div class="alert alert-warning mb-3">
                 <span class="alert-icon">💡</span>
                 <div>未关联报价测算，请从下方选择一个报价测算绑定（办理时随补正一起提交）</div>
@@ -329,27 +333,33 @@ export default function ContractDetail() {
                   </For>
                 </select>
               </div>
-              <Show when={bindPricingId()}>
-                {(() => {
-                  const sel = allPricing().find(p => p.id === bindPricingId());
-                  if (!sel) return null;
-                  return (
-                    <div class="card mt-3" style="background: #f6ffed; border: 1px solid #b7eb8f;">
-                      <div class="card-title" style="margin-bottom:8px;padding-bottom:8px;">✅ 即将绑定的报价测算</div>
+            </Show>
+            <Show when={!c().pricing && bindPricingId()}>
+              {(() => {
+                const sel = allPricing().find(p => p.id === bindPricingId());
+                if (!sel) return null;
+                return (
+                  <div>
+                    <div class="alert alert-success mb-3" style="padding:8px 12px;">
+                      <span class="alert-icon">✅</span>
+                      <div><b>已选择报价测算绑定：</b>{sel.calculation_code}（办理时提交关联）</div>
+                    </div>
+                    <div class="card mt-2" style="background: #f6ffed; border: 1px solid #b7eb8f;">
+                      <div class="card-title" style="margin-bottom:8px;padding-bottom:8px;">
+                        <span>即将绑定的报价测算预览</span>
+                        <button class="btn btn-default btn-sm" onClick={() => setShowPricingPatch(true)}>
+                          ✏️ 补正报价资料
+                        </button>
+                      </div>
                       <div class="info-list-3">
-                        {[['测算编码','calculation_code'],['基础电价','base_price'],['合同期限(月)','contract_term_months'],['年预计金额','estimated_annual_amount'],['折扣率(%)','discount_rate']].map(([k,f]) => (
+                        {[['测算编码','calculation_code'],['基础电价','base_price'],['合同期限(月)','contract_term_months'],['峰时电价','peak_price'],['谷时电价','valley_price'],['年预计电量','expected_annual_kwh'],['年预计金额','estimated_annual_amount'],['折扣率(%)','discount_rate'],['状态','status']].map(([k,f]) => (
                           <div class="info-item"><div class="label">{k}</div><div class="value">{sel[f] ?? '-'}</div></div>
                         ))}
                       </div>
                     </div>
-                  );
-                })()}
-              </Show>
-            </Show>
-            <Show when={bindPricingId()}>
-              <div class="alert alert-success mt-3" style="padding:6px 12px;margin-bottom:0">
-                ✅ 已选择报价测算 #{bindPricingId()}，将在办理时绑定到合同
-              </div>
+                  </div>
+                );
+              })()}
             </Show>
           </div>
         </Show>
@@ -536,29 +546,32 @@ export default function ContractDetail() {
                 ✅ 已暂存报价补正：{Object.keys(pricingPatch()).join('、')}（办理时提交）
               </div>
             </Show>
-            <Show when={bindPricingId()}>
+            <Show when={bindPricingId() && !c().pricing}>
               <div class="alert alert-success" style="padding:6px 12px;margin:0">
                 ✅ 已选择报价测算 #{bindPricingId()} 绑定（办理时提交）
               </div>
             </Show>
           </div>
-          <div class="flex gap-2 mt-2">
+          <div class="flex gap-2 mt-2 flex-wrap">
             <Show when={c().missing_fields?.customer?.length}>
               <button class="btn btn-warning btn-sm" onClick={() => setShowCustomerPatch(true)}>
                 ⚠️ 补正客户缺项：{c().missing_fields.customer.join('、')}
               </button>
             </Show>
-            <Show when={c().missing_fields?.pricing?.length && !bindPricingId()}>
-              <Show when={!c().pricing}>
-                <button class="btn btn-warning btn-sm" onClick={() => setTab('pricing')}>
-                  ⚠️ 请绑定报价测算（点击跳转）
-                </button>
-              </Show>
-              <Show when={c().pricing}>
-                <button class="btn btn-warning btn-sm" onClick={() => setShowPricingPatch(true)}>
-                  ⚠️ 补正报价缺项：{c().missing_fields.pricing.join('、')}
-                </button>
-              </Show>
+            <Show when={!c().pricing && !bindPricingId()}>
+              <button class="btn btn-warning btn-sm" onClick={() => setTab('pricing')}>
+                ⚠️ 请绑定报价测算（点击跳转）
+              </button>
+            </Show>
+            <Show when={!c().pricing && bindPricingId() && !pricingPatch()}>
+              <button class="btn btn-info btn-sm" onClick={() => setShowPricingPatch(true)}>
+                ✏️ 补正报价资料（可选）
+              </button>
+            </Show>
+            <Show when={c().pricing && c().missing_fields?.pricing?.length}>
+              <button class="btn btn-warning btn-sm" onClick={() => setShowPricingPatch(true)}>
+                ⚠️ 补正报价缺项：{c().missing_fields.pricing.join('、')}
+              </button>
             </Show>
           </div>
 
