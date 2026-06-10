@@ -48,6 +48,7 @@ type LeaseApplication struct {
 	CurrentHandlerName      string   `json:"current_handler_name"`
 	CurrentHandlerRole      string   `json:"current_handler_role"`
 	Version                 int      `json:"version"`
+	Confirmed               bool     `json:"confirmed"`
 	TenantSigningStatus     string   `json:"tenant_signing_status"`
 	RoomConfirmationStatus  string   `json:"room_confirmation_status"`
 	MoveInHandoverStatus    string   `json:"move_in_handover_status"`

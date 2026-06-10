@@ -41,7 +41,7 @@ export const ACTION_LABELS: Record<string, string> = {
   confirm: '确认',
 };
 
-export const ERROR_MESSAGES: Record<number, string> = {
+export const ERROR_CODE_MAP: Record<number, string> = {
   40101: '请先选择角色',
   40301: '当前角色无权执行此操作',
   40302: '当前申请应由其他角色处理',
@@ -49,6 +49,7 @@ export const ERROR_MESSAGES: Record<number, string> = {
   40902: '当前状态不允许执行此操作',
   40903: '缺少必要附件，无法完成核验',
   40904: '该申请已被处理，请勿重复提交',
+  40905: '该申请已确认，请勿重复确认',
 };
 
 export const DEFAULT_USER = {

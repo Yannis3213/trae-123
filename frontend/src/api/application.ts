@@ -19,8 +19,11 @@ interface ApplicationQueryParams {
 
 interface ProcessData {
   action: string;
+  version?: number;
   remark?: string;
   exception_reason?: string;
+  sub_module?: string;
+  sub_module_status?: string;
 }
 
 interface BatchProcessData {

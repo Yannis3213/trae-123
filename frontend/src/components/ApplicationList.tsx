@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Table, Tag, Button, Space, Input, Select } from 'antd';
-import { PlusOutlined, EyeOutlined, EditOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Table, Tag, Button, Space, Input, Select, Tooltip } from 'antd';
+import { PlusOutlined, EyeOutlined, EditOutlined, CheckCircleOutlined, CheckCircleTwoTone } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getApplications } from '../api/application';
 import { STATUS_LABELS, STATUS_COLORS, EXPIRY_LABELS, EXPIRY_COLORS, SUB_MODULE_LABELS, ROLE_LABELS, getUserInfo } from '../constants';
@@ -11,10 +11,11 @@ import ExportButton from './ExportButton';
 
 interface ApplicationListProps {
   onViewDetail: (id: string) => void;
-  onBatchSelect: (ids: string[]) => void;
+  onBatchSelect: (ids: string[], records: Application[]) => void;
+  refreshKey?: number;
 }
 
-const ApplicationList: React.FC<ApplicationListProps> = ({ onViewDetail, onBatchSelect }) => {
+const ApplicationList: React.FC<ApplicationListProps> = ({ onViewDetail, onBatchSelect, refreshKey }) => {
   const [data, setData] = useState<Application[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -24,12 +25,14 @@ const ApplicationList: React.FC<ApplicationListProps> = ({ onViewDetail, onBatch
   const [expiryFilter, setExpiryFilter] = useState<ExpiryStatus | undefined>();
   const [keyword, setKeyword] = useState('');
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [selectedRecords, setSelectedRecords] = useState<Application[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editRecord, setEditRecord] = useState<Application | null>(null);
 
   const userInfo = getUserInfo();
   const currentRole = userInfo.role as Role;
+  const currentUserId = userInfo.userId;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -49,15 +52,15 @@ const ApplicationList: React.FC<ApplicationListProps> = ({ onViewDetail, onBatch
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter, expiryFilter, keyword]);
+  }, [page, pageSize, statusFilter, expiryFilter, keyword, refreshKey]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
   useEffect(() => {
-    onBatchSelect(selectedRowKeys as string[]);
-  }, [selectedRowKeys, onBatchSelect]);
+    onBatchSelect(selectedRowKeys as string[], selectedRecords);
+  }, [selectedRowKeys, selectedRecords, onBatchSelect]);
 
   const handleEdit = (record: Application) => {
     setEditRecord(record);
@@ -69,11 +72,23 @@ const ApplicationList: React.FC<ApplicationListProps> = ({ onViewDetail, onBatch
   };
 
   const canVerify = (record: Application) => {
-    return currentRole === 'maintenance_coordinator' && record.status === 'pending_verification';
+    if (currentRole !== 'maintenance_coordinator') return false;
+    if (record.status !== 'pending_verification') return false;
+    if (record.current_handler_id && record.current_handler_id !== currentUserId) return false;
+    return true;
   };
 
   const canConfirm = (record: Application) => {
-    return currentRole === 'store_manager' && record.status === 'verification_complete';
+    if (currentRole !== 'store_manager') return false;
+    if (record.status !== 'verification_complete') return false;
+    if (record.confirmed) return false;
+    if (record.current_handler_id && record.current_handler_id !== currentUserId) return false;
+    return true;
+  };
+
+  const isHandlerOf = (record: Application) => {
+    if (!record.current_handler_id) return false;
+    return record.current_handler_id === currentUserId;
   };
 
   const getRowClassName = (record: Application) => {
@@ -83,17 +98,24 @@ const ApplicationList: React.FC<ApplicationListProps> = ({ onViewDetail, onBatch
   };
 
   const columns = [
-    { title: '申请编号', dataIndex: 'application_no', key: 'application_no', width: 150 },
+    { title: '申请编号', dataIndex: 'application_no', key: 'application_no', width: 140 },
     { title: '租客姓名', dataIndex: 'tenant_name', key: 'tenant_name', width: 100 },
-    { title: '房间号', dataIndex: 'room_number', key: 'room_number', width: 100 },
-    { title: '楼栋', dataIndex: 'building_name', key: 'building_name', width: 120 },
+    { title: '房间号', dataIndex: 'room_number', key: 'room_number', width: 90 },
+    { title: '楼栋', dataIndex: 'building_name', key: 'building_name', width: 90 },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
-      render: (status: ApplicationStatus) => (
-        <Tag color={STATUS_COLORS[status]}>{STATUS_LABELS[status]}</Tag>
+      width: 150,
+      render: (status: ApplicationStatus, record: Application) => (
+        <Space size={4}>
+          <Tag color={STATUS_COLORS[status]}>{STATUS_LABELS[status]}</Tag>
+          {record.confirmed && (
+            <Tooltip title="门店经理已确认">
+              <CheckCircleTwoTone twoToneColor="#52c41a" style={{ fontSize: 16 }} />
+            </Tooltip>
+          )}
+        </Space>
       ),
     },
     {
@@ -101,30 +123,49 @@ const ApplicationList: React.FC<ApplicationListProps> = ({ onViewDetail, onBatch
       dataIndex: 'expiry_status',
       key: 'expiry_status',
       width: 100,
-      render: (status: ExpiryStatus) => (
-        <Tag color={EXPIRY_COLORS[status]}>{EXPIRY_LABELS[status]}</Tag>
+      render: (status: ExpiryStatus, record: Application) => (
+        <Space direction="vertical" size={0}>
+          <Tag color={EXPIRY_COLORS[status]}>{EXPIRY_LABELS[status]}</Tag>
+          {record.overdue_days > 0 && <span style={{ color: 'red', fontSize: 12 }}>逾期{record.overdue_days}天</span>}
+        </Space>
       ),
     },
     {
       title: '签约状态',
       dataIndex: 'tenant_signing_status',
       key: 'tenant_signing_status',
-      width: 100,
+      width: 90,
       render: (status: string) => SUB_MODULE_LABELS[status] || status,
     },
     {
       title: '当前处理人',
       key: 'handler',
-      width: 150,
-      render: (_: unknown, record: Application) =>
-        `${record.current_handler_name}（${ROLE_LABELS[record.current_handler_role] || record.current_handler_role}）`,
+      width: 140,
+      render: (_: unknown, record: Application) => (
+        <Tooltip title={isHandlerOf(record) ? '您负责处理' : record.current_handler_name || '待分配'}>
+          <span>
+            {record.current_handler_name
+              ? `${record.current_handler_name}（${ROLE_LABELS[record.current_handler_role] || record.current_handler_role}）`
+              : record.current_handler_role
+                ? `待${ROLE_LABELS[record.current_handler_role]}`
+                : '-'}
+          </span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '版本',
+      dataIndex: 'version',
+      key: 'version',
+      width: 60,
+      render: (v: number) => `v${v}`,
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 170,
-      render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm:ss'),
+      width: 160,
+      render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm'),
     },
     {
       title: '操作',
@@ -207,7 +248,10 @@ const ApplicationList: React.FC<ApplicationListProps> = ({ onViewDetail, onBatch
         rowClassName={getRowClassName}
         rowSelection={{
           selectedRowKeys,
-          onChange: setSelectedRowKeys,
+          onChange: (keys, records) => {
+            setSelectedRowKeys(keys);
+            setSelectedRecords(records as Application[]);
+          },
         }}
         pagination={{
           current: page,

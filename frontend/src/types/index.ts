@@ -19,6 +19,7 @@ export interface Application {
   current_handler_name: string;
   current_handler_role: Role;
   version: number;
+  confirmed: boolean;
   tenant_signing_status: SubModuleStatus;
   room_confirmation_status: SubModuleStatus;
   move_in_handover_status: SubModuleStatus;

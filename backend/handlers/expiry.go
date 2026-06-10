@@ -15,7 +15,7 @@ func GetExpiryWarnings(c *gin.Context) {
 
 	query := `SELECT id, application_no, tenant_name, tenant_phone, room_number, building_name,
 		lease_start_date, lease_end_date, monthly_rent, deposit, status,
-		current_handler_id, current_handler_name, current_handler_role, version,
+		current_handler_id, current_handler_name, current_handler_role, version, confirmed,
 		tenant_signing_status, room_confirmation_status, move_in_handover_status,
 		exception_reason, created_at, updated_at
 		FROM lease_applications WHERE 1=1`
@@ -51,12 +51,14 @@ func GetExpiryWarnings(c *gin.Context) {
 	list := []models.LeaseApplication{}
 	for rows.Next() {
 		var app models.LeaseApplication
+		var confirmed int
 		rows.Scan(&app.ID, &app.ApplicationNo, &app.TenantName, &app.TenantPhone,
 			&app.RoomNumber, &app.BuildingName, &app.LeaseStartDate, &app.LeaseEndDate,
 			&app.MonthlyRent, &app.Deposit, &app.Status,
-			&app.CurrentHandlerID, &app.CurrentHandlerName, &app.CurrentHandlerRole, &app.Version,
+			&app.CurrentHandlerID, &app.CurrentHandlerName, &app.CurrentHandlerRole, &app.Version, &confirmed,
 			&app.TenantSigningStatus, &app.RoomConfirmationStatus, &app.MoveInHandoverStatus,
 			&app.ExceptionReason, &app.CreatedAt, &app.UpdatedAt)
+		app.Confirmed = confirmed == 1
 		app.ExpiryStatus, app.OverdueDays = models.ComputeExpiryFields(app.LeaseEndDate)
 		list = append(list, app)
 	}

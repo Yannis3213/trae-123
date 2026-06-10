@@ -21,6 +21,7 @@ type seedData struct {
 	CurrentHandlerID       string
 	CurrentHandlerName     string
 	CurrentHandlerRole     string
+	Confirmed              int
 	TenantSigningStatus    string
 	RoomConfirmationStatus string
 	MoveInHandoverStatus   string
@@ -62,11 +63,11 @@ func SeedData() error {
 		{ApplicationNo: "ZY-2026-008", TenantName: "吴晓燕", TenantPhone: "13800001008", RoomNumber: "704", BuildingName: "B栋", LeaseStartDate: startBase2, LeaseEndDate: normalEnd2, MonthlyRent: 3800, Deposit: 7600, Status: "verification_failed", CurrentHandlerID: "user_001", CurrentHandlerName: "张租赁", CurrentHandlerRole: "lease_clerk", TenantSigningStatus: "pending", RoomConfirmationStatus: "failed", MoveInHandoverStatus: "pending", ExceptionReason: "房态异常，房间存在漏水问题"},
 		{ApplicationNo: "ZY-2026-009", TenantName: "郑海涛", TenantPhone: "13800001009", RoomNumber: "506", BuildingName: "A栋", LeaseStartDate: startBase3, LeaseEndDate: longEnd, MonthlyRent: 3500, Deposit: 7000, Status: "verification_failed", CurrentHandlerID: "user_001", CurrentHandlerName: "张租赁", CurrentHandlerRole: "lease_clerk", TenantSigningStatus: "failed", RoomConfirmationStatus: "pending", MoveInHandoverStatus: "pending", ExceptionReason: "签约信息有误，租客姓名与身份证不符"},
 		{ApplicationNo: "ZY-2026-010", TenantName: "黄雅琴", TenantPhone: "13800001010", RoomNumber: "203", BuildingName: "C栋", LeaseStartDate: startBase, LeaseEndDate: normalEnd, MonthlyRent: 3200, Deposit: 6400, Status: "verification_failed", CurrentHandlerID: "user_001", CurrentHandlerName: "张租赁", CurrentHandlerRole: "lease_clerk", TenantSigningStatus: "pending", RoomConfirmationStatus: "pending", MoveInHandoverStatus: "pending", ExceptionReason: "材料不全，缺少收入证明"},
-		{ApplicationNo: "ZY-2026-011", TenantName: "林大为", TenantPhone: "13800001011", RoomNumber: "1008", BuildingName: "A栋", LeaseStartDate: startBase2, LeaseEndDate: normalEnd2, MonthlyRent: 4500, Deposit: 9000, Status: "verification_complete", CurrentHandlerID: "user_003", CurrentHandlerName: "王经理", CurrentHandlerRole: "store_manager", TenantSigningStatus: "complete", RoomConfirmationStatus: "complete", MoveInHandoverStatus: "complete", ExceptionReason: ""},
-		{ApplicationNo: "ZY-2026-012", TenantName: "杨秀英", TenantPhone: "13800001012", RoomNumber: "405", BuildingName: "B栋", LeaseStartDate: startBase3, LeaseEndDate: longEnd, MonthlyRent: 3600, Deposit: 7200, Status: "verification_complete", CurrentHandlerID: "user_003", CurrentHandlerName: "王经理", CurrentHandlerRole: "store_manager", TenantSigningStatus: "complete", RoomConfirmationStatus: "complete", MoveInHandoverStatus: "pending", ExceptionReason: ""},
-		{ApplicationNo: "ZY-2026-013", TenantName: "马晓峰", TenantPhone: "13800001013", RoomNumber: "710", BuildingName: "C栋", LeaseStartDate: startBase, LeaseEndDate: expiringSoon, MonthlyRent: 3900, Deposit: 7800, Status: "verification_complete", CurrentHandlerID: "user_003", CurrentHandlerName: "王经理", CurrentHandlerRole: "store_manager", TenantSigningStatus: "complete", RoomConfirmationStatus: "pending", MoveInHandoverStatus: "pending", ExceptionReason: ""},
-		{ApplicationNo: "ZY-2026-014", TenantName: "何丽萍", TenantPhone: "13800001014", RoomNumber: "309", BuildingName: "A栋", LeaseStartDate: startBase2, LeaseEndDate: normalEnd, MonthlyRent: 3700, Deposit: 7400, Status: "pending_verification", CurrentHandlerID: "user_002", CurrentHandlerName: "李维修", CurrentHandlerRole: "maintenance_coordinator", TenantSigningStatus: "complete", RoomConfirmationStatus: "pending", MoveInHandoverStatus: "failed", ExceptionReason: "交接时发现家具损坏"},
-		{ApplicationNo: "ZY-2026-015", TenantName: "许振宇", TenantPhone: "13800001015", RoomNumber: "607", BuildingName: "B栋", LeaseStartDate: startBase3, LeaseEndDate: normalEnd2, MonthlyRent: 4100, Deposit: 8200, Status: "verification_complete", CurrentHandlerID: "user_003", CurrentHandlerName: "王经理", CurrentHandlerRole: "store_manager", TenantSigningStatus: "pending", RoomConfirmationStatus: "complete", MoveInHandoverStatus: "complete", ExceptionReason: ""},
+		{ApplicationNo: "ZY-2026-011", TenantName: "林大为", TenantPhone: "13800001011", RoomNumber: "1008", BuildingName: "A栋", LeaseStartDate: startBase2, LeaseEndDate: normalEnd2, MonthlyRent: 4500, Deposit: 9000, Status: "verification_complete", CurrentHandlerID: "user_003", CurrentHandlerName: "王经理", CurrentHandlerRole: "store_manager", Confirmed: 0, TenantSigningStatus: "complete", RoomConfirmationStatus: "complete", MoveInHandoverStatus: "complete", ExceptionReason: ""},
+		{ApplicationNo: "ZY-2026-012", TenantName: "杨秀英", TenantPhone: "13800001012", RoomNumber: "405", BuildingName: "B栋", LeaseStartDate: startBase3, LeaseEndDate: longEnd, MonthlyRent: 3600, Deposit: 7200, Status: "verification_complete", CurrentHandlerID: "", CurrentHandlerName: "", CurrentHandlerRole: "store_manager", Confirmed: 1, TenantSigningStatus: "complete", RoomConfirmationStatus: "complete", MoveInHandoverStatus: "pending", ExceptionReason: ""},
+		{ApplicationNo: "ZY-2026-013", TenantName: "马晓峰", TenantPhone: "13800001013", RoomNumber: "710", BuildingName: "C栋", LeaseStartDate: startBase, LeaseEndDate: expiringSoon, MonthlyRent: 3900, Deposit: 7800, Status: "verification_complete", CurrentHandlerID: "user_003", CurrentHandlerName: "王经理", CurrentHandlerRole: "store_manager", Confirmed: 0, TenantSigningStatus: "complete", RoomConfirmationStatus: "pending", MoveInHandoverStatus: "pending", ExceptionReason: ""},
+		{ApplicationNo: "ZY-2026-014", TenantName: "何丽萍", TenantPhone: "13800001014", RoomNumber: "309", BuildingName: "A栋", LeaseStartDate: startBase2, LeaseEndDate: normalEnd, MonthlyRent: 3700, Deposit: 7400, Status: "pending_verification", CurrentHandlerID: "user_002", CurrentHandlerName: "李维修", CurrentHandlerRole: "maintenance_coordinator", Confirmed: 0, TenantSigningStatus: "complete", RoomConfirmationStatus: "pending", MoveInHandoverStatus: "failed", ExceptionReason: "交接时发现家具损坏"},
+		{ApplicationNo: "ZY-2026-015", TenantName: "许振宇", TenantPhone: "13800001015", RoomNumber: "607", BuildingName: "B栋", LeaseStartDate: startBase3, LeaseEndDate: normalEnd2, MonthlyRent: 4100, Deposit: 8200, Status: "verification_complete", CurrentHandlerID: "", CurrentHandlerName: "", CurrentHandlerRole: "store_manager", Confirmed: 1, TenantSigningStatus: "pending", RoomConfirmationStatus: "complete", MoveInHandoverStatus: "complete", ExceptionReason: ""},
 	}
 
 	tx, err := DB.Begin()
@@ -77,10 +78,10 @@ func SeedData() error {
 	stmt, err := tx.Prepare(`INSERT INTO lease_applications
 		(id, application_no, tenant_name, tenant_phone, room_number, building_name,
 		lease_start_date, lease_end_date, monthly_rent, deposit, status,
-		current_handler_id, current_handler_name, current_handler_role, version,
+		current_handler_id, current_handler_name, current_handler_role, version, confirmed,
 		tenant_signing_status, room_confirmation_status, move_in_handover_status,
 		exception_reason, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -92,7 +93,7 @@ func SeedData() error {
 		_, err = stmt.Exec(id, s.ApplicationNo, s.TenantName, s.TenantPhone,
 			s.RoomNumber, s.BuildingName, s.LeaseStartDate, s.LeaseEndDate,
 			s.MonthlyRent, s.Deposit, s.Status,
-			s.CurrentHandlerID, s.CurrentHandlerName, s.CurrentHandlerRole, 1,
+			s.CurrentHandlerID, s.CurrentHandlerName, s.CurrentHandlerRole, 1, s.Confirmed,
 			s.TenantSigningStatus, s.RoomConfirmationStatus, s.MoveInHandoverStatus,
 			s.ExceptionReason, now, now)
 		if err != nil {

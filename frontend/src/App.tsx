@@ -11,6 +11,7 @@ import ApplicationDetail from './components/ApplicationDetail';
 import ExpiryWarning from './components/ExpiryWarning';
 import StatisticsPanel from './components/StatisticsPanel';
 import BatchProcess from './components/BatchProcess';
+import type { Application } from './types';
 
 const { Header, Sider, Content } = Layout;
 
@@ -20,11 +21,16 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<PageKey>('applications');
   const [detailId, setDetailId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedRecords, setSelectedRecords] = useState<Application[]>([]);
   const [batchOpen, setBatchOpen] = useState(false);
-  const [, setRoleVersion] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [roleKey, setRoleKey] = useState(0);
 
   const handleRoleChange = () => {
-    setRoleVersion((v) => v + 1);
+    setRoleKey((v) => v + 1);
+    setDetailId(null);
+    setSelectedIds([]);
+    setSelectedRecords([]);
   };
 
   const handleViewDetail = (id: string) => {
@@ -35,14 +41,26 @@ const App: React.FC = () => {
     setDetailId(null);
   };
 
-  const handleBatchSelect = useCallback((ids: string[]) => {
+  const handleBatchSelect = useCallback((ids: string[], records: Application[]) => {
     setSelectedIds(ids);
+    setSelectedRecords(records);
   }, []);
+
+  const refreshList = () => {
+    setRefreshKey((v) => v + 1);
+  };
 
   const renderContent = () => {
     if (currentPage === 'applications') {
       if (detailId) {
-        return <ApplicationDetail id={detailId} onBack={handleBack} />;
+        return (
+          <ApplicationDetail
+            key={detailId}
+            id={detailId}
+            onBack={handleBack}
+            onRefresh={refreshList}
+          />
+        );
       }
       return (
         <div>
@@ -53,23 +71,33 @@ const App: React.FC = () => {
               </Button>
             </div>
           )}
-          <ApplicationList onViewDetail={handleViewDetail} onBatchSelect={handleBatchSelect} />
+          <ApplicationList
+            key={roleKey}
+            onViewDetail={handleViewDetail}
+            onBatchSelect={handleBatchSelect}
+            refreshKey={refreshKey}
+          />
           <BatchProcess
             selectedIds={selectedIds}
+            selectedRecords={selectedRecords}
             open={batchOpen}
             onClose={() => setBatchOpen(false)}
-            onSuccess={() => setSelectedIds([])}
+            onSuccess={() => {
+              setSelectedIds([]);
+              setSelectedRecords([]);
+              refreshList();
+            }}
           />
         </div>
       );
     }
 
     if (currentPage === 'expiry') {
-      return <ExpiryWarning />;
+      return <ExpiryWarning key={roleKey} />;
     }
 
     if (currentPage === 'statistics') {
-      return <StatisticsPanel />;
+      return <StatisticsPanel key={roleKey} />;
     }
 
     return null;

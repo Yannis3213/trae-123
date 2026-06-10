@@ -33,6 +33,28 @@ func InitDB(dbPath string) error {
 		return fmt.Errorf("创建表失败: %v", err)
 	}
 
+	if err = migrateSchema(); err != nil {
+		return fmt.Errorf("迁移表结构失败: %v", err)
+	}
+
+	return nil
+}
+
+func migrateSchema() error {
+	columns := map[string]string{
+		"confirmed": "INTEGER NOT NULL DEFAULT 0",
+	}
+
+	for col, def := range columns {
+		var exists bool
+		DB.QueryRow("SELECT 1 FROM pragma_table_info('lease_applications') WHERE name = ?", col).Scan(&exists)
+		if !exists {
+			_, err := DB.Exec(fmt.Sprintf("ALTER TABLE lease_applications ADD COLUMN %s %s", col, def))
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -54,6 +76,7 @@ func createTables() error {
 			current_handler_name TEXT DEFAULT '',
 			current_handler_role TEXT DEFAULT '',
 			version INTEGER NOT NULL DEFAULT 1,
+			confirmed INTEGER NOT NULL DEFAULT 0,
 			tenant_signing_status TEXT DEFAULT 'pending',
 			room_confirmation_status TEXT DEFAULT 'pending',
 			move_in_handover_status TEXT DEFAULT 'pending',
