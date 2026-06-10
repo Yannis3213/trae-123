@@ -28,6 +28,10 @@ export interface CheckinRecord {
   scenario: string;
   created_at: string;
   updated_at: string;
+  latest_action: string;
+  latest_success: boolean;
+  latest_block_reason: string;
+  latest_block_type: string;
 }
 
 export interface Attachment {
@@ -179,4 +183,46 @@ export const ATTACHMENT_TYPE_LABELS: Record<AttachmentType, string> = {
   checkin_evidence: '旅客值机证据',
   baggage_evidence: '行李托运证据',
   exception_evidence: '异常交接证据',
+};
+
+export interface ProcessTrace {
+  record_id: number;
+  flight_no: string;
+  passenger_name: string;
+  action: ProcessAction;
+  handler_name: string;
+  handler_role: UserRole;
+  from_status: RecordStatus;
+  to_status: RecordStatus;
+  version_before: number;
+  version_after: number;
+  previous_handler_role: UserRole;
+  next_handler_role: UserRole;
+  block_reason: string;
+  block_type: string;
+  success: boolean;
+}
+
+export const BLOCK_TYPE_LABELS: Record<string, string> = {
+  version: '版本冲突',
+  role: '角色越权',
+  status: '状态冲突',
+  evidence: '缺少证据',
+  deadline: '已逾期',
+  return_reason: '缺少退回原因',
+  not_found: '记录不存在',
+  invalid_input: '参数错误',
+  internal: '系统错误',
+};
+
+export const BLOCK_TYPE_COLORS: Record<string, string> = {
+  version: '#8e44ad',
+  role: '#e74c3c',
+  status: '#e67e22',
+  evidence: '#d35400',
+  deadline: '#c0392b',
+  return_reason: '#7f8c8d',
+  not_found: '#95a5a6',
+  invalid_input: '#34495e',
+  internal: '#2c3e50',
 };

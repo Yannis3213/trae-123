@@ -17,6 +17,8 @@ import {
   WARNING_LABELS,
   WarningType,
   BatchProcessResult,
+  BLOCK_TYPE_LABELS,
+  BLOCK_TYPE_COLORS,
 } from '../../models/models';
 
 @Component({
@@ -50,30 +52,8 @@ export class WarningQueueComponent implements OnInit {
   ACTION_LABELS = ACTION_LABELS;
   WARNING_COLORS = WARNING_COLORS;
   WARNING_LABELS = WARNING_LABELS;
-
-  ERROR_TYPE_LABELS: Record<string, string> = {
-    version: '版本冲突',
-    role: '角色越权',
-    status: '状态冲突',
-    evidence: '缺少证据',
-    deadline: '已逾期',
-    return_reason: '缺少退回原因',
-    not_found: '记录不存在',
-    invalid_input: '参数错误',
-    internal: '系统错误',
-  };
-
-  ERROR_TYPE_COLORS: Record<string, string> = {
-    version: '#8e44ad',
-    role: '#e74c3c',
-    status: '#e67e22',
-    evidence: '#d35400',
-    deadline: '#c0392b',
-    return_reason: '#7f8c8d',
-    not_found: '#95a5a6',
-    invalid_input: '#34495e',
-    internal: '#2c3e50',
-  };
+  BLOCK_TYPE_LABELS = BLOCK_TYPE_LABELS;
+  BLOCK_TYPE_COLORS = BLOCK_TYPE_COLORS;
 
   batchActionOptions: { value: ProcessAction; label: string }[] = [
     { value: 'submit', label: '提交审核' },

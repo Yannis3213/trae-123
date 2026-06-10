@@ -580,6 +580,60 @@
   overflow: hidden;
 }
 
+.latest-action-col {
+  max-width: 200px;
+  min-width: 120px;
+}
+
+.latest-action-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.latest-action-label {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  width: fit-content;
+}
+
+.latest-action-label.success {
+  background: #e8f8f5;
+  color: #27ae60;
+}
+
+.latest-action-label.fail {
+  background: #fdecea;
+  color: #e74c3c;
+}
+
+.latest-block-reason {
+  font-size: 11px;
+  color: #e74c3c;
+  line-height: 1.3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.mini-block-tag {
+  display: inline-block;
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.no-action-text {
+  color: #b2bec3;
+  font-size: 12px;
+}
+
 .dialog-wide {
   width: 720px;
 }

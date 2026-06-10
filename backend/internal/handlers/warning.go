@@ -62,7 +62,12 @@ func (h *WarningHandler) List(c echo.Context) error {
 	h.DB.QueryRow(countQuery, args...).Scan(&total)
 
 	offset := (page - 1) * pageSize
-	listQuery := "SELECT cr.id, cr.flight_no, cr.passenger_name, cr.passenger_id, cr.seat_no, cr.checkin_time, cr.status, cr.version, cr.deadline, cr.created_by, cr.current_handler_role, cr.return_reason, cr.scenario, cr.created_at, cr.updated_at FROM checkin_records cr " + whereClause + " ORDER BY cr.deadline ASC LIMIT ? OFFSET ?"
+	listQuery := `SELECT cr.id, cr.flight_no, cr.passenger_name, cr.passenger_id, cr.seat_no, cr.checkin_time, cr.status, cr.version, cr.deadline, cr.created_by, cr.current_handler_role, cr.return_reason, cr.scenario, cr.created_at, cr.updated_at,
+	(SELECT pr.action FROM processing_records pr WHERE pr.record_id = cr.id ORDER BY pr.id DESC LIMIT 1),
+	(SELECT pr.success FROM processing_records pr WHERE pr.record_id = cr.id ORDER BY pr.id DESC LIMIT 1),
+	(SELECT pr.block_reason FROM processing_records pr WHERE pr.record_id = cr.id ORDER BY pr.id DESC LIMIT 1),
+	(SELECT pr.block_type FROM processing_records pr WHERE pr.record_id = cr.id ORDER BY pr.id DESC LIMIT 1)
+	FROM checkin_records cr ` + whereClause + " ORDER BY cr.deadline ASC LIMIT ? OFFSET ?"
 	args = append(args, pageSize, offset)
 
 	rows, err := h.DB.Query(listQuery, args...)
@@ -73,25 +78,44 @@ func (h *WarningHandler) List(c echo.Context) error {
 
 	type WarningRecord struct {
 		models.CheckinRecord
-		WarningType string `json:"warning_type"`
+		WarningType       string `json:"warning_type"`
+		LatestAction      string `json:"latest_action"`
+		LatestSuccess     bool   `json:"latest_success"`
+		LatestBlockReason string `json:"latest_block_reason"`
+		LatestBlockType   string `json:"latest_block_type"`
 	}
 
 	var records []WarningRecord
 	for rows.Next() {
-		var r models.CheckinRecord
+		var r WarningRecord
+		var latestAction sql.NullString
+		var latestSuccessInt sql.NullInt64
+		var latestBlockReason sql.NullString
+		var latestBlockType sql.NullString
 		if err := rows.Scan(
 			&r.ID, &r.FlightNo, &r.PassengerName, &r.PassengerID, &r.SeatNo,
 			&r.CheckinTime, &r.Status, &r.Version, &r.Deadline, &r.CreatedBy,
 			&r.CurrentHandlerRole, &r.ReturnReason, &r.Scenario, &r.CreatedAt, &r.UpdatedAt,
+			&latestAction, &latestSuccessInt, &latestBlockReason, &latestBlockType,
 		); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "数据解析失败"})
 		}
 
 		wt := services.CheckDeadline(r.Deadline)
-		records = append(records, WarningRecord{
-			CheckinRecord: r,
-			WarningType:   wt,
-		})
+		r.WarningType = wt
+		if latestAction.Valid {
+			r.LatestAction = latestAction.String
+		}
+		if latestSuccessInt.Valid {
+			r.LatestSuccess = latestSuccessInt.Int64 != 0
+		}
+		if latestBlockReason.Valid {
+			r.LatestBlockReason = latestBlockReason.String
+		}
+		if latestBlockType.Valid {
+			r.LatestBlockType = latestBlockType.String
+		}
+		records = append(records, r)
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{

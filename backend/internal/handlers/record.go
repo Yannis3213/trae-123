@@ -80,7 +80,12 @@ func (h *RecordHandler) List(c echo.Context) error {
 
 	offset := (q.Page - 1) * q.PageSize
 	listQuery := fmt.Sprintf(
-		"SELECT cr.id, cr.flight_no, cr.passenger_name, cr.passenger_id, cr.seat_no, cr.checkin_time, cr.status, cr.version, cr.deadline, cr.created_by, cr.current_handler_role, cr.return_reason, cr.scenario, cr.created_at, cr.updated_at FROM checkin_records cr %s ORDER BY cr.updated_at DESC LIMIT ? OFFSET ?",
+		`SELECT cr.id, cr.flight_no, cr.passenger_name, cr.passenger_id, cr.seat_no, cr.checkin_time, cr.status, cr.version, cr.deadline, cr.created_by, cr.current_handler_role, cr.return_reason, cr.scenario, cr.created_at, cr.updated_at,
+		(SELECT pr.action FROM processing_records pr WHERE pr.record_id = cr.id ORDER BY pr.id DESC LIMIT 1),
+		(SELECT pr.success FROM processing_records pr WHERE pr.record_id = cr.id ORDER BY pr.id DESC LIMIT 1),
+		(SELECT pr.block_reason FROM processing_records pr WHERE pr.record_id = cr.id ORDER BY pr.id DESC LIMIT 1),
+		(SELECT pr.block_type FROM processing_records pr WHERE pr.record_id = cr.id ORDER BY pr.id DESC LIMIT 1)
+		FROM checkin_records cr %s ORDER BY cr.updated_at DESC LIMIT ? OFFSET ?`,
 		whereClause,
 	)
 	args = append(args, q.PageSize, offset)
@@ -91,15 +96,40 @@ func (h *RecordHandler) List(c echo.Context) error {
 	}
 	defer rows.Close()
 
-	var records []models.CheckinRecord
+	type ListRecord struct {
+		models.CheckinRecord
+		LatestAction      string `json:"latest_action"`
+		LatestSuccess     bool   `json:"latest_success"`
+		LatestBlockReason string `json:"latest_block_reason"`
+		LatestBlockType   string `json:"latest_block_type"`
+	}
+
+	var records []ListRecord
 	for rows.Next() {
-		var r models.CheckinRecord
+		var r ListRecord
+		var latestAction sql.NullString
+		var latestSuccessInt sql.NullInt64
+		var latestBlockReason sql.NullString
+		var latestBlockType sql.NullString
 		if err := rows.Scan(
 			&r.ID, &r.FlightNo, &r.PassengerName, &r.PassengerID, &r.SeatNo,
 			&r.CheckinTime, &r.Status, &r.Version, &r.Deadline, &r.CreatedBy,
 			&r.CurrentHandlerRole, &r.ReturnReason, &r.Scenario, &r.CreatedAt, &r.UpdatedAt,
+			&latestAction, &latestSuccessInt, &latestBlockReason, &latestBlockType,
 		); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "数据解析失败"})
+		}
+		if latestAction.Valid {
+			r.LatestAction = latestAction.String
+		}
+		if latestSuccessInt.Valid {
+			r.LatestSuccess = latestSuccessInt.Int64 != 0
+		}
+		if latestBlockReason.Valid {
+			r.LatestBlockReason = latestBlockReason.String
+		}
+		if latestBlockType.Valid {
+			r.LatestBlockType = latestBlockType.String
 		}
 		records = append(records, r)
 	}
@@ -190,14 +220,16 @@ func (h *RecordHandler) getProcessingRecords(recordID int64) ([]models.Processin
 	var items []models.ProcessingRecord
 	for rows.Next() {
 		var p models.ProcessingRecord
+		var successInt int
 		if err := rows.Scan(
 			&p.ID, &p.RecordID, &p.HandlerID, &p.HandlerRole, &p.Action, &p.Comment,
 			&p.FromStatus, &p.ToStatus, &p.VersionBefore, &p.VersionAfter,
 			&p.PreviousHandlerRole, &p.NextHandlerRole, &p.BlockReason, &p.BlockType,
-			&p.Success, &p.CreatedAt,
+			&successInt, &p.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
+		p.Success = successInt != 0
 		items = append(items, p)
 	}
 	return items, nil
@@ -283,8 +315,11 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{
 			"success":    false,
-			"error":      "无效的记录ID",
+			"message":    "无效的记录ID",
 			"error_type": "invalid_input",
+			"trace": map[string]interface{}{
+				"success": false, "block_reason": "无效的记录ID", "block_type": "invalid_input",
+			},
 		})
 	}
 
@@ -292,8 +327,11 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{
 			"success":    false,
-			"error":      "请求参数错误",
+			"message":    "请求参数错误",
 			"error_type": "invalid_input",
+			"trace": map[string]interface{}{
+				"success": false, "block_reason": "请求参数错误", "block_type": "invalid_input",
+			},
 		})
 	}
 
@@ -312,8 +350,11 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]interface{}{
 			"success":    false,
-			"error":      "记录不存在",
+			"message":    "记录不存在",
 			"error_type": "not_found",
+			"trace": map[string]interface{}{
+				"record_id": recordID, "success": false, "block_reason": "记录不存在", "block_type": "not_found",
+			},
 		})
 	}
 
@@ -346,6 +387,7 @@ func (h *RecordHandler) Process(c echo.Context) error {
 		"next_handler_role":     record.CurrentHandlerRole,
 		"block_reason":          "",
 		"block_type":            "",
+		"success":               false,
 	}
 
 	newStatus, newHandlerRole := services.GetNextState(req.Action)
@@ -394,10 +436,13 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	updateQuery := "UPDATE checkin_records SET status = ?, version = version + 1, current_handler_role = ?, return_reason = ?, updated_at = ? WHERE id = ? AND version = ?"
 	result, err := h.DB.Exec(updateQuery, newStatus, newHandlerRole, returnReason, now, recordID, record.Version)
 	if err != nil {
+		trace["block_reason"] = "更新记录失败"
+		trace["block_type"] = "internal"
 		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
 			"success":    false,
-			"error":      "更新记录失败",
+			"message":    "更新记录失败",
 			"error_type": "internal",
+			"trace":      trace,
 		})
 	}
 
@@ -451,8 +496,9 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
 			"success":    false,
-			"error":      "记录处理日志失败",
+			"message":    "记录处理日志失败",
 			"error_type": "internal",
+			"trace":      trace,
 		})
 	}
 

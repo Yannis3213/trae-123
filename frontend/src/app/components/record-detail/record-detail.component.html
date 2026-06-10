@@ -178,8 +178,8 @@
                 <p>{{ pr.comment }}</p>
               </div>
               <div *ngIf="!pr.success && pr.block_reason" class="trace-block">
-                <span class="block-type-tag" [style.background]="ERROR_TYPE_COLORS[pr.block_type] || '#95a5a6'">
-                  {{ ERROR_TYPE_LABELS[pr.block_type] || '操作失败' }}
+                <span class="block-type-tag" [style.background]="BLOCK_TYPE_COLORS[pr.block_type] || '#95a5a6'">
+                  {{ BLOCK_TYPE_LABELS[pr.block_type] || '操作失败' }}
                 </span>
                 <span class="block-reason">{{ pr.block_reason }}</span>
               </div>
@@ -250,6 +250,64 @@
       <button class="btn-sm btn-primary" (click)="executeAction()" [disabled]="processing">
         {{ processing ? '处理中...' : '确认' }}
       </button>
+    </div>
+  </div>
+</div>
+
+<div class="dialog-overlay" *ngIf="showTraceDialog && actionTrace" (click)="closeTraceDialog()">
+  <div class="dialog-card" (click)="$event.stopPropagation()">
+    <h3>处理轨迹结果</h3>
+    <div class="trace-result-card" [class.trace-result-fail]="!actionTrace.success">
+      <div class="trace-result-header">
+        <span class="trace-result-action">{{ getActionLabel(actionTrace.action) }}</span>
+        <span class="trace-result-handler">{{ actionTrace.handler_name }} ({{ getRoleLabel(actionTrace.handler_role) }})</span>
+        <span class="trace-badge" [class.success]="actionTrace.success" [class.fail]="!actionTrace.success">
+          {{ actionTrace.success ? '成功' : '失败' }}
+        </span>
+      </div>
+      <div class="trace-result-body">
+        <div class="trace-row">
+          <div class="trace-item">
+            <label>状态变化</label>
+            <div class="status-transition">
+              <span class="status-tag" [style.background]="getStatusColor(actionTrace.from_status)">{{ getStatusLabel(actionTrace.from_status) }}</span>
+              <span class="status-arrow">→</span>
+              <span class="status-tag" [style.background]="getStatusColor(actionTrace.to_status)">{{ getStatusLabel(actionTrace.to_status) }}</span>
+            </div>
+          </div>
+          <div class="trace-item">
+            <label>版本变化</label>
+            <div class="version-transition">
+              <span class="version-tag">v{{ actionTrace.version_before }}</span>
+              <span class="version-arrow">→</span>
+              <span class="version-tag" [class.version-up]="actionTrace.version_after > actionTrace.version_before">v{{ actionTrace.version_after }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="trace-row">
+          <div class="trace-item">
+            <label>上一处理角色</label>
+            <span class="role-text">{{ getRoleLabel(actionTrace.previous_handler_role) || '无' }}</span>
+          </div>
+          <div class="trace-item">
+            <label>下一处理角色</label>
+            <span class="role-text">{{ getRoleLabel(actionTrace.next_handler_role) || '无' }}</span>
+          </div>
+        </div>
+        <div *ngIf="!actionTrace.success && actionTrace.block_reason" class="trace-block">
+          <span class="block-type-tag" [style.background]="BLOCK_TYPE_COLORS[actionTrace.block_type] || '#95a5a6'">
+            {{ BLOCK_TYPE_LABELS[actionTrace.block_type] || '操作失败' }}
+          </span>
+          <span class="block-reason">{{ actionTrace.block_reason }}</span>
+        </div>
+        <div *ngIf="actionTrace.success" class="result-success-msg">
+          <span class="success-icon">✓</span>
+          <span>处理成功</span>
+        </div>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn-sm btn-primary" (click)="closeTraceDialog()">关闭</button>
     </div>
   </div>
 </div>

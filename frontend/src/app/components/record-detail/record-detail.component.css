@@ -566,6 +566,56 @@
   max-width: 320px;
 }
 
+.trace-result-card {
+  border: 1px solid #dfe6e9;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.trace-result-card.trace-result-fail {
+  border-left: 4px solid #e74c3c;
+}
+
+.trace-result-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #dfe6e9;
+  flex-wrap: wrap;
+}
+
+.trace-result-action {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.trace-result-handler {
+  color: #636e72;
+  font-size: 13px;
+}
+
+.trace-result-body {
+  padding: 14px;
+}
+
+.result-success-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #27ae60;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.success-icon {
+  color: #27ae60;
+  font-weight: bold;
+  font-size: 14px;
+}
+
 .trace-list {
   display: flex;
   flex-direction: column;

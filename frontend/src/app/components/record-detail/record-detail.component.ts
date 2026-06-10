@@ -14,11 +14,14 @@ import {
   ProcessingRecord,
   AuditNote,
   ExceptionReason,
+  ProcessTrace,
   STATUS_LABELS,
   STATUS_COLORS,
   ROLE_LABELS,
   ACTION_LABELS,
   ATTACHMENT_TYPE_LABELS,
+  BLOCK_TYPE_LABELS,
+  BLOCK_TYPE_COLORS,
 } from '../../models/models';
 
 @Component({
@@ -57,6 +60,8 @@ export class RecordDetailComponent implements OnInit {
   ROLE_LABELS = ROLE_LABELS;
   ACTION_LABELS = ACTION_LABELS;
   ATTACHMENT_TYPE_LABELS = ATTACHMENT_TYPE_LABELS;
+  BLOCK_TYPE_LABELS = BLOCK_TYPE_LABELS;
+  BLOCK_TYPE_COLORS = BLOCK_TYPE_COLORS;
 
   attachmentTypes: AttachmentType[] = ['checkin_evidence', 'baggage_evidence', 'exception_evidence'];
 
@@ -72,29 +77,8 @@ export class RecordDetailComponent implements OnInit {
     overdue: '#e74c3c',
   };
 
-  ERROR_TYPE_LABELS: Record<string, string> = {
-    version: '版本冲突',
-    role: '角色越权',
-    status: '状态冲突',
-    evidence: '缺少证据',
-    deadline: '已逾期',
-    return_reason: '缺少退回原因',
-    not_found: '记录不存在',
-    invalid_input: '参数错误',
-    internal: '系统错误',
-  };
-
-  ERROR_TYPE_COLORS: Record<string, string> = {
-    version: '#8e44ad',
-    role: '#e74c3c',
-    status: '#e67e22',
-    evidence: '#d35400',
-    deadline: '#c0392b',
-    return_reason: '#7f8c8d',
-    not_found: '#95a5a6',
-    invalid_input: '#34495e',
-    internal: '#2c3e50',
-  };
+  actionTrace: ProcessTrace | null = null;
+  showTraceDialog = false;
 
   constructor(
     private route: ActivatedRoute,
@@ -158,20 +142,33 @@ export class RecordDetailComponent implements OnInit {
     }
     this.processing = true;
     this.api.processRecord(this.record.id, this.pendingAction, this.processComment, this.record.version).subscribe({
-      next: () => {
+      next: (res) => {
         this.processing = false;
         this.showActionDialog = false;
+        this.actionTrace = res.trace || null;
+        this.showTraceDialog = true;
         this.loadDetail(this.record.id);
       },
       error: (err) => {
         this.processing = false;
-        const errType = err.error?.error_type;
-        const errMsg = err.error?.error || '操作失败';
-        const errLabel = this.ERROR_TYPE_LABELS[errType] || '操作失败';
-        alert(`【${errLabel}】${errMsg}`);
         this.showActionDialog = false;
+        const trace = err.error?.trace;
+        if (trace) {
+          this.actionTrace = trace;
+          this.showTraceDialog = true;
+        } else {
+          const errType = err.error?.error_type;
+          const errMsg = err.error?.message || err.error?.error || '操作失败';
+          const errLabel = BLOCK_TYPE_LABELS[errType] || '操作失败';
+          alert(`【${errLabel}】${errMsg}`);
+        }
       },
     });
+  }
+
+  closeTraceDialog(): void {
+    this.showTraceDialog = false;
+    this.actionTrace = null;
   }
 
   uploadAttachment(): void {

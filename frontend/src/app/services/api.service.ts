@@ -60,8 +60,8 @@ export class ApiService {
     return this.http.post<{ id: number; message: string }>('/api/records', data, { headers: this.authHeaders() });
   }
 
-  processRecord(id: number, action: ProcessAction, comment: string, version: number): Observable<{ message: string; new_status: string }> {
-    return this.http.put<{ message: string; new_status: string }>(`/api/records/${id}/process`, { action, comment, version }, { headers: this.authHeaders() });
+  processRecord(id: number, action: ProcessAction, comment: string, version: number): Observable<{ success: boolean; message: string; new_status: string; error_type: string; trace: any }> {
+    return this.http.put<{ success: boolean; message: string; new_status: string; error_type: string; trace: any }>(`/api/records/${id}/process`, { action, comment, version }, { headers: this.authHeaders() });
   }
 
   batchProcess(recordIds: number[], action: ProcessAction, comment: string, version: number = 0, recordVersions?: Record<number, number>): Observable<{ results: BatchProcessResult[] }> {

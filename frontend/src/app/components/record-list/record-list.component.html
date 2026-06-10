@@ -49,6 +49,7 @@
               <th>状态</th>
               <th>当前处理角色</th>
               <th>截止时间</th>
+              <th>最近操作</th>
               <th>场景</th>
               <th>更新时间</th>
             </tr>
@@ -83,13 +84,28 @@
                   </span>
                 </div>
               </td>
+              <td class="latest-action-col">
+                <div *ngIf="record.latest_action" class="latest-action-cell">
+                  <span class="latest-action-label" [class.success]="record.latest_success" [class.fail]="!record.latest_success">
+                    {{ ACTION_LABELS[record.latest_action] || record.latest_action }}
+                  </span>
+                  <span *ngIf="!record.latest_success && record.latest_block_reason" class="latest-block-reason"
+                        [title]="record.latest_block_reason">
+                    <span class="mini-block-tag" [style.background]="BLOCK_TYPE_COLORS[record.latest_block_type] || '#95a5a6'">
+                      {{ BLOCK_TYPE_LABELS[record.latest_block_type] || '失败' }}
+                    </span>
+                    {{ record.latest_block_reason.length > 15 ? record.latest_block_reason.substring(0, 15) + '...' : record.latest_block_reason }}
+                  </span>
+                </div>
+                <span *ngIf="!record.latest_action" class="no-action-text">-</span>
+              </td>
               <td class="scenario-col">
                 <span class="scenario-text">{{ record.scenario }}</span>
               </td>
               <td>{{ record.updated_at | date:'yyyy-MM-dd HH:mm' }}</td>
             </tr>
             <tr *ngIf="records.length === 0">
-              <td colspan="10" class="empty-row">暂无记录</td>
+              <td colspan="11" class="empty-row">暂无记录</td>
             </tr>
           </tbody>
         </table>
@@ -205,8 +221,8 @@
             </div>
           </div>
           <div *ngIf="!result.success && result.block_reason" class="result-block">
-            <span class="error-type-tag" [style.background]="ERROR_TYPE_COLORS[result.block_type] || '#95a5a6'">
-              {{ ERROR_TYPE_LABELS[result.block_type] || '未知错误' }}
+            <span class="error-type-tag" [style.background]="BLOCK_TYPE_COLORS[result.block_type] || '#95a5a6'">
+              {{ BLOCK_TYPE_LABELS[result.block_type] || '未知错误' }}
             </span>
             <span class="result-msg">{{ result.block_reason }}</span>
           </div>
