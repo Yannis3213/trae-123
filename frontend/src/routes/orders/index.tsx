@@ -2,8 +2,8 @@ import { component$, useStore, useVisibleTask$, $, useTask$ } from '@builder.io/
 import { useNavigate, useLocation } from '@builder.io/qwik-city';
 import { AppLayout } from '~/components/app-layout';
 import type { TourOrder, OrderStatus, UserRole, User, BatchProcessResult } from '~/types';
-import { STATUS_LABELS, STATUS_BADGE } from '~/types';
-import { api } from '~/utils/api';
+import { STATUS_LABELS, STATUS_BADGE, EVIDENCE_LABELS } from '~/types';
+import { api, ApiError } from '~/utils/api';
 
 interface FilterState {
   status: string;
@@ -75,7 +75,7 @@ const getBatchActions = (role: UserRole, status: string): { target: string; labe
 
 const fmtDate = (s: string) => {
   try {
-    return new Date(s).toLocaleString('zh-CN');
+    return new Date(s).toLocaleString('zh-CN', { hour12: false });
   } catch { return s; }
 };
 
@@ -124,7 +124,11 @@ export default component$(() => {
     departure_date: '',
     return_date: '',
     quoted_price: 0,
+    deadline: '',
     as_draft: true,
+    route_quote_evidence: false,
+    registration_confirm_evidence: false,
+    tour_audit_evidence: false,
   });
 
   useVisibleTask$(() => {
@@ -141,14 +145,19 @@ export default component$(() => {
         page_size: state.pageSize,
       };
       if (filters.status) params.status = filters.status;
-      if (filters.overdue) params.overdue = filters.overdue === '1';
+      if (filters.overdue) params.overdue = filters.overdue;
       if (filters.search) params.search = filters.search;
 
       const result = await api.getOrders(params);
       state.orders = result.items;
       state.total = result.total;
     } catch (e: any) {
-      state.error = e?.error || '加载失败';
+      const ae = e as ApiError;
+      state.error = ae.error || '加载失败';
+      if (ae.code === 'AUTH_ERROR') {
+        localStorage.clear();
+        location.href = '/login';
+      }
     } finally {
       state.loading = false;
     }
@@ -197,31 +206,56 @@ export default component$(() => {
     }
   });
 
+  const resetForm = $((asDraft: boolean = true) => {
+    Object.assign(form, {
+      route_name: '', customer_name: '', customer_phone: '',
+      traveler_count: 1, departure_date: '', return_date: '',
+      quoted_price: 0, deadline: '', as_draft: asDraft,
+      route_quote_evidence: false,
+      registration_confirm_evidence: false,
+      tour_audit_evidence: false,
+    });
+  });
+
   const createOrder = $(async () => {
-    if (!form.route_name || !form.customer_name || !form.customer_phone) {
-      state.error = '请填写必填字段';
+    if (!form.route_name || !form.customer_name || !form.customer_phone ||
+        !form.departure_date || !form.return_date) {
+      state.error = '请填写必填字段（线路、客户信息、出发/返程日期）';
       return;
     }
+    if (form.traveler_count < 1) {
+      state.error = '出游人数必须≥1';
+      return;
+    }
+
+    if (!form.as_draft && !form.route_quote_evidence) {
+      state.error = '直接提交审核前必须先核验线路报价证据，请勾选对应选项或改为"保存草稿"';
+      return;
+    }
+
     try {
-      await api.createOrder({
+      const payload: Record<string, any> = {
         route_name: form.route_name,
         customer_name: form.customer_name,
         customer_phone: form.customer_phone,
         traveler_count: form.traveler_count,
-        departure_date: new Date(form.departure_date).toISOString(),
-        return_date: new Date(form.return_date).toISOString(),
+        departure_date: new Date(form.departure_date + 'T10:00:00').toISOString(),
+        return_date: new Date(form.return_date + 'T18:00:00').toISOString(),
         quoted_price: form.quoted_price,
         as_draft: form.as_draft,
-      });
+      };
+      if (form.deadline) payload.deadline = new Date(form.deadline + 'T18:00:00').toISOString();
+      if (form.route_quote_evidence) payload.route_quote_evidence = true;
+      if (form.registration_confirm_evidence) payload.registration_confirm_evidence = true;
+      if (form.tour_audit_evidence) payload.tour_audit_evidence = true;
+
+      await api.createOrder(payload);
       state.showCreateModal = false;
-      Object.assign(form, {
-        route_name: '', customer_name: '', customer_phone: '',
-        traveler_count: 1, departure_date: '', return_date: '',
-        quoted_price: 0, as_draft: true,
-      });
+      resetForm();
       await loadOrders();
     } catch (e: any) {
-      state.error = e?.error || '创建失败';
+      const ae = e as ApiError;
+      state.error = ae.error || '创建失败';
     }
   });
 
@@ -242,6 +276,12 @@ export default component$(() => {
     return 'normal';
   };
 
+  const evidenceHint = form.as_draft
+    ? '草稿无需校验证据，可随时在详情页补充后提交审核。'
+    : form.route_quote_evidence
+      ? '已核验线路报价证据 ✔ 提交后将进入待审核队列。'
+      : '提交审核前必须先核验线路报价证据（勾选线路报价单）。';
+
   return (
     <AppLayout>
       <div>
@@ -251,8 +291,11 @@ export default component$(() => {
 
         {canCreate && (
           <div class="toolbar">
-            <button class="btn btn-primary" onClick$={() => (state.showCreateModal = true)}>
+            <button class="btn btn-primary" onClick$={() => { resetForm(); state.showCreateModal = true; }}>
               + 新建旅游订单
+            </button>
+            <button class="btn btn-success" onClick$={() => { resetForm(false); state.showCreateModal = true; }}>
+              ⚡ 快速登记（直接提交审核）
             </button>
           </div>
         )}
@@ -304,7 +347,7 @@ export default component$(() => {
 
           {state.selectedIds.size > 0 && batchActions.length > 0 && (
             <div class="batch-toolbar">
-              <span class="batch-info">已选择 {state.selectedIds.size} 项</span>
+              <span class="batch-info">已选择 {state.selectedIds.size} 项（批量操作会逐条校验权限/版本/证据）</span>
               {batchActions.map(act => (
                 <button
                   key={act.target}
@@ -340,9 +383,10 @@ export default component$(() => {
                     <th>客户</th>
                     <th>人数</th>
                     <th>报价</th>
-                    <th>出发日期</th>
+                    <th>证据</th>
                     <th>状态</th>
                     <th>预警</th>
+                    <th>责任人</th>
                     <th>版本</th>
                     <th>更新时间</th>
                     <th>操作</th>
@@ -351,6 +395,7 @@ export default component$(() => {
                 <tbody>
                   {state.orders.map(order => {
                     const overdueState = isOverdue(order);
+                    const evCount = [order.route_quote_evidence, order.registration_confirm_evidence, order.tour_audit_evidence].filter(Boolean).length;
                     return (
                       <tr key={order.id}>
                         <td>
@@ -366,7 +411,14 @@ export default component$(() => {
                         <td>{order.customer_name} ({order.customer_phone})</td>
                         <td>{order.traveler_count}</td>
                         <td>¥{order.quoted_price.toLocaleString()}</td>
-                        <td>{fmtDate(order.departure_date)}</td>
+                        <td>
+                          <div class="evidence-cell" style="font-size: 12px;">
+                            <span class={order.route_quote_evidence ? 'evidence-on' : 'evidence-off'}>报价</span>
+                            <span class={order.registration_confirm_evidence ? 'evidence-on' : 'evidence-off'}>报名</span>
+                            <span class={order.tour_audit_evidence ? 'evidence-on' : 'evidence-off'}>出团</span>
+                            <span style="margin-left: 6px; color: var(--text-secondary);">{evCount}/3</span>
+                          </div>
+                        </td>
                         <td>
                           <span class={`badge ${STATUS_BADGE[order.status as OrderStatus]}`}>
                             {STATUS_LABELS[order.status as OrderStatus]}
@@ -376,6 +428,10 @@ export default component$(() => {
                           {overdueState === 'overdue' && <span class="badge badge-overdue">逾期</span>}
                           {overdueState === 'warning' && <span class="badge badge-warning">临期</span>}
                           {overdueState === 'normal' && <span class="badge badge-normal">正常</span>}
+                        </td>
+                        <td style="font-size: 12px; color: var(--text-secondary);">
+                          {order.current_handler_name || order.status === 'pending_audit' ? '审核组' :
+                            order.status === 'pending_review' ? '复核组' : '—'}
                         </td>
                         <td>v{order.version}</td>
                         <td>{fmtDate(order.updated_at)}</td>
@@ -418,20 +474,20 @@ export default component$(() => {
 
         {state.showCreateModal && (
           <div class="modal-overlay" onClick$={e => { if ((e.target as HTMLElement).className === 'modal-overlay') state.showCreateModal = false; }}>
-            <div class="modal">
+            <div class="modal" style="max-width: 760px;">
               <div class="modal-header">
-                <h3 class="modal-title">新建旅游订单</h3>
+                <h3 class="modal-title">新建旅游订单（{form.as_draft ? '保存草稿模式' : '直接提交审核模式'}）</h3>
                 <button class="btn btn-sm" onClick$={() => (state.showCreateModal = false)}>×</button>
               </div>
               <div class="modal-body">
                 <div class="form-row">
                   <div class="form-group">
                     <label class="form-label">线路名称 *</label>
-                    <input class="form-input" value={form.route_name} onInput$={(e: any) => (form.route_name = e.target.value)} placeholder="如：北京五日游" />
+                    <input class="form-input" value={form.route_name} onInput$={(e: any) => (form.route_name = e.target.value)} placeholder="如：北京经典五日游" />
                   </div>
                   <div class="form-group">
-                    <label class="form-label">报价 (元) *</label>
-                    <input type="number" class="form-input" value={form.quoted_price} onInput$={(e: any) => (form.quoted_price = parseFloat(e.target.value) || 0)} />
+                    <label class="form-label">总报价 (元) *</label>
+                    <input type="number" min="0" class="form-input" value={form.quoted_price} onInput$={(e: any) => (form.quoted_price = parseFloat(e.target.value) || 0)} />
                   </div>
                 </div>
                 <div class="form-row">
@@ -449,33 +505,71 @@ export default component$(() => {
                     <label class="form-label">出游人数</label>
                     <input type="number" min="1" class="form-input" value={form.traveler_count} onInput$={(e: any) => (form.traveler_count = parseInt(e.target.value) || 1)} />
                   </div>
-                  <div class="form-group"></div>
+                  <div class="form-group">
+                    <label class="form-label">办理截止时间（可选）</label>
+                    <input type="datetime-local" class="form-input" value={form.deadline} onInput$={(e: any) => (form.deadline = e.target.value)} />
+                  </div>
                 </div>
                 <div class="form-row">
                   <div class="form-group">
-                    <label class="form-label">出发日期</label>
+                    <label class="form-label">出发日期 *</label>
                     <input type="date" class="form-input" value={form.departure_date} onInput$={(e: any) => (form.departure_date = e.target.value)} />
                   </div>
                   <div class="form-group">
-                    <label class="form-label">返程日期</label>
+                    <label class="form-label">返程日期 *</label>
                     <input type="date" class="form-input" value={form.return_date} onInput$={(e: any) => (form.return_date = e.target.value)} />
                   </div>
                 </div>
-                <div class="form-group">
-                  <label style="display: flex; align-items: center; gap: 8px;">
+
+                <div class="card" style="border: 1px dashed #d1d5db; background: #fafafa; margin-top: 12px;">
+                  <div class="card-header" style="background: transparent; padding: 8px 12px; border-bottom: 1px dashed #e5e7eb;">
+                    <h3 class="card-title" style="font-size: 14px; margin: 0;">证据核验（登记时可勾选已收到的单据）</h3>
+                  </div>
+                  <div class="card-body" style="padding: 12px;">
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                      {(Object.keys(EVIDENCE_LABELS) as Array<keyof typeof EVIDENCE_LABELS>).map((k) => {
+                        const checked = k === 'route_quote' ? form.route_quote_evidence : k === 'registration_confirm' ? form.registration_confirm_evidence : form.tour_audit_evidence;
+                        const onChange = (v: boolean) => {
+                          if (k === 'route_quote') form.route_quote_evidence = v;
+                          else if (k === 'registration_confirm') form.registration_confirm_evidence = v;
+                          else form.tour_audit_evidence = v;
+                        };
+                        return (
+                          <label key={k} class="evidence-row" style={checked ? { borderColor: 'var(--primary)', background: '#eef2ff' } : {}}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange$={(e: any) => onChange(e.target.checked)}
+                            />
+                            <div>
+                              <div style="font-size: 13px; font-weight: 600;">{EVIDENCE_LABELS[k]}</div>
+                              <div style="font-size: 11px; color: var(--text-secondary);">
+                                {k === 'route_quote' ? '线路报价单已签字/盖章' : k === 'registration_confirm' ? '报名确认表及客户身份信息' : '出团通知书、行程单、导游确认'}
+                              </div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div style="margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: #eff6ff; font-size: 13px; color: #1d4ed8;">
+                  <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
                     <input
                       type="checkbox"
                       checked={form.as_draft}
                       onChange$={(e: any) => (form.as_draft = e.target.checked)}
                     />
-                    <span>保存为草稿（不勾选将直接提交审核）</span>
+                    <span style="font-weight: 600;">保存为草稿</span>
                   </label>
+                  <div style="opacity: 0.9;">{evidenceHint}</div>
                 </div>
               </div>
               <div class="modal-footer">
                 <button class="btn" onClick$={() => (state.showCreateModal = false)}>取消</button>
                 <button class="btn btn-primary" onClick$={createOrder}>
-                  {form.as_draft ? '保存草稿' : '创建并提交'}
+                  {form.as_draft ? '💾 保存草稿' : '📤 创建并提交审核'}
                 </button>
               </div>
             </div>
@@ -484,16 +578,33 @@ export default component$(() => {
 
         {state.showBatchResult && (
           <div class="modal-overlay" onClick$={e => { if ((e.target as HTMLElement).className === 'modal-overlay') state.showBatchResult = false; }}>
-            <div class="modal">
+            <div class="modal" style="max-width: 720px;">
               <div class="modal-header">
-                <h3 class="modal-title">批量处理结果</h3>
+                <h3 class="modal-title">批量处理结果（逐条校验）</h3>
                 <button class="btn btn-sm" onClick$={() => (state.showBatchResult = false)}>×</button>
               </div>
               <div class="modal-body">
+                <div style="margin-bottom: 10px; font-size: 13px; color: var(--text-secondary);">
+                  成功: {state.batchResults.filter(r => r.success).length} · 失败: {state.batchResults.filter(r => !r.success).length}
+                </div>
                 {state.batchResults.map(r => (
-                  <div key={r.order_id} class={`batch-result-item ${r.success ? 'batch-success' : 'batch-fail'}`}>
-                    <strong>{r.success ? '成功' : '失败'}</strong> - {r.order_id.substring(0, 8)}...
-                    <div style="margin-top: 4px; font-size: 12px;">{r.message}</div>
+                  <div
+                    key={r.order_id}
+                    class={`batch-result-item ${r.success ? 'batch-success' : 'batch-fail'}`}
+                    style={{ marginBottom: '6px', padding: '8px 12px', borderRadius: '6px', border: r.success ? '1px solid #bbf7d0' : '1px solid #fecaca', background: r.success ? '#f0fdf4' : '#fef2f2' }}
+                  >
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+                      <div>
+                        <span style={{
+                          padding: '2px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 600,
+                          background: r.success ? '#16a34a' : '#dc2626', color: '#fff', marginRight: '8px'
+                        }}>{r.success ? '✓ 成功' : '✗ 失败'}</span>
+                        <span style="font-family: monospace; font-weight: 600;">{r.order_no}</span>
+                        {r.code !== 'OK' && <span style="margin-left: 8px; font-size: 12px; color: #991b1b;">[错误码: {r.code}]</span>}
+                      </div>
+                      <div style="font-size: 11px; color: var(--text-secondary); opacity: 0.8;">{r.order_id.substring(0, 8)}…</div>
+                    </div>
+                    <div style="margin-top: 4px; font-size: 13px; line-height: 1.6;">{r.message}</div>
                   </div>
                 ))}
               </div>

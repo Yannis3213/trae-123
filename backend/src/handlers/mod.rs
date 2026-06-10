@@ -1,2 +1,2 @@
-pub mod order_handlers;
-pub mod dashboard_handlers;
+pub mod order;
+pub mod dashboard;

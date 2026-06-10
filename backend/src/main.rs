@@ -19,7 +19,6 @@ mod db;
 mod services;
 
 use db::init_db;
-use handlers::*;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -43,30 +42,30 @@ async fn main() -> anyhow::Result<()> {
         .expect("BACKEND_PORT must be a valid port number");
 
     let frontend_origin = format!("http://localhost:{}", frontend_port);
-    tracing::info!("Frontend origin: {}", frontend_origin);
+    tracing::info!("前端地址: {} | 后端端口: {}", frontend_origin, backend_port);
 
     let cors = CorsLayer::new()
         .allow_origin([frontend_origin.parse().unwrap()])
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::OPTIONS])
         .allow_headers(Any)
         .allow_credentials(true);
 
     let app = Router::new()
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/me", get(auth::get_current_user))
-        .route("/api/orders", get(order_handlers::list_orders).post(order_handlers::create_order))
-        .route("/api/orders/:id", get(order_handlers::get_order).put(order_handlers::update_order))
-        .route("/api/orders/:id/status", put(order_handlers::change_status))
-        .route("/api/orders/batch", post(order_handlers::batch_process))
-        .route("/api/orders/:id/attachments", post(order_handlers::upload_attachment).get(order_handlers::list_attachments))
-        .route("/api/orders/:id/records", get(order_handlers::list_records).post(order_handlers::add_record))
-        .route("/api/orders/:id/audit", post(order_handlers::add_audit_note).get(order_handlers::list_audit_notes))
-        .route("/api/dashboard/stats", get(dashboard_handlers::get_stats))
+        .route("/api/orders", get(handlers::order::list_orders).post(handlers::order::create_order))
+        .route("/api/orders/:id", get(handlers::order::get_order).put(handlers::order::update_order))
+        .route("/api/orders/:id/status", put(handlers::order::change_status))
+        .route("/api/orders/batch", post(handlers::order::batch_process))
+        .route("/api/orders/:id/attachments", post(handlers::order::upload_attachment).get(handlers::order::list_attachments))
+        .route("/api/orders/:id/records", get(handlers::order::list_records).post(handlers::order::add_record))
+        .route("/api/orders/:id/audit", post(handlers::order::add_audit_note).get(handlers::order::list_audit_notes))
+        .route("/api/dashboard/stats", get(handlers::dashboard::get_stats))
         .layer(cors)
         .layer(Extension(pool));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], backend_port));
-    tracing::info!("Server listening on {}", addr);
+    tracing::info!("服务启动: {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

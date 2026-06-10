@@ -15,6 +15,20 @@ export type OrderStatus =
   | 'archived'
   | 'rejected';
 
+export type EvidenceType = 'route_quote' | 'registration_confirm' | 'tour_audit';
+
+export const EVIDENCE_LABELS: Record<EvidenceType, string> = {
+  route_quote: '线路报价单',
+  registration_confirm: '报名确认表',
+  tour_audit: '出团审核表',
+};
+
+export const EVIDENCE_FIELD: Record<EvidenceType, 'route_quote_evidence' | 'registration_confirm_evidence' | 'tour_audit_evidence'> = {
+  route_quote: 'route_quote_evidence',
+  registration_confirm: 'registration_confirm_evidence',
+  tour_audit: 'tour_audit_evidence',
+};
+
 export interface TourOrder {
   id: string;
   order_no: string;
@@ -26,15 +40,16 @@ export interface TourOrder {
   return_date: string;
   quoted_price: number;
   status: OrderStatus;
-  current_handler: string | null;
+  current_handler_id: string | null;
+  current_handler_name: string | null;
   version: number;
   is_overdue: boolean;
   deadline: string | null;
   exception_reason: string | null;
   correction_note: string | null;
-  route_quote_evidence: boolean | null;
-  registration_confirm_evidence: boolean | null;
-  tour_audit_evidence: boolean | null;
+  route_quote_evidence: boolean;
+  registration_confirm_evidence: boolean;
+  tour_audit_evidence: boolean;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -48,6 +63,7 @@ export interface Attachment {
   file_size: number;
   evidence_type: string;
   uploaded_by: string;
+  uploaded_by_name: string;
   created_at: string;
 }
 
@@ -70,18 +86,19 @@ export interface AuditNote {
   order_id: string;
   content: string;
   created_by: string;
+  created_by_name: string;
   created_at: string;
 }
 
 export interface DashboardStats {
-  draft_count: number;
-  pending_audit_count: number;
-  pending_correction_count: number;
-  pending_review_count: number;
-  archived_count: number;
-  overdue_count: number;
-  warning_count: number;
-  normal_count: number;
+  total_mine: number;
+  to_audit: number;
+  to_review: number;
+  correction: number;
+  archived: number;
+  overdue: number;
+  normal_queue: TourOrder[];
+  overdue_queue: TourOrder[];
 }
 
 export interface PaginatedResponse<T> {
@@ -112,6 +129,9 @@ export interface CreateOrderRequest {
   quoted_price: number;
   deadline?: string | null;
   as_draft?: boolean;
+  route_quote_evidence?: boolean;
+  registration_confirm_evidence?: boolean;
+  tour_audit_evidence?: boolean;
 }
 
 export interface UpdateOrderRequest {
@@ -148,7 +168,9 @@ export interface BatchProcessRequest {
 
 export interface BatchProcessResult {
   order_id: string;
+  order_no: string;
   success: boolean;
+  code: string;
   message: string;
 }
 
@@ -175,3 +197,15 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   auditor: '旅游审核主管',
   reviewer: '旅行社复核负责人',
 };
+
+export const ROLE_VISIBLE_STATUSES: Record<UserRole, OrderStatus[]> = {
+  registrar: ['draft', 'pending_correction'],
+  auditor: ['pending_audit', 'pending_correction'],
+  reviewer: ['pending_review', 'archived'],
+};
+
+export interface StatusAction {
+  target: OrderStatus;
+  label: string;
+  disabled: boolean;
+}

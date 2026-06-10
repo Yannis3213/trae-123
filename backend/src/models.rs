@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum UserRole {
     Registrar,
@@ -20,11 +20,19 @@ impl UserRole {
         }
     }
 
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             UserRole::Registrar => "registrar",
             UserRole::Auditor => "auditor",
             UserRole::Reviewer => "reviewer",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            UserRole::Registrar => "旅游登记员",
+            UserRole::Auditor => "旅游审核主管",
+            UserRole::Reviewer => "旅行社复核负责人",
         }
     }
 }
@@ -40,7 +48,7 @@ pub struct User {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderStatus {
     Draft,
@@ -64,7 +72,7 @@ impl OrderStatus {
         }
     }
 
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             OrderStatus::Draft => "draft",
             OrderStatus::PendingAudit => "pending_audit",
@@ -72,6 +80,17 @@ impl OrderStatus {
             OrderStatus::PendingReview => "pending_review",
             OrderStatus::Archived => "archived",
             OrderStatus::Rejected => "rejected",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            OrderStatus::Draft => "草稿",
+            OrderStatus::PendingAudit => "待审核",
+            OrderStatus::PendingCorrection => "待补正",
+            OrderStatus::PendingReview => "待复核",
+            OrderStatus::Archived => "已归档",
+            OrderStatus::Rejected => "已拒绝",
         }
     }
 }
@@ -88,15 +107,16 @@ pub struct TourOrder {
     pub return_date: DateTime<Utc>,
     pub quoted_price: f64,
     pub status: OrderStatus,
-    pub current_handler: Option<Uuid>,
+    pub current_handler_id: Option<Uuid>,
+    pub current_handler_name: Option<String>,
     pub version: i32,
     pub is_overdue: bool,
     pub deadline: Option<DateTime<Utc>>,
     pub exception_reason: Option<String>,
     pub correction_note: Option<String>,
-    pub route_quote_evidence: Option<bool>,
-    pub registration_confirm_evidence: Option<bool>,
-    pub tour_audit_evidence: Option<bool>,
+    pub route_quote_evidence: bool,
+    pub registration_confirm_evidence: bool,
+    pub tour_audit_evidence: bool,
     pub created_by: Uuid,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -109,11 +129,14 @@ pub struct CreateOrderRequest {
     pub customer_name: String,
     pub customer_phone: String,
     pub traveler_count: i32,
-    pub departure_date: DateTime<Utc>,
-    pub return_date: DateTime<Utc>,
+    pub departure_date: String,
+    pub return_date: String,
     pub quoted_price: f64,
-    pub deadline: Option<DateTime<Utc>>,
+    pub deadline: Option<String>,
     pub as_draft: Option<bool>,
+    pub route_quote_evidence: Option<bool>,
+    pub registration_confirm_evidence: Option<bool>,
+    pub tour_audit_evidence: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,10 +145,10 @@ pub struct UpdateOrderRequest {
     pub customer_name: Option<String>,
     pub customer_phone: Option<String>,
     pub traveler_count: Option<i32>,
-    pub departure_date: Option<DateTime<Utc>>,
-    pub return_date: Option<DateTime<Utc>>,
+    pub departure_date: Option<String>,
+    pub return_date: Option<String>,
     pub quoted_price: Option<f64>,
-    pub deadline: Option<DateTime<Utc>>,
+    pub deadline: Option<String>,
     pub route_quote_evidence: Option<bool>,
     pub registration_confirm_evidence: Option<bool>,
     pub tour_audit_evidence: Option<bool>,
@@ -145,7 +168,7 @@ pub struct ChangeStatusRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchProcessRequest {
-    pub order_ids: Vec<Uuid>,
+    pub order_ids: Vec<String>,
     pub target_status: String,
     pub note: Option<String>,
     pub version_map: Option<std::collections::HashMap<String, i32>>,
@@ -153,8 +176,10 @@ pub struct BatchProcessRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchProcessResult {
-    pub order_id: Uuid,
+    pub order_id: String,
+    pub order_no: String,
     pub success: bool,
+    pub code: String,
     pub message: String,
 }
 
@@ -167,7 +192,16 @@ pub struct Attachment {
     pub file_size: i64,
     pub evidence_type: String,
     pub uploaded_by: Uuid,
+    pub uploaded_by_name: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadAttachmentRequest {
+    pub file_name: String,
+    pub file_type: String,
+    pub file_size: i64,
+    pub evidence_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,6 +231,7 @@ pub struct AuditNote {
     pub order_id: Uuid,
     pub content: String,
     pub created_by: Uuid,
+    pub created_by_name: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -229,8 +264,7 @@ pub struct Claims {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderListQuery {
     pub status: Option<String>,
-    pub role: Option<String>,
-    pub overdue: Option<bool>,
+    pub overdue: Option<String>,
     pub search: Option<String>,
     pub page: Option<i32>,
     pub page_size: Option<i32>,
@@ -246,12 +280,54 @@ pub struct PaginatedResponse<T> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardStats {
-    pub draft_count: i64,
-    pub pending_audit_count: i64,
-    pub pending_correction_count: i64,
-    pub pending_review_count: i64,
-    pub archived_count: i64,
-    pub overdue_count: i64,
-    pub warning_count: i64,
-    pub normal_count: i64,
+    pub total_mine: i64,
+    pub to_audit: i64,
+    pub to_review: i64,
+    pub correction: i64,
+    pub archived: i64,
+    pub overdue: i64,
+    pub normal_queue: Vec<TourOrder>,
+    pub overdue_queue: Vec<TourOrder>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum EvidenceType {
+    RouteQuote,
+    RegistrationConfirm,
+    TourAudit,
+}
+
+impl EvidenceType {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "route_quote" => Some(EvidenceType::RouteQuote),
+            "registration_confirm" => Some(EvidenceType::RegistrationConfirm),
+            "tour_audit" => Some(EvidenceType::TourAudit),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EvidenceType::RouteQuote => "route_quote",
+            EvidenceType::RegistrationConfirm => "registration_confirm",
+            EvidenceType::TourAudit => "tour_audit",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            EvidenceType::RouteQuote => "线路报价单",
+            EvidenceType::RegistrationConfirm => "报名确认表",
+            EvidenceType::TourAudit => "出团审核表",
+        }
+    }
+
+    pub fn field_name(self) -> &'static str {
+        match self {
+            EvidenceType::RouteQuote => "route_quote_evidence",
+            EvidenceType::RegistrationConfirm => "registration_confirm_evidence",
+            EvidenceType::TourAudit => "tour_audit_evidence",
+        }
+    }
 }
