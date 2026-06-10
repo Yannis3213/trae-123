@@ -113,6 +113,13 @@ function getCurrentNode(workorder) {
 }
 
 function getNodeResponsible(workorder) {
+  if (workorder.current_handler_role && workorder.current_handler) {
+    return {
+      role: workorder.current_handler_role,
+      person: workorder.current_handler
+    };
+  }
+
   const node = getCurrentNode(workorder);
   const nodeResponsibleMap = {
     '生产排程': { role: ROLES.PLANNER, person: workorder.planner },
@@ -153,10 +160,15 @@ function validateNotOverdue(workorder, action) {
   if (warningLevel === 'overdue') {
     const blockedActions = ['submit_for_review', 'batch_submit', 'review_approve', 'factory_confirm', 'batch_review_approve', 'batch_factory_confirm'];
     if (blockedActions.includes(action)) {
+      const currentNode = getCurrentNode(workorder);
+      const responsible = getNodeResponsible(workorder);
       return {
         valid: false,
-        error: '工单已逾期，无法推进，请先在详情页补正后再操作',
-        code: 'OVERDUE_BLOCKED'
+        error: `工单已逾期，当前节点「${currentNode}」，责任人为 ${responsible.person || '未指定'}，无法推进，请先在详情页补正后再操作`,
+        code: 'OVERDUE_BLOCKED',
+        current_node: currentNode,
+        responsible_role: responsible.role,
+        responsible_person: responsible.person
       };
     }
   }

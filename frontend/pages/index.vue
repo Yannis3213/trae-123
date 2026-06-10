@@ -139,10 +139,11 @@
             <th>数量</th>
             <th>状态</th>
             <th>当前节点</th>
+            <th>责任人</th>
             <th>计划员</th>
             <th>截止日期</th>
             <th>预警</th>
-            <th>当前处理人</th>
+            <th>异常原因</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -169,6 +170,13 @@
                 {{ wo.current_node }}
               </span>
             </td>
+            <td class="text-sm">
+              <span v-if="wo.responsible_person">{{ wo.responsible_person }}</span>
+              <span v-else class="text-muted">-</span>
+              <span v-if="wo.responsible_role_name" class="text-muted" style="margin-left: 4px; font-size: 11px;">
+                ({{ wo.responsible_role_name }})
+              </span>
+            </td>
             <td class="text-sm text-muted">{{ wo.planner }}</td>
             <td class="text-sm" :class="{ 'text-danger': wo.warning_level === 'overdue' }">
               {{ formatDate(wo.deadline) }}
@@ -178,9 +186,23 @@
                 {{ getWarningLabel(wo.warning_level) }}
               </span>
             </td>
-            <td class="text-sm text-muted">{{ wo.current_handler || '-' }}</td>
+            <td class="text-sm">
+              <span v-if="wo.latest_exception" class="text-danger" style="max-width: 200px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="wo.latest_exception.reason">
+                {{ wo.latest_exception.reason }}
+              </span>
+              <span v-else class="text-muted">-</span>
+            </td>
             <td>
-              <button class="btn btn-outline btn-sm" @click="viewDetail(wo.id)">详情</button>
+              <div class="flex gap-2">
+                <button class="btn btn-outline btn-sm" @click="viewDetail(wo.id)">详情</button>
+                <button
+                  v-if="canQuickFix(wo)"
+                  class="btn btn-primary btn-sm"
+                  @click="quickFix(wo)"
+                >
+                  去补正
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -484,6 +506,17 @@ function toggleSelectAll() {
       }
     }
   }
+}
+
+function canQuickFix(wo: any) {
+  if (wo.status === 'completed') return false
+  if (wo.current_handler_role !== baseRole.value) return false
+  if (wo.current_handler !== currentUserName.value) return false
+  return true
+}
+
+function quickFix(wo: any) {
+  navigateTo(`/workorder/${wo.id}`)
 }
 
 function getBadgeClass(status: string) {

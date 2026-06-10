@@ -60,43 +60,45 @@ function getWarningList(req, res) {
   const userRole = req.user.role;
   const username = req.user.username;
 
-  let query = `SELECT * FROM workorders WHERE status != ?`;
+  let whereClause = `WHERE status != ?`;
   const params = [STATUS.COMPLETED];
 
   if (level === 'overdue') {
-    query += ` AND deadline < datetime('now')`;
+    whereClause += ` AND deadline < datetime('now')`;
   } else if (level === 'warning') {
-    query += ` AND deadline >= datetime('now') AND deadline <= datetime('now', '+' || ? || ' days')`;
+    whereClause += ` AND deadline >= datetime('now') AND deadline <= datetime('now', '+' || ? || ' days')`;
     params.push(WARNING_THRESHOLD_DAYS);
   }
 
-  query += ` ORDER BY deadline ASC`;
+  const query = `SELECT * FROM workorders ${whereClause} ORDER BY deadline ASC LIMIT ? OFFSET ?`;
+  const listParams = [...params, parseInt(pageSize), parseInt((page - 1) * pageSize)];
 
-  const offset = (page - 1) * pageSize;
-  query += ` LIMIT ? OFFSET ?`;
-  params.push(parseInt(pageSize), parseInt(offset));
+  const getExceptions = db.prepare(`
+    SELECT * FROM exceptions WHERE workorder_id = ? ORDER BY created_at DESC
+  `);
+  const getAuditNotes = db.prepare(`
+    SELECT * FROM audit_notes WHERE workorder_id = ? ORDER BY created_at DESC
+  `);
 
-  const workorders = db.prepare(query).all(...params).map(wo => {
+  const workorders = db.prepare(query).all(...listParams).map(wo => {
     const formatted = formatWorkorder(wo);
     const responsible = getNodeResponsible(wo);
+    const exceptions = getExceptions.all(wo.id);
+    const auditNotes = getAuditNotes.all(wo.id);
     return {
       ...formatted,
       current_node: getCurrentNode(wo),
       responsible_role: responsible.role,
       responsible_role_name: responsible.role ? ROLE_NAMES[responsible.role] : null,
-      responsible_person: responsible.person
+      responsible_person: responsible.person,
+      exceptions: exceptions || [],
+      latest_exception: exceptions && exceptions.length > 0 ? exceptions[0] : null,
+      audit_notes_count: auditNotes ? auditNotes.length : 0
     };
   });
 
-  let countQuery = `SELECT COUNT(*) as total FROM workorders WHERE status != ?`;
-  const countParams = [STATUS.COMPLETED];
-  if (level === 'overdue') {
-    countQuery += ` AND deadline < datetime('now')`;
-  } else if (level === 'warning') {
-    countQuery += ` AND deadline >= datetime('now') AND deadline <= datetime('now', '+' || ? || ' days')`;
-    countParams.push(WARNING_THRESHOLD_DAYS);
-  }
-  const { total } = db.prepare(countQuery).get(...countParams);
+  const countQuery = `SELECT COUNT(*) as total FROM workorders ${whereClause}`;
+  const { total } = db.prepare(countQuery).get(...params);
 
   const groupStats = db.prepare(`
     SELECT

@@ -428,7 +428,7 @@ function seedData() {
     'exc_001',
     'wo_004',
     'overdue',
-    '工单已超过截止日期，未完成生产排程',
+    '工单已逾期2天，未完成生产排程',
     '生产排程',
     ROLES.PLANNER,
     '刘芳'
@@ -438,7 +438,7 @@ function seedData() {
     'exc_002',
     'wo_008',
     'overdue',
-    '工单已严重逾期，尚未安排生产',
+    '工单已严重逾期5天，尚未安排生产',
     '生产排程',
     ROLES.PLANNER,
     '张伟'
@@ -450,6 +450,46 @@ function seedData() {
     'overdue',
     '工单已逾期，车间主任尚未复核',
     '车间复核',
+    ROLES.WORKSHOP_DIRECTOR,
+    '陈刚'
+  );
+
+  insertException.run(
+    'exc_004',
+    'wo_006',
+    'warning',
+    '工单即将到期，仅剩1天，请尽快提交复核',
+    '待提交复核',
+    ROLES.PLANNER,
+    '张伟'
+  );
+
+  insertException.run(
+    'exc_005',
+    'wo_002',
+    'warning',
+    '工单临期，仅剩2天，请尽快完成复核',
+    '车间复核',
+    ROLES.WORKSHOP_DIRECTOR,
+    '李明'
+  );
+
+  insertException.run(
+    'exc_006',
+    'wo_001',
+    'normal',
+    '正常推进中，等待生产排程',
+    '生产排程',
+    ROLES.PLANNER,
+    '张伟'
+  );
+
+  insertException.run(
+    'exc_007',
+    'wo_004',
+    'overdue',
+    '领料确认也已逾期，物料未出库',
+    '领料确认',
     ROLES.WORKSHOP_DIRECTOR,
     '陈刚'
   );
@@ -472,6 +512,38 @@ function seedData() {
     'note_002',
     'wo_004',
     '请刘芳尽快处理该逾期工单，如有困难请及时反馈',
+    ROLES.FACTORY_MANAGER,
+    '王强'
+  );
+
+  insertAuditNote.run(
+    'note_003',
+    'wo_008',
+    '该工单已严重逾期，张伟需说明原因并尽快推进',
+    ROLES.FACTORY_MANAGER,
+    '王强'
+  );
+
+  insertAuditNote.run(
+    'note_004',
+    'wo_006',
+    '注意该工单即将到期，请优先处理',
+    ROLES.FACTORY_MANAGER,
+    '王强'
+  );
+
+  insertAuditNote.run(
+    'note_005',
+    'wo_009',
+    '陈刚请尽快完成该逾期工单的复核',
+    ROLES.FACTORY_MANAGER,
+    '王强'
+  );
+
+  insertAuditNote.run(
+    'note_006',
+    'wo_002',
+    '临期工单，请李明安排时间优先复核',
     ROLES.FACTORY_MANAGER,
     '王强'
   );

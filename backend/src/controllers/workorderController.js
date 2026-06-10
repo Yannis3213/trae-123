@@ -27,6 +27,7 @@ function parseJsonField(value) {
 }
 
 function formatWorkorder(wo) {
+  const responsible = getNodeResponsible(wo);
   return {
     ...wo,
     production_schedule: parseJsonField(wo.production_schedule),
@@ -35,7 +36,10 @@ function formatWorkorder(wo) {
     status_name: STATUS_NAMES[wo.status] || wo.status,
     current_handler_role_name: wo.current_handler_role ? ROLE_NAMES[wo.current_handler_role] : null,
     warning_level: getWarningLevel(wo.deadline),
-    current_node: getCurrentNode(wo)
+    current_node: getCurrentNode(wo),
+    responsible_role: responsible.role,
+    responsible_role_name: responsible.role ? ROLE_NAMES[responsible.role] : null,
+    responsible_person: responsible.person
   };
 }
 
@@ -65,6 +69,16 @@ function getWorkorders(req, res) {
   const listQuery = `SELECT w.* FROM workorders w ${whereClause} ORDER BY w.created_at DESC LIMIT ? OFFSET ?`;
   const listParams = [...params, parseInt(pageSize), parseInt((page - 1) * pageSize)];
   const workorders = db.prepare(listQuery).all(...listParams).map(formatWorkorder);
+
+  const getLatestException = db.prepare(`
+    SELECT * FROM exceptions WHERE workorder_id = ? ORDER BY created_at DESC LIMIT 1
+  `);
+
+  for (const wo of workorders) {
+    const exc = getLatestException.get(wo.id);
+    wo.latest_exception = exc || null;
+    wo.exceptions = exc ? [exc] : [];
+  }
 
   const countQuery = `SELECT COUNT(*) as total FROM workorders w ${whereClause}`;
   const { total } = db.prepare(countQuery).get(...params);
