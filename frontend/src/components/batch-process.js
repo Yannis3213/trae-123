@@ -411,6 +411,16 @@ class BatchProcess extends LitElement {
     }
     window.addEventListener('auth-changed', (e) => {
       this.currentUser = e.detail.user;
+      this.selectedIds = [];
+      this.batchAction = '';
+      this.showResult = false;
+      this._loadApplications();
+    });
+    window.addEventListener('refresh-data', () => {
+      this.selectedIds = [];
+      this.batchAction = '';
+      this.showResult = false;
+      this._loadApplications();
     });
     this._loadApplications();
   }

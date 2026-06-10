@@ -263,6 +263,14 @@ class WarningBoard extends LitElement {
   firstUpdated() {
     this._loadStats();
     this._loadLists();
+    window.addEventListener('auth-changed', () => {
+      this._loadStats();
+      this._loadLists();
+    });
+    window.addEventListener('refresh-data', () => {
+      this._loadStats();
+      this._loadLists();
+    });
   }
 
   async _loadStats() {

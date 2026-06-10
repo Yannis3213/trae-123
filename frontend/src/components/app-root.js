@@ -200,9 +200,13 @@ class AppRoot extends LitElement {
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
         this.currentUser = data.user;
+        this.currentPage = 'list';
+        this.selectedAppId = null;
         window.dispatchEvent(new CustomEvent('auth-changed', { detail: { user: data.user } }));
+        window.dispatchEvent(new CustomEvent('refresh-data'));
       }).catch((err) => {
         alert('切换角色失败: ' + err.message);
+        e.target.value = this.currentUser?.role || '';
       });
     }
   }

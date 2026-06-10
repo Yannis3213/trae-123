@@ -13,6 +13,8 @@ class ApplicationDetail extends LitElement {
     actionForm: { type: Object },
     error: { type: String },
     activeTab: { type: String },
+    showRemarkModal: { type: Boolean },
+    newRemark: { type: String },
   };
 
   static styles = css`
@@ -379,6 +381,8 @@ class ApplicationDetail extends LitElement {
     this.actionForm = {};
     this.error = '';
     this.activeTab = 'info';
+    this.showRemarkModal = false;
+    this.newRemark = '';
   }
 
   firstUpdated() {
@@ -388,6 +392,10 @@ class ApplicationDetail extends LitElement {
     }
     window.addEventListener('auth-changed', (e) => {
       this.currentUser = e.detail.user;
+      this._loadDetail();
+    });
+    window.addEventListener('refresh-data', () => {
+      this._loadDetail();
     });
     this._loadDetail();
   }
@@ -528,6 +536,7 @@ class ApplicationDetail extends LitElement {
       const data = {
         action: this.currentAction,
         version: this.application.version,
+        targetStatus: this.application.status,
         ...this.actionForm,
       };
 
@@ -747,25 +756,50 @@ class ApplicationDetail extends LitElement {
               ${this.activeTab === 'audit'
                 ? html`
                     <div class="detail-card">
-                      <div class="card-header">处理记录与审计轨迹</div>
+                      <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>处理记录与审计轨迹</span>
+                        <button class="btn-default btn-sm" @click=${() => (this.showRemarkModal = true)}>
+                          + 添加备注
+                        </button>
+                      </div>
                       <div class="card-body">
-                        <div class="timeline">
-                          ${this.auditLogs.length === 0
-                            ? html`<div style="color: #8c8c8c;">暂无处理记录</div>`
-                            : this.auditLogs.map(
-                                (log) => html`
-                                  <div class="timeline-item">
-                                    <div class="timeline-time">${log.createdAt}</div>
-                                    <div class="timeline-title">
-                                      ${log.nodeName} - ${log.operator}
-                                      <span style="font-size: 12px; color: #8c8c8c; font-weight: normal;">
-                                        (${log.previousStatus} → ${log.newStatus})
-                                      </span>
+                        <div style="margin-bottom: 20px;">
+                          <div style="font-weight: 500; margin-bottom: 12px; color: #262626;">处理记录</div>
+                          <div class="timeline">
+                            ${this.auditLogs.length === 0
+                              ? html`<div style="color: #8c8c8c;">暂无处理记录</div>`
+                              : this.auditLogs.map(
+                                  (log) => html`
+                                    <div class="timeline-item">
+                                      <div class="timeline-time">${log.createdAt}</div>
+                                      <div class="timeline-title">
+                                        ${log.nodeName} - ${log.operator}
+                                        <span style="font-size: 12px; color: #8c8c8c; font-weight: normal;">
+                                          (${log.previousStatus} → ${log.newStatus})
+                                        </span>
+                                      </div>
+                                      <div class="timeline-desc">${log.remark || '无备注'}</div>
+                                      ${log.exceptionReason
+                                        ? html`<div class="timeline-exception">异常: ${log.exceptionReason}</div>`
+                                        : ''}
                                     </div>
-                                    <div class="timeline-desc">${log.remark || '无备注'}</div>
-                                    ${log.exceptionReason
-                                      ? html`<div class="timeline-exception">异常: ${log.exceptionReason}</div>`
-                                      : ''}
+                                  `
+                                )}
+                          </div>
+                        </div>
+
+                        <div style="border-top: 1px solid #f0f0f0; padding-top: 20px;">
+                          <div style="font-weight: 500; margin-bottom: 12px; color: #262626;">审计备注</div>
+                          ${!this.application.auditRemarks || this.application.auditRemarks.length === 0
+                            ? html`<div style="color: #8c8c8c;">暂无审计备注</div>`
+                            : this.application.auditRemarks.map(
+                                (remark) => html`
+                                  <div style="padding: 12px; background: #fafafa; border-radius: 6px; margin-bottom: 8px;">
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                                      <span style="font-weight: 500; color: #262626;">${remark.operator}</span>
+                                      <span style="font-size: 12px; color: #8c8c8c;">${remark.createdAt}</span>
+                                    </div>
+                                    <div style="color: #595959; font-size: 13px;">${remark.remark}</div>
                                   </div>
                                 `
                               )}
@@ -885,7 +919,51 @@ class ApplicationDetail extends LitElement {
             </div>
           `
         : ''}
+
+      ${this.showRemarkModal
+        ? html`
+            <div class="modal-overlay" @click=${(e) => e.target === e.currentTarget && (this.showRemarkModal = false)}>
+              <div class="modal-content">
+                <div class="modal-header">添加审计备注</div>
+                <div class="modal-body">
+                  ${this.error ? html`<div class="error-msg">${this.error}</div>` : ''}
+                  <div class="form-group">
+                    <label><span class="required">*</span> 备注内容</label>
+                    <textarea
+                      .value=${this.newRemark}
+                      @input=${(e) => (this.newRemark = e.target.value)}
+                      placeholder="请输入备注内容"
+                      rows="4"
+                    ></textarea>
+                  </div>
+                  <div style="font-size: 12px; color: #8c8c8c;">
+                    备注将公开显示，所有可见该申请的人员都能看到。
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <button class="btn-default" @click=${() => { this.showRemarkModal = false; this.newRemark = ''; }}>取消</button>
+                  <button class="btn-primary" @click=${this._handleAddRemark} ?disabled=${!this.newRemark.trim()}>
+                    添加
+                  </button>
+                </div>
+              </div>
+            </div>
+          `
+        : ''}
     `;
+  }
+
+  async _handleAddRemark() {
+    if (!this.newRemark.trim()) return;
+    this.error = '';
+    try {
+      await api.addRemark(this.applicationId, this.newRemark.trim());
+      this.showRemarkModal = false;
+      this.newRemark = '';
+      this._loadDetail();
+    } catch (err) {
+      this.error = err.message;
+    }
   }
 }
 

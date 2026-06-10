@@ -356,6 +356,18 @@ class ApplicationList extends LitElement {
   firstUpdated() {
     this._loadData();
     this._loadStats();
+    window.addEventListener('auth-changed', () => {
+      this.selectedIds = [];
+      this.page = 1;
+      this._loadData();
+      this._loadStats();
+    });
+    window.addEventListener('refresh-data', () => {
+      this.selectedIds = [];
+      this.page = 1;
+      this._loadData();
+      this._loadStats();
+    });
   }
 
   async _loadData() {

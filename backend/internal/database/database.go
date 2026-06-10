@@ -123,6 +123,27 @@ func createTables(db *sql.DB) error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_exc_app ON exception_reasons(application_id);
+
+	CREATE TABLE IF NOT EXISTS batch_results (
+		id TEXT PRIMARY KEY,
+		batch_no TEXT NOT NULL,
+		action TEXT NOT NULL,
+		operator TEXT NOT NULL,
+		application_id TEXT NOT NULL,
+		application_no TEXT NOT NULL,
+		success INTEGER NOT NULL DEFAULT 0,
+		previous_status TEXT,
+		new_status TEXT,
+		reason TEXT,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (operator) REFERENCES users(id),
+		FOREIGN KEY (application_id) REFERENCES account_applications(id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_batch_no ON batch_results(batch_no);
+	CREATE INDEX IF NOT EXISTS idx_batch_operator ON batch_results(operator);
+	CREATE INDEX IF NOT EXISTS idx_batch_app ON batch_results(application_id);
+	CREATE INDEX IF NOT EXISTS idx_batch_time ON batch_results(created_at);
 	`
 
 	_, err := db.Exec(schema)
@@ -356,6 +377,54 @@ func SeedDemoData(db *sql.DB) error {
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, r.ID, r.ApplicationID, r.NodeName, r.Operator, r.PreviousStatus,
 			r.NewStatus, r.Action, remarkVal, excVal)
+		if err != nil {
+			return err
+		}
+	}
+
+	exceptionReasons := []struct {
+		ID            string
+		ApplicationID string
+		ReasonType    string
+		Description   string
+		ReportedBy    string
+	}{
+		{"e001", "app003", "资料异常", "用户身份证复印件模糊，需要补充清晰材料", "u003"},
+		{"e002", "app008", "资料异常", "房产证未提供，需用户补充", "u004"},
+		{"e003", "app004", "装表异常", "装表现场与地址不符，待核实地址信息", "u003"},
+		{"e004", "app012", "装表异常", "装表位置存在争议，需用户确认具体安装位置", "u004"},
+	}
+
+	for _, e := range exceptionReasons {
+		_, err := db.Exec(`
+			INSERT INTO exception_reasons
+			(id, application_id, reason_type, description, reported_by)
+			VALUES (?, ?, ?, ?, ?)
+		`, e.ID, e.ApplicationID, e.ReasonType, e.Description, e.ReportedBy)
+		if err != nil {
+			return err
+		}
+	}
+
+	auditRemarks := []struct {
+		ID            string
+		ApplicationID string
+		Operator      string
+		Remark        string
+	}{
+		{"ar001", "app003", "u003", "已电话联系用户，用户表示本周内会携带身份证原件来营业厅"},
+		{"ar002", "app003", "u001", "用户来电询问补正材料需要带哪些原件，已告知"},
+		{"ar003", "app004", "u003", "地址核查中，需要联系物业确认具体门牌号码"},
+		{"ar004", "app008", "u004", "用户表示房产证在银行抵押，需要一周时间取出"},
+		{"ar005", "app012", "u004", "已与用户预约本周五到现场确认装表位置"},
+	}
+
+	for _, ar := range auditRemarks {
+		_, err := db.Exec(`
+			INSERT INTO audit_remarks
+			(id, application_id, operator, remark)
+			VALUES (?, ?, ?, ?)
+		`, ar.ID, ar.ApplicationID, ar.Operator, ar.Remark)
 		if err != nil {
 			return err
 		}

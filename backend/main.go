@@ -445,6 +445,7 @@ func getApplicationDetail(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 	attachments := getAttachments(db, id)
 	processingRecords := getProcessingRecords(db, id)
+	auditRemarks := getAuditRemarks(db, id)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"id":                app.ID,
@@ -470,6 +471,7 @@ func getApplicationDetail(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		"reviewRemark":      app.ReviewRemark.String,
 		"attachments":       attachments,
 		"processingRecords": processingRecords,
+		"auditRemarks":      auditRemarks,
 	})
 }
 
@@ -536,6 +538,36 @@ func getProcessingRecords(db *sql.DB, appID string) []map[string]interface{} {
 			"remark":          remark.String,
 			"exceptionReason": excReason.String,
 			"createdAt":       createdAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+	return list
+}
+
+func getAuditRemarks(db *sql.DB, appID string) []map[string]interface{} {
+	rows, err := db.Query(`
+		SELECT id, operator, remark, created_at
+		FROM audit_remarks 
+		WHERE application_id = ? 
+		ORDER BY created_at DESC
+	`, appID)
+	if err != nil {
+		return []map[string]interface{}{}
+	}
+	defer rows.Close()
+
+	var list []map[string]interface{}
+	for rows.Next() {
+		var id, operatorID, remark string
+		var createdAt time.Time
+		if err := rows.Scan(&id, &operatorID, &remark, &createdAt); err != nil {
+			continue
+		}
+		list = append(list, map[string]interface{}{
+			"id":         id,
+			"operator":   getUserNameByID(db, operatorID),
+			"operatorId": operatorID,
+			"remark":     remark,
+			"createdAt":  createdAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 	return list
@@ -653,8 +685,13 @@ func updateApplicationStatus(db *sql.DB, w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.Version != 0 && req.Version != currentVersion {
-		writeError(w, http.StatusConflict, "数据版本冲突，当前数据已被他人修改，请刷新后重试")
+	if req.Version != currentVersion {
+		writeError(w, http.StatusConflict, fmt.Sprintf("数据版本冲突：页面版本为%d，当前最新版本为%d，请刷新后重试", req.Version, currentVersion))
+		return
+	}
+
+	if req.TargetStatus != "" && req.TargetStatus != currentStatus {
+		writeError(w, http.StatusConflict, fmt.Sprintf("页面状态与后端记录不一致：页面显示'%s'，实际为'%s'，请刷新后重试", req.TargetStatus, currentStatus))
 		return
 	}
 
@@ -825,6 +862,30 @@ func updateApplicationStatus(db *sql.DB, w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if req.ExceptionReason != "" {
+		reasonType := ""
+		switch req.Action {
+		case "material_review":
+			reasonType = "资料异常"
+		case "meter_install":
+			reasonType = "装表异常"
+		case "return_correct":
+			reasonType = "复核退回"
+		default:
+			reasonType = "其他异常"
+		}
+
+		_, err = tx.Exec(`
+			INSERT INTO exception_reasons
+			(id, application_id, reason_type, description, reported_by, created_at)
+			VALUES (?, ?, ?, ?, ?, datetime('now'))
+		`, generateUUID(), id, reasonType, req.ExceptionReason, user.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "记录异常原因失败")
+			return
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, "提交事务失败")
 		return
@@ -880,11 +941,38 @@ func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	batchNo := generateBatchNo()
 	results := make([]batchResultItem, 0, len(req.IDs))
 
 	for _, appID := range req.IDs {
 		result := processSingleBatchItem(db, appID, req, user)
 		results = append(results, result)
+
+		appNo := getApplicationNoByID(db, appID)
+		newStatus := ""
+		if result.Success {
+			switch req.Action {
+			case "batch_dispatch":
+				newStatus = "处理中"
+			case "batch_close":
+				newStatus = "已关闭"
+			case "batch_overdue_advance":
+				newStatus = result.Status
+			}
+		}
+
+		successInt := 0
+		if result.Success {
+			successInt = 1
+		}
+
+		db.Exec(`
+			INSERT INTO batch_results
+			(id, batch_no, action, operator, application_id, application_no,
+			 success, previous_status, new_status, reason, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		`, generateUUID(), batchNo, req.Action, user.ID, appID, appNo,
+			successInt, result.Status, newStatus, result.Reason)
 	}
 
 	successCount := 0
@@ -895,6 +983,7 @@ func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"batchNo":      batchNo,
 		"total":        len(req.IDs),
 		"successCount": successCount,
 		"failCount":    len(req.IDs) - successCount,
@@ -1032,6 +1121,16 @@ func processSingleBatchItem(db *sql.DB, appID string, req batchProcessRequest, u
 		`, generateUUID(), appID, user.ID, req.Reason)
 		if err != nil {
 			result.Reason = "记录处理日志失败"
+			return result
+		}
+
+		_, err = tx.Exec(`
+			INSERT INTO exception_reasons
+			(id, application_id, reason_type, description, reported_by, created_at)
+			VALUES (?, ?, '逾期推进', ?, ?, datetime('now'))
+		`, generateUUID(), appID, req.Reason, user.ID)
+		if err != nil {
+			result.Reason = "记录异常原因失败"
 			return result
 		}
 
@@ -1222,6 +1321,20 @@ func addRemark(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 func generateApplicationNo() string {
 	now := time.Now()
 	return fmt.Sprintf("KH%s%06d", now.Format("20060102"), now.UnixNano()%1000000)
+}
+
+func generateBatchNo() string {
+	now := time.Now()
+	return fmt.Sprintf("BATCH%s%06d", now.Format("20060102"), now.UnixNano()%1000000)
+}
+
+func getApplicationNoByID(db *sql.DB, appID string) string {
+	var appNo string
+	err := db.QueryRow("SELECT application_no FROM account_applications WHERE id = ?", appID).Scan(&appNo)
+	if err != nil {
+		return appID
+	}
+	return appNo
 }
 
 func generateUUID() string {
