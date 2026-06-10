@@ -282,6 +282,10 @@ func seedData() error {
 		{"深圳建安分包进场-已审核", "深圳建安集团", "approved", "high", "subcontractor_entry", "王项目", now.Add(4 * day).Format("2006-01-02T15:04:05Z07:00"), "", 1, "王项目", "project_manager"},
 		{"山东铁正资质审核-已同步", "山东铁正建设", "synced", "medium", "qualification_review", "王项目", now.Add(-3 * day).Format("2006-01-02T15:04:05Z07:00"), "", 1, "王项目", "project_manager"},
 		{"中铁十二局安全交底-已同步", "中铁十二局", "synced", "low", "safety_briefing", "王项目", now.Add(-1 * day).Format("2006-01-02T15:04:05Z07:00"), "", 1, "王项目", "project_manager"},
+
+		{"江苏华建分包进场-版本冲突", "江苏华建集团", "pending_review", "high", "subcontractor_entry", "李施工", now.Add(5 * day).Format("2006-01-02T15:04:05Z07:00"), "status_conflict", 1, "李施工", "construction_manager"},
+		{"陕西建工资质审核-状态冲突", "陕西建工集团", "synced", "medium", "qualification_review", "王项目", now.Add(-2 * day).Format("2006-01-02T15:04:05Z07:00"), "status_conflict", 1, "王项目", "project_manager"},
+		{"安徽路桥安全交底-越权测试", "安徽路桥集团", "pending_review", "low", "safety_briefing", "李施工", now.Add(8 * day).Format("2006-01-02T15:04:05Z07:00"), "", 1, "李施工", "construction_manager"},
 	}
 
 	for i, e := range entries {
@@ -324,6 +328,8 @@ func seedData() error {
 		}
 	}
 
+	db.Exec(`UPDATE subcontractor_entries SET version = 2 WHERE title = '江苏华建分包进场-版本冲突'`)
+
 	seedAttachments := []struct {
 		entryID                  int
 		filename, fileType, desc string
@@ -339,6 +345,10 @@ func seedData() error {
 		{13, "深圳建安安全交底记录.pdf", "application/pdf", "安全交底签字记录", 320000, 1},
 		{14, "山东铁正全流程文档.pdf", "application/pdf", "完整审批流程文档", 800000, 1},
 		{15, "中铁十二局交底完成确认.pdf", "application/pdf", "安全交底完成确认书", 256000, 1},
+		{16, "江苏华建营业执照.pdf", "application/pdf", "营业执照扫描件", 220000, 1},
+		{16, "江苏华建资质证书.pdf", "application/pdf", "施工资质证书", 160000, 1},
+		{17, "陕西建工全流程文档.pdf", "application/pdf", "完整审批流程文档", 750000, 1},
+		{18, "安徽路桥营业执照.pdf", "application/pdf", "营业执照扫描件", 190000, 1},
 	}
 	for _, a := range seedAttachments {
 		db.Exec(`INSERT INTO attachments (entry_id, filename, file_type, file_size, description, uploaded_by)
@@ -358,10 +368,29 @@ func seedData() error {
 		{4, "exception", "缺少必要附件材料：资质证书", 1},
 		{5, "exception", "缺少必要附件材料：安全生产许可证", 1},
 		{6, "exception", "缺少必要附件材料：安全交底签字表", 1},
+		{16, "system", "版本冲突测试用例：版本号已升级到 v2，提交时携带旧版本号将触发冲突", 1},
+		{17, "exception", "状态冲突测试用例：当前状态已同步，不可重复审核", 1},
+		{18, "system", "越权测试用例：资料员角色审核将触发越权异常", 1},
 	}
 	for _, n := range seedAuditNotes {
 		db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
 			VALUES (?, ?, ?, ?)`, n.entryID, n.noteType, n.content, n.createdBy)
+	}
+
+	for _, e := range entries {
+		if strings.Contains(e.tags, "status_conflict") {
+			var eid int
+			db.QueryRow(`SELECT id FROM subcontractor_entries WHERE title = ?`, e.title).Scan(&eid)
+			if eid > 0 {
+				if strings.Contains(e.title, "版本冲突") {
+					db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
+						VALUES (?, 'status_conflict', ?)`, eid, "版本冲突测试：提交旧版本号将触发冲突")
+				} else if strings.Contains(e.title, "状态冲突") {
+					db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
+						VALUES (?, 'status_conflict', ?)`, eid, "状态冲突测试：当前状态已同步，不可重复审核")
+				}
+			}
+		}
 	}
 
 	return nil
@@ -706,119 +735,81 @@ func processEntryHandler(c echo.Context) error {
 	if currentHandler.Valid {
 		entry.CurrentHandler = &currentHandler.String
 	}
+	var curHandlerRole *string
 	if currentHandlerRole.Valid {
-		entry.CurrentHandlerRole = &currentHandlerRole.String
+		curHandlerRole = &currentHandlerRole.String
+		entry.CurrentHandlerRole = curHandlerRole
 	}
 
-	if req.Version != entry.Version {
-		db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
-			VALUES (?, 'status_conflict', ?)`, id, fmt.Sprintf("版本冲突：提交版本%d，当前版本%d", req.Version, entry.Version))
-		return c.JSON(http.StatusConflict, map[string]string{"error": fmt.Sprintf("版本冲突：提交版本%d，当前版本%d，请刷新后重试", req.Version, entry.Version)})
+	var attCount int
+	db.QueryRow("SELECT COUNT(*) FROM attachments WHERE entry_id = ?", id).Scan(&attCount)
+
+	vr := validateEntryAction(id, req.Action, user, entry.Status, entry.Version,
+		curHandlerRole, entry.Deadline, req.Version, req.ReturnReason, attCount)
+
+	if !vr.Valid {
+		if vr.ExceptionType != "" {
+			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
+				VALUES (?, ?, ?)`, id, vr.ExceptionType, vr.ExceptionDesc)
+		}
+		return c.JSON(vr.HTTPStatus, map[string]string{"error": vr.Reason})
 	}
 
-	if req.Action == "approve" {
-		if user.Role != "construction_manager" {
-			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
-				VALUES (?, 'unauthorized_advance', ?)`, id, fmt.Sprintf("用户 %s (%s) 无权审核该单据", user.Name, user.Role))
-			return c.JSON(http.StatusForbidden, map[string]string{"error": "仅施工负责人可审核分包进场单"})
-		}
-		if entry.Status != "pending_review" {
-			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
-				VALUES (?, 'status_conflict', ?)`, id, fmt.Sprintf("状态冲突：当前状态%s，无法审核", entry.Status))
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("当前状态为%s，无法审核", statusLabel(entry.Status))})
-		}
+	var newStatus, newHandler, newHandlerRole, newExceptionTags string
 
-		var attCount int
-		db.QueryRow("SELECT COUNT(*) FROM attachments WHERE entry_id = ?", id).Scan(&attCount)
-		if attCount == 0 {
-			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
-				VALUES (?, 'missing_materials', '缺少附件材料，无法审核通过')`, id)
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "缺少附件材料，无法审核通过，请先上传必要材料"})
-		}
-
-		now := time.Now()
-		deadline, _ := time.Parse(time.RFC3339, entry.Deadline)
-		if deadline.Before(now) {
-			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
-				VALUES (?, 'overdue', '逾期单据不可直接审核，需在详情页补正')`, id)
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "该单据已逾期，不可直接审核，请前往详情页补正后再处理"})
-		}
-
-		db.Exec(`UPDATE subcontractor_entries SET status = 'approved', current_handler = '王项目', current_handler_role = 'project_manager', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	switch req.Action {
+	case "approve":
+		newStatus = "approved"
+		newHandler = "王项目"
+		newHandlerRole = "project_manager"
+		newExceptionTags = entry.ExceptionTags
 		db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result)
 			VALUES (?, 'construction_manager', ?, 'approve', ?)`, id, user.Name, firstNonEmpty(req.Result, "审核通过"))
 		db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
 			VALUES (?, 'audit', ?, ?)`, id, fmt.Sprintf("施工负责人 %s 审核通过", user.Name), user.ID)
 
-	} else if req.Action == "confirm" {
-		if user.Role != "project_manager" {
-			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
-				VALUES (?, 'unauthorized_advance', ?)`, id, fmt.Sprintf("用户 %s (%s) 无权确认该单据", user.Name, user.Role))
-			return c.JSON(http.StatusForbidden, map[string]string{"error": "仅项目经理可确认分包进场单"})
-		}
-		if entry.Status != "approved" {
-			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
-				VALUES (?, 'status_conflict', ?)`, id, fmt.Sprintf("状态冲突：当前状态%s，无法确认", entry.Status))
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("当前状态为%s，无法确认", statusLabel(entry.Status))})
-		}
-
-		db.Exec(`UPDATE subcontractor_entries SET status = 'synced', current_handler = ?, current_handler_role = 'project_manager', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-			user.Name, id)
+	case "confirm":
+		newStatus = "synced"
+		newHandler = "王项目"
+		newHandlerRole = "project_manager"
+		newExceptionTags = entry.ExceptionTags
 		db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result)
 			VALUES (?, 'project_manager', ?, 'confirm', ?)`, id, user.Name, firstNonEmpty(req.Result, "已同步确认"))
 		db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
 			VALUES (?, 'audit', ?, ?)`, id, fmt.Sprintf("项目经理 %s 确认同步", user.Name), user.ID)
 
-	} else if req.Action == "return" {
-		if req.ReturnReason == "" {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "退回时必须填写退回原因"})
-		}
-
-		if entry.Status == "pending_review" && user.Role == "construction_manager" {
-			db.Exec(`UPDATE subcontractor_entries SET status = 'returned', current_handler = (SELECT name FROM users WHERE id = created_by), current_handler_role = 'document_clerk', version = version + 1, exception_tags = 'returned', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	case "return":
+		newStatus = "returned"
+		newExceptionTags = "returned"
+		if entry.Status == "pending_review" {
+			newHandlerRole = "document_clerk"
+			db.QueryRow("SELECT name FROM users WHERE id = (SELECT created_by FROM subcontractor_entries WHERE id = ?)", id).Scan(&newHandler)
 			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason)
 				VALUES (?, 'construction_manager', ?, 'return', '退回补正', ?)`, id, user.Name, req.ReturnReason)
 			db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
 				VALUES (?, 'audit', ?, ?)`, id, fmt.Sprintf("施工负责人 %s 退回： %s", user.Name, req.ReturnReason), user.ID)
-
-		} else if entry.Status == "approved" && user.Role == "project_manager" {
-			db.Exec(`UPDATE subcontractor_entries SET status = 'returned', current_handler = '李施工', current_handler_role = 'construction_manager', version = version + 1, exception_tags = 'returned', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+		} else {
+			newHandler = "李施工"
+			newHandlerRole = "construction_manager"
 			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason)
 				VALUES (?, 'project_manager', ?, 'return', '退回补正', ?)`, id, user.Name, req.ReturnReason)
 			db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
 				VALUES (?, 'audit', ?, ?)`, id, fmt.Sprintf("项目经理 %s 退回： %s", user.Name, req.ReturnReason), user.ID)
-
-		} else {
-			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
-				VALUES (?, 'unauthorized_advance', ?)`, id, fmt.Sprintf("用户 %s (%s) 无权退回当前状态的单据", user.Name, user.Role))
-			return c.JSON(http.StatusForbidden, map[string]string{"error": "无权退回当前状态的单据"})
 		}
 
-	} else if req.Action == "resubmit" {
-		if user.Role != "document_clerk" {
-			return c.JSON(http.StatusForbidden, map[string]string{"error": "仅资料员可重新提交"})
-		}
-		if entry.Status != "returned" {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "仅退回状态的单据可重新提交"})
-		}
-
-		var attCount int
-		db.QueryRow("SELECT COUNT(*) FROM attachments WHERE entry_id = ?", id).Scan(&attCount)
-		if attCount == 0 {
-			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
-				VALUES (?, 'missing_materials', '重新提交时缺少附件材料')`, id)
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "重新提交时必须附带材料"})
-		}
-
-		db.Exec(`UPDATE subcontractor_entries SET status = 'pending_review', current_handler = '李施工', current_handler_role = 'construction_manager', version = version + 1, exception_tags = '', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	case "resubmit":
+		newStatus = "pending_review"
+		newHandler = "李施工"
+		newHandlerRole = "construction_manager"
+		newExceptionTags = ""
 		db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result)
 			VALUES (?, 'document_clerk', ?, 'resubmit', '重新提交审核')`, id, user.Name)
 		db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
 			VALUES (?, 'audit', ?, ?)`, id, fmt.Sprintf("资料员 %s 重新提交", user.Name), user.ID)
-
-	} else {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "不支持的操作类型"})
 	}
+
+	db.Exec(`UPDATE subcontractor_entries SET status = ?, current_handler = ?, current_handler_role = ?, version = version + 1, exception_tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		newStatus, newHandler, newHandlerRole, newExceptionTags, id)
 
 	return c.JSON(http.StatusOK, map[string]string{"message": "操作成功"})
 }
@@ -833,6 +824,10 @@ func batchProcessHandler(c echo.Context) error {
 
 	if len(req.EntryIDs) == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "请选择要处理的分包进场单"})
+	}
+
+	if req.Action == "return" && req.Result == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "批量退回需要填写退回原因"})
 	}
 
 	results := []BatchResult{}
@@ -852,73 +847,90 @@ func batchProcessHandler(c echo.Context) error {
 			continue
 		}
 
-		if req.Action == "approve" {
-			if user.Role != "construction_manager" {
-				results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "仅施工负责人可审核"})
-				continue
-			}
-			if status != "pending_review" {
-				results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: fmt.Sprintf("当前状态为%s，无法审核", statusLabel(status))})
-				continue
-			}
-			var attCount int
-			db.QueryRow("SELECT COUNT(*) FROM attachments WHERE entry_id = ?", entryID).Scan(&attCount)
-			if attCount == 0 {
-				results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "缺少附件材料"})
-				db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description) VALUES (?, 'missing_materials', '批量审核时检测到缺少附件')`, entryID)
-				continue
-			}
-			overdueGroup := calcOverdueGroup(deadline)
-			if overdueGroup == "overdue" {
-				results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "该单据已逾期，请前往详情页补正后处理"})
-				db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description) VALUES (?, 'overdue', '逾期单据批量审核被拦截')`, entryID)
-				continue
-			}
-
-			db.Exec(`UPDATE subcontractor_entries SET status = 'approved', current_handler = '王项目', current_handler_role = 'project_manager', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, entryID)
-			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result) VALUES (?, 'construction_manager', ?, 'batch_approve', ?)`, entryID, user.Name, firstNonEmpty(req.Result, "批量审核通过"))
-			results = append(results, BatchResult{EntryID: entryID, Success: true, Reason: "审核通过"})
-
-		} else if req.Action == "confirm" {
-			if user.Role != "project_manager" {
-				results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "仅项目经理可确认"})
-				continue
-			}
-			if status != "approved" {
-				results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: fmt.Sprintf("当前状态为%s，无法确认", statusLabel(status))})
-				continue
-			}
-			overdueGroup := calcOverdueGroup(deadline)
-			if overdueGroup == "overdue" {
-				results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "该单据已逾期，请前往详情页补正后处理"})
-				db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description) VALUES (?, 'overdue', '逾期单据批量确认被拦截')`, entryID)
-				continue
-			}
-
-			db.Exec(`UPDATE subcontractor_entries SET status = 'synced', current_handler = '王项目', current_handler_role = 'project_manager', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, entryID)
-			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result) VALUES (?, 'project_manager', ?, 'batch_confirm', ?)`, entryID, user.Name, firstNonEmpty(req.Result, "批量确认同步"))
-			results = append(results, BatchResult{EntryID: entryID, Success: true, Reason: "确认同步"})
-
-		} else if req.Action == "return" {
-			if req.Result == "" {
-				results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "批量退回需要填写退回原因"})
-				continue
-			}
-			if status == "pending_review" && user.Role == "construction_manager" {
-				db.Exec(`UPDATE subcontractor_entries SET status = 'returned', current_handler = (SELECT name FROM users WHERE id = created_by), current_handler_role = 'document_clerk', version = version + 1, exception_tags = 'returned', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, entryID)
-				db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason) VALUES (?, 'construction_manager', ?, 'batch_reject', '批量退回补正', ?)`, entryID, user.Name, req.Result)
-				results = append(results, BatchResult{EntryID: entryID, Success: true, Reason: "已退回"})
-			} else if status == "approved" && user.Role == "project_manager" {
-				db.Exec(`UPDATE subcontractor_entries SET status = 'returned', current_handler = '李施工', current_handler_role = 'construction_manager', version = version + 1, exception_tags = 'returned', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, entryID)
-				db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason) VALUES (?, 'project_manager', ?, 'batch_reject', '批量退回补正', ?)`, entryID, user.Name, req.Result)
-				results = append(results, BatchResult{EntryID: entryID, Success: true, Reason: "已退回"})
-			} else {
-				results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "无权退回当前状态的单据"})
-			}
-
-		} else {
-			results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "不支持的操作类型"})
+		var curHandlerRole *string
+		if currentHandlerRole.Valid {
+			curHandlerRole = &currentHandlerRole.String
 		}
+
+		var attCount int
+		db.QueryRow("SELECT COUNT(*) FROM attachments WHERE entry_id = ?", entryID).Scan(&attCount)
+
+		returnReason := ""
+		if req.Action == "return" {
+			returnReason = req.Result
+		}
+
+		vr := validateEntryAction(entryID, req.Action, user, status, version,
+			curHandlerRole, deadline, version, returnReason, attCount)
+
+		if !vr.Valid {
+			if vr.ExceptionType != "" {
+				db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
+					VALUES (?, ?, ?)`, entryID, vr.ExceptionType, vr.ExceptionDesc)
+			}
+			results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: vr.Reason})
+			continue
+		}
+
+		var newStatus, newHandler, newHandlerRole, newExceptionTags string
+		var action string
+
+		switch req.Action {
+		case "approve":
+			newStatus = "approved"
+			newHandler = "王项目"
+			newHandlerRole = "project_manager"
+			newExceptionTags = exceptionTags
+			action = "batch_approve"
+			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result)
+				VALUES (?, 'construction_manager', ?, ?, ?)`, entryID, user.Name, action, firstNonEmpty(req.Result, "批量审核通过"))
+			db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
+				VALUES (?, 'audit', ?, ?)`, entryID, fmt.Sprintf("施工负责人 %s 批量审核通过", user.Name), user.ID)
+
+		case "confirm":
+			newStatus = "synced"
+			newHandler = "王项目"
+			newHandlerRole = "project_manager"
+			newExceptionTags = exceptionTags
+			action = "batch_confirm"
+			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result)
+				VALUES (?, 'project_manager', ?, ?, ?)`, entryID, user.Name, action, firstNonEmpty(req.Result, "批量确认同步"))
+			db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
+				VALUES (?, 'audit', ?, ?)`, entryID, fmt.Sprintf("项目经理 %s 批量确认同步", user.Name), user.ID)
+
+		case "return":
+			newStatus = "returned"
+			newExceptionTags = "returned"
+			action = "batch_reject"
+			if status == "pending_review" {
+				newHandlerRole = "document_clerk"
+				db.QueryRow("SELECT name FROM users WHERE id = (SELECT created_by FROM subcontractor_entries WHERE id = ?)", entryID).Scan(&newHandler)
+				db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason)
+					VALUES (?, 'construction_manager', ?, ?, '批量退回补正', ?)`, entryID, user.Name, action, req.Result)
+				db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
+					VALUES (?, 'audit', ?, ?)`, entryID, fmt.Sprintf("施工负责人 %s 批量退回： %s", user.Name, req.Result), user.ID)
+			} else {
+				newHandler = "李施工"
+				newHandlerRole = "construction_manager"
+				db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason)
+					VALUES (?, 'project_manager', ?, ?, '批量退回补正', ?)`, entryID, user.Name, action, req.Result)
+				db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
+					VALUES (?, 'audit', ?, ?)`, entryID, fmt.Sprintf("项目经理 %s 批量退回： %s", user.Name, req.Result), user.ID)
+			}
+		}
+
+		db.Exec(`UPDATE subcontractor_entries SET status = ?, current_handler = ?, current_handler_role = ?, version = version + 1, exception_tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+			newStatus, newHandler, newHandlerRole, newExceptionTags, entryID)
+
+		successReason := "操作成功"
+		if req.Action == "approve" {
+			successReason = "审核通过"
+		} else if req.Action == "confirm" {
+			successReason = "确认同步"
+		} else if req.Action == "return" {
+			successReason = "已退回"
+		}
+		results = append(results, BatchResult{EntryID: entryID, Success: true, Reason: successReason})
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
@@ -1252,6 +1264,197 @@ func firstNonEmpty(args ...string) string {
 		}
 	}
 	return ""
+}
+
+type ValidationResult struct {
+	Valid         bool
+	Reason        string
+	ExceptionType string
+	ExceptionDesc string
+	HTTPStatus    int
+}
+
+func validateEntryAction(entryID int, action string, user User, entryStatus string, entryVersion int, currentHandlerRole *string, deadline string, submittedVersion int, returnReason string, attachmentCount int) ValidationResult {
+	now := time.Now()
+
+	if submittedVersion != entryVersion {
+		return ValidationResult{
+			Valid:         false,
+			Reason:        fmt.Sprintf("版本冲突：提交版本%d，当前版本%d，请刷新后重试", submittedVersion, entryVersion),
+			ExceptionType: "status_conflict",
+			ExceptionDesc: fmt.Sprintf("版本冲突：提交版本%d，当前版本%d", submittedVersion, entryVersion),
+			HTTPStatus:    http.StatusConflict,
+		}
+	}
+
+	if currentHandlerRole != nil && *currentHandlerRole != user.Role && action != "resubmit" {
+		return ValidationResult{
+			Valid:         false,
+			Reason:        fmt.Sprintf("当前处理角色应为%s，您的角色%s无权处理", ROLE_LABELS[*currentHandlerRole], ROLE_LABELS[user.Role]),
+			ExceptionType: "unauthorized_advance",
+			ExceptionDesc: fmt.Sprintf("用户 %s (%s) 无权处理当前角色应为 %s 的单据", user.Name, user.Role, *currentHandlerRole),
+			HTTPStatus:    http.StatusForbidden,
+		}
+	}
+
+	switch action {
+	case "approve":
+		if user.Role != "construction_manager" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "仅施工负责人可审核分包进场单",
+				ExceptionType: "unauthorized_advance",
+				ExceptionDesc: fmt.Sprintf("用户 %s (%s) 无权审核该单据", user.Name, user.Role),
+				HTTPStatus:    http.StatusForbidden,
+			}
+		}
+		if entryStatus != "pending_review" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        fmt.Sprintf("当前状态为%s，无法审核", statusLabel(entryStatus)),
+				ExceptionType: "status_conflict",
+				ExceptionDesc: fmt.Sprintf("状态冲突：当前状态%s，无法审核", entryStatus),
+				HTTPStatus:    http.StatusBadRequest,
+			}
+		}
+		if attachmentCount == 0 {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "缺少附件材料，无法审核通过，请先上传必要材料",
+				ExceptionType: "missing_materials",
+				ExceptionDesc: "缺少附件材料，无法审核通过",
+				HTTPStatus:    http.StatusBadRequest,
+			}
+		}
+		d, err := time.Parse(time.RFC3339, deadline)
+		if err != nil {
+			d, err = time.Parse("2006-01-02T15:04:05Z07:00", deadline)
+		}
+		if err == nil && d.Before(now) {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "该单据已逾期，不可直接审核，请前往详情页补正后再处理",
+				ExceptionType: "overdue",
+				ExceptionDesc: "逾期单据不可直接审核，需在详情页补正",
+				HTTPStatus:    http.StatusBadRequest,
+			}
+		}
+
+	case "confirm":
+		if user.Role != "project_manager" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "仅项目经理可确认分包进场单",
+				ExceptionType: "unauthorized_advance",
+				ExceptionDesc: fmt.Sprintf("用户 %s (%s) 无权确认该单据", user.Name, user.Role),
+				HTTPStatus:    http.StatusForbidden,
+			}
+		}
+		if entryStatus != "approved" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        fmt.Sprintf("当前状态为%s，无法确认", statusLabel(entryStatus)),
+				ExceptionType: "status_conflict",
+				ExceptionDesc: fmt.Sprintf("状态冲突：当前状态%s，无法确认", entryStatus),
+				HTTPStatus:    http.StatusBadRequest,
+			}
+		}
+		d, err := time.Parse(time.RFC3339, deadline)
+		if err != nil {
+			d, err = time.Parse("2006-01-02T15:04:05Z07:00", deadline)
+		}
+		if err == nil && d.Before(now) {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "该单据已逾期，请前往详情页补正后处理",
+				ExceptionType: "overdue",
+				ExceptionDesc: "逾期单据批量确认被拦截",
+				HTTPStatus:    http.StatusBadRequest,
+			}
+		}
+
+	case "return":
+		if returnReason == "" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "退回时必须填写退回原因",
+				ExceptionType: "missing_materials",
+				ExceptionDesc: "退回缺少原因字段",
+				HTTPStatus:    http.StatusBadRequest,
+			}
+		}
+		if entryStatus == "pending_review" && user.Role != "construction_manager" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "仅施工负责人可退回待审核单据",
+				ExceptionType: "unauthorized_advance",
+				ExceptionDesc: fmt.Sprintf("用户 %s (%s) 无权退回待审核单据", user.Name, user.Role),
+				HTTPStatus:    http.StatusForbidden,
+			}
+		}
+		if entryStatus == "approved" && user.Role != "project_manager" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "仅项目经理可退回审核通过单据",
+				ExceptionType: "unauthorized_advance",
+				ExceptionDesc: fmt.Sprintf("用户 %s (%s) 无权退回审核通过单据", user.Name, user.Role),
+				HTTPStatus:    http.StatusForbidden,
+			}
+		}
+		if entryStatus != "pending_review" && entryStatus != "approved" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        fmt.Sprintf("当前状态为%s，无法退回", statusLabel(entryStatus)),
+				ExceptionType: "status_conflict",
+				ExceptionDesc: fmt.Sprintf("状态冲突：当前状态%s，无法退回", entryStatus),
+				HTTPStatus:    http.StatusBadRequest,
+			}
+		}
+
+	case "resubmit":
+		if user.Role != "document_clerk" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "仅资料员可重新提交",
+				ExceptionType: "unauthorized_advance",
+				ExceptionDesc: fmt.Sprintf("用户 %s (%s) 无权重新提交", user.Name, user.Role),
+				HTTPStatus:    http.StatusForbidden,
+			}
+		}
+		if entryStatus != "returned" {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "仅退回状态的单据可重新提交",
+				ExceptionType: "status_conflict",
+				ExceptionDesc: fmt.Sprintf("状态冲突：当前状态%s，无法重新提交", entryStatus),
+				HTTPStatus:    http.StatusBadRequest,
+			}
+		}
+		if attachmentCount == 0 {
+			return ValidationResult{
+				Valid:         false,
+				Reason:        "重新提交时必须附带材料",
+				ExceptionType: "missing_materials",
+				ExceptionDesc: "重新提交时缺少附件材料",
+				HTTPStatus:    http.StatusBadRequest,
+			}
+		}
+
+	default:
+		return ValidationResult{
+			Valid:      false,
+			Reason:     "不支持的操作类型",
+			HTTPStatus: http.StatusBadRequest,
+		}
+	}
+
+	return ValidationResult{Valid: true}
+}
+
+var ROLE_LABELS = map[string]string{
+	"document_clerk":       "资料员",
+	"construction_manager": "施工负责人",
+	"project_manager":      "项目经理",
 }
 
 func main() {
