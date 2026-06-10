@@ -1,7 +1,7 @@
 import { component$, useSignal, useTask$, useVisibleTask$, $ } from '@builder.io/qwik';
 import { routeLoader$, useNavigate, Link } from '@builder.io/qwik-city';
 import { api } from '~/utils/api';
-import { getCurrentUser, hasPermission } from '~/utils/auth';
+import { getCurrentUser, hasPermission, getUsersByRole } from '~/utils/auth';
 import {
   type PatrolOrder,
   type DefectReport,
@@ -165,6 +165,9 @@ export default component$(() => {
   const toastMessage = useSignal('');
   const toastType = useSignal<'success' | 'error'>('success');
 
+  const dispatchEngineerId = useSignal<number | ''>('');
+  const engineers = useSignal<User[]>([]);
+
   const isEditing = useSignal(false);
   const editPatrolContent = useSignal('');
   const editWeather = useSignal('');
@@ -214,6 +217,8 @@ export default component$(() => {
         api.get<AuditTrail[]>(`/api/patrol-orders/${id}/audit-trails`),
       ]);
 
+      engineers.value = getUsersByRole('engineer');
+
       if (detailRes.success && detailRes.data) {
         if (detailRes.data.order) {
           order.value = detailRes.data.order;
@@ -240,6 +245,7 @@ export default component$(() => {
       acceptanceRecords.value = MOCK_ACCEPTANCE;
       attachments.value = MOCK_ATTACHMENTS;
       auditTrails.value = MOCK_AUDIT;
+      engineers.value = getUsersByRole('engineer');
     } finally {
       loading.value = false;
     }
@@ -276,7 +282,7 @@ export default component$(() => {
       (o.status === 'pending_dispatch' || o.status === 'returned');
 
     const canDispatch = (role === 'manager' || role === 'admin') &&
-      o.status === 'pending_dispatch';
+      (o.status === 'pending_dispatch' || o.status === 'returned' || (o.status === 'in_progress' && !o.engineer_id));
 
     const canHandle = ((role === 'engineer' && o.current_handler === 'engineer') ||
                        role === 'admin') && o.status === 'in_progress';
@@ -354,6 +360,9 @@ export default component$(() => {
   const handleAction$ = $((action: 'submit' | 'dispatch' | 'handle' | 'return' | 'review_pass' | 'review_reject') => {
     handleResult.value = action;
     handleOpinion.value = '';
+    if (action === 'dispatch' && order.value) {
+      dispatchEngineerId.value = order.value.engineer_id || '';
+    }
     showHandleDialog.value = true;
   });
 
@@ -379,7 +388,7 @@ export default component$(() => {
         message = res.message || '';
       } else if (action === 'dispatch') {
         const res = await api.put(`/api/patrol-orders/${id}/dispatch`, {
-          engineer_id: order.value.engineer_id || 4,
+          engineer_id: dispatchEngineerId.value,
           version,
           remark: handleOpinion.value,
         });
@@ -1049,36 +1058,64 @@ export default component$(() => {
                     )}
                   </div>
 
-                  {acceptanceRecords.value.length === 0 ? (
+                  {acceptanceRecords.value.length === 0 && o.status !== 'closed' ? (
                     <div class="text-sm text-gray-500 py-8 text-center">暂无验收记录</div>
                   ) : (
-                    <div class="space-y-3">
-                      {acceptanceRecords.value.map(r => (
-                        <div key={r.id} class="border border-gray-200 rounded-lg p-4">
-                          <div class="flex justify-between items-start mb-2">
-                            <div class="flex items-center space-x-2">
-                              <span class={[
-                                'inline-flex px-2 py-0.5 text-xs font-medium rounded',
-                                r.result === 'pass' ? 'bg-green-100 text-green-700' :
-                                r.result === 'fail' ? 'bg-red-100 text-red-700' :
-                                'bg-gray-100 text-gray-700',
-                              ].join(' ')}>
-                                {r.result === 'pass' ? '通过' : r.result === 'fail' ? '不通过' : '待处理'}
-                              </span>
-                              <span class="text-sm text-gray-500">验收人：{r.acceptor_name}</span>
-                            </div>
-                            <span class="text-xs text-gray-400">{r.accepted_at}</span>
-                          </div>
-                          {r.remark && (
-                            <div class="text-sm text-gray-700 mb-2">{r.remark}</div>
-                          )}
-                          {r.anomaly_reason && (
-                            <div class="text-xs text-red-600 bg-red-50 p-2 rounded">
-                              异常：{r.anomaly_reason}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                    <div class="overflow-x-auto">
+                      <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                          <tr>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">缺陷编号</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">结果</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">证据</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">备注</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">验收人</th>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">验收时间</th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                          {acceptanceRecords.value.map(r => {
+                            const defect = defects.value.find(d => d.id === r.defect_id);
+                            return (
+                              <tr key={r.id} class="hover:bg-gray-50">
+                                <td class="px-3 py-2 text-sm text-blue-600 font-medium">
+                                  {defect?.defect_no || `-`}
+                                </td>
+                                <td class="px-3 py-2">
+                                  <span class={[
+                                    'inline-flex px-2 py-0.5 text-xs font-medium rounded',
+                                    r.result === 'pass' ? 'bg-green-100 text-green-700' :
+                                    r.result === 'fail' ? 'bg-red-100 text-red-700' :
+                                    'bg-gray-100 text-gray-700',
+                                  ].join(' ')}>
+                                    {r.result === 'pass' ? '通过' : r.result === 'fail' ? '不通过' : '待处理'}
+                                  </span>
+                                </td>
+                                <td class="px-3 py-2 text-sm text-gray-700">
+                                  {r.evidence && r.evidence.length > 0 ? (
+                                    <div class="flex flex-wrap gap-1">
+                                      {r.evidence.map((e, i) => (
+                                        <span key={i} class="inline-flex items-center px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">
+                                          📎 {e}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : '-'}
+                                </td>
+                                <td class="px-3 py-2 text-sm text-gray-700 max-w-xs truncate" title={r.remark}>
+                                  {r.remark || '-'}
+                                </td>
+                                <td class="px-3 py-2 text-sm text-gray-900">
+                                  {r.acceptor_name || '-'}
+                                </td>
+                                <td class="px-3 py-2 text-sm text-gray-500">
+                                  {r.accepted_at}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
@@ -1141,15 +1178,37 @@ export default component$(() => {
                 {handleResult.value === 'review_reject' && '复核退回'}
               </h3>
             </div>
-            <div class="p-6">
-              <label class="block text-sm font-medium text-gray-700 mb-2">处理意见</label>
-              <textarea
-                value={handleOpinion.value}
-                onInput$={(e) => handleOpinion.value = (e.target as HTMLTextAreaElement).value}
-                rows={4}
-                placeholder="请输入处理意见..."
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+            <div class="p-6 space-y-4">
+              {handleResult.value === 'dispatch' && (
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    选择工程师 <span class="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={dispatchEngineerId.value as any}
+                    onInput$={(e) => {
+                      const v = (e.target as HTMLSelectElement).value;
+                      dispatchEngineerId.value = v === '' ? '' : Number(v);
+                    }}
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">请选择工程师</option>
+                    {engineers.value.map(eng => (
+                      <option key={eng.id} value={eng.id}>{eng.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">处理意见</label>
+                <textarea
+                  value={handleOpinion.value}
+                  onInput$={(e) => handleOpinion.value = (e.target as HTMLTextAreaElement).value}
+                  rows={4}
+                  placeholder="请输入处理意见..."
+                  class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
             </div>
             <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
               <button

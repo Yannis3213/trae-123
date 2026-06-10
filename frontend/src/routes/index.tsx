@@ -200,10 +200,25 @@ export default component$(() => {
   const handleBatchProcess$ = $(async () => {
     if (selectedIds.value.size === 0) return;
     try {
-      const items = Array.from(selectedIds.value).map(id => {
+      const ids = Array.from(selectedIds.value);
+      const itemsPromises = ids.map(async (id) => {
         const order = orders.value.find(o => o.id === id);
-        return { id, version: order?.version || 1, opinion: '批量办理' };
+        let defectNos: string[] = [];
+        try {
+          const detailRes = await api.get<any>(`/api/patrol-orders/${id}`);
+          if (detailRes.success && detailRes.data) {
+            const defects = detailRes.data.defects || detailRes.data.order?.defects || [];
+            defectNos = defects.map((d: any) => d.defect_no).filter(Boolean);
+          }
+        } catch {
+        }
+        const defect_evidences: Record<string, string[]> = {};
+        defectNos.forEach((defect_no: string) => {
+          defect_evidences[defect_no] = [`消缺证据_${defect_no}.pdf`];
+        });
+        return { id, version: order?.version || 1, opinion: '批量办理', defect_evidences };
       });
+      const items = await Promise.all(itemsPromises);
       const res = await api.post<any>('/api/patrol-orders/batch-process', { items });
       if (res.success && res.data) {
         const mapped: BatchResultItem[] = (res.data as any[]).map((r: any) => {

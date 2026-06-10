@@ -74,6 +74,7 @@ pub struct PatrolOrderDetail {
     pub defects: Vec<DefectReport>,
     pub attachments: Vec<Attachment>,
     pub process_records: Vec<ProcessRecord>,
+    pub acceptance_records: Vec<AcceptanceRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Object)]

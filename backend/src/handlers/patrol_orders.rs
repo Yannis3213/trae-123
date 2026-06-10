@@ -435,11 +435,44 @@ impl PatrolOrdersApi {
         let process_records: Result<Vec<ProcessRecord>, _> = proc_records.collect();
         let process_records = process_records?;
 
+        let acc_sql = "
+            SELECT a.id, a.defect_id, a.patrol_order_id, a.result, a.evidence, a.remark,
+                   a.acceptor_id, u.name, a.accepted_at, a.anomaly_reason
+            FROM acceptance_records a
+            LEFT JOIN users u ON a.acceptor_id = u.id
+            WHERE a.patrol_order_id = ?1
+            ORDER BY a.accepted_at DESC
+        ";
+        let mut acc_stmt = conn.prepare(acc_sql)?;
+        let acc_records = acc_stmt.query_map([id], |row| {
+            let evidence_val = row.get::<_, rusqlite::types::Value>(4)?;
+            let evidence: Option<Vec<String>> = if matches!(evidence_val, rusqlite::types::Value::Null) {
+                None
+            } else {
+                json_from_row(&evidence_val).ok()
+            };
+            Ok(AcceptanceRecord {
+                id: row.get(0)?,
+                defect_id: row.get(1)?,
+                patrol_order_id: row.get(2)?,
+                result: row.get(3)?,
+                evidence,
+                remark: row.get(5).ok(),
+                acceptor_id: row.get(6).ok(),
+                acceptor_name: row.get(7).ok(),
+                accepted_at: row.get(8)?,
+                anomaly_reason: row.get(9).ok(),
+            })
+        })?;
+        let acceptance_records: Result<Vec<AcceptanceRecord>, _> = acc_records.collect();
+        let acceptance_records = acceptance_records?;
+
         Ok(Json(PatrolOrderDetail {
             order,
             defects,
             attachments,
             process_records,
+            acceptance_records,
         }))
     }
 
@@ -717,6 +750,12 @@ impl PatrolOrdersApi {
             }
         }
 
+        if order.status == state_machine::IN_PROGRESS && order.engineer_id.is_some() {
+            let reason = format!("状态冲突：当前状态「{}」且已指派工程师，不允许重新派发", state_machine::status_label(&order.status));
+            record_anomaly(&conn, &order, "派发失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+            return Err(AppError::bad_request(reason));
+        }
+
         state_machine::check_transition(&order.status, "dispatch").map_err(|e| {
             let _ = record_anomaly(&conn, &order, "派发失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
             e
@@ -732,6 +771,17 @@ impl PatrolOrdersApi {
             let _ = record_anomaly(&conn, &order, "派发失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
             e
         })?;
+
+        let engineer_valid: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1 AND role = 'engineer')",
+            [req.engineer_id],
+            |row| row.get(0),
+        ).unwrap_or(false);
+        if !engineer_valid {
+            let reason = "无效的工程师ID".to_string();
+            record_anomaly(&conn, &order, "派发失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+            return Err(AppError::bad_request(reason));
+        }
 
         let from_status = order.status.clone();
         let to_status = state_machine::next_status_after_dispatch();
@@ -1158,45 +1208,52 @@ impl PatrolOrdersApi {
                 continue;
             }
 
+            let evidences = match &item.defect_evidences {
+                Some(e) if !e.is_empty() => e,
+                _ => {
+                    let reason = "未提供缺陷消缺证据".to_string();
+                    let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, &reason, None);
+                    results.push(BatchResultItem {
+                        id,
+                        success: false,
+                        message: reason,
+                    });
+                    continue;
+                }
+            };
+
             let mut has_evidence_error = false;
-            if let Some(evidences) = &item.defect_evidences {
-                for (defect_no, evidence) in evidences {
-                    if evidence.is_empty() {
-                        let reason = format!("缺陷 {} 缺少消缺证据", defect_no);
-                        let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, &reason, None);
-                        results.push(BatchResultItem {
-                            id,
-                            success: false,
-                            message: reason,
-                        });
-                        has_evidence_error = true;
-                        break;
-                    }
+            for (defect_no, evidence) in evidences {
+                if evidence.is_empty() {
+                    let reason = format!("缺陷 {} 缺少消缺证据", defect_no);
+                    let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, &reason, None);
+                    results.push(BatchResultItem {
+                        id,
+                        success: false,
+                        message: reason,
+                    });
+                    has_evidence_error = true;
+                    break;
                 }
             }
             if has_evidence_error {
                 continue;
             }
 
-            if let Some(evidences) = &item.defect_evidences {
-                for (defect_no, evidence) in evidences {
-                    let evidence_json = serde_json::to_string(evidence).unwrap_or_default();
-                    let defect_sql = "
-                        UPDATE defect_reports
-                        SET status = 'resolved', evidence = ?1, version = version + 1, updated_at = datetime('now')
-                        WHERE defect_no = ?2 AND patrol_order_id = ?3
-                    ";
-                    let _ = conn.execute(defect_sql, rusqlite::params![evidence_json, defect_no, id]);
-                }
+            for (defect_no, evidence) in evidences {
+                let evidence_json = serde_json::to_string(evidence).unwrap_or_default();
+                let defect_sql = "
+                    UPDATE defect_reports
+                    SET status = 'resolved', evidence = ?1, version = version + 1, updated_at = datetime('now')
+                    WHERE defect_no = ?2 AND patrol_order_id = ?3
+                ";
+                let _ = conn.execute(defect_sql, rusqlite::params![evidence_json, defect_no, id]);
             }
 
             let from_status = order.status.clone();
             let to_status = state_machine::next_status_after_process();
             let next_handler = state_machine::next_handler_after_process();
-            let all_evidence: Vec<String> = item.defect_evidences
-                .as_ref()
-                .map(|m| m.values().flatten().cloned().collect())
-                .unwrap_or_default();
+            let all_evidence: Vec<String> = evidences.values().flatten().cloned().collect();
 
             let sql = "
                 UPDATE patrol_orders
