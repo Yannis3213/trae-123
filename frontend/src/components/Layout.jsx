@@ -21,15 +21,11 @@ const ROLE_TIPS = {
 export default function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { userRole, userName, userLabel, switchRole, ROLE_MAP, notification, showNotification } = useApp()
+  const { userRole, userName, userLabel, switchRole, ROLE_MAP, notification, showNotification, refreshAll, fetchStats } = useApp()
 
   const [stats, setStats] = useState(null)
   const [roleSwitchInfo, setRoleSwitchInfo] = useState(null)
   const [showRoleToast, setShowRoleToast] = useState(false)
-
-  useEffect(() => {
-    loadStats()
-  }, [])
 
   const loadStats = async () => {
     try {
@@ -38,10 +34,14 @@ export default function Layout() {
     } catch (e) { console.warn(e) }
   }
 
+  useEffect(() => {
+    loadStats()
+  }, [])
+
   const handleSwitchRole = (role) => {
     const prevRole = userRole
     switchRole(role)
-    loadStats().then(() => {
+    Promise.all([loadStats(), refreshAll()]).then(() => {
       setRoleSwitchInfo({ from: prevRole, to: role })
       setShowRoleToast(true)
       setTimeout(() => setShowRoleToast(false), 6000)

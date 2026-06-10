@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import api from '../api'
 
 const AppContext = createContext()
@@ -9,6 +9,22 @@ const ROLE_MAP = {
   manager: { name: '景区经理-张总', label: '景区经理' }
 }
 
+const DEFAULT_FILTERS = { status: '', urgency: '', missing_module: '' }
+
+function _loadFilters() {
+  try {
+    const raw = localStorage.getItem('booking_filters')
+    if (raw) return { ...DEFAULT_FILTERS, ...JSON.parse(raw) }
+  } catch (_) {}
+  return { ...DEFAULT_FILTERS }
+}
+
+function _saveFilters(f) {
+  try {
+    localStorage.setItem('booking_filters', JSON.stringify(f))
+  } catch (_) {}
+}
+
 export function AppProvider({ children }) {
   const [userRole, setUserRole] = useState(() => localStorage.getItem('user_role') || 'dispatcher')
   const [userName, setUserName] = useState(() => localStorage.getItem('user_name') || ROLE_MAP.dispatcher.name)
@@ -17,6 +33,8 @@ export function AppProvider({ children }) {
   const [stats, setStats] = useState({ total: 0, normal: 0, approaching: 0, overdue: 0, by_status: {} })
   const [loading, setLoading] = useState(false)
   const [notification, setNotification] = useState(null)
+
+  const filtersRef = useRef(_loadFilters())
 
   useEffect(() => {
     localStorage.setItem('user_role', userRole)
@@ -33,13 +51,18 @@ export function AppProvider({ children }) {
     setTimeout(() => setNotification(null), 4000)
   }, [])
 
-  const fetchBookings = useCallback(async (filters = {}) => {
+  const fetchBookings = useCallback(async (filters) => {
+    if (filters) {
+      filtersRef.current = { ...DEFAULT_FILTERS, ...filters }
+      _saveFilters(filtersRef.current)
+    }
+    const f = filtersRef.current
     setLoading(true)
     try {
       const params = new URLSearchParams()
-      if (filters.status) params.append('status', filters.status)
-      if (filters.urgency) params.append('urgency', filters.urgency)
-      if (filters.missing_module) params.append('missing_module', filters.missing_module)
+      if (f.status) params.append('status', f.status)
+      if (f.urgency) params.append('urgency', f.urgency)
+      if (f.missing_module) params.append('missing_module', f.missing_module)
 
       const res = await api.get(`/bookings?${params.toString()}`)
       if (res.data.success) {
@@ -68,6 +91,8 @@ export function AppProvider({ children }) {
     await Promise.all([fetchBookings(), fetchStats()])
   }, [fetchBookings, fetchStats])
 
+  const currentFilters = filtersRef.current
+
   const value = {
     userRole,
     userName,
@@ -75,6 +100,7 @@ export function AppProvider({ children }) {
     switchRole,
     bookings,
     missingSummary,
+    currentFilters,
     stats,
     loading,
     fetchBookings,

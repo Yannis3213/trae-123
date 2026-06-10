@@ -14,11 +14,11 @@ const FAIL_CODE_LABEL = {
 
 export default function BookingList() {
   const navigate = useNavigate()
-  const { bookings, missingSummary, loading, fetchBookings, refreshAll, showNotification, userRole } = useApp()
+  const { bookings, missingSummary, loading, fetchBookings, refreshAll, showNotification, userRole, currentFilters } = useApp()
 
-  const [filterStatus, setFilterStatus] = useState('')
-  const [filterUrgency, setFilterUrgency] = useState('')
-  const [filterMissing, setFilterMissing] = useState('')
+  const [filterStatus, setFilterStatus] = useState(() => currentFilters?.status || '')
+  const [filterUrgency, setFilterUrgency] = useState(() => currentFilters?.urgency || '')
+  const [filterMissing, setFilterMissing] = useState(() => currentFilters?.missing_module || '')
   const [selectedIds, setSelectedIds] = useState([])
 
   const [showBatchModal, setShowBatchModal] = useState(false)
@@ -156,10 +156,12 @@ export default function BookingList() {
             {Object.keys(missingSummary).length > 0 && (
               <div className="missing-chip-list" style={{ margin: 0 }}>
                 {Object.entries(missingSummary).map(([k, v]) => (
-                  <span key={k} className="missing-chip" onClick={() => setFilterMissing(k)} style={{ cursor: 'pointer' }}>
-                    ⛔ 缺 {v.label} × {v.count}
-                    <span className="owner">责任：{v.owner_label}</span>
-                  </span>
+                  v.count > 0 && (
+                    <span key={k} className="missing-chip" onClick={() => setFilterMissing(k)} style={{ cursor: 'pointer' }}>
+                      ⛔ 缺 {v.label} × {v.count}
+                      <span className="owner">责任：{v.owner_label}</span>
+                    </span>
+                  )
                 ))}
                 {filterMissing && (
                   <span
