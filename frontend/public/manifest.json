@@ -1,0 +1,16 @@
+{
+  "name": "电站巡检管理系统",
+  "short_name": "巡检系统",
+  "description": "电站巡检管理系统前端应用",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
