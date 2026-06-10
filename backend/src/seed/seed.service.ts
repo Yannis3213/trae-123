@@ -130,7 +130,7 @@ export class SeedService implements OnModuleInit {
       { content: '请尽快上传订单凭证', author: 'review01', authorRole: UserRole.REVIEW_LEADER },
     ]);
     await this.createExceptionReasons(order3.id, [
-      { reason: '缺少订单凭证，材料不完整', reasonType: 'material_missing', operator: 'review01' },
+      { reason: '缺少订单凭证，材料不完整', reasonType: 'material_missing', operator: 'review01', needRole: '团长运营' },
     ]);
 
     const order4 = await this.createOrder({
@@ -164,7 +164,7 @@ export class SeedService implements OnModuleInit {
       { content: '订单已逾期，请尽快处理履约签收', author: 'supervisor02', authorRole: UserRole.AUDIT_SUPERVISOR },
     ]);
     await this.createExceptionReasons(order4.id, [
-      { reason: '履约处理超时，已超过处理截止日期', reasonType: 'overdue', operator: 'system' },
+      { reason: '履约处理超时，已超过处理截止日期', reasonType: 'overdue', operator: 'system', needRole: '履约专员' },
     ]);
 
     const order5 = await this.createOrder({
@@ -202,7 +202,7 @@ export class SeedService implements OnModuleInit {
       { content: '重新审核后凭证信息正确', author: 'review01', authorRole: UserRole.REVIEW_LEADER },
     ]);
     await this.createExceptionReasons(order5.id, [
-      { reason: '上架凭证与SKU信息冲突，凭证内容有误', reasonType: 'conflict', operator: 'review01' },
+      { reason: '上架凭证与SKU信息冲突，凭证内容有误', reasonType: 'conflict', operator: 'review01', needRole: '团购登记员' },
     ]);
 
     this.logger.log(`共创建 ${[order1, order2, order3, order4, order5].length} 条演示订单`);

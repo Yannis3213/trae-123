@@ -192,12 +192,12 @@ export class GroupOrdersController {
   @Post('batch')
   @Roles(UserRole.AUDIT_SUPERVISOR, UserRole.FULFILLMENT_SPECIALIST, UserRole.CITY_MANAGER, UserRole.REVIEW_LEADER)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '批量处理订单（派发/处理/关闭/退回' })
+  @ApiOperation({ summary: '批量处理订单（派发/处理/关闭/退回）' })
   @ApiBody({
     schema: {
       properties: {
-        ids: { type: 'array', items: { type: 'number' },
-        action: { type: 'string', enum: ['assign', 'process', 'close', 'return' },
+        ids: { type: 'array', items: { type: 'number' } },
+        action: { type: 'string', enum: ['assign', 'process', 'close', 'return'] },
         operator: { type: 'string' },
         operatorRole: { type: 'string' },
         comment: { type: 'string', nullable: true },
@@ -211,7 +211,7 @@ export class GroupOrdersController {
       required: ['ids', 'action', 'operator', 'operatorRole'],
     },
   })
-  @ApiResponse({ status: 200, description: '批量处理完成（含成功/失败逐条结果' })
+  @ApiResponse({ status: 200, description: '批量处理完成（含成功/失败逐条结果）' })
   @ApiResponse({ status: 403, description: '权限不足' })
   batchProcess(@Body() dto: BatchProcessDto, @CurrentUser() user: CurrentUser) {
     return this.groupOrdersService.batchProcess(dto, user);
