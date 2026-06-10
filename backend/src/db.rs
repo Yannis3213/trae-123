@@ -428,7 +428,23 @@ async fn add_seed_records(
         }
         2 => {
             sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
-            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
+            sqlx::query(&push_with_meta(
+                Some(&OrderStatus::Draft),
+                &OrderStatus::PendingAudit,
+                "提交审核",
+                &reg_id, &reg_name, &reg_role,
+                Some("已上传线路报价和报名确认证据，请审核主管核验"),
+                None,
+            )).execute(pool).await?;
+            // 模拟审核主管已浏览但未出最终结论的"检查"留痕（不改变状态，只写 processing_records）
+            sqlx::query(&push_with_meta(
+                Some(&OrderStatus::PendingAudit),
+                &OrderStatus::PendingAudit,
+                "审核主管检查（临期预警）",
+                &aud_id, &aud_name, &aud_role,
+                Some("临期订单：已检查基础材料，出团审核证据（含行程确认单）缺失，已通知登记员补交"),
+                Some("缺出团审核证据：旅行社行程确认单 / 出团通知书未上传"),
+            )).execute(pool).await?;
         }
         3 => {
             sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿", &reg_id, &reg_name, &reg_role)).execute(pool).await?;
@@ -520,6 +536,28 @@ async fn add_seed_audit_notes(
     let now = Utc::now().to_rfc3339();
 
     match version {
+        2 => {
+            // 002 缺证据 + 临期：审核主管双备注
+            let (aid_uid, aid_name, _) = find_user(auditor_id);
+            let aid1 = Uuid::new_v4().to_string();
+            let aid2 = Uuid::new_v4().to_string();
+            sqlx::query(&format!(
+                "INSERT INTO audit_notes (id, order_id, content, created_by, created_by_name, created_at) VALUES \
+                 ('{}', '{}', '{}', '{}', '{}', '{}')",
+                aid1, order_id.to_string(),
+                "临期预警：1天内需完成审核；登记员已上传线路报价和报名确认证据。".replace('\'', "''"),
+                aid_uid, aid_name.replace('\'', "''"),
+                &now,
+            )).execute(pool).await?;
+            sqlx::query(&format!(
+                "INSERT INTO audit_notes (id, order_id, content, created_by, created_by_name, created_at) VALUES \
+                 ('{}', '{}', '{}', '{}', '{}', '{}')",
+                aid2, order_id.to_string(),
+                "缺少证据提醒：出团审核证据（行程确认单/出团通知书）未上传，已在处理记录中标注；请登记员补交后再批量推进。".replace('\'', "''"),
+                aid_uid, aid_name.replace('\'', "''"),
+                &now,
+            )).execute(pool).await?;
+        }
         3 => {
             // 003 逾期样例：审核主管备注
             let (uid, name, _) = find_user(auditor_id);

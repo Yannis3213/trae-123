@@ -209,6 +209,70 @@ impl Default for BatchProcessResult {
     }
 }
 
+impl BatchProcessResult {
+    /// 构造"订单无法读取"级别的失败（INVALID_ID / MISSING_VERSION / NOT_FOUND / DB_ERROR）
+    pub fn fail_unreadable(order_id: &str, order_no: &str, code: &str, message: impl Into<String>) -> Self {
+        Self {
+            order_id: order_id.to_string(),
+            order_no: order_no.to_string(),
+            success: false,
+            code: code.to_string(),
+            message: message.into(),
+            trace_saved: Some(false),
+            ..Default::default()
+        }
+    }
+
+    /// 构造基于 base（已读到订单）的失败：AUTH_ERR / VERSION_CONFLICT / OVERDUE /
+    /// STATE_CONFLICT / ROLE_FORBIDDEN / MISSING_EVIDENCE / DB_ERROR / TRACE_FAILED
+    pub fn fail(
+        base: &BatchProcessResult,
+        code: &str,
+        message: impl Into<String>,
+        trace_saved: Option<bool>,
+    ) -> Self {
+        Self {
+            order_id: base.order_id.clone(),
+            order_no: base.order_no.clone(),
+            success: false,
+            code: code.to_string(),
+            message: message.into(),
+            old_status: base.old_status.clone(),
+            new_status: None,
+            old_version: base.old_version,
+            new_version: None,
+            old_handler_name: base.old_handler_name.clone(),
+            new_handler_name: None,
+            trace_saved: trace_saved.or(Some(false)),
+        }
+    }
+
+    /// 构造成功推进的结果
+    pub fn success(
+        base: &BatchProcessResult,
+        code: &str,
+        message: impl Into<String>,
+        new_status: &str,
+        new_version: i32,
+        new_handler_name: Option<String>,
+    ) -> Self {
+        Self {
+            order_id: base.order_id.clone(),
+            order_no: base.order_no.clone(),
+            success: true,
+            code: code.to_string(),
+            message: message.into(),
+            old_status: base.old_status.clone(),
+            new_status: Some(new_status.to_string()),
+            old_version: base.old_version,
+            new_version: Some(new_version),
+            old_handler_name: base.old_handler_name.clone(),
+            new_handler_name,
+            trace_saved: Some(true),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attachment {
     pub id: Uuid,

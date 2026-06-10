@@ -591,15 +591,25 @@ export default component$(() => {
                 </div>
                 <div style="max-height: 520px; overflow-y: auto;">
                   {state.batchResults.map(r => {
+                    const oldStatusLabel: string = r.old_status
+                      ? (STATUS_LABELS[r.old_status as OrderStatus] || r.old_status)
+                      : '未知状态';
+                    const newStatusLabel: string = r.new_status
+                      ? (STATUS_LABELS[r.new_status as OrderStatus] || r.new_status)
+                      : '';
                     const statusChange = (r.old_status && r.new_status) ? (
                       <span style="font-size: 12px; color: #0f766e; font-weight: 500;">
-                        {STATUS_LABELS[r.old_status as OrderStatus] || r.old_status} → {STATUS_LABELS[r.new_status as OrderStatus] || r.new_status}
+                        {oldStatusLabel} → {newStatusLabel}
                       </span>
                     ) : r.old_status ? (
                       <span style="font-size: 12px; color: #7f1d1d; font-weight: 500;">
-                        状态未变更（{STATUS_LABELS[r.old_status as OrderStatus] || r.old_status}）
+                        状态未变更（{oldStatusLabel}）
                       </span>
-                    ) : null;
+                    ) : (
+                      <span style="font-size: 12px; color: #6b7280; font-weight: 500;">
+                        状态未知（订单不存在或ID无效）
+                      </span>
+                    );
                     const versionTag = (r.old_version != null && r.new_version != null) ? (
                       <span style="font-size: 12px; color: #1d4ed8; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: #eff6ff;">
                         v{r.old_version} → v{r.new_version}
@@ -608,27 +618,34 @@ export default component$(() => {
                       <span style="font-size: 12px; color: #6b7280; padding: 1px 6px; border-radius: 4px; background: #f3f4f6;">
                         当前 v{r.old_version}
                       </span>
-                    ) : null;
+                    ) : (
+                      <span style="font-size: 12px; color: #9ca3af; padding: 1px 6px; border-radius: 4px; background: #f9fafb;">
+                        版本：—
+                      </span>
+                    );
                     const handlerTag = r.new_handler_name ? (
                       <span style="font-size: 12px; color: #92400e; font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #fef3c7;">
-                        责任人：{r.new_handler_name}
+                        责任人→{r.new_handler_name}
                       </span>
                     ) : r.old_handler_name ? (
                       <span style="font-size: 12px; color: #4b5563; padding: 1px 6px; border-radius: 4px; background: #f3f4f6;">
                         责任人：{r.old_handler_name}
                       </span>
-                    ) : null;
-                    const traceTag = (r.trace_saved != null) ? (
-                      r.trace_saved ? (
-                        <span style="font-size: 12px; color: #166534; font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #dcfce7;">
-                          📝 留痕已写
-                        </span>
-                      ) : (
-                        <span style="font-size: 12px; color: #7c2d12; font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #ffedd5;">
-                          📝 留痕失败
-                        </span>
-                      )
-                    ) : null;
+                    ) : (
+                      <span style="font-size: 12px; color: #9ca3af; padding: 1px 6px; border-radius: 4px; background: #f9fafb;">
+                        责任人：—
+                      </span>
+                    );
+                    const traceSaved = r.trace_saved != null ? r.trace_saved : false;
+                    const traceTag = traceSaved ? (
+                      <span style="font-size: 12px; color: #166534; font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #dcfce7;">
+                        📝 留痕已写
+                      </span>
+                    ) : (
+                      <span style="font-size: 12px; color: #7c2d12; font-weight: 500; padding: 1px 6px; border-radius: 4px; background: #ffedd5;">
+                        📝 留痕失败
+                      </span>
+                    );
                     return (
                       <div
                         key={r.order_id}
