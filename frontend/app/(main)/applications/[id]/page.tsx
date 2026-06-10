@@ -9,6 +9,8 @@ import {
   ApplicationDetailResponse,
   getUser,
   User,
+  parseErrorMessage,
+  formatDateTime,
 } from '@/lib/api';
 import Link from 'next/link';
 
@@ -19,7 +21,10 @@ export default function ApplicationDetailPage() {
   const [data, setData] = useState<ApplicationDetailResponse | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [action, setAction] = useState('');
   const [remark, setRemark] = useState('');
   const [evidence, setEvidence] = useState('');
@@ -30,22 +35,28 @@ export default function ApplicationDetailPage() {
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('info');
+  const [needRefresh, setNeedRefresh] = useState(false);
 
   useEffect(() => {
     setUser(getUser());
     loadDetail();
   }, [id]);
 
-  const loadDetail = async () => {
-    setLoading(true);
+  const loadDetail = async (showRefreshing = false) => {
+    if (showRefreshing) setRefreshing(true);
+    else setLoading(true);
     setError('');
+    setNeedRefresh(false);
     try {
       const res = await fetchApplicationDetail(id);
       setData(res);
+      setSuccessMsg('');
     } catch (err: any) {
-      setError(err.message || '加载失败');
+      const parsed = parseErrorMessage(err);
+      setError(parsed.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -54,14 +65,14 @@ export default function ApplicationDetailPage() {
     setRemark('');
     setEvidence('');
     setExceptionReason('');
-    setError('');
+    setActionError('');
     setShowActionModal(true);
   };
 
   const handleAction = async () => {
     if (!data) return;
     setActionLoading(true);
-    setError('');
+    setActionError('');
     try {
       const res = await processApplication(
         id,
@@ -75,8 +86,17 @@ export default function ApplicationDetailPage() {
       setData(res);
       setShowActionModal(false);
       setAction('');
+      setSuccessMsg(`✅ ${action}操作成功！`);
+      setTimeout(() => setSuccessMsg(''), 5000);
+      if (action !== '签收') {
+        setActiveTab('records');
+      }
     } catch (err: any) {
-      setError(err.message || '操作失败');
+      const parsed = parseErrorMessage(err);
+      setActionError(parsed.message);
+      if (parsed.needRefresh) {
+        setNeedRefresh(true);
+      }
     } finally {
       setActionLoading(false);
     }
@@ -91,8 +111,10 @@ export default function ApplicationDetailPage() {
       }
       setAuditNote('');
       setShowAuditModal(false);
+      setActiveTab('audit');
     } catch (err: any) {
-      setError(err.message || '添加失败');
+      const parsed = parseErrorMessage(err);
+      setError(parsed.message);
     }
   };
 
@@ -113,9 +135,23 @@ export default function ApplicationDetailPage() {
             <span style={{ fontFamily: 'monospace', fontSize: '14px', color: '#64748b', marginLeft: '12px' }}>
               {app.application_no}
             </span>
+            <span style={{ fontFamily: 'monospace', fontSize: '12px', color: '#94a3b8', marginLeft: '8px' }}>
+              v{app.version}
+            </span>
           </h2>
+          <p style={{ color: '#64748b', fontSize: '13px', marginTop: '4px' }}>
+            当前阶段：<span className="badge badge-gray">{app.current_role || '-'}</span>
+            {app.current_handler && <span style={{ marginLeft: '12px' }}>处理人：{app.current_handler}</span>}
+          </p>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button
+            className="btn btn-sm"
+            onClick={() => loadDetail(true)}
+            disabled={refreshing}
+          >
+            {refreshing ? '刷新中...' : '🔄 刷新'}
+          </button>
           <span className={`badge ${statusBadge(app.status)}`} style={{ fontSize: '14px', padding: '4px 14px' }}>
             {app.status}
           </span>
@@ -125,7 +161,21 @@ export default function ApplicationDetailPage() {
         </div>
       </div>
 
-      {error && <div className="alert alert-error">{error}</div>}
+      {error && <div className="alert alert-error">
+        {error}
+        <button className="btn btn-sm" style={{ marginLeft: '12px' }} onClick={() => loadDetail()}>
+          重新加载
+        </button>
+      </div>}
+
+      {successMsg && <div className="alert alert-success">{successMsg}</div>}
+
+      {needRefresh && <div className="alert alert-warning">
+        ⚠️ 数据已被他人更新，请点击「刷新」获取最新版本后再操作
+        <button className="btn btn-sm btn-primary" style={{ marginLeft: '12px' }} onClick={() => loadDetail(true)}>
+          立即刷新
+        </button>
+      </div>}
 
       {hasUnresolvedException && (
         <div className="alert alert-warning">
@@ -403,12 +453,38 @@ export default function ApplicationDetailPage() {
               <button className="close-btn" onClick={() => setShowActionModal(false)}>×</button>
             </div>
             <div className="modal-body">
-              {error && <div className="alert alert-error">{error}</div>}
+              {actionError && <div className="alert alert-error">
+                <div style={{ fontWeight: 600 }}>❌ 操作失败</div>
+                <div style={{ marginTop: '4px' }}>{actionError}</div>
+                {needRefresh && (
+                  <div style={{ marginTop: '8px' }}>
+                    <button className="btn btn-sm btn-primary" onClick={() => {
+                      loadDetail(true);
+                      setShowActionModal(false);
+                    }}>
+                      刷新数据
+                    </button>
+                  </div>
+                )}
+              </div>}
 
               <div style={{ padding: '12px', background: '#f8fafc', borderRadius: '6px', marginBottom: '16px', fontSize: '13px' }}>
-                <div>当前状态：<strong>{app.status}</strong></div>
-                <div>当前版本：v{app.version}</div>
-                <div>当前处理人：{app.current_handler || '待分配'}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span>当前状态：</span>
+                  <strong>{app.status}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span>当前阶段：</span>
+                  <strong>{app.current_role || '-'}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span>当前版本：</span>
+                  <strong style={{ fontFamily: 'monospace' }}>v{app.version}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>处理人：</span>
+                  <strong>{app.current_handler || '待分配'}</strong>
+                </div>
               </div>
 
               <div className="form-group">
@@ -464,7 +540,11 @@ export default function ApplicationDetailPage() {
               <button
                 className="btn btn-primary"
                 onClick={handleAction}
-                disabled={actionLoading}
+                disabled={
+                  actionLoading ||
+                  ((action === '审核通过' || action === '复核通过') && !evidence.trim()) ||
+                  (action === '退回补正' && !exceptionReason.trim())
+                }
               >
                 {actionLoading ? '处理中...' : '确认提交'}
               </button>

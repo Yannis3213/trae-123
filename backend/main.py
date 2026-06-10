@@ -91,28 +91,30 @@ async def list_applications(request: Request):
         params = []
 
         if user["role"] == "客户经理":
-            if queue == "my":
-                query += " AND customer_manager = ?"
-                params.append(user["real_name"])
-            else:
-                query += " AND customer_manager = ?"
-                params.append(user["real_name"])
+            query += " AND customer_manager = ?"
+            params.append(user["real_name"])
+            if queue and queue != "my":
+                pass
 
         elif user["role"] == "运营主管":
             if queue == "my":
-                query += " AND current_handler = ? AND current_role = '运营主管'"
+                query += " AND current_handler = ? AND current_role = '运营主管' AND status = '待签收'"
                 params.append(user["real_name"])
             elif queue == "returned":
                 query += " AND status = '异常回传'"
+            elif queue == "pending":
+                query += " AND status = '待签收' AND current_role = '运营主管' AND current_handler IS NULL"
             else:
                 query += " AND ((status = '待签收' AND current_role = '运营主管') OR status = '异常回传')"
 
         elif user["role"] == "支行行长":
             if queue == "my":
-                query += " AND current_handler = ? AND current_role = '支行行长'"
+                query += " AND current_handler = ? AND current_role = '支行行长' AND status = '待签收'"
                 params.append(user["real_name"])
             elif queue == "completed":
                 query += " AND status = '签收完成'"
+            elif queue == "pending":
+                query += " AND status = '待签收' AND current_role = '支行行长' AND current_handler IS NULL"
             else:
                 query += " AND ((status = '待签收' AND current_role = '支行行长') OR status = '签收完成')"
 
@@ -231,87 +233,140 @@ async def _validate_and_process(db, app_id, action, version, user, remark="", ev
     )
     app = await cursor.fetchone()
     if not app:
-        return None, "开户申请不存在", 404
+        return None, "E001: 开户申请不存在", 404
 
     if app["version"] != version:
-        return None, f"版本冲突：当前版本为 {app['version']}，您提交的版本为 {version}，请刷新后重试", 409
+        return None, f"E002: 版本冲突：当前版本为 v{app['version']}，您提交的版本为 v{version}，请刷新后重试", 409
 
     current_status = app["status"]
     current_role = user["role"]
     current_handler = app["current_handler"]
+    current_stage_role = app["current_role"]
     customer_manager = app["customer_manager"]
+    app_no = app["application_no"]
 
     valid_actions = {
         "客户经理": {
-            "提交申请": {"from": [None], "to": "待签收"},
-            "补正重提": {"from": ["异常回传"], "to": "待签收", "handler_check": "self_cm"},
+            "补正重提": {
+                "from": ["异常回传"],
+                "to": "待签收",
+                "require_handler": "self_cm",
+                "require_stage": "客户经理",
+            },
         },
         "运营主管": {
-            "签收": {"from": ["待签收"], "to": "待签收", "handler_check": "none_or_self"},
-            "审核通过": {"from": ["待签收"], "to": "待签收", "handler_check": "self", "require_evidence": True},
-            "退回补正": {"from": ["待签收"], "to": "异常回传", "handler_check": "self"},
+            "签收": {
+                "from": ["待签收"],
+                "to": "待签收",
+                "require_handler": "none_or_self",
+                "require_stage": "运营主管",
+            },
+            "审核通过": {
+                "from": ["待签收"],
+                "to": "待签收",
+                "require_handler": "self",
+                "require_stage": "运营主管",
+                "require_evidence": True,
+                "next_stage": "支行行长",
+            },
+            "退回补正": {
+                "from": ["待签收"],
+                "to": "异常回传",
+                "require_handler": "self",
+                "require_stage": "运营主管",
+                "require_exception_reason": True,
+                "next_stage": "客户经理",
+            },
         },
         "支行行长": {
-            "签收": {"from": ["待签收"], "to": "待签收", "handler_check": "none_or_self"},
-            "复核通过": {"from": ["待签收"], "to": "签收完成", "handler_check": "self"},
-            "退回补正": {"from": ["待签收"], "to": "异常回传", "handler_check": "self"},
+            "签收": {
+                "from": ["待签收"],
+                "to": "待签收",
+                "require_handler": "none_or_self",
+                "require_stage": "支行行长",
+            },
+            "复核通过": {
+                "from": ["待签收"],
+                "to": "签收完成",
+                "require_handler": "self",
+                "require_stage": "支行行长",
+                "require_evidence": True,
+                "next_stage": None,
+            },
+            "退回补正": {
+                "from": ["待签收"],
+                "to": "异常回传",
+                "require_handler": "self",
+                "require_stage": "支行行长",
+                "require_exception_reason": True,
+                "next_stage": "客户经理",
+            },
         },
     }
 
     if action not in valid_actions.get(current_role, {}):
-        return None, f"角色 {current_role} 无权执行操作 {action}", 403
+        return None, f"E003: 角色越权，{current_role} 无权执行「{action}」操作", 403
 
     rule = valid_actions[current_role][action]
 
+    if current_stage_role != rule["require_stage"]:
+        return None, f"E004: 阶段不匹配，当前为 {current_stage_role} 阶段，无法执行 {current_role} 的「{action}」操作", 400
+
     if rule.get("from") and current_status not in rule["from"]:
-        return None, f"状态不匹配：当前状态为 {current_status}，无法执行 {action}", 400
+        return None, f"E005: 状态冲突，{app_no} 当前状态为「{current_status}」，无法执行「{action}」", 400
 
-    handler_check = rule.get("handler_check")
-    if handler_check == "self" and current_handler != user["real_name"]:
-        return None, f"当前处理人为 {current_handler}，您无权处理此申请", 403
-    if handler_check == "none_or_self":
+    handler_check = rule.get("require_handler")
+
+    if handler_check == "self":
+        if not current_handler:
+            return None, f"E006: 未签收，{app_no} 尚未被任何人签收，请先签收再处理", 400
+        if current_handler != user["real_name"]:
+            return None, f"E007: 处理人不匹配，{app_no} 已由 {current_handler} 签收处理，您（{user['real_name']}）无权操作", 403
+
+    elif handler_check == "none_or_self":
         if current_handler and current_handler != user["real_name"]:
-            return None, f"申请已被 {current_handler} 签收处理中", 409
-        if not current_handler and app["current_role"] != current_role:
-            return None, f"该申请当前阶段为 {app['current_role']}，您（{current_role}）无权签收", 403
-    if handler_check == "self_cm" and customer_manager != user["real_name"]:
-        return None, "只能处理自己名下的退回申请", 403
+            return None, f"E008: 重复签收，{app_no} 已由 {current_handler} 签收处理中，请等待其处理完成或退回", 409
+        if not current_handler and current_stage_role != current_role:
+            return None, f"E009: 阶段越权，{app_no} 当前阶段为 {current_stage_role}，{current_role} 无权签收", 403
 
-    if action in ["审核通过", "退回补正", "复核通过"] and current_handler != user["real_name"]:
-        return None, f"当前处理人为 {current_handler}，您无权执行此操作", 403
-
-    if action in ["审核通过", "退回补正"] and app["current_role"] != "运营主管":
-        return None, f"当前阶段为 {app['current_role']}，运营主管无法执行此操作", 403
-
-    if action in ["复核通过", "退回补正"] and app["current_role"] == "支行行长" and current_role == "支行行长":
-        pass
-    elif action == "复核通过" and app["current_role"] != "支行行长":
-        return None, f"当前阶段为 {app['current_role']}，尚未到支行行长复核阶段", 403
+    elif handler_check == "self_cm":
+        if customer_manager != user["real_name"]:
+            return None, f"E010: 归属不匹配，{app_no} 的客户经理为 {customer_manager}，您（{user['real_name']}）无权补正", 403
 
     if rule.get("require_evidence") and not evidence:
-        return None, "审核通过必须提供审核证据（已核查的材料清单）", 400
+        return None, f"E011: 缺少证据，「{action}」必须提供已核查的材料清单作为审核证据", 400
+
+    if rule.get("require_exception_reason") and not exception_reason:
+        return None, f"E012: 缺少退回原因，「退回补正」必须填写需要补正的具体内容", 400
+
+    if action == "退回补正" and not exception_reason.strip():
+        return None, f"E012: 缺少退回原因，「退回补正」必须填写需要补正的具体内容", 400
 
     new_status = rule["to"]
     new_handler = user["real_name"]
-    new_handler_role = current_role
+    new_handler_role = current_stage_role
 
     if action == "签收":
         new_handler = user["real_name"]
         new_handler_role = current_role
     elif action == "审核通过":
         new_handler = None
-        new_handler_role = "支行行长"
+        new_handler_role = rule.get("next_stage", "支行行长")
+    elif action == "复核通过":
+        new_handler = None
+        new_handler_role = None
     elif action == "退回补正":
         new_handler = customer_manager
         new_handler_role = "客户经理"
     elif action == "补正重提":
         new_handler = None
         new_handler_role = "运营主管"
-    elif action == "复核通过":
-        new_handler = None
-        new_handler_role = None
 
     new_version = app["version"] + 1
+
+    evidence_required = None
+    if rule.get("require_evidence"):
+        evidence_required = "请按系统要求提供完整的开户材料"
 
     await db.execute(
         """UPDATE account_applications
@@ -321,6 +376,11 @@ async def _validate_and_process(db, app_id, action, version, user, remark="", ev
         (new_status, new_handler, new_handler_role, new_version, app_id, version),
     )
 
+    update_check = await db.execute("SELECT changes() as cnt")
+    update_result = await update_check.fetchone()
+    if update_result["cnt"] == 0:
+        return None, f"E013: 并发冲突，{app_no} 已被他人修改，请刷新后重试", 409
+
     await db.execute(
         """INSERT INTO processing_records
            (application_id, action, from_status, to_status, operator, operator_role,
@@ -329,7 +389,7 @@ async def _validate_and_process(db, app_id, action, version, user, remark="", ev
         (
             app_id, action, current_status, new_status,
             user["real_name"], current_role, remark,
-            None, evidence if evidence else None,
+            evidence_required, evidence if evidence else None,
             version, new_version,
         ),
     )
@@ -405,59 +465,72 @@ async def batch_process(request: Request):
     if not data.items:
         return JSONResponse({"detail": "批量处理项不能为空"}, status_code=400)
 
-    db = await get_db()
-    try:
-        results = []
-        for item in data.items:
+    results = []
+    for item in data.items:
+        try:
+            db = await get_db()
             try:
                 result, error, status = await _validate_and_process(
                     db, item.application_id, data.action, item.version, user,
                     data.remark or "", data.evidence or "",
                     "", "",
                 )
-                cursor = await db.execute(
-                    "SELECT application_no FROM account_applications WHERE id = ?",
-                    (item.application_id,),
-                )
-                app_row = await cursor.fetchone()
-                app_no = app_row["application_no"] if app_row else f"ID{item.application_id}"
+            finally:
+                await db.close()
 
-                if error:
-                    results.append({
-                        "application_id": item.application_id,
-                        "application_no": app_no,
-                        "success": False,
-                        "message": error,
-                        "new_status": None,
-                    })
-                else:
-                    results.append({
-                        "application_id": item.application_id,
-                        "application_no": app_no,
-                        "success": True,
-                        "message": f"操作成功：{data.action}",
-                        "new_status": result["status"],
-                    })
-            except Exception as e:
+            app_no = f"ID{item.application_id}"
+            try:
+                db2 = await get_db()
+                try:
+                    cursor = await db2.execute(
+                        "SELECT application_no FROM account_applications WHERE id = ?",
+                        (item.application_id,),
+                    )
+                    app_row = await cursor.fetchone()
+                    if app_row:
+                        app_no = app_row["application_no"]
+                finally:
+                    await db2.close()
+            except Exception:
+                pass
+
+            if error:
                 results.append({
                     "application_id": item.application_id,
-                    "application_no": f"ID{item.application_id}",
+                    "application_no": app_no,
                     "success": False,
-                    "message": f"处理异常：{str(e)}",
+                    "message": error,
+                    "error_code": status,
                     "new_status": None,
                 })
+            else:
+                results.append({
+                    "application_id": item.application_id,
+                    "application_no": app_no,
+                    "success": True,
+                    "message": f"操作成功：{data.action}",
+                    "error_code": None,
+                    "new_status": result["status"] if result else None,
+                })
+        except Exception as e:
+            results.append({
+                "application_id": item.application_id,
+                "application_no": f"ID{item.application_id}",
+                "success": False,
+                "message": f"E999: 系统异常 - {str(e)}",
+                "error_code": 500,
+                "new_status": None,
+            })
 
-        success_count = sum(1 for r in results if r["success"])
-        fail_count = len(results) - success_count
+    success_count = sum(1 for r in results if r["success"])
+    fail_count = len(results) - success_count
 
-        return JSONResponse({
-            "total": len(results),
-            "success_count": success_count,
-            "fail_count": fail_count,
-            "results": results,
-        })
-    finally:
-        await db.close()
+    return JSONResponse({
+        "total": len(results),
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "results": results,
+    })
 
 
 @require_role(["运营主管", "支行行长"])

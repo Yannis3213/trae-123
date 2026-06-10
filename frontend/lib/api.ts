@@ -200,17 +200,84 @@ export async function processApplication(
   exceptionType?: string,
   exceptionReason?: string
 ): Promise<ApplicationDetailResponse> {
-  return apiRequest<ApplicationDetailResponse>(`/api/applications/${id}/process`, {
-    method: 'POST',
-    body: JSON.stringify({
-      action,
-      version,
-      remark,
-      evidence,
-      exception_type: exceptionType,
-      exception_reason: exceptionReason,
-    }),
-  });
+  try {
+    return await apiRequest<ApplicationDetailResponse>(`/api/applications/${id}/process`, {
+      method: 'POST',
+      body: JSON.stringify({
+        action,
+        version,
+        remark,
+        evidence,
+        exception_type: exceptionType,
+        exception_reason: exceptionReason,
+      }),
+    });
+  } catch (err) {
+    throw err;
+  }
+}
+
+export function parseErrorMessage(error: any): { code: string; message: string; needRefresh: boolean; whoFix?: string } {
+  const msg = error?.message || '操作失败';
+  let code = 'E000';
+  let needRefresh = false;
+  let whoFix: string | undefined;
+
+  const codeMatch = msg.match(/^(E\d+):/);
+  if (codeMatch) {
+    code = codeMatch[1];
+  }
+
+  if (msg.includes('版本冲突') || msg.includes('并发冲突')) {
+    needRefresh = true;
+  }
+
+  if (msg.includes('客户经理') && !msg.includes('阶段越权')) {
+    whoFix = '客户经理';
+  } else if (msg.includes('运营主管')) {
+    whoFix = '运营主管';
+  } else if (msg.includes('支行行长')) {
+    whoFix = '支行行长';
+  }
+
+  return { code, message: msg, needRefresh, whoFix };
+}
+
+export function formatDateTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
+export function getDaysLeft(dueDate: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(dueDate);
+  return Math.floor((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+export function getResponsiblePerson(app: Application): string {
+  if (app.status === '异常回传') {
+    return `${app.customer_manager}（客户经理）`;
+  }
+  if (app.current_handler) {
+    return `${app.current_handler}（${app.current_role || ''}）`;
+  }
+  if (app.status === '待签收' && app.current_role) {
+    return `待${app.current_role}签收`;
+  }
+  if (app.status === '签收完成') {
+    return '流程已完成';
+  }
+  return '-';
 }
 
 export async function batchProcess(
