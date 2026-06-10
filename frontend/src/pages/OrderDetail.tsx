@@ -23,6 +23,7 @@ import {
   Empty,
   Upload,
   Collapse,
+  Checkbox,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -154,6 +155,11 @@ function OrderDetail() {
   const [activeStage, setActiveStage] = useState<OrderStage>('listing');
   const [attachmentModalOpen, setAttachmentModalOpen] = useState(false);
   const [attachmentForm, setAttachmentForm] = useState({ file_name: '', file_url: '', file_type: '' });
+  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<Record<OrderStage, string[]>>({
+    listing: [],
+    inventory: [],
+    fulfillment: [],
+  });
 
   const loadDetail = async () => {
     setLoading(true);
@@ -246,11 +252,16 @@ function OrderDetail() {
         data: dataInput,
         version: order.version,
         audit_note: auditNote,
+        attachment_ids:
+          action === 'submit' || action === 'resubmit'
+            ? selectedAttachmentIds[order.current_stage]
+            : undefined,
       };
       await orderApi.action(id, action, payload);
       message.success(`${ACTION_LABEL[action]}成功`);
       setActionModal({ open: false, action: '' });
       setAuditNote('');
+      setSelectedAttachmentIds((prev) => ({ ...prev, [order.current_stage]: [] }));
       await loadDetail();
     } catch (e: any) {
       message.error(e?.response?.data?.error || '操作失败');
@@ -579,17 +590,48 @@ function OrderDetail() {
 
         {stageAttachments.length > 0 && (
           <Card
-            title={<span><PaperClipOutlined /> 材料附件（{stageAttachments.length}份）</span>}
+            title={
+              <Space>
+                <PaperClipOutlined /> 材料附件（{stageAttachments.length}份）
+                {isEditable && (
+                  <Tag color="blue">
+                    已选 {selectedAttachmentIds[stage].length} 份
+                  </Tag>
+                )}
+              </Space>
+            }
             size="small"
             style={{ marginBottom: 16 }}
           >
-            <Space wrap>
-              {stageAttachments.map((a) => (
-                <Tag key={a.id} icon={<PaperClipOutlined />} style={{ padding: '4px 10px' }}>
-                  {a.file_name} ({a.uploaded_by?.name})
-                </Tag>
-              ))}
-            </Space>
+            {isEditable ? (
+              <Checkbox.Group
+                value={selectedAttachmentIds[stage]}
+                onChange={(vals) =>
+                  setSelectedAttachmentIds((prev) => ({
+                    ...prev,
+                    [stage]: vals as string[],
+                  }))
+                }
+              >
+                <Space wrap>
+                  {stageAttachments.map((a) => (
+                    <Checkbox key={a.id} value={a.id}>
+                      <Tag icon={<PaperClipOutlined />} style={{ padding: '4px 10px', margin: 0 }}>
+                        {a.file_name} ({a.uploaded_by?.name})
+                      </Tag>
+                    </Checkbox>
+                  ))}
+                </Space>
+              </Checkbox.Group>
+            ) : (
+              <Space wrap>
+                {stageAttachments.map((a) => (
+                  <Tag key={a.id} icon={<PaperClipOutlined />} style={{ padding: '4px 10px' }}>
+                    {a.file_name} ({a.uploaded_by?.name})
+                  </Tag>
+                ))}
+              </Space>
+            )}
           </Card>
         )}
 
@@ -844,6 +886,14 @@ function OrderDetail() {
               <Alert
                 message="注意：本环节已逾期，提交后将自动记录逾期异常日志"
                 type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {selectedAttachmentIds[order.current_stage].length > 0 && (
+              <Alert
+                message={`本次提交附带 ${selectedAttachmentIds[order.current_stage].length} 份材料附件，提交后将与订单数据一起进入审核`}
+                type="success"
                 showIcon
                 style={{ marginBottom: 16 }}
               />

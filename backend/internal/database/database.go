@@ -436,5 +436,121 @@ func seedData() {
 		DB.Create(&exceptions[i])
 	}
 
+	attachments := []models.OrderAttachment{
+		{
+			OrderID:      orders[1].ID,
+			Stage:        models.StageListing,
+			FileName:     "无线蓝牙耳机-规格参数表.pdf",
+			FileType:     "application/pdf",
+			FileURL:      "/attachments/earphone-spec.pdf",
+			UploadedByID: users[0].ID,
+			CreatedAt:    now.Add(-3 * time.Hour),
+		},
+		{
+			OrderID:      orders[1].ID,
+			Stage:        models.StageListing,
+			FileName:     "产品高清白底图-5张.zip",
+			FileType:     "application/zip",
+			FileURL:      "/attachments/earphone-images.zip",
+			UploadedByID: users[0].ID,
+			CreatedAt:    now.Add(-3 * time.Hour),
+		},
+		{
+			OrderID:      orders[2].ID,
+			Stage:        models.StageListing,
+			FileName:     "便携咖啡机-初稿说明.docx",
+			FileType:     "application/docx",
+			FileURL:      "/attachments/coffee-draft.docx",
+			UploadedByID: users[0].ID,
+			CreatedAt:    now.Add(-50 * time.Hour),
+		},
+		{
+			OrderID:      orders[2].ID,
+			Stage:        models.StageListing,
+			FileName:     "便携咖啡机-3C认证证书.pdf",
+			FileType:     "application/pdf",
+			FileURL:      "/attachments/coffee-3c.pdf",
+			UploadedByID: users[0].ID,
+			CreatedAt:    now.Add(-3 * time.Hour),
+		},
+		{
+			OrderID:      orders[4].ID,
+			Stage:        models.StageInventory,
+			FileName:     "深圳保税仓-入库单.pdf",
+			FileType:     "application/pdf",
+			FileURL:      "/attachments/toy-stockin.pdf",
+			UploadedByID: users[0].ID,
+			CreatedAt:    now.Add(-4 * time.Hour),
+		},
+		{
+			OrderID:      orders[5].ID,
+			Stage:        models.StageInventory,
+			FileName:     "运动手环-库存盘点表.xlsx",
+			FileType:     "application/xlsx",
+			FileURL:      "/attachments/band-stock.xlsx",
+			UploadedByID: users[0].ID,
+			CreatedAt:    now.Add(-5 * time.Hour),
+		},
+		{
+			OrderID:      orders[7].ID,
+			Stage:        models.StageFulfillment,
+			FileName:     "轻奢女包-报关单.pdf",
+			FileType:     "application/pdf",
+			FileURL:      "/attachments/bag-customs.pdf",
+			UploadedByID: users[0].ID,
+			CreatedAt:    now.Add(-2 * time.Hour),
+		},
+		{
+			OrderID:      orders[7].ID,
+			Stage:        models.StageFulfillment,
+			FileName:     "DHL运单回执.pdf",
+			FileType:     "application/pdf",
+			FileURL:      "/attachments/bag-dhl.pdf",
+			UploadedByID: users[0].ID,
+			CreatedAt:    now.Add(-2 * time.Hour),
+		},
+		{
+			OrderID:      orders[9].ID,
+			Stage:        models.StageFulfillment,
+			FileName:     "数码配件-质检报告.pdf",
+			FileType:     "application/pdf",
+			FileURL:      "/attachments/acc-qc.pdf",
+			UploadedByID: users[0].ID,
+			CreatedAt:    now.Add(-30 * time.Hour),
+		},
+	}
+	for i := range attachments {
+		DB.Create(&attachments[i])
+	}
+
+	supplementExceptions := []models.ExceptionLog{
+		{
+			OrderID:         orders[2].ID,
+			Stage:           models.StageListing,
+			ExceptionType:   "attachment_supplement",
+			Reason:          "运营专员张运营补充上传了材料：便携咖啡机-3C认证证书.pdf",
+			OperatorID:      users[0].ID,
+			CorrectedAction: "",
+			IsResolved:      false,
+			CreatedAt:       now.Add(-3 * time.Hour),
+		},
+	}
+	for i := range supplementExceptions {
+		DB.Create(&supplementExceptions[i])
+	}
+
+	supplementNotes := []models.AuditNote{
+		{
+			OrderID:  orders[2].ID,
+			Stage:    models.StageListing,
+			Content:  "运营专员张运营补充上传了材料：便携咖啡机-3C认证证书.pdf，请仓配主管核对",
+			AuthorID: users[0].ID,
+			CreatedAt: now.Add(-3 * time.Hour),
+		},
+	}
+	for i := range supplementNotes {
+		DB.Create(&supplementNotes[i])
+	}
+
 	log.Println("Database seeded with demo data")
 }

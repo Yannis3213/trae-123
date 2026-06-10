@@ -43,6 +43,8 @@ export interface CrossBorderOrder {
 export interface OrderWithWarning extends CrossBorderOrder {
   warning_level: WarningLevel;
   warning_text: string;
+  attachment_count: number;
+  stage_attach_count: number;
 }
 
 export interface OrderAttachment {
@@ -67,6 +69,7 @@ export interface ProcessingRecord {
   operator_id: string;
   operator?: User;
   note?: string;
+  attachment_ids?: string;
   is_exception: boolean;
   exception_reason?: string;
   client_ip?: string;

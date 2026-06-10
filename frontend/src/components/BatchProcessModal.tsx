@@ -11,6 +11,7 @@ import {
   message,
   Alert,
   Spin,
+  Checkbox,
 } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { orderApi, type BatchProcessReq } from '../api';
@@ -58,6 +59,7 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
   const [auditNote, setAuditNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<BatchResult[] | null>(null);
+  const [includeAttachments, setIncludeAttachments] = useState(true);
 
   const showResults = results !== null;
 
@@ -80,6 +82,22 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
           selectedOrders.map((o) => [o.id, auditNote])
         );
       }
+      if (includeAttachments && (action === 'submit' || action === 'resubmit')) {
+        const attachmentMap: Record<string, string[]> = {};
+        await Promise.all(
+          selectedOrders.map(async (o) => {
+            try {
+              const detail = await orderApi.get(o.id);
+              attachmentMap[o.id] = detail.attachments
+                .filter((a) => a.stage === stage)
+                .map((a) => a.id);
+            } catch {
+              attachmentMap[o.id] = [];
+            }
+          })
+        );
+        payload.attachment_ids = attachmentMap;
+      }
       const res = await orderApi.batch(payload);
       setResults(res.results);
       if (res.success_count > 0) {
@@ -98,6 +116,7 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
   const handleClose = () => {
     setResults(null);
     setAuditNote('');
+    setIncludeAttachments(true);
     form.resetFields();
     onClose();
   };
@@ -259,6 +278,17 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
                     : '请输入审核说明（可选）'
                 }
               />
+            </Form.Item>
+          )}
+
+          {(action === 'submit' || action === 'resubmit') && (
+            <Form.Item label="材料附件">
+              <Checkbox
+                checked={includeAttachments}
+                onChange={(e) => setIncludeAttachments(e.target.checked)}
+              >
+                自动携带每个订单{STAGE_LABELS[stage]}环节的全部材料附件（推荐）
+              </Checkbox>
             </Form.Item>
           )}
 

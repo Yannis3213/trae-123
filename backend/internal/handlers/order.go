@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"cross-border-order-system/internal/database"
@@ -27,12 +28,13 @@ type SubmitOrderRequest struct {
 }
 
 type BatchProcessRequest struct {
-	Action     string                     `json:"action"`
-	Stage      models.OrderStage          `json:"stage"`
-	OrderIDs   []string                   `json:"order_ids"`
-	Data       map[string]string          `json:"data,omitempty"`
-	AuditNotes map[string]string          `json:"audit_notes,omitempty"`
-	Versions   map[string]int             `json:"versions"`
+	Action        string                     `json:"action"`
+	Stage         models.OrderStage          `json:"stage"`
+	OrderIDs      []string                   `json:"order_ids"`
+	Data          map[string]string          `json:"data,omitempty"`
+	AuditNotes    map[string]string          `json:"audit_notes,omitempty"`
+	Versions      map[string]int             `json:"versions"`
+	AttachmentIDs map[string][]string        `json:"attachment_ids,omitempty"`
 }
 
 type BatchResultItem struct {
@@ -231,12 +233,43 @@ func validateEvidence(ctx *ValidationContext, tx *gorm.DB) error {
 	}
 
 	if len(ctx.AttachmentIDs) > 0 {
-		var count int64
-		tx.Model(&models.OrderAttachment{}).
-			Where("id IN ? AND order_id = ? AND stage = ?", ctx.AttachmentIDs, ctx.Order.ID, ctx.Stage).
-			Count(&count)
-		if int(count) != len(ctx.AttachmentIDs) {
-			return fmt.Errorf("部分附件不存在或不属于本环节，请核对后重试")
+		var validAttachments []models.OrderAttachment
+		tx.Where("id IN ? AND order_id = ? AND stage = ?",
+			ctx.AttachmentIDs, ctx.Order.ID, ctx.Stage).
+			Find(&validAttachments)
+
+		validIDSet := make(map[string]bool)
+		for _, a := range validAttachments {
+			validIDSet[a.ID] = true
+		}
+
+		var invalidIDs, wrongOrderIDs, wrongStageIDs []string
+		for _, aid := range ctx.AttachmentIDs {
+			if !validIDSet[aid] {
+				var att models.OrderAttachment
+				err := tx.Where("id = ?", aid).First(&att).Error
+				if err != nil {
+					invalidIDs = append(invalidIDs, aid)
+				} else if att.OrderID != ctx.Order.ID {
+					wrongOrderIDs = append(wrongOrderIDs, att.FileName)
+				} else if att.Stage != ctx.Stage {
+					wrongStageIDs = append(wrongStageIDs, att.FileName)
+				}
+			}
+		}
+
+		var errParts []string
+		if len(invalidIDs) > 0 {
+			errParts = append(errParts, fmt.Sprintf("%d个附件不存在", len(invalidIDs)))
+		}
+		if len(wrongOrderIDs) > 0 {
+			errParts = append(errParts, fmt.Sprintf("附件[%s]不属于当前订单", strings.Join(wrongOrderIDs, "、")))
+		}
+		if len(wrongStageIDs) > 0 {
+			errParts = append(errParts, fmt.Sprintf("附件[%s]不属于%s环节", strings.Join(wrongStageIDs, "、"), stageName(ctx.Stage)))
+		}
+		if len(errParts) > 0 {
+			return fmt.Errorf("附件校验失败：%s", strings.Join(errParts, "；"))
 		}
 	}
 
@@ -345,7 +378,7 @@ func createAuditNote(tx *gorm.DB, orderID string, stage models.OrderStage,
 
 func createProcessingRecord(tx *gorm.DB, order *models.CrossBorderOrder, ctx *ValidationContext,
 	fromStatus models.OrderStatus, toStatus models.OrderStatus,
-	isException bool, exceptionReason string, note string, clientIP string) (*models.ProcessingRecord, error) {
+	isException bool, exceptionReason string, note string, clientIP string, attachmentIDs []string) (*models.ProcessingRecord, error) {
 	record := &models.ProcessingRecord{
 		OrderID:         order.ID,
 		Stage:           ctx.Stage,
@@ -357,6 +390,9 @@ func createProcessingRecord(tx *gorm.DB, order *models.CrossBorderOrder, ctx *Va
 		IsException:     isException,
 		ExceptionReason: exceptionReason,
 		ClientIP:        clientIP,
+	}
+	if len(attachmentIDs) > 0 {
+		record.AttachmentIDs = strings.Join(attachmentIDs, ",")
 	}
 	if err := tx.Create(record).Error; err != nil {
 		return nil, fmt.Errorf("创建处理记录失败: %v", err)
@@ -384,6 +420,19 @@ func (h *OrderHandler) applyStatusChange(tx *gorm.DB, order *models.CrossBorderO
 	exceptionReason := ""
 	note := ctx.AuditNote
 	isException := false
+
+	var attachmentNames []string
+	if len(ctx.AttachmentIDs) > 0 {
+		var atts []models.OrderAttachment
+		tx.Where("id IN ?", ctx.AttachmentIDs).Find(&atts)
+		for _, a := range atts {
+			attachmentNames = append(attachmentNames, a.FileName)
+		}
+	}
+	attachmentDesc := ""
+	if len(attachmentNames) > 0 {
+		attachmentDesc = fmt.Sprintf("（附带材料：%s）", strings.Join(attachmentNames, "、"))
+	}
 
 	persistStageData(order, ctx.Stage, ctx.Data)
 	order.Version++
@@ -429,10 +478,14 @@ func (h *OrderHandler) applyStatusChange(tx *gorm.DB, order *models.CrossBorderO
 		if isResubmit {
 			order.IsResubmitted = true
 			order.ResubmitCount++
+			correctedAction := fmt.Sprintf("运营专员%s重新提交了材料%s", ctx.Username, attachmentDesc)
+			if ctx.AuditNote != "" {
+				correctedAction = correctedAction + "，说明：" + ctx.AuditNote
+			}
 			if note != "" {
-				note = "重新提交：" + note
+				note = "重新提交：" + note + attachmentDesc
 			} else {
-				note = fmt.Sprintf("运营专员%s重新提交了材料", ctx.Username)
+				note = correctedAction
 			}
 
 			var unresolvedEx []models.ExceptionLog
@@ -441,8 +494,14 @@ func (h *OrderHandler) applyStatusChange(tx *gorm.DB, order *models.CrossBorderO
 			for _, ex := range unresolvedEx {
 				ex.IsResolved = true
 				ex.ResolvedAt = &ctx.Now
-				ex.CorrectedAction = note
+				ex.CorrectedAction = correctedAction
 				tx.Save(&ex)
+			}
+		} else if attachmentDesc != "" {
+			if note != "" {
+				note = note + attachmentDesc
+			} else {
+				note = "提交材料" + attachmentDesc
 			}
 		}
 		if needsOverdueLog {
@@ -499,7 +558,7 @@ func (h *OrderHandler) applyStatusChange(tx *gorm.DB, order *models.CrossBorderO
 	}
 
 	if _, err := createProcessingRecord(tx, order, ctx, fromStatus, toStatus,
-		isException, exceptionReason, note, clientIP); err != nil {
+		isException, exceptionReason, note, clientIP, ctx.AttachmentIDs); err != nil {
 		return err
 	}
 
@@ -508,19 +567,20 @@ func (h *OrderHandler) applyStatusChange(tx *gorm.DB, order *models.CrossBorderO
 
 func (h *OrderHandler) processOrderAction(tx *gorm.DB, order *models.CrossBorderOrder,
 	action string, stage models.OrderStage, data string, auditNote string, version int,
-	userID string, role models.Role, username string, clientIP string) error {
+	attachmentIDs []string, userID string, role models.Role, username string, clientIP string) error {
 
 	ctx := &ValidationContext{
-		Order:     order,
-		Action:    action,
-		Stage:     stage,
-		Data:      data,
-		AuditNote: auditNote,
-		Version:   version,
-		UserID:    userID,
-		Role:      role,
-		Username:  username,
-		Now:       time.Now(),
+		Order:         order,
+		Action:        action,
+		Stage:         stage,
+		Data:          data,
+		AuditNote:     auditNote,
+		Version:       version,
+		AttachmentIDs: attachmentIDs,
+		UserID:        userID,
+		Role:          role,
+		Username:      username,
+		Now:           time.Now(),
 	}
 
 	toStatus, needsOverdueLog, err := validateBusinessRules(ctx, tx)
@@ -576,8 +636,10 @@ func (h *OrderHandler) ListOrders(c *fiber.Ctx) error {
 
 	type OrderWithWarning struct {
 		*models.CrossBorderOrder
-		WarningLevel models.WarningLevel `json:"warning_level"`
-		WarningText  string              `json:"warning_text"`
+		WarningLevel     models.WarningLevel `json:"warning_level"`
+		WarningText      string              `json:"warning_text"`
+		AttachmentCount  int64               `json:"attachment_count"`
+		StageAttachCount int64               `json:"stage_attach_count"`
 	}
 
 	result := make([]OrderWithWarning, 0, len(orders))
@@ -595,11 +657,16 @@ func (h *OrderHandler) ListOrders(c *fiber.Ctx) error {
 		if warning != "" && string(wl) != warning {
 			continue
 		}
+		var totalAttach, stageAttach int64
+		database.DB.Model(&models.OrderAttachment{}).Where("order_id = ?", o.ID).Count(&totalAttach)
+		database.DB.Model(&models.OrderAttachment{}).Where("order_id = ? AND stage = ?", o.ID, o.CurrentStage).Count(&stageAttach)
 		oCopy := o
 		result = append(result, OrderWithWarning{
 			CrossBorderOrder: &oCopy,
 			WarningLevel:     wl,
 			WarningText:      warningText,
+			AttachmentCount:  totalAttach,
+			StageAttachCount: stageAttach,
 		})
 	}
 
@@ -678,7 +745,7 @@ func (h *OrderHandler) SubmitOrder(c *fiber.Ctx) error {
 	tx := database.DB.Begin()
 
 	err := h.processOrderAction(tx, &order, action, req.Stage, req.Data, req.AuditNote,
-		req.Version, userID, role, username, clientIP)
+		req.Version, req.AttachmentIDs, userID, role, username, clientIP)
 	if err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -686,12 +753,13 @@ func (h *OrderHandler) SubmitOrder(c *fiber.Ctx) error {
 
 	tx.Commit()
 	return c.JSON(fiber.Map{
-		"success":    true,
-		"message":    fmt.Sprintf("%s操作成功", action),
-		"order_id":   order.ID,
-		"new_status": order.CurrentStatus,
-		"new_stage":  order.CurrentStage,
-		"version":    order.Version,
+		"success":       true,
+		"message":       fmt.Sprintf("%s操作成功", action),
+		"order_id":      order.ID,
+		"new_status":    order.CurrentStatus,
+		"new_stage":     order.CurrentStage,
+		"version":       order.Version,
+		"attachment_ids": req.AttachmentIDs,
 	})
 }
 
@@ -735,10 +803,14 @@ func (h *OrderHandler) BatchProcess(c *fiber.Ctx) error {
 		if req.Versions != nil {
 			version = req.Versions[orderID]
 		}
+		var attachmentIDs []string
+		if req.AttachmentIDs != nil {
+			attachmentIDs = req.AttachmentIDs[orderID]
+		}
 
 		tx := database.DB.Begin()
 		err := h.processOrderAction(tx, &order, req.Action, req.Stage, data, auditNote,
-			version, userID, role, username, clientIP)
+			version, attachmentIDs, userID, role, username, clientIP)
 		if err != nil {
 			tx.Rollback()
 			item.Success = false
@@ -754,7 +826,11 @@ func (h *OrderHandler) BatchProcess(c *fiber.Ctx) error {
 		}
 
 		item.Success = true
-		item.Message = fmt.Sprintf("%s操作成功，状态已更新", req.Action)
+		if len(attachmentIDs) > 0 {
+			item.Message = fmt.Sprintf("%s操作成功（附带%d份材料），状态已更新", req.Action, len(attachmentIDs))
+		} else {
+			item.Message = fmt.Sprintf("%s操作成功，状态已更新", req.Action)
+		}
 		results = append(results, item)
 	}
 
@@ -799,7 +875,7 @@ func (h *OrderHandler) AddAuditNote(c *fiber.Ctx) error {
 
 func (h *OrderHandler) UploadAttachment(c *fiber.Ctx) error {
 	id := c.Params("id")
-	userID, _, _ := middleware.GetCurrentUser(c)
+	userID, role, username := middleware.GetCurrentUser(c)
 
 	stage := models.OrderStage(c.FormValue("stage"))
 	fileName := c.FormValue("file_name")
@@ -812,11 +888,48 @@ func (h *OrderHandler) UploadAttachment(c *fiber.Ctx) error {
 	if stage == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "请指定所属环节"})
 	}
+	if stage != models.StageListing && stage != models.StageInventory && stage != models.StageFulfillment {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "环节参数无效"})
+	}
 
 	var order models.CrossBorderOrder
 	if err := database.DB.First(&order, "id = ?", id).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "订单不存在"})
 	}
+
+	if role != models.RoleOpsSpecialist {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "只有运营专员可以上传材料附件"})
+	}
+	if order.CurrentStage != stage {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": fmt.Sprintf("订单当前环节为%s，不能在%s环节上传材料",
+				stageName(order.CurrentStage), stageName(stage)),
+		})
+	}
+	if order.CurrentStatus != models.StatusPending && order.CurrentStatus != models.StatusReturned {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": fmt.Sprintf("当前状态为%s，仅待提交或已退回状态可上传材料", order.CurrentStatus),
+		})
+	}
+	if order.CurrentHandlerID != "" && order.CurrentHandlerID != userID {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "该订单当前不由您处理，无权上传材料"})
+	}
+
+	dueAt := getStageDueAt(&order, stage)
+	if dueAt != nil {
+		now := time.Now()
+		if now.After(*dueAt) {
+			hoursOverdue := now.Sub(*dueAt).Hours()
+			if hoursOverdue > 72 {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": fmt.Sprintf("%s环节已逾期%.0f小时（超过3天），请先联系主管特批后再上传材料",
+						stageName(stage), hoursOverdue),
+				})
+			}
+		}
+	}
+
+	tx := database.DB.Begin()
 
 	att := &models.OrderAttachment{
 		OrderID:      id,
@@ -826,9 +939,27 @@ func (h *OrderHandler) UploadAttachment(c *fiber.Ctx) error {
 		FileURL:      fileURL,
 		UploadedByID: userID,
 	}
-	if err := database.DB.Create(att).Error; err != nil {
+	if err := tx.Create(att).Error; err != nil {
+		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "保存附件失败"})
 	}
+
+	if order.CurrentStatus == models.StatusReturned {
+		reason := fmt.Sprintf("运营专员%s补充上传了材料：%s", username, fileName)
+		if _, err := createExceptionLog(tx, id, stage, "attachment_supplement", reason, userID, ""); err != nil {
+			tx.Rollback()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		if _, err := createAuditNote(tx, id, stage, reason, userID); err != nil {
+			tx.Rollback()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "事务提交失败"})
+	}
+
 	database.DB.Preload("UploadedBy").First(att)
 	return c.JSON(att)
 }

@@ -64,6 +64,7 @@ export interface BatchProcessReq {
   data?: Record<string, string>;
   audit_notes?: Record<string, string>;
   versions: Record<string, number>;
+  attachment_ids?: Record<string, string[]>;
 }
 
 export const orderApi = {
@@ -90,7 +91,16 @@ export const orderApi = {
   uploadAttachment: (
     id: string,
     data: { stage: CrossBorderOrder['current_stage']; file_name: string; file_type: string; file_url: string }
-  ) => api.post<OrderAttachment>(`/orders/${id}/attachments`, data).then((r) => r.data),
+  ) => {
+    const formData = new FormData();
+    formData.append('stage', data.stage);
+    formData.append('file_name', data.file_name);
+    formData.append('file_type', data.file_type || 'application/octet-stream');
+    formData.append('file_url', data.file_url);
+    return api.post<OrderAttachment>(`/orders/${id}/attachments`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then((r) => r.data);
+  },
 
   statistics: () => api.get<Statistics>('/orders/statistics').then((r) => r.data),
 };

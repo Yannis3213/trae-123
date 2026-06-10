@@ -27,6 +27,7 @@ import {
   SyncOutlined,
   EyeOutlined,
   PlayCircleOutlined,
+  PaperClipOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -237,6 +238,23 @@ function OrderList() {
           {r.resubmit_count > 0 && (
             <Tag style={{ background: '#fff7e6', color: '#d46b08', borderColor: '#ffd591' }}>
               {r.resubmit_count}次
+            </Tag>
+          )}
+        </Space>
+      ),
+    },
+    {
+      title: '材料附件',
+      key: 'attachments',
+      width: 120,
+      render: (_: any, r: OrderWithWarning) => (
+        <Space>
+          <Tag icon={<PaperClipOutlined />} color={r.stage_attach_count > 0 ? 'blue' : 'default'}>
+            本环节 {r.stage_attach_count}
+          </Tag>
+          {r.attachment_count > r.stage_attach_count && (
+            <Tag style={{ color: '#8c8c8c' }}>
+              全单 {r.attachment_count}
             </Tag>
           )}
         </Space>

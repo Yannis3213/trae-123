@@ -125,6 +125,7 @@ type ProcessingRecord struct {
 	OperatorID      string      `json:"operator_id"`
 	Operator        *User       `gorm:"foreignKey:OperatorID" json:"operator,omitempty"`
 	Note            string      `gorm:"type:text" json:"note,omitempty"`
+	AttachmentIDs   string      `gorm:"type:text" json:"attachment_ids,omitempty"`
 	IsException     bool        `json:"is_exception"`
 	ExceptionReason string      `gorm:"type:text" json:"exception_reason,omitempty"`
 	ClientIP        string      `json:"client_ip,omitempty"`
