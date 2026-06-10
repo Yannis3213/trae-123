@@ -7,6 +7,7 @@ import type {
   UserRole,
   QueryParams,
   BatchProcessDto,
+  BatchProcessResult,
   ReturnOrderDto,
   AssignOrderDto,
   ProcessOrderDto,
@@ -28,6 +29,7 @@ interface OrdersState {
   total: number
   page: number
   pageSize: number
+  lastBatchResult: BatchProcessResult | null
 }
 
 const statusLabels: Record<OrderStatus, string> = {
@@ -82,6 +84,7 @@ export const useOrdersStore = defineStore('orders', {
     total: 0,
     page: 1,
     pageSize: 10,
+    lastBatchResult: null,
   }),
 
   getters: {
@@ -279,13 +282,14 @@ export const useOrdersStore = defineStore('orders', {
     async batchProcess(dto: BatchProcessDto) {
       this.submitting = true
       try {
-        const res = await useApiFetch<{ success: number[]; failed: { id: number; reason: string }[] }>(
+        const res = await useApiFetch<BatchProcessResult>(
           '/group-orders/batch',
           {
             method: 'POST',
             body: dto,
           }
         )
+        this.lastBatchResult = res
         const successCount = res.success?.length || 0
         const failedCount = res.failed?.length || 0
         if (failedCount > 0) {
@@ -294,10 +298,6 @@ export const useOrdersStore = defineStore('orders', {
             description: `成功 ${successCount} 条，失败 ${failedCount} 条`,
             color: 'amber',
           })
-          if (res.failed && res.failed.length > 0) {
-            const failedInfo = res.failed.map(f => `订单${f.id}: ${f.reason}`).join('\n')
-            window.alert(`以下订单处理失败：\n${failedInfo}`)
-          }
         } else {
           useToast().add({
             title: '批量操作成功',
@@ -355,6 +355,10 @@ export const useOrdersStore = defineStore('orders', {
 
     clearDetail() {
       this.detail = null
+    },
+
+    clearBatchResult() {
+      this.lastBatchResult = null
     },
   },
 })

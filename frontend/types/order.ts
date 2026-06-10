@@ -135,6 +135,17 @@ export interface BatchProcessDto {
   operator: string
   operatorRole: string
   comment?: string
+  targetRole?: UserRole
+  targetHandler?: string
+  orderEvidence?: string
+  deliveryEvidence?: string
+  reason?: string
+  returnToRole?: string
+}
+
+export interface BatchProcessResult {
+  success: { id: number; orderNo: string }[]
+  failed: { id: number; orderNo: string; reason: string; needRole?: UserRole }[]
 }
 
 export interface ReturnOrderDto {

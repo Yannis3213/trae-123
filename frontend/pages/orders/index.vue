@@ -4,6 +4,7 @@ import type {
   OrderStatus,
   WarningStatus,
   UserRole,
+  BatchProcessResult,
 } from '~/types/order'
 
 const ordersStore = useOrdersStore()
@@ -40,6 +41,20 @@ const columns = [
   { key: 'deadline', label: '截止日期' },
   { key: 'warningStatus', label: '预警状态' },
   { key: 'actions', label: '操作' },
+]
+
+const roleOptions = [
+  { label: '团购登记员', value: 'GROUPON_REGISTRAR' },
+  { label: '团购审核主管', value: 'AUDIT_SUPERVISOR' },
+  { label: '复核负责人', value: 'REVIEW_LEADER' },
+  { label: '团长运营', value: 'LEADER_OPERATOR' },
+  { label: '履约专员', value: 'FULFILLMENT_SPECIALIST' },
+  { label: '城市经理', value: 'CITY_MANAGER' },
+]
+
+const returnRoleOptions = [
+  { label: '团长运营', value: 'LEADER_OPERATOR' },
+  { label: '履约专员', value: 'FULFILLMENT_SPECIALIST' },
 ]
 
 function getStatusColor(status: OrderStatus): string {
@@ -121,24 +136,28 @@ const batchMenuItems = [
     icon: 'i-heroicons-paper-airplane',
     action: 'ASSIGN',
     allowedRoles: ['GROUPON_REGISTRAR', 'AUDIT_SUPERVISOR'],
+    needsConfig: true,
   },
   {
     label: '批量处理',
     icon: 'i-heroicons-check-circle',
     action: 'PROCESS',
     allowedRoles: ['FULFILLMENT_SPECIALIST'],
+    needsConfig: false,
   },
   {
     label: '批量关闭',
     icon: 'i-heroicons-x-circle',
     action: 'CLOSE',
     allowedRoles: ['REVIEW_LEADER', 'CITY_MANAGER'],
+    needsConfig: false,
   },
   {
     label: '批量退回',
     icon: 'i-heroicons-arrow-uturn-left',
     action: 'RETURN',
     allowedRoles: ['REVIEW_LEADER', 'CITY_MANAGER', 'AUDIT_SUPERVISOR'],
+    needsConfig: true,
   },
 ]
 
@@ -146,25 +165,73 @@ const availableBatchActions = computed(() =>
   batchMenuItems.filter((item) => item.allowedRoles.includes(authStore.currentRole))
 )
 
-const showBatchConfirm = ref(false)
+const showBatchConfig = ref(false)
 const batchActionType = ref('')
+const batchTargetRole = ref<UserRole>('FULFILLMENT_SPECIALIST')
+const batchTargetHandler = ref('')
+const batchReturnReason = ref('')
+const batchReturnToRole = ref<UserRole>('LEADER_OPERATOR')
+
+const showBatchResult = ref(false)
+const batchResult = ref<BatchProcessResult | null>(null)
 
 function openBatchModal(action: string) {
   batchActionType.value = action
-  showBatchConfirm.value = true
+  const item = batchMenuItems.find((i) => i.action === action)
+  if (item?.needsConfig) {
+    if (action === 'ASSIGN') {
+      batchTargetRole.value = 'FULFILLMENT_SPECIALIST'
+      batchTargetHandler.value = ''
+    } else if (action === 'RETURN') {
+      batchReturnReason.value = ''
+      batchReturnToRole.value = 'LEADER_OPERATOR'
+    }
+    showBatchConfig.value = true
+  } else {
+    confirmBatchAction()
+  }
+}
+
+function canSubmitBatchConfig(): boolean {
+  if (batchActionType.value === 'ASSIGN') {
+    return batchTargetRole.value !== '' && batchTargetHandler.value.trim() !== ''
+  }
+  if (batchActionType.value === 'RETURN') {
+    return batchReturnReason.value.trim() !== '' && batchReturnToRole.value !== ''
+  }
+  return true
 }
 
 async function confirmBatchAction() {
   if (selectedRows.value.length === 0) return
-  await ordersStore.batchProcess({
+
+  const dto: any = {
     ids: selectedRows.value,
     action: batchActionType.value,
     operator: authStore.userName,
     operatorRole: authStore.currentRole,
-  })
-  showBatchConfirm.value = false
+  }
+
+  if (batchActionType.value === 'ASSIGN') {
+    dto.targetRole = batchTargetRole.value
+    dto.targetHandler = batchTargetHandler.value
+  }
+  if (batchActionType.value === 'RETURN') {
+    dto.reason = batchReturnReason.value
+    dto.returnToRole = batchReturnToRole.value
+  }
+
+  showBatchConfig.value = false
+  const result = await ordersStore.batchProcess(dto)
+  batchResult.value = result
+  showBatchResult.value = true
   selectedRows.value = []
   await loadOrders()
+}
+
+function viewFailedOrder(orderId: number) {
+  showBatchResult.value = false
+  router.push(`/orders/${orderId}`)
 }
 
 const totalPages = computed(() =>
@@ -433,21 +500,144 @@ onMounted(async () => {
       </div>
     </UCard>
 
-    <UModal v-model="showBatchConfirm">
+    <UModal v-model="showBatchConfig">
       <UCard class="border-0">
         <template #header>
-          <h3 class="text-lg font-semibold">确认批量操作</h3>
+          <h3 class="text-lg font-semibold">
+            {{ batchMenuItems.find((i) => i.action === batchActionType)?.label }}
+          </h3>
         </template>
-        <p class="text-gray-600">
-          确定要对已选择的 <span class="font-semibold text-primary">{{ selectedRows.length }}</span> 条订单执行操作吗？
-        </p>
+
+        <div class="space-y-4">
+          <p class="text-gray-600">
+            已选择 <span class="font-semibold text-primary">{{ selectedRows.length }}</span> 条订单
+          </p>
+
+          <div v-if="batchActionType === 'ASSIGN'">
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              目标角色 <span class="text-red-500">*</span>
+            </label>
+            <USelect v-model="batchTargetRole" :options="roleOptions" placeholder="选择目标角色" />
+          </div>
+
+          <div v-if="batchActionType === 'ASSIGN'">
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              目标处理人 <span class="text-red-500">*</span>
+            </label>
+            <UInput v-model="batchTargetHandler" placeholder="请输入处理人姓名" />
+          </div>
+
+          <div v-if="batchActionType === 'RETURN'">
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              退回角色 <span class="text-red-500">*</span>
+            </label>
+            <USelect v-model="batchReturnToRole" :options="returnRoleOptions" placeholder="选择退回角色" />
+          </div>
+
+          <div v-if="batchActionType === 'RETURN'">
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              退回原因 <span class="text-red-500">*</span>
+            </label>
+            <UTextarea v-model="batchReturnReason" placeholder="请输入退回原因" rows="3" />
+            <p v-if="!batchReturnReason.trim()" class="text-xs text-red-500 mt-1">请填写退回原因</p>
+          </div>
+        </div>
+
         <template #footer>
           <div class="flex justify-end gap-2">
-            <UButton variant="ghost" @click="showBatchConfirm = false">
+            <UButton variant="ghost" @click="showBatchConfig = false">
               取消
             </UButton>
-            <UButton color="primary" :loading="ordersStore.submitting" @click="confirmBatchAction">
-              确认
+            <UButton
+              color="primary"
+              :loading="ordersStore.submitting"
+              :disabled="!canSubmitBatchConfig()"
+              @click="confirmBatchAction"
+            >
+              确认执行
+            </UButton>
+          </div>
+        </template>
+      </UCard>
+    </UModal>
+
+    <UModal v-model="showBatchResult" :ui="{ width: 'max-w-3xl' }">
+      <UCard class="border-0">
+        <template #header>
+          <h3 class="text-lg font-semibold">批量操作结果</h3>
+        </template>
+
+        <div v-if="batchResult" class="space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-green-50 rounded-lg p-4 border border-green-200">
+              <div class="flex items-center gap-2 mb-3">
+                <UIcon name="i-heroicons-check-circle" class="w-5 h-5 text-green-600" />
+                <p class="text-sm font-semibold text-green-800">
+                  成功 ({{ batchResult.success?.length || 0 }} 条)
+                </p>
+              </div>
+              <div v-if="!batchResult.success || batchResult.success.length === 0" class="text-sm text-green-600 py-2">
+                无
+              </div>
+              <ul v-else class="space-y-1.5 max-h-64 overflow-y-auto">
+                <li
+                  v-for="item in batchResult.success"
+                  :key="item.id"
+                  class="text-sm text-green-700 flex items-center gap-2"
+                >
+                  <UIcon name="i-heroicons-check" class="w-4 h-4 text-green-500" />
+                  <button
+                    class="text-green-700 hover:text-green-900 hover:underline font-medium"
+                    @click="viewFailedOrder(item.id)"
+                  >
+                    {{ item.orderNo }}
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            <div class="bg-red-50 rounded-lg p-4 border border-red-200">
+              <div class="flex items-center gap-2 mb-3">
+                <UIcon name="i-heroicons-x-circle" class="w-5 h-5 text-red-600" />
+                <p class="text-sm font-semibold text-red-800">
+                  失败 ({{ batchResult.failed?.length || 0 }} 条)
+                </p>
+              </div>
+              <div v-if="!batchResult.failed || batchResult.failed.length === 0" class="text-sm text-red-600 py-2">
+                无
+              </div>
+              <ul v-else class="space-y-3 max-h-64 overflow-y-auto">
+                <li
+                  v-for="item in batchResult.failed"
+                  :key="item.id"
+                  class="text-sm text-red-700 p-2 bg-red-100/50 rounded"
+                >
+                  <div class="flex items-center gap-2 mb-1">
+                    <UIcon name="i-heroicons-x-mark" class="w-4 h-4 text-red-500" />
+                    <button
+                      class="font-medium text-red-700 hover:text-red-900 hover:underline"
+                      @click="viewFailedOrder(item.id)"
+                    >
+                      {{ item.orderNo }}
+                    </button>
+                  </div>
+                  <div class="ml-6 text-red-600">
+                    <p><span class="font-medium">失败原因：</span>{{ item.reason }}</p>
+                    <p v-if="item.needRole">
+                      <span class="font-medium">需补正角色：</span>
+                      {{ ordersStore.getRoleLabel(item.needRole) }}
+                    </p>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <template #footer>
+          <div class="flex justify-end">
+            <UButton color="primary" @click="showBatchResult = false">
+              确定
             </UButton>
           </div>
         </template>

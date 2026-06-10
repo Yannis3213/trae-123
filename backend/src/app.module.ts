@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import { GroupOrdersModule } from './group-orders/group-orders.module';
+import { SeedModule } from './seed/seed.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { GroupOrdersModule } from './group-orders/group-orders.module';
     }),
     AuthModule,
     GroupOrdersModule,
+    SeedModule,
   ],
 })
 export class AppModule {}

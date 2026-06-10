@@ -5,6 +5,7 @@ import type {
   WarningStatus,
   UserRole,
   ReasonType,
+  BatchProcessResult,
 } from '~/types/order'
 
 const route = useRoute()
@@ -13,6 +14,7 @@ const ordersStore = useOrdersStore()
 const authStore = useAuthStore()
 
 const orderId = computed(() => Number(route.params.id))
+const activeTab = ref<'basic' | 'exception' | 'records'>('basic')
 
 const showActionModal = ref(false)
 const currentAction = ref('')
@@ -24,12 +26,15 @@ const assignRole = ref<UserRole>('FULFILLMENT_SPECIALIST')
 const assignDeadline = ref('')
 
 const returnReason = ref('')
-const returnToRole = ref<UserRole>('GROUPON_REGISTRAR')
+const returnToRole = ref<UserRole>('LEADER_OPERATOR')
 
 const correctMaterialComplete = ref(false)
 const correctShelfEvidence = ref('')
 const correctOrderEvidence = ref('')
 const correctDeliveryEvidence = ref('')
+
+const processOrderEvidence = ref('')
+const reviewDeliveryEvidence = ref('')
 
 const noteContent = ref('')
 const showNoteModal = ref(false)
@@ -38,6 +43,8 @@ const exceptionReasons = ref<{ reason: string; reasonType: ReasonType }[]>([
   { reason: '', reasonType: 'other' },
 ])
 
+const batchResult = ref<BatchProcessResult | null>(null)
+
 const roleOptions = [
   { label: '团购登记员', value: 'GROUPON_REGISTRAR' },
   { label: '团购审核主管', value: 'AUDIT_SUPERVISOR' },
@@ -45,6 +52,11 @@ const roleOptions = [
   { label: '团长运营', value: 'LEADER_OPERATOR' },
   { label: '履约专员', value: 'FULFILLMENT_SPECIALIST' },
   { label: '城市经理', value: 'CITY_MANAGER' },
+]
+
+const returnRoleOptions = [
+  { label: '团长运营', value: 'LEADER_OPERATOR' },
+  { label: '履约专员', value: 'FULFILLMENT_SPECIALIST' },
 ]
 
 const reasonTypeOptions = [
@@ -82,13 +94,6 @@ function formatDate(dateStr?: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-function formatFileSize(bytes?: number): string {
-  if (!bytes) return '未知'
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
 const availableActions = computed(() => {
@@ -133,11 +138,13 @@ function openActionModal(action: string) {
   assignRole.value = 'FULFILLMENT_SPECIALIST'
   assignDeadline.value = ''
   returnReason.value = ''
-  returnToRole.value = 'GROUPON_REGISTRAR'
-  correctMaterialComplete.value = false
-  correctShelfEvidence.value = ''
-  correctOrderEvidence.value = ''
-  correctDeliveryEvidence.value = ''
+  returnToRole.value = 'LEADER_OPERATOR'
+  correctMaterialComplete.value = ordersStore.detail?.isMaterialComplete || false
+  correctShelfEvidence.value = ordersStore.detail?.shelfEvidence || ''
+  correctOrderEvidence.value = ordersStore.detail?.orderEvidence || ''
+  correctDeliveryEvidence.value = ordersStore.detail?.deliveryEvidence || ''
+  processOrderEvidence.value = ''
+  reviewDeliveryEvidence.value = ''
   exceptionReasons.value = [{ reason: '', reasonType: 'other' }]
   showActionModal.value = true
 }
@@ -152,8 +159,25 @@ function removeExceptionReason(index: number) {
   }
 }
 
+function canSubmitAction(): boolean {
+  if (currentAction.value === 'process' && !processOrderEvidence.value.trim()) {
+    return false
+  }
+  if (currentAction.value === 'review_pass' && !reviewDeliveryEvidence.value.trim()) {
+    return false
+  }
+  if (currentAction.value === 'return' && !returnReason.value.trim()) {
+    return false
+  }
+  if (currentAction.value === 'return' && !returnToRole.value) {
+    return false
+  }
+  return true
+}
+
 async function submitAction() {
   if (!ordersStore.detail) return
+  if (!canSubmitAction()) return
 
   const version = ordersStore.detail.version
 
@@ -214,12 +238,16 @@ async function submitNote() {
 }
 
 function goBack() {
+  ordersStore.clearBatchResult()
   router.push('/orders')
 }
 
 onMounted(async () => {
   if (!authStore.isLoggedIn) {
     authStore.login()
+  }
+  if (ordersStore.lastBatchResult) {
+    batchResult.value = ordersStore.lastBatchResult
   }
   await ordersStore.fetchDetail(orderId.value)
 })
@@ -242,6 +270,39 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <div v-if="batchResult" class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+      <div class="flex items-center gap-2 mb-3">
+        <UIcon name="i-heroicons-information-circle" class="w-5 h-5 text-blue-600" />
+        <h3 class="font-semibold text-blue-900">批量操作结果</h3>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div v-if="batchResult.success && batchResult.success.length > 0" class="bg-green-50 rounded-lg p-3 border border-green-200">
+          <p class="text-sm font-semibold text-green-800 mb-2">
+            成功 ({{ batchResult.success.length }} 条)
+          </p>
+          <ul class="space-y-1">
+            <li v-for="item in batchResult.success" :key="item.id" class="text-sm text-green-700">
+              ✓ {{ item.orderNo }}
+            </li>
+          </ul>
+        </div>
+        <div v-if="batchResult.failed && batchResult.failed.length > 0" class="bg-red-50 rounded-lg p-3 border border-red-200">
+          <p class="text-sm font-semibold text-red-800 mb-2">
+            失败 ({{ batchResult.failed.length }} 条)
+          </p>
+          <ul class="space-y-2">
+            <li v-for="item in batchResult.failed" :key="item.id" class="text-sm text-red-700">
+              <div class="font-medium">✗ {{ item.orderNo }}</div>
+              <div class="text-red-600 ml-4">原因：{{ item.reason }}</div>
+              <div v-if="item.needRole" class="text-red-600 ml-4">
+                需补正角色：{{ ordersStore.getRoleLabel(item.needRole) }}
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
     <div v-if="ordersStore.detailLoading" class="flex items-center justify-center py-20">
       <UIcon name="i-heroicons-arrow-path" class="w-8 h-8 animate-spin text-primary" />
     </div>
@@ -249,234 +310,285 @@ onBeforeUnmount(() => {
     <template v-else-if="ordersStore.detail">
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div class="lg:col-span-2 space-y-6">
-          <UCard class="shadow-sm">
-            <template #header>
-              <div class="flex items-start justify-between">
-                <div>
-                  <div class="flex items-center gap-3">
-                    <h2 class="text-lg font-semibold text-gray-900">
-                      {{ ordersStore.detail.productName }}
-                    </h2>
-                    <UBadge :color="getStatusColor(ordersStore.detail.orderStatus)" variant="subtle">
-                      {{ ordersStore.getStatusLabel(ordersStore.detail.orderStatus) }}
-                    </UBadge>
-                    <UBadge :color="getWarningColor(ordersStore.detail.warningStatus)" variant="subtle">
-                      {{ ordersStore.getWarningLabel(ordersStore.detail.warningStatus) }}
-                    </UBadge>
-                    <UBadge
-                      v-if="ordersStore.detail.isOverdue"
-                      color="red"
-                      variant="subtle"
-                    >
-                      已逾期
-                    </UBadge>
-                  </div>
-                  <p class="text-sm text-gray-500 mt-1">
-                    订单号：{{ ordersStore.detail.orderNo }} · SKU：{{ ordersStore.detail.sku }}
-                  </p>
-                </div>
-                <div class="flex items-center gap-2">
-                  <UButton
-                    v-for="act in availableActions"
-                    :key="act.action"
-                    :color="act.color"
-                    :variant="act.variant"
-                    size="sm"
-                    @click="openActionModal(act.action)"
-                  >
-                    {{ act.label }}
-                  </UButton>
-                </div>
-              </div>
-            </template>
+          <UTabs v-model="activeTab">
+            <UTab value="basic" label="基本信息" />
+            <UTab value="exception" label="异常原因与退回补正" />
+            <UTab value="records" label="处理记录" />
 
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">上架日期</p>
-                <p class="text-sm text-gray-900 mt-1">{{ formatDate(ordersStore.detail.shelfDate) }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">团购单价</p>
-                <p class="text-sm text-gray-900 mt-1 font-medium">
-                  ¥ {{ Number(ordersStore.detail.grouponPrice).toLocaleString() }}
-                </p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">订单数量</p>
-                <p class="text-sm text-gray-900 mt-1">{{ ordersStore.detail.quantity }} 件</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">订单金额</p>
-                <p class="text-sm text-gray-900 mt-1 font-medium">
-                  ¥ {{ Number(ordersStore.detail.totalAmount).toLocaleString() }}
-                </p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">当前处理人</p>
-                <p class="text-sm text-gray-900 mt-1">{{ ordersStore.detail.currentHandler || '-' }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">当前处理角色</p>
-                <p class="text-sm text-gray-900 mt-1">
-                  {{ ordersStore.detail.currentRole ? ordersStore.getRoleLabel(ordersStore.detail.currentRole) : '-' }}
-                </p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">截止日期</p>
-                <p class="text-sm text-gray-900 mt-1">{{ formatDate(ordersStore.detail.deadline) }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">材料是否完整</p>
-                <UBadge
-                  :color="ordersStore.detail.isMaterialComplete ? 'green' : 'amber'"
-                  variant="subtle"
-                  size="sm"
-                  class="mt-1"
-                >
-                  {{ ordersStore.detail.isMaterialComplete ? '完整' : '待补正' }}
-                </UBadge>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">创建人</p>
-                <p class="text-sm text-gray-900 mt-1">{{ ordersStore.detail.createdBy }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">创建时间</p>
-                <p class="text-sm text-gray-900 mt-1">{{ formatDate(ordersStore.detail.createdAt) }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">更新时间</p>
-                <p class="text-sm text-gray-900 mt-1">{{ formatDate(ordersStore.detail.updatedAt) }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">版本号</p>
-                <p class="text-sm text-gray-900 mt-1">v{{ ordersStore.detail.version }}</p>
-              </div>
-            </div>
-
-            <div v-if="ordersStore.detail.overdueReason" class="mt-6">
-              <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">逾期原因</p>
-              <p class="text-sm text-red-600 mt-1">{{ ordersStore.detail.overdueReason }}</p>
-            </div>
-
-            <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">上架凭证</p>
-                <p class="text-sm text-gray-900 mt-1">{{ ordersStore.detail.shelfEvidence || '-' }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">订单凭证</p>
-                <p class="text-sm text-gray-900 mt-1">{{ ordersStore.detail.orderEvidence || '-' }}</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">履约凭证</p>
-                <p class="text-sm text-gray-900 mt-1">{{ ordersStore.detail.deliveryEvidence || '-' }}</p>
-              </div>
-            </div>
-
-            <div
-              v-if="ordersStore.detail.exceptionReasons && ordersStore.detail.exceptionReasons.length > 0"
-              class="mt-6 p-4 bg-red-50 rounded-lg border border-red-100"
-            >
-              <div class="flex items-center gap-2 mb-2">
-                <UIcon name="i-heroicons-exclamation-triangle" class="w-5 h-5 text-red-500" />
-                <p class="text-sm font-semibold text-red-800">异常原因</p>
-              </div>
-              <ul class="space-y-1">
-                <li
-                  v-for="(reason, idx) in ordersStore.detail.exceptionReasons"
-                  :key="idx"
-                  class="text-sm text-red-700"
-                >
-                  <UBadge size="xs" variant="subtle" color="red" class="mr-2">
-                    {{ ordersStore.getReasonTypeLabel(reason.reasonType) }}
-                  </UBadge>
-                  {{ reason.reason }}
-                  <span class="text-xs text-red-500 ml-2">
-                    · {{ reason.operator }} · {{ formatDate(reason.createdAt) }}
-                  </span>
-                </li>
-              </ul>
-            </div>
-          </UCard>
-
-          <UCard class="shadow-sm">
-            <template #header>
-              <div class="flex items-center justify-between">
-                <h2 class="font-semibold text-gray-900">处理记录</h2>
-              </div>
-            </template>
-            <div v-if="ordersStore.detail.processingRecords.length === 0" class="text-sm text-gray-500 py-4">
-              暂无处理记录
-            </div>
-            <UTimeline v-else>
-              <UTimelineItem
-                v-for="record in ordersStore.detail.processingRecords"
-                :key="record.id"
-                :title="ordersStore.getActionTypeLabel(record.actionType)"
-                :date="formatDate(record.createdAt)"
-              >
-                <template #icon>
-                  <div class="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
-                    <UIcon name="i-heroicons-check" class="w-4 h-4 text-primary" />
+            <UTabPanel value="basic" class="space-y-6 pt-4">
+              <UCard class="shadow-sm">
+                <template #header>
+                  <div class="flex items-start justify-between">
+                    <div>
+                      <div class="flex items-center gap-3">
+                        <h2 class="text-lg font-semibold text-gray-900">
+                          {{ ordersStore.detail.productName }}
+                        </h2>
+                        <UBadge :color="getStatusColor(ordersStore.detail.orderStatus)" variant="subtle">
+                          {{ ordersStore.getStatusLabel(ordersStore.detail.orderStatus) }}
+                        </UBadge>
+                        <UBadge :color="getWarningColor(ordersStore.detail.warningStatus)" variant="subtle">
+                          {{ ordersStore.getWarningLabel(ordersStore.detail.warningStatus) }}
+                        </UBadge>
+                        <UBadge
+                          v-if="ordersStore.detail.isOverdue"
+                          color="red"
+                          variant="subtle"
+                        >
+                          已逾期
+                        </UBadge>
+                      </div>
+                      <p class="text-sm text-gray-500 mt-1">
+                        订单号：{{ ordersStore.detail.orderNo }} · SKU：{{ ordersStore.detail.sku }}
+                      </p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <UButton
+                        v-for="act in availableActions"
+                        :key="act.action"
+                        :color="act.color"
+                        :variant="act.variant"
+                        size="sm"
+                        @click="openActionModal(act.action)"
+                      >
+                        {{ act.label }}
+                      </UButton>
+                    </div>
                   </div>
                 </template>
-                <p class="text-sm text-gray-600">
-                  <span class="font-medium">{{ record.operator }}</span>
-                  <span class="text-gray-400"> · </span>
-                  <span>{{ ordersStore.getRoleLabel(record.operatorRole) }}</span>
-                  <span class="text-gray-400"> · v{{ record.version }}</span>
-                </p>
-                <p v-if="record.previousStatus || record.newStatus" class="text-sm text-gray-500 mt-1">
-                  状态变更：
-                  <span v-if="record.previousStatus">{{ ordersStore.getStatusLabel(record.previousStatus) }}</span>
-                  <span v-if="record.previousStatus && record.newStatus"> → </span>
-                  <span v-if="record.newStatus">{{ ordersStore.getStatusLabel(record.newStatus) }}</span>
-                </p>
-                <p v-if="record.previousHandler || record.newHandler" class="text-sm text-gray-500 mt-1">
-                  处理人变更：
-                  <span v-if="record.previousHandler">{{ record.previousHandler }}</span>
-                  <span v-if="record.previousHandler && record.newHandler"> → </span>
-                  <span v-if="record.newHandler">{{ record.newHandler }}</span>
-                </p>
-                <p v-if="record.comment" class="text-sm text-gray-500 mt-1">
-                  备注：{{ record.comment }}
-                </p>
-              </UTimelineItem>
-            </UTimeline>
-          </UCard>
 
-          <UCard class="shadow-sm">
-            <template #header>
-              <div class="flex items-center justify-between">
-                <h2 class="font-semibold text-gray-900">审计备注</h2>
-                <UButton size="xs" color="primary" variant="ghost" @click="showNoteModal = true">
-                  <UIcon name="i-heroicons-plus" class="w-3.5 h-3.5 mr-1" />
-                  添加备注
-                </UButton>
-              </div>
-            </template>
-            <div v-if="ordersStore.detail.auditNotes.length === 0" class="text-sm text-gray-500 py-4">
-              暂无审计备注
-            </div>
-            <div v-else class="space-y-4">
-              <div
-                v-for="note in ordersStore.detail.auditNotes"
-                :key="note.id"
-                class="p-4 bg-gray-50 rounded-lg"
-              >
-                <div class="flex items-center gap-2 mb-2">
-                  <UAvatar :name="note.author" size="xs" />
-                  <p class="text-sm font-medium text-gray-900">{{ note.author }}</p>
-                  <UBadge size="xs" variant="subtle" color="primary">
-                    {{ ordersStore.getRoleLabel(note.authorRole) }}
-                  </UBadge>
-                  <p class="text-xs text-gray-500">{{ formatDate(note.createdAt) }}</p>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">上架日期</p>
+                    <p class="text-sm text-gray-900 mt-1">{{ formatDate(ordersStore.detail.shelfDate) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">团购单价</p>
+                    <p class="text-sm text-gray-900 mt-1 font-medium">
+                      ¥ {{ Number(ordersStore.detail.grouponPrice).toLocaleString() }}
+                    </p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">订单数量</p>
+                    <p class="text-sm text-gray-900 mt-1">{{ ordersStore.detail.quantity }} 件</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">订单金额</p>
+                    <p class="text-sm text-gray-900 mt-1 font-medium">
+                      ¥ {{ Number(ordersStore.detail.totalAmount).toLocaleString() }}
+                    </p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">当前处理人</p>
+                    <p class="text-sm text-gray-900 mt-1">{{ ordersStore.detail.currentHandler || '-' }}</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">当前处理角色</p>
+                    <p class="text-sm text-gray-900 mt-1">
+                      {{ ordersStore.detail.currentRole ? ordersStore.getRoleLabel(ordersStore.detail.currentRole) : '-' }}
+                    </p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">截止日期</p>
+                    <p class="text-sm text-gray-900 mt-1">{{ formatDate(ordersStore.detail.deadline) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">材料是否完整</p>
+                    <UBadge
+                      :color="ordersStore.detail.isMaterialComplete ? 'green' : 'amber'"
+                      variant="subtle"
+                      size="sm"
+                      class="mt-1"
+                    >
+                      {{ ordersStore.detail.isMaterialComplete ? '完整' : '待补正' }}
+                    </UBadge>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">创建人</p>
+                    <p class="text-sm text-gray-900 mt-1">{{ ordersStore.detail.createdBy }}</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">创建时间</p>
+                    <p class="text-sm text-gray-900 mt-1">{{ formatDate(ordersStore.detail.createdAt) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">更新时间</p>
+                    <p class="text-sm text-gray-900 mt-1">{{ formatDate(ordersStore.detail.updatedAt) }}</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">版本号</p>
+                    <p class="text-sm text-gray-900 mt-1">v{{ ordersStore.detail.version }}</p>
+                  </div>
                 </div>
-                <p class="text-sm text-gray-700">{{ note.content }}</p>
-              </div>
-            </div>
-          </UCard>
+
+                <div v-if="ordersStore.detail.overdueReason" class="mt-6">
+                  <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">逾期原因</p>
+                  <p class="text-sm text-red-600 mt-1">{{ ordersStore.detail.overdueReason }}</p>
+                </div>
+              </UCard>
+
+              <UCard class="shadow-sm">
+                <template #header>
+                  <h2 class="font-semibold text-gray-900">三类凭证</h2>
+                </template>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div class="p-4 border rounded-lg" :class="ordersStore.detail.shelfEvidence ? 'border-gray-200 bg-white' : 'border-red-300 bg-red-50'">
+                    <div class="flex items-center gap-2 mb-2">
+                      <UIcon name="i-heroicons-archive-box" class="w-4 h-4" :class="ordersStore.detail.shelfEvidence ? 'text-gray-600' : 'text-red-500'" />
+                      <p class="text-sm font-medium" :class="ordersStore.detail.shelfEvidence ? 'text-gray-900' : 'text-red-700'">商品上架凭证</p>
+                    </div>
+                    <p v-if="ordersStore.detail.shelfEvidence" class="text-sm text-gray-700 break-all">
+                      {{ ordersStore.detail.shelfEvidence }}
+                    </p>
+                    <p v-else class="text-sm text-red-600 font-medium">
+                      待补录
+                    </p>
+                  </div>
+
+                  <div class="p-4 border rounded-lg" :class="ordersStore.detail.orderEvidence ? 'border-gray-200 bg-white' : 'border-red-300 bg-red-50'">
+                    <div class="flex items-center gap-2 mb-2">
+                      <UIcon name="i-heroicons-shopping-cart" class="w-4 h-4" :class="ordersStore.detail.orderEvidence ? 'text-gray-600' : 'text-red-500'" />
+                      <p class="text-sm font-medium" :class="ordersStore.detail.orderEvidence ? 'text-gray-900' : 'text-red-700'">团购下单过程核对凭证</p>
+                    </div>
+                    <p v-if="ordersStore.detail.orderEvidence" class="text-sm text-gray-700 break-all">
+                      {{ ordersStore.detail.orderEvidence }}
+                    </p>
+                    <p v-else class="text-sm text-red-600 font-medium">
+                      待补录
+                    </p>
+                  </div>
+
+                  <div class="p-4 border rounded-lg" :class="ordersStore.detail.deliveryEvidence ? 'border-gray-200 bg-white' : 'border-red-300 bg-red-50'">
+                    <div class="flex items-center gap-2 mb-2">
+                      <UIcon name="i-heroicons-truck" class="w-4 h-4" :class="ordersStore.detail.deliveryEvidence ? 'text-gray-600' : 'text-red-500'" />
+                      <p class="text-sm font-medium" :class="ordersStore.detail.deliveryEvidence ? 'text-gray-900' : 'text-red-700'">到货签收最终凭证</p>
+                    </div>
+                    <p v-if="ordersStore.detail.deliveryEvidence" class="text-sm text-gray-700 break-all">
+                      {{ ordersStore.detail.deliveryEvidence }}
+                    </p>
+                    <p v-else class="text-sm text-red-600 font-medium">
+                      待补录
+                    </p>
+                  </div>
+                </div>
+              </UCard>
+            </UTabPanel>
+
+            <UTabPanel value="exception" class="pt-4">
+              <UCard class="shadow-sm">
+                <template #header>
+                  <div class="flex items-center justify-between">
+                    <h2 class="font-semibold text-gray-900">异常原因与退回补正记录</h2>
+                  </div>
+                </template>
+                <div v-if="!ordersStore.detail.exceptionReasons || ordersStore.detail.exceptionReasons.length === 0" class="text-sm text-gray-500 py-8 text-center">
+                  暂无异常原因记录
+                </div>
+                <div v-else class="space-y-3">
+                  <div
+                    v-for="reason in ordersStore.detail.exceptionReasons"
+                    :key="reason.id"
+                    class="p-4 border rounded-lg"
+                    :class="reason.resolved ? 'bg-gray-50 border-gray-200' : 'bg-red-50 border-red-200'"
+                  >
+                    <div class="flex items-start justify-between">
+                      <div class="flex items-center gap-2">
+                        <UBadge :color="reason.resolved ? 'gray' : 'red'" variant="subtle" size="sm">
+                          {{ ordersStore.getReasonTypeLabel(reason.reasonType) }}
+                        </UBadge>
+                        <UBadge :color="reason.resolved ? 'green' : 'amber'" variant="subtle" size="sm">
+                          {{ reason.resolved ? '已解决' : '待解决' }}
+                        </UBadge>
+                      </div>
+                      <p class="text-xs text-gray-500">{{ formatDate(reason.createdAt) }}</p>
+                    </div>
+                    <p class="text-sm text-gray-900 mt-2">{{ reason.reason }}</p>
+                    <p class="text-xs text-gray-500 mt-2">操作人：{{ reason.operator }}</p>
+                  </div>
+                </div>
+              </UCard>
+            </UTabPanel>
+
+            <UTabPanel value="records" class="pt-4">
+              <UCard class="shadow-sm">
+                <template #header>
+                  <div class="flex items-center justify-between">
+                    <h2 class="font-semibold text-gray-900">处理记录</h2>
+                  </div>
+                </template>
+                <div v-if="ordersStore.detail.processingRecords.length === 0" class="text-sm text-gray-500 py-4">
+                  暂无处理记录
+                </div>
+                <UTimeline v-else>
+                  <UTimelineItem
+                    v-for="record in ordersStore.detail.processingRecords"
+                    :key="record.id"
+                    :title="ordersStore.getActionTypeLabel(record.actionType)"
+                    :date="formatDate(record.createdAt)"
+                  >
+                    <template #icon>
+                      <div class="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
+                        <UIcon name="i-heroicons-check" class="w-4 h-4 text-primary" />
+                      </div>
+                    </template>
+                    <p class="text-sm text-gray-600">
+                      <span class="font-medium">{{ record.operator }}</span>
+                      <span class="text-gray-400"> · </span>
+                      <span>{{ ordersStore.getRoleLabel(record.operatorRole) }}</span>
+                      <span class="text-gray-400"> · v{{ record.version }}</span>
+                    </p>
+                    <p v-if="record.previousStatus || record.newStatus" class="text-sm text-gray-500 mt-1">
+                      状态变更：
+                      <span v-if="record.previousStatus">{{ ordersStore.getStatusLabel(record.previousStatus) }}</span>
+                      <span v-if="record.previousStatus && record.newStatus"> → </span>
+                      <span v-if="record.newStatus">{{ ordersStore.getStatusLabel(record.newStatus) }}</span>
+                    </p>
+                    <p v-if="record.previousHandler || record.newHandler" class="text-sm text-gray-500 mt-1">
+                      处理人变更：
+                      <span v-if="record.previousHandler">{{ record.previousHandler }}</span>
+                      <span v-if="record.previousHandler && record.newHandler"> → </span>
+                      <span v-if="record.newHandler">{{ record.newHandler }}</span>
+                    </p>
+                    <p v-if="record.comment" class="text-sm text-gray-500 mt-1">
+                      备注：{{ record.comment }}
+                    </p>
+                  </UTimelineItem>
+                </UTimeline>
+              </UCard>
+
+              <UCard class="shadow-sm mt-6">
+                <template #header>
+                  <div class="flex items-center justify-between">
+                    <h2 class="font-semibold text-gray-900">审计备注</h2>
+                    <UButton size="xs" color="primary" variant="ghost" @click="showNoteModal = true">
+                      <UIcon name="i-heroicons-plus" class="w-3.5 h-3.5 mr-1" />
+                      添加备注
+                    </UButton>
+                  </div>
+                </template>
+                <div v-if="ordersStore.detail.auditNotes.length === 0" class="text-sm text-gray-500 py-4">
+                  暂无审计备注
+                </div>
+                <div v-else class="space-y-4">
+                  <div
+                    v-for="note in ordersStore.detail.auditNotes"
+                    :key="note.id"
+                    class="p-4 bg-gray-50 rounded-lg"
+                  >
+                    <div class="flex items-center gap-2 mb-2">
+                      <UAvatar :name="note.author" size="xs" />
+                      <p class="text-sm font-medium text-gray-900">{{ note.author }}</p>
+                      <UBadge size="xs" variant="subtle" color="primary">
+                        {{ ordersStore.getRoleLabel(note.authorRole) }}
+                      </UBadge>
+                      <p class="text-xs text-gray-500">{{ formatDate(note.createdAt) }}</p>
+                    </div>
+                    <p class="text-sm text-gray-700">{{ note.content }}</p>
+                  </div>
+                </div>
+              </UCard>
+            </UTabPanel>
+          </UTabs>
         </div>
 
         <div class="space-y-6">
@@ -549,18 +661,34 @@ onBeforeUnmount(() => {
 
         <div class="space-y-4">
           <div v-if="currentAction === 'assign'">
-            <label class="block text-sm font-medium text-gray-700 mb-1.5">派发处理人</label>
-            <UInput v-model="assignHandler" placeholder="请输入处理人姓名" />
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              派发角色 <span class="text-red-500">*</span>
+            </label>
+            <USelect v-model="assignRole" :options="roleOptions" placeholder="选择角色" />
           </div>
 
           <div v-if="currentAction === 'assign'">
-            <label class="block text-sm font-medium text-gray-700 mb-1.5">派发角色</label>
-            <USelect v-model="assignRole" :options="roleOptions" placeholder="选择角色" />
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              派发处理人 <span class="text-red-500">*</span>
+            </label>
+            <UInput v-model="assignHandler" placeholder="请输入处理人姓名" />
           </div>
 
           <div v-if="currentAction === 'assign'">
             <label class="block text-sm font-medium text-gray-700 mb-1.5">截止日期（可选）</label>
             <UInput v-model="assignDeadline" type="date" />
+          </div>
+
+          <div v-if="currentAction === 'process'">
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              团购下单过程核对凭证 <span class="text-red-500">*</span>
+            </label>
+            <UTextarea
+              v-model="processOrderEvidence"
+              placeholder="请输入团购下单过程核对凭证链接或说明（必填）"
+              rows="3"
+            />
+            <p v-if="!processOrderEvidence.trim()" class="text-xs text-red-500 mt-1">请填写团购下单过程核对凭证</p>
           </div>
 
           <div v-if="currentAction === 'process' || currentAction === 'correct'">
@@ -572,29 +700,46 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
+          <div v-if="currentAction === 'review_pass'">
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              到货签收最终凭证 <span class="text-red-500">*</span>
+            </label>
+            <UTextarea
+              v-model="reviewDeliveryEvidence"
+              placeholder="请输入到货签收最终凭证链接或说明（必填）"
+              rows="3"
+            />
+            <p v-if="!reviewDeliveryEvidence.trim()" class="text-xs text-red-500 mt-1">请填写到货签收最终凭证</p>
+          </div>
+
           <div v-if="currentAction === 'correct'">
-            <label class="block text-sm font-medium text-gray-700 mb-1.5">上架凭证（可选）</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">商品上架凭证</label>
             <UInput v-model="correctShelfEvidence" placeholder="凭证链接或说明" />
           </div>
 
           <div v-if="currentAction === 'correct'">
-            <label class="block text-sm font-medium text-gray-700 mb-1.5">订单凭证（可选）</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">团购下单过程核对凭证</label>
             <UInput v-model="correctOrderEvidence" placeholder="凭证链接或说明" />
           </div>
 
           <div v-if="currentAction === 'correct'">
-            <label class="block text-sm font-medium text-gray-700 mb-1.5">履约凭证（可选）</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">到货签收最终凭证</label>
             <UInput v-model="correctDeliveryEvidence" placeholder="凭证链接或说明" />
           </div>
 
           <div v-if="currentAction === 'return'">
-            <label class="block text-sm font-medium text-gray-700 mb-1.5">退回到角色</label>
-            <USelect v-model="returnToRole" :options="roleOptions" placeholder="选择角色" />
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              退回角色 <span class="text-red-500">*</span>
+            </label>
+            <USelect v-model="returnToRole" :options="returnRoleOptions" placeholder="选择退回角色" />
           </div>
 
           <div v-if="currentAction === 'return'">
-            <label class="block text-sm font-medium text-gray-700 mb-1.5">退回原因</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              退回原因 <span class="text-red-500">*</span>
+            </label>
             <UTextarea v-model="returnReason" placeholder="请输入退回原因" rows="3" />
+            <p v-if="!returnReason.trim()" class="text-xs text-red-500 mt-1">请填写退回原因</p>
           </div>
 
           <div v-if="currentAction === 'review_reject'">
@@ -654,6 +799,7 @@ onBeforeUnmount(() => {
             <UButton
               :color="availableActions.find((a) => a.action === currentAction)?.color || 'primary'"
               :loading="ordersStore.submitting"
+              :disabled="!canSubmitAction()"
               @click="submitAction"
             >
               确认提交
