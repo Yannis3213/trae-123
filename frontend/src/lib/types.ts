@@ -72,6 +72,7 @@ export interface BatchResultItem {
 	order_no: string;
 	success: boolean;
 	reason: string;
+	error_code?: string;
 }
 
 export interface APIError {

@@ -77,10 +77,11 @@ type BatchRequest struct {
 }
 
 type BatchResultItem struct {
-	ID      int64  `json:"id"`
-	OrderNo string `json:"order_no"`
-	Success bool   `json:"success"`
-	Reason  string `json:"reason"`
+	ID        int64  `json:"id"`
+	OrderNo   string `json:"order_no"`
+	Success   bool   `json:"success"`
+	Reason    string `json:"reason"`
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 type BatchResponse struct {

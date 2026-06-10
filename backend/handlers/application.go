@@ -36,6 +36,26 @@ func fillNames(app *models.Application) {
 	}
 }
 
+func getCurrentHandlerName(app models.Application) string {
+	switch app.Status {
+	case "draft", "pending_correction":
+		if app.CreatorID > 0 {
+			var name string
+			DB.QueryRow("SELECT display_name FROM users WHERE id = ?", app.CreatorID).Scan(&name)
+			return name
+		}
+	case "pending_temp":
+		var name string
+		DB.QueryRow("SELECT display_name FROM users WHERE role = 'temp_supervisor' LIMIT 1").Scan(&name)
+		return name
+	case "under_review":
+		var name string
+		DB.QueryRow("SELECT display_name FROM users WHERE role = 'warehouse_manager' LIMIT 1").Scan(&name)
+		return name
+	}
+	return "-"
+}
+
 type ActionContext struct {
 	AppID           int64
 	UserID          int64
@@ -43,6 +63,7 @@ type ActionContext struct {
 	Version         int
 	TemperatureZone string
 	CorrectionNote  string
+	Remark          string
 }
 
 type ActionResponse struct {
@@ -52,12 +73,33 @@ type ActionResponse struct {
 	OrderNo string
 }
 
+func insertAuditNote(tx interface {
+	Exec(string, ...interface{}) (interface {
+		LastInsertId() (int64, error)
+		RowsAffected() (int64, error)
+	}, error)
+}, appID, userID int64, content, now string) error {
+	_, err := tx.Exec(
+		"INSERT INTO audit_notes (application_id, operator_id, content, created_at) VALUES (?, ?, ?, ?)",
+		appID, userID, content, now,
+	)
+	return err
+}
+
+func verifyRowsAffected(res interface{ RowsAffected() (int64, error) }) bool {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false
+	}
+	return rows > 0
+}
+
 func doSubmit(ctx ActionContext) ActionResponse {
 	var app models.Application
 	err := DB.QueryRow(
-		"SELECT id, order_no, status, version, creator_id, product_name, expected_date FROM applications WHERE id = ?",
+		"SELECT id, order_no, status, version, creator_id, handler_id, product_name, expected_date FROM applications WHERE id = ?",
 		ctx.AppID,
-	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version, &app.CreatorID, &app.ProductName, &app.ExpectedDate)
+	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version, &app.CreatorID, &app.HandlerID, &app.ProductName, &app.ExpectedDate)
 	if err != nil {
 		return ActionResponse{Success: false, Code: "NOT_FOUND", Message: "单据不存在", OrderNo: ""}
 	}
@@ -67,7 +109,7 @@ func doSubmit(ctx ActionContext) ActionResponse {
 	}
 
 	if app.CreatorID != ctx.UserID {
-		return ActionResponse{Success: false, Code: "CROSS_ROLE", Message: "您不是当前处理人，无法执行此操作", OrderNo: app.OrderNo}
+		return ActionResponse{Success: false, Code: "CROSS_ROLE", Message: fmt.Sprintf("您不是当前处理人（仓管员：%s），无法执行此操作", getCurrentHandlerName(app)), OrderNo: app.OrderNo}
 	}
 
 	if app.Status == "pending_temp" {
@@ -79,15 +121,15 @@ func doSubmit(ctx ActionContext) ActionResponse {
 	}
 
 	if ctx.Version != app.Version {
-		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为%d，请刷新后重试", app.Version), OrderNo: app.OrderNo}
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（您提交的是v%d）", app.Version, ctx.Version), OrderNo: app.OrderNo}
 	}
 
 	missing := []string{}
 	if app.ProductName == "" {
-		missing = append(missing, "product_name")
+		missing = append(missing, "product_name(品名)")
 	}
 	if app.ExpectedDate == "" {
-		missing = append(missing, "expected_date")
+		missing = append(missing, "expected_date(预计到期日)")
 	}
 	if len(missing) > 0 {
 		return ActionResponse{Success: false, Code: "EVIDENCE_MISSING", Message: fmt.Sprintf("缺少必要证据：%s，请补充后再提交", strings.Join(missing, "、")), OrderNo: app.OrderNo}
@@ -99,13 +141,17 @@ func doSubmit(ctx ActionContext) ActionResponse {
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "数据库错误", OrderNo: app.OrderNo}
 	}
 
-	_, err = tx.Exec(
+	updateRes, err := tx.Exec(
 		"UPDATE applications SET status = ?, current_step = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?",
 		"pending_temp", "allocation", now, ctx.AppID, ctx.Version,
 	)
 	if err != nil {
 		tx.Rollback()
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "更新失败", OrderNo: app.OrderNo}
+	}
+	if !verifyRowsAffected(updateRes) {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（乐观锁拦截）", app.Version+1), OrderNo: app.OrderNo}
 	}
 
 	_, err = tx.Exec(
@@ -115,6 +161,11 @@ func doSubmit(ctx ActionContext) ActionResponse {
 	if err != nil {
 		tx.Rollback()
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "创建处理记录失败", OrderNo: app.OrderNo}
+	}
+
+	if err := insertAuditNote(tx, ctx.AppID, ctx.UserID, "仓管员提交入库单审核，状态：草稿→待温控分配", now); err != nil {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "写入审计备注失败", OrderNo: app.OrderNo}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -127,15 +178,21 @@ func doSubmit(ctx ActionContext) ActionResponse {
 func doAllocate(ctx ActionContext) ActionResponse {
 	var app models.Application
 	err := DB.QueryRow(
-		"SELECT id, order_no, status, version FROM applications WHERE id = ?",
+		"SELECT id, order_no, status, version, creator_id, handler_id FROM applications WHERE id = ?",
 		ctx.AppID,
-	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version)
+	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version, &app.CreatorID, &app.HandlerID)
 	if err != nil {
 		return ActionResponse{Success: false, Code: "NOT_FOUND", Message: "单据不存在", OrderNo: ""}
 	}
 
 	if ctx.Role != "temp_supervisor" {
 		return ActionResponse{Success: false, Code: "ROLE_FORBIDDEN", Message: fmt.Sprintf("当前角色[%s]无权执行此操作，需要[temp_supervisor]角色", ctx.Role), OrderNo: app.OrderNo}
+	}
+
+	if app.HandlerID > 0 && app.HandlerID != ctx.UserID {
+		var handlerName string
+		DB.QueryRow("SELECT display_name FROM users WHERE id = ?", app.HandlerID).Scan(&handlerName)
+		return ActionResponse{Success: false, Code: "CROSS_ROLE", Message: fmt.Sprintf("您不是当前处理人（温控主管：%s），无法执行此操作", handlerName), OrderNo: app.OrderNo}
 	}
 
 	if app.Status == "under_review" {
@@ -147,11 +204,11 @@ func doAllocate(ctx ActionContext) ActionResponse {
 	}
 
 	if ctx.Version != app.Version {
-		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为%d，请刷新后重试", app.Version), OrderNo: app.OrderNo}
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（您提交的是v%d）", app.Version, ctx.Version), OrderNo: app.OrderNo}
 	}
 
 	if ctx.TemperatureZone == "" {
-		return ActionResponse{Success: false, Code: "EVIDENCE_MISSING", Message: "缺少必要证据：temperature_zone，请补充后再提交", OrderNo: app.OrderNo}
+		return ActionResponse{Success: false, Code: "EVIDENCE_MISSING", Message: "缺少必要证据：temperature_zone(温区)，请选择冷冻区/冷藏区/恒温区后再提交", OrderNo: app.OrderNo}
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -160,13 +217,17 @@ func doAllocate(ctx ActionContext) ActionResponse {
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "数据库错误", OrderNo: app.OrderNo}
 	}
 
-	_, err = tx.Exec(
+	updateRes, err := tx.Exec(
 		"UPDATE applications SET status = ?, current_step = ?, handler_id = ?, temperature_zone = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?",
 		"under_review", "confirmation", ctx.UserID, ctx.TemperatureZone, now, ctx.AppID, ctx.Version,
 	)
 	if err != nil {
 		tx.Rollback()
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "更新失败", OrderNo: app.OrderNo}
+	}
+	if !verifyRowsAffected(updateRes) {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（乐观锁拦截）", app.Version+1), OrderNo: app.OrderNo}
 	}
 
 	_, err = tx.Exec(
@@ -176,6 +237,22 @@ func doAllocate(ctx ActionContext) ActionResponse {
 	if err != nil {
 		tx.Rollback()
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "创建处理记录失败", OrderNo: app.OrderNo}
+	}
+
+	if err := insertAuditNote(tx, ctx.AppID, ctx.UserID, fmt.Sprintf("温控主管分配温区：%s，状态：待温控分配→复核中", temperatureZoneLabel(ctx.TemperatureZone)), now); err != nil {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "写入审计备注失败", OrderNo: app.OrderNo}
+	}
+
+	if calculateExpiryGroup(app.ExpectedDate) == "overdue" {
+		_, err = tx.Exec(
+			"INSERT INTO exception_reasons (application_id, operator_id, reason_type, description, created_at) VALUES (?, ?, ?, ?, ?)",
+			ctx.AppID, ctx.UserID, "timeout", "超期后分配温区，请关注时效性", now,
+		)
+		if err != nil {
+			tx.Rollback()
+			return ActionResponse{Success: false, Code: "DB_ERROR", Message: "写入超时异常失败", OrderNo: app.OrderNo}
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -188,9 +265,9 @@ func doAllocate(ctx ActionContext) ActionResponse {
 func doConfirm(ctx ActionContext) ActionResponse {
 	var app models.Application
 	err := DB.QueryRow(
-		"SELECT id, order_no, status, version FROM applications WHERE id = ?",
+		"SELECT id, order_no, status, version, handler_id, expected_date FROM applications WHERE id = ?",
 		ctx.AppID,
-	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version)
+	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version, &app.HandlerID, &app.ExpectedDate)
 	if err != nil {
 		return ActionResponse{Success: false, Code: "NOT_FOUND", Message: "单据不存在", OrderNo: ""}
 	}
@@ -208,7 +285,7 @@ func doConfirm(ctx ActionContext) ActionResponse {
 	}
 
 	if ctx.Version != app.Version {
-		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为%d，请刷新后重试", app.Version), OrderNo: app.OrderNo}
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（您提交的是v%d）", app.Version, ctx.Version), OrderNo: app.OrderNo}
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -217,13 +294,17 @@ func doConfirm(ctx ActionContext) ActionResponse {
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "数据库错误", OrderNo: app.OrderNo}
 	}
 
-	_, err = tx.Exec(
+	updateRes, err := tx.Exec(
 		"UPDATE applications SET status = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?",
 		"completed", now, ctx.AppID, ctx.Version,
 	)
 	if err != nil {
 		tx.Rollback()
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "更新失败", OrderNo: app.OrderNo}
+	}
+	if !verifyRowsAffected(updateRes) {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（乐观锁拦截）", app.Version+1), OrderNo: app.OrderNo}
 	}
 
 	_, err = tx.Exec(
@@ -233,6 +314,22 @@ func doConfirm(ctx ActionContext) ActionResponse {
 	if err != nil {
 		tx.Rollback()
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "创建处理记录失败", OrderNo: app.OrderNo}
+	}
+
+	if err := insertAuditNote(tx, ctx.AppID, ctx.UserID, "仓储经理复核通过，状态：复核中→办结", now); err != nil {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "写入审计备注失败", OrderNo: app.OrderNo}
+	}
+
+	if calculateExpiryGroup(app.ExpectedDate) == "overdue" {
+		_, err = tx.Exec(
+			"INSERT INTO exception_reasons (application_id, operator_id, reason_type, description, created_at) VALUES (?, ?, ?, ?, ?)",
+			ctx.AppID, ctx.UserID, "timeout", "超期后完成复核，请注意后续跟踪", now,
+		)
+		if err != nil {
+			tx.Rollback()
+			return ActionResponse{Success: false, Code: "DB_ERROR", Message: "写入超时异常失败", OrderNo: app.OrderNo}
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -245,15 +342,21 @@ func doConfirm(ctx ActionContext) ActionResponse {
 func doReturn(ctx ActionContext) ActionResponse {
 	var app models.Application
 	err := DB.QueryRow(
-		"SELECT id, order_no, status, version FROM applications WHERE id = ?",
+		"SELECT id, order_no, status, version, handler_id FROM applications WHERE id = ?",
 		ctx.AppID,
-	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version)
+	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version, &app.HandlerID)
 	if err != nil {
 		return ActionResponse{Success: false, Code: "NOT_FOUND", Message: "单据不存在", OrderNo: ""}
 	}
 
 	if ctx.Role != "temp_supervisor" && ctx.Role != "warehouse_manager" {
 		return ActionResponse{Success: false, Code: "ROLE_FORBIDDEN", Message: fmt.Sprintf("当前角色[%s]无权执行此操作，需要[temp_supervisor或warehouse_manager]角色", ctx.Role), OrderNo: app.OrderNo}
+	}
+
+	if app.Status == "pending_temp" && app.HandlerID > 0 && app.HandlerID != ctx.UserID && ctx.Role == "temp_supervisor" {
+		var handlerName string
+		DB.QueryRow("SELECT display_name FROM users WHERE id = ?", app.HandlerID).Scan(&handlerName)
+		return ActionResponse{Success: false, Code: "CROSS_ROLE", Message: fmt.Sprintf("您不是当前处理人（温控主管：%s），无法执行退回操作", handlerName), OrderNo: app.OrderNo}
 	}
 
 	if app.Status == "pending_correction" {
@@ -265,11 +368,11 @@ func doReturn(ctx ActionContext) ActionResponse {
 	}
 
 	if ctx.Version != app.Version {
-		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为%d，请刷新后重试", app.Version), OrderNo: app.OrderNo}
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（您提交的是v%d）", app.Version, ctx.Version), OrderNo: app.OrderNo}
 	}
 
 	if ctx.CorrectionNote == "" {
-		return ActionResponse{Success: false, Code: "EVIDENCE_MISSING", Message: "缺少必要证据：correction_note，请补充后再提交", OrderNo: app.OrderNo}
+		return ActionResponse{Success: false, Code: "EVIDENCE_MISSING", Message: "缺少必要证据：correction_note(补正说明)，请填写退回原因后再提交", OrderNo: app.OrderNo}
 	}
 
 	newStep := "confirmation"
@@ -283,13 +386,17 @@ func doReturn(ctx ActionContext) ActionResponse {
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "数据库错误", OrderNo: app.OrderNo}
 	}
 
-	_, err = tx.Exec(
+	updateRes, err := tx.Exec(
 		"UPDATE applications SET status = ?, current_step = ?, correction_note = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?",
 		"pending_correction", newStep, ctx.CorrectionNote, now, ctx.AppID, ctx.Version,
 	)
 	if err != nil {
 		tx.Rollback()
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "更新失败", OrderNo: app.OrderNo}
+	}
+	if !verifyRowsAffected(updateRes) {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（乐观锁拦截）", app.Version+1), OrderNo: app.OrderNo}
 	}
 
 	_, err = tx.Exec(
@@ -310,6 +417,15 @@ func doReturn(ctx ActionContext) ActionResponse {
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "创建处理记录失败", OrderNo: app.OrderNo}
 	}
 
+	roleLabel := "温控主管"
+	if ctx.Role == "warehouse_manager" {
+		roleLabel = "仓储经理"
+	}
+	if err := insertAuditNote(tx, ctx.AppID, ctx.UserID, fmt.Sprintf("%s退回补正：%s，状态：%s→待补正", roleLabel, ctx.CorrectionNote, statusLabel(app.Status)), now); err != nil {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "写入审计备注失败", OrderNo: app.OrderNo}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "提交失败", OrderNo: app.OrderNo}
 	}
@@ -320,9 +436,9 @@ func doReturn(ctx ActionContext) ActionResponse {
 func doCorrect(ctx ActionContext) ActionResponse {
 	var app models.Application
 	err := DB.QueryRow(
-		"SELECT id, order_no, status, version, creator_id FROM applications WHERE id = ?",
+		"SELECT id, order_no, status, version, creator_id, product_name, expected_date FROM applications WHERE id = ?",
 		ctx.AppID,
-	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version, &app.CreatorID)
+	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version, &app.CreatorID, &app.ProductName, &app.ExpectedDate)
 	if err != nil {
 		return ActionResponse{Success: false, Code: "NOT_FOUND", Message: "单据不存在", OrderNo: ""}
 	}
@@ -332,7 +448,7 @@ func doCorrect(ctx ActionContext) ActionResponse {
 	}
 
 	if app.CreatorID != ctx.UserID {
-		return ActionResponse{Success: false, Code: "CROSS_ROLE", Message: "您不是当前处理人，无法执行此操作", OrderNo: app.OrderNo}
+		return ActionResponse{Success: false, Code: "CROSS_ROLE", Message: fmt.Sprintf("您不是当前处理人（仓管员：%s），无法执行此操作", getCurrentHandlerName(app)), OrderNo: app.OrderNo}
 	}
 
 	if app.Status == "pending_temp" {
@@ -344,7 +460,18 @@ func doCorrect(ctx ActionContext) ActionResponse {
 	}
 
 	if ctx.Version != app.Version {
-		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为%d，请刷新后重试", app.Version), OrderNo: app.OrderNo}
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（您提交的是v%d）", app.Version, ctx.Version), OrderNo: app.OrderNo}
+	}
+
+	missing := []string{}
+	if app.ProductName == "" {
+		missing = append(missing, "product_name(品名)")
+	}
+	if app.ExpectedDate == "" {
+		missing = append(missing, "expected_date(预计到期日)")
+	}
+	if len(missing) > 0 {
+		return ActionResponse{Success: false, Code: "EVIDENCE_MISSING", Message: fmt.Sprintf("缺少必要证据：%s，请补充后再提交修正", strings.Join(missing, "、")), OrderNo: app.OrderNo}
 	}
 
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -353,13 +480,17 @@ func doCorrect(ctx ActionContext) ActionResponse {
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "数据库错误", OrderNo: app.OrderNo}
 	}
 
-	_, err = tx.Exec(
+	updateRes, err := tx.Exec(
 		"UPDATE applications SET status = ?, current_step = ?, correction_note = '', version = version + 1, updated_at = ? WHERE id = ? AND version = ?",
 		"pending_temp", "allocation", now, ctx.AppID, ctx.Version,
 	)
 	if err != nil {
 		tx.Rollback()
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "更新失败", OrderNo: app.OrderNo}
+	}
+	if !verifyRowsAffected(updateRes) {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（乐观锁拦截）", app.Version+1), OrderNo: app.OrderNo}
 	}
 
 	_, err = tx.Exec(
@@ -371,6 +502,11 @@ func doCorrect(ctx ActionContext) ActionResponse {
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "创建处理记录失败", OrderNo: app.OrderNo}
 	}
 
+	if err := insertAuditNote(tx, ctx.AppID, ctx.UserID, "仓管员修正完成并重新提交，状态：待补正→待温控分配", now); err != nil {
+		tx.Rollback()
+		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "写入审计备注失败", OrderNo: app.OrderNo}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return ActionResponse{Success: false, Code: "DB_ERROR", Message: "提交失败", OrderNo: app.OrderNo}
 	}
@@ -378,13 +514,25 @@ func doCorrect(ctx ActionContext) ActionResponse {
 	return ActionResponse{Success: true, OrderNo: app.OrderNo}
 }
 
+func temperatureZoneLabel(zone string) string {
+	labels := map[string]string{
+		"frozen":   "冷冻区",
+		"chilled":  "冷藏区",
+		"constant": "恒温区",
+	}
+	if label, ok := labels[zone]; ok {
+		return label
+	}
+	return zone
+}
+
 func statusLabel(status string) string {
 	labels := map[string]string{
 		"draft":              "草稿",
 		"pending_temp":       "待温控分配",
-		"pending_correction": "待修正",
-		"under_review":       "审核中",
-		"completed":          "已完成",
+		"pending_correction": "待补正",
+		"under_review":       "复核中",
+		"completed":          "办结",
 	}
 	if label, ok := labels[status]; ok {
 		return label
@@ -542,6 +690,12 @@ func CreateApplication(c *gin.Context) {
 		return
 	}
 
+	if err := insertAuditNote(tx, appID, userID.(int64), "仓管员创建入库单，状态：草稿", now); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, models.APIError{Code: "DB_ERROR", Message: "写入审计备注失败"})
+		return
+	}
+
 	if err := tx.Commit(); err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIError{Code: "DB_ERROR", Message: "提交失败"})
 		return
@@ -629,14 +783,14 @@ func UpdateApplication(c *gin.Context) {
 	}
 
 	if reqVersion != app.Version {
-		c.JSON(http.StatusConflict, models.APIError{Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为%d，请刷新后重试", app.Version)})
+		c.JSON(http.StatusConflict, models.APIError{Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（您提交的是v%d）", app.Version, reqVersion)})
 		return
 	}
 
 	userID, _ := c.Get("userID")
 	uid := userID.(int64)
 	if uid != app.CreatorID && uid != app.HandlerID {
-		c.JSON(http.StatusForbidden, models.APIError{Code: "CROSS_ROLE", Message: "您不是当前处理人，无法执行此操作"})
+		c.JSON(http.StatusForbidden, models.APIError{Code: "CROSS_ROLE", Message: fmt.Sprintf("您不是当前处理人（%s），无法执行此操作", getCurrentHandlerName(app))})
 		return
 	}
 
@@ -673,16 +827,32 @@ func UpdateApplication(c *gin.Context) {
 	setClauses = append(setClauses, "version = version + 1", "updated_at = ?")
 	args = append(args, now, id, app.Version)
 
-	sqlStr := "UPDATE applications SET " + strings.Join(setClauses, ", ") + " WHERE id = ? AND version = ?"
-	res, err := DB.Exec(sqlStr, args...)
+	tx, err := DB.Begin()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIError{Code: "DB_ERROR", Message: "更新失败"})
+		c.JSON(http.StatusInternalServerError, models.APIError{Code: "DB_ERROR", Message: "数据库错误"})
 		return
 	}
 
-	rowsAffected, _ := res.RowsAffected()
-	if rowsAffected == 0 {
-		c.JSON(http.StatusConflict, models.APIError{Code: "VERSION_CONFLICT", Message: "单据已被他人修改，请刷新后重试"})
+	updateRes, err := tx.Exec("UPDATE applications SET "+strings.Join(setClauses, ", ")+" WHERE id = ? AND version = ?", args...)
+	if err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, models.APIError{Code: "DB_ERROR", Message: "更新失败"})
+		return
+	}
+	if !verifyRowsAffected(updateRes) {
+		tx.Rollback()
+		c.JSON(http.StatusConflict, models.APIError{Code: "VERSION_CONFLICT", Message: fmt.Sprintf("单据已被他人修改，当前版本为v%d，请刷新后重试（乐观锁拦截）", app.Version+1)})
+		return
+	}
+
+	if err := insertAuditNote(tx, id, uid, fmt.Sprintf("编辑入库单，更新了%d个字段", len(setClauses)-2), now); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, models.APIError{Code: "DB_ERROR", Message: "写入审计备注失败"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIError{Code: "DB_ERROR", Message: "提交失败"})
 		return
 	}
 
@@ -1049,7 +1219,7 @@ func AddAuditNote(c *gin.Context) {
 	}
 
 	if body.Content == "" {
-		c.JSON(http.StatusBadRequest, models.APIError{Code: "EVIDENCE_MISSING", Message: "缺少必要证据：content，请补充后再提交"})
+		c.JSON(http.StatusBadRequest, models.APIError{Code: "EVIDENCE_MISSING", Message: "缺少必要证据：content，请输入备注内容后再提交"})
 		return
 	}
 

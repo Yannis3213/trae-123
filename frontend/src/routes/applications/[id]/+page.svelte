@@ -10,7 +10,7 @@
 	} from '$lib/api';
 	import {
 		STATUS_LABELS, STATUS_COLORS, STEP_LABELS, TEMP_ZONE_LABELS,
-		EXPIRY_LABELS, EXPIRY_COLORS
+		EXPIRY_LABELS, EXPIRY_COLORS, ROLE_LABELS
 	} from '$lib/types';
 	import type { Application, ProcessingRecord, AuditNote, ExceptionReason, Attachment } from '$lib/types';
 
@@ -205,6 +205,40 @@
 	$: isCompleted = app?.status === 'completed';
 	$: noAction = app && !canEditDraft && !canAllocate && !canCorrect && !canReview && !isCompleted;
 
+	$: currentHandlerName = (() => {
+		if (!app) return '-';
+		switch (app.status) {
+			case 'draft':
+			case 'pending_correction':
+				return app.creator_name || '仓管员';
+			case 'pending_temp':
+				return app.handler_name || '待分配温控主管';
+			case 'under_review':
+				return '仓储经理';
+			case 'completed':
+				return '-';
+			default:
+				return '-';
+		}
+	})();
+
+	$: currentHandlerRole = (() => {
+		if (!app) return '';
+		switch (app.status) {
+			case 'draft':
+			case 'pending_correction':
+				return 'warehouse_clerk';
+			case 'pending_temp':
+				return 'temp_supervisor';
+			case 'under_review':
+				return 'warehouse_manager';
+			default:
+				return '';
+		}
+	})();
+
+	$: isOverdue = app?.expiry_group === 'overdue';
+
 	import { onMount } from 'svelte';
 	onMount(() => { loadApp(); });
 </script>
@@ -223,10 +257,10 @@
 			<h3 class="card-title">入库单信息</h3>
 			<div class="info-grid">
 				<div class="info-item"><span class="info-label">单号</span><span class="info-value">{app.order_no}</span></div>
-				<div class="info-item"><span class="info-label">品名</span><span class="info-value">{app.product_name}</span></div>
-				<div class="info-item"><span class="info-label">数量</span><span class="info-value">{app.product_count}</span></div>
-				<div class="info-item"><span class="info-label">预计到期</span><span class="info-value">{app.expected_date}</span></div>
-				<div class="info-item"><span class="info-label">预约时间</span><span class="info-value">{app.appointment_time}</span></div>
+				<div class="info-item"><span class="info-label">品名</span><span class="info-value">{#if app.product_name}{app.product_name}{:else}<span class="missing">未填写</span>{/if}</span></div>
+				<div class="info-item"><span class="info-label">数量</span><span class="info-value">{#if app.product_count > 0}{app.product_count}{:else}<span class="missing">未填写</span>{/if}</span></div>
+				<div class="info-item"><span class="info-label">预计到期</span><span class="info-value">{#if app.expected_date}{app.expected_date}{:else}<span class="missing">未填写</span>{/if}</span></div>
+				<div class="info-item"><span class="info-label">预约时间</span><span class="info-value">{app.appointment_time || '-'}</span></div>
 				<div class="info-item"><span class="info-label">温区</span><span class="info-value">{TEMP_ZONE_LABELS[app.temperature_zone] || app.temperature_zone || '-'}</span></div>
 				<div class="info-item"><span class="info-label">状态</span><span class="info-value"><span class="badge" style="background:{STATUS_COLORS[app.status] || '#999'}">{STATUS_LABELS[app.status] || app.status}</span></span></div>
 				<div class="info-item"><span class="info-label">当前步骤</span><span class="info-value">{STEP_LABELS[app.current_step] || app.current_step}</span></div>
@@ -236,22 +270,45 @@
 				{#if app.expiry_group}
 					<div class="info-item"><span class="info-label">到期分组</span><span class="info-value"><span class="badge" style="background:{EXPIRY_COLORS[app.expiry_group] || '#999'}">{EXPIRY_LABELS[app.expiry_group] || app.expiry_group}</span></span></div>
 				{/if}
-				{#if app.correction_note}
-					<div class="info-item full"><span class="info-label">补正说明</span><span class="info-value correction">{app.correction_note}</span></div>
-				{/if}
+			</div>
+
+			<div class="handler-grid">
+				<div class="handler-box {isOverdue ? 'overdue' : ''}">
+					<div class="handler-label">
+						{#if isOverdue}
+							⚠️ 逾期责任人
+						{:else}
+							👤 当前处理人
+						{/if}
+					</div>
+					<div class="handler-name">{currentHandlerName}</div>
+					<div class="handler-role">{ROLE_LABELS[currentHandlerRole] || ''}</div>
+				</div>
+			</div>
+
+			{#if app.correction_note}
+				<div class="info-item full" style="margin-top:12px"><span class="info-label">补正说明</span><span class="info-value correction">{app.correction_note}</span></div>
+			{/if}
+			<div class="info-grid" style="margin-top:12px">
 				<div class="info-item"><span class="info-label">创建时间</span><span class="info-value">{app.created_at}</span></div>
 				<div class="info-item"><span class="info-label">更新时间</span><span class="info-value">{app.updated_at}</span></div>
 			</div>
 		</div>
 
 		{#if exceptions.length > 0}
-			<div class="info-card">
-				<h3 class="card-title">异常原因</h3>
-				{#each exceptions as ex}
+			<div class="info-card exception-card">
+				<h3 class="card-title">
+					<span class="exception-icon">🚨</span>
+					异常原因 ({exceptions.length})
+				</h3>
+				{#each exceptions as ex, i}
 					<div class="exception-item">
-						<span class="badge small" style="background:#f44336">{ex.reason_type}</span>
-						<span class="exception-desc">{ex.description}</span>
-						<span class="exception-meta">{ex.operator_name || '-'} | {ex.created_at}</span>
+						<div class="exception-header">
+							<span class="exception-index">#{i + 1}</span>
+							<span class="badge small" style="background:#f44336">{ex.reason_type}</span>
+							<span class="exception-meta">{ex.operator_name || '-'} · {ex.created_at}</span>
+						</div>
+						<div class="exception-desc">{ex.description}</div>
 					</div>
 				{/each}
 			</div>
@@ -406,14 +463,19 @@
 			{#if exceptions.length === 0}
 				<div class="empty">暂无异常原因</div>
 			{:else}
-				<table class="data-table">
-					<thead><tr><th>类型</th><th>描述</th><th>操作人</th><th>时间</th></tr></thead>
-					<tbody>
-						{#each exceptions as e}
-							<tr><td>{e.reason_type}</td><td>{e.description}</td><td>{e.operator_name || '-'}</td><td>{e.created_at}</td></tr>
-						{/each}
-					</tbody>
-				</table>
+				<div class="exception-list">
+					{#each exceptions as e, i}
+						<div class="exception-row">
+							<div class="exception-row-header">
+								<span class="exception-index">#{i + 1}</span>
+								<span class="badge small" style="background:#f44336">{e.reason_type}</span>
+								<span class="exception-operator">{e.operator_name || '-'}</span>
+								<span class="exception-time">{e.created_at}</span>
+							</div>
+							<div class="exception-row-desc">{e.description}</div>
+						</div>
+					{/each}
+				</div>
 			{/if}
 		{/if}
 	</div>
@@ -683,4 +745,119 @@
 	.note-meta { font-size: 12px; color: var(--text-light); margin-bottom: 4px; }
 	.note-content { font-size: 13px; color: var(--text); }
 	.empty { text-align: center; padding: 30px; color: var(--text-light); }
+	.missing {
+		color: var(--danger);
+		font-style: italic;
+		font-weight: 500;
+	}
+	.handler-grid {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 12px;
+		margin-top: 16px;
+		padding-top: 16px;
+		border-top: 1px solid var(--border);
+	}
+	.handler-box {
+		background: linear-gradient(135deg, #e3f2fd, #bbdefb);
+		border-radius: 8px;
+		padding: 16px 20px;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		border-left: 4px solid var(--primary);
+	}
+	.handler-box.overdue {
+		background: linear-gradient(135deg, #ffebee, #ffcdd2);
+		border-left-color: var(--danger);
+	}
+	.handler-label {
+		font-size: 12px;
+		color: var(--text-light);
+		font-weight: 500;
+	}
+	.handler-name {
+		font-size: 18px;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.handler-box.overdue .handler-name {
+		color: var(--danger);
+	}
+	.handler-role {
+		font-size: 12px;
+		color: var(--text-light);
+	}
+	.exception-card {
+		border-left: 4px solid var(--danger);
+		background: #fff8f8;
+	}
+	.exception-icon {
+		margin-right: 6px;
+	}
+	.exception-card .card-title {
+		color: var(--danger);
+	}
+	.exception-item {
+		padding: 12px 0;
+		border-bottom: 1px solid var(--border);
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.exception-item:last-child { border-bottom: none; }
+	.exception-header {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+	.exception-index {
+		font-size: 12px;
+		color: var(--danger);
+		font-weight: 600;
+	}
+	.exception-meta {
+		font-size: 12px;
+		color: var(--text-light);
+		margin-left: auto;
+	}
+	.exception-desc {
+		font-size: 13px;
+		color: var(--text);
+		padding-left: 2px;
+	}
+	.exception-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.exception-row {
+		background: #fff8f8;
+		border-radius: 8px;
+		padding: 12px 16px;
+		border-left: 3px solid var(--danger);
+	}
+	.exception-row-header {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-bottom: 6px;
+		flex-wrap: wrap;
+	}
+	.exception-operator {
+		font-size: 12px;
+		color: var(--text);
+		font-weight: 500;
+	}
+	.exception-time {
+		font-size: 12px;
+		color: var(--text-light);
+		margin-left: auto;
+	}
+	.exception-row-desc {
+		font-size: 13px;
+		color: var(--text);
+		padding-left: 2px;
+	}
 </style>

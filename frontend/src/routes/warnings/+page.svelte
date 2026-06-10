@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getExpiryWarnings, getExceptions, batchAdvanceOverdue } from '$lib/api';
-	import { STATUS_LABELS, EXPIRY_LABELS } from '$lib/types';
+	import { STATUS_LABELS, EXPIRY_LABELS, STATUS_COLORS, ROLE_LABELS } from '$lib/types';
 	import type { Application, ExceptionReason, BatchResultItem } from '$lib/types';
 	import { goto } from '$app/navigation';
 
@@ -109,21 +109,26 @@
 	<div class="results-card">
 		<h3 class="card-title">批量推进结果</h3>
 		<div class="results-summary">
-			<span class="success-count">成功: {successCount}</span>
-			<span class="fail-count">失败: {failCount}</span>
+			<span class="success-count">✅ 成功: {successCount}</span>
+			<span class="fail-count">❌ 失败: {failCount}</span>
 		</div>
-		<table class="data-table">
-			<thead><tr><th>单号</th><th>结果</th><th>原因</th></tr></thead>
-			<tbody>
-				{#each advanceResults as r}
-					<tr>
-						<td>{r.order_no}</td>
-						<td>{r.success ? '✅' : '❌'}</td>
-						<td>{r.reason || '-'}</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
+		<div class="result-list">
+			{#each advanceResults as r, i}
+				<div class="result-item {r.success ? 'success' : 'fail'}">
+					<div class="result-header">
+						<span class="result-index">#{i + 1}</span>
+						<span class="result-order">{r.order_no}</span>
+						<span class="badge small" style="background:{r.success ? '#4caf50' : '#f44336'}">{r.success ? '成功' : '失败'}</span>
+						{#if r.error_code}
+							<span class="badge small error-code" style="background:#ff9800">{r.error_code}</span>
+						{/if}
+					</div>
+					{#if !r.success && r.reason}
+						<div class="result-reason">{r.reason}</div>
+					{/if}
+				</div>
+			{/each}
+		</div>
 	</div>
 {/if}
 
@@ -145,7 +150,7 @@
 				<div class="empty">暂无正常入库单</div>
 			{:else}
 				<table class="data-table">
-					<thead><tr><th>单号</th><th>品名</th><th>数量</th><th>预计到期</th><th>状态</th></tr></thead>
+					<thead><tr><th>单号</th><th>品名</th><th>数量</th><th>预计到期</th><th>状态</th><th>当前处理人</th></tr></thead>
 					<tbody>
 						{#each normalApps as app}
 							<tr class="clickable" on:click={() => goto(`/applications/${app.id}`)}>
@@ -153,7 +158,18 @@
 								<td>{app.product_name}</td>
 								<td>{app.product_count}</td>
 								<td>{app.expected_date}</td>
-								<td>{STATUS_LABELS[app.status] || app.status}</td>
+								<td><span class="badge small" style="background:{STATUS_COLORS[app.status] || '#999'}">{STATUS_LABELS[app.status] || app.status}</span></td>
+								<td>
+									{#if app.status === 'draft' || app.status === 'pending_correction'}
+										{app.creator_name || '-'}
+									{:else if app.status === 'pending_temp'}
+										{app.handler_name || '待分配'}
+									{:else if app.status === 'under_review'}
+										仓储经理
+									{:else}
+										-
+									{/if}
+								</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -169,7 +185,7 @@
 				<div class="empty">暂无临期入库单</div>
 			{:else}
 				<table class="data-table">
-					<thead><tr><th>单号</th><th>品名</th><th>数量</th><th>预计到期</th><th>状态</th><th>操作</th></tr></thead>
+					<thead><tr><th>单号</th><th>品名</th><th>数量</th><th>预计到期</th><th>状态</th><th>临期责任人</th><th>操作</th></tr></thead>
 					<tbody>
 						{#each nearExpiryApps as app}
 							<tr>
@@ -177,7 +193,21 @@
 								<td>{app.product_name}</td>
 								<td>{app.product_count}</td>
 								<td>{app.expected_date}</td>
-								<td>{STATUS_LABELS[app.status] || app.status}</td>
+								<td><span class="badge small" style="background:{STATUS_COLORS[app.status] || '#999'}">{STATUS_LABELS[app.status] || app.status}</span></td>
+								<td class="responsible">
+									{#if app.status === 'draft' || app.status === 'pending_correction'}
+										<span class="resp-name">{app.creator_name || '-'}</span>
+										<span class="resp-role">仓管员</span>
+									{:else if app.status === 'pending_temp'}
+										<span class="resp-name">{app.handler_name || '待分配'}</span>
+										<span class="resp-role">温控主管</span>
+									{:else if app.status === 'under_review'}
+										<span class="resp-name">仓储经理</span>
+										<span class="resp-role">仓储经理</span>
+									{:else}
+										-
+									{/if}
+								</td>
 								<td>
 									<button class="btn-link" on:click={() => goto(`/applications/${app.id}`)}>补正动作</button>
 									<button class="btn-link" on:click={() => loadExceptions(app.id)}>查看异常原因</button>
@@ -186,7 +216,7 @@
 							{#if showingExceptions === app.id && exceptionMap[app.id]}
 								{#each exceptionMap[app.id] as ex}
 									<tr class="sub-row">
-										<td colspan="6">
+										<td colspan="7">
 											<span class="badge small" style="background:#f44336">{ex.reason_type}</span>
 											{ex.description}
 											<span class="meta">{ex.operator_name || '-'} | {ex.created_at}</span>
@@ -201,8 +231,9 @@
 		{/if}
 
 		{#if activeSection === 'overdue'}
-			<div class="section-header" style="border-left-color: #f44336">
-				<h3>逾期</h3>
+			<div class="section-header overdue-header" style="border-left-color: #f44336">
+				<h3>🚨 逾期</h3>
+				<span class="overdue-tip">以下单据已逾期，请立即推进或退回补正</span>
 			</div>
 			{#if overdueApps.length > 0}
 				<div class="batch-bar">
@@ -218,18 +249,31 @@
 			{#if overdueApps.length === 0}
 				<div class="empty">暂无逾期入库单</div>
 			{:else}
-				<table class="data-table">
-					<thead><tr><th></th><th>单号</th><th>品名</th><th>数量</th><th>预计到期</th><th>状态</th><th>负责人</th><th>操作</th></tr></thead>
+				<table class="data-table overdue-table">
+					<thead><tr><th></th><th>单号</th><th>品名</th><th>数量</th><th>预计到期</th><th>状态</th><th>⚠️ 逾期责任人</th><th>操作</th></tr></thead>
 					<tbody>
 						{#each overdueApps as app}
-							<tr>
+							<tr class="overdue-row">
 								<td><input type="checkbox" checked={selectedOverdueIds.includes(app.id)} on:change={() => toggleOverdue(app.id)} /></td>
-								<td>{app.order_no}</td>
+								<td class="order-no">{app.order_no}</td>
 								<td>{app.product_name}</td>
 								<td>{app.product_count}</td>
-								<td>{app.expected_date}</td>
-								<td>{STATUS_LABELS[app.status] || app.status}</td>
-								<td>{app.handler_name || app.creator_name || '-'}</td>
+								<td class="expired-date">{app.expected_date}</td>
+								<td><span class="badge small" style="background:{STATUS_COLORS[app.status] || '#999'}">{STATUS_LABELS[app.status] || app.status}</span></td>
+								<td class="responsible overdue-resp">
+									{#if app.status === 'draft' || app.status === 'pending_correction'}
+										<span class="resp-name">{app.creator_name || '-'}</span>
+										<span class="resp-role">{ROLE_LABELS.warehouse_clerk}</span>
+									{:else if app.status === 'pending_temp'}
+										<span class="resp-name">{app.handler_name || '待分配'}</span>
+										<span class="resp-role">{ROLE_LABELS.temp_supervisor}</span>
+									{:else if app.status === 'under_review'}
+										<span class="resp-name">仓储经理</span>
+										<span class="resp-role">{ROLE_LABELS.warehouse_manager}</span>
+									{:else}
+										-
+									{/if}
+								</td>
 								<td>
 									<button class="btn-link" on:click={() => goto(`/applications/${app.id}`)}>补正动作</button>
 									<button class="btn-link" on:click={() => loadExceptions(app.id)}>查看异常原因</button>
@@ -404,4 +448,109 @@
 		cursor: pointer;
 	}
 	.empty { text-align: center; padding: 40px; color: var(--text-light); }
+	.badge {
+		display: inline-block;
+		padding: 3px 10px;
+		border-radius: 12px;
+		color: white;
+		font-size: 12px;
+		font-weight: 500;
+	}
+	.badge.small { padding: 2px 8px; font-size: 11px; }
+	.responsible {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.resp-name {
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.resp-role {
+		font-size: 11px;
+		color: var(--text-light);
+	}
+	.overdue-resp .resp-name {
+		color: var(--danger);
+	}
+	.overdue-header {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+	}
+	.overdue-header h3 {
+		color: var(--danger);
+	}
+	.overdue-tip {
+		font-size: 12px;
+		color: var(--danger);
+		font-weight: 500;
+		background: #ffebee;
+		padding: 4px 10px;
+		border-radius: 12px;
+	}
+	.overdue-table {
+		background: #fff8f8;
+	}
+	.overdue-row {
+		background: #fff8f8;
+	}
+	.overdue-row:hover {
+		background: #fff0f0 !important;
+	}
+	.overdue-row .order-no {
+		font-weight: 600;
+	}
+	.overdue-row .expired-date {
+		color: var(--danger);
+		font-weight: 600;
+	}
+	.result-list {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		margin-top: 12px;
+	}
+	.result-item {
+		border-radius: 8px;
+		padding: 12px 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.result-item.success {
+		background: #f1f8e9;
+		border-left: 4px solid #4caf50;
+	}
+	.result-item.fail {
+		background: #fff8f8;
+		border-left: 4px solid #f44336;
+	}
+	.result-header {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+	.result-index {
+		font-size: 12px;
+		color: var(--text-light);
+		font-weight: 600;
+	}
+	.result-order {
+		font-size: 14px;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.error-code {
+		font-family: monospace;
+		letter-spacing: 0.5px;
+	}
+	.result-reason {
+		font-size: 13px;
+		color: var(--text);
+		padding-left: 2px;
+		line-height: 1.5;
+	}
 </style>

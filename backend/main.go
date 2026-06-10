@@ -23,6 +23,7 @@ func main() {
 	}
 
 	handlers.SetDB(database.DB)
+	middleware.SetDB(database.DB)
 
 	r := gin.Default()
 	r.Use(middleware.CORS())

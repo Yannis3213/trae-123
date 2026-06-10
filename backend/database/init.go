@@ -163,19 +163,43 @@ func seedData() error {
 		correctionNote                       string
 	}
 
+	today := time.Now()
+	past15 := today.AddDate(0, 0, -15).Format("2006-01-02")
+	past20 := today.AddDate(0, 0, -20).Format("2006-01-02")
+	past25 := today.AddDate(0, 0, -25).Format("2006-01-02")
+	past30 := today.AddDate(0, 0, -30).Format("2006-01-02")
+	past45 := today.AddDate(0, 0, -45).Format("2006-01-02")
+	past60 := today.AddDate(0, 0, -60).Format("2006-01-02")
+	future15 := today.AddDate(0, 0, 15).Format("2006-01-02")
+	future20 := today.AddDate(0, 0, 20).Format("2006-01-02")
+	future25 := today.AddDate(0, 0, 25).Format("2006-01-02")
+	future30 := today.AddDate(0, 0, 30).Format("2006-01-02")
+
 	apps := []seedApp{
-		{"CC-2026-001", "冷冻牛排", 200, "2026-06-20", "09:00-11:00", "frozen", "completed", "confirmation", userIDs[0], userIDs[1], 4, ""},
-		{"CC-2026-002", "冰鲜三文鱼", 150, "2026-06-25", "10:00-12:00", "chilled", "under_review", "confirmation", userIDs[0], userIDs[1], 3, ""},
-		{"CC-2026-003", "冷藏蔬菜", 300, "2026-06-22", "08:00-10:00", "constant", "pending_temp", "allocation", userIDs[0], 0, 2, ""},
-		{"CC-2026-004", "速冻水饺", 500, "2026-06-13", "14:00-16:00", "frozen", "pending_correction", "appointment", userIDs[0], userIDs[1], 3, "缺少产品质检报告，请补充后重新提交"},
-		{"CC-2026-005", "冷鲜牛奶", 100, "2026-06-28", "07:00-09:00", "chilled", "draft", "appointment", userIDs[0], 0, 1, ""},
-		{"CC-2026-006", "冷冻虾仁", 250, "2026-06-05", "13:00-15:00", "frozen", "pending_temp", "allocation", userIDs[0], 0, 2, ""},
-		{"CC-2026-007", "冷藏水果", 180, "2026-06-01", "09:00-11:00", "constant", "pending_correction", "confirmation", userIDs[0], userIDs[1], 4, "温度区间与产品不匹配，请确认后重新提交"},
-		{"CC-2026-008", "冰鲜鳕鱼", 120, "2026-06-15", "10:00-12:00", "chilled", "under_review", "confirmation", userIDs[0], userIDs[1], 3, ""},
-		{"CC-2026-009", "速冻汤圆", 400, "2026-06-05", "15:00-17:00", "frozen", "draft", "appointment", userIDs[0], 0, 1, ""},
-		{"CC-2026-010", "冷藏酸奶", 80, "2026-06-22", "08:00-10:00", "constant", "pending_temp", "allocation", userIDs[0], 0, 2, ""},
-		{"CC-2026-011", "冰鲜金枪鱼", 60, "2026-06-14", "11:00-13:00", "chilled", "pending_correction", "appointment", userIDs[0], userIDs[1], 3, "入库预约时间已过，请重新预约"},
-		{"CC-2026-012", "冷冻羊肉", 350, "2026-06-20", "09:00-11:00", "frozen", "completed", "confirmation", userIDs[0], userIDs[1], 4, ""},
+		{"CC-2026-001", "冷冻牛排", 200, future30, "09:00-11:00", "frozen", "completed", "confirmation", userIDs[0], userIDs[1], 4, ""},
+		{"CC-2026-002", "冰鲜三文鱼", 150, future25, "10:00-12:00", "chilled", "under_review", "confirmation", userIDs[0], userIDs[1], 3, ""},
+		{"CC-2026-003", "冷藏蔬菜", 300, future20, "08:00-10:00", "constant", "pending_temp", "allocation", userIDs[0], 0, 2, ""},
+		{"CC-2026-004", "速冻水饺", 500, future15, "14:00-16:00", "frozen", "pending_correction", "appointment", userIDs[0], userIDs[1], 3, "缺少产品质检报告，请补充后重新提交"},
+		{"CC-2026-005", "冷鲜牛奶", 100, future25, "07:00-09:00", "chilled", "draft", "appointment", userIDs[0], 0, 1, ""},
+		{"CC-2026-006", "冷冻虾仁", 250, future20, "13:00-15:00", "frozen", "pending_temp", "allocation", userIDs[0], 0, 2, ""},
+		{"CC-2026-007", "冷藏水果", 180, future15, "09:00-11:00", "constant", "pending_correction", "confirmation", userIDs[0], userIDs[1], 4, "温度区间与产品不匹配，请确认后重新提交"},
+		{"CC-2026-008", "冰鲜鳕鱼", 120, future30, "10:00-12:00", "chilled", "under_review", "confirmation", userIDs[0], userIDs[1], 3, ""},
+		{"CC-2026-009", "速冻汤圆", 400, future20, "15:00-17:00", "frozen", "draft", "appointment", userIDs[0], 0, 1, ""},
+		{"CC-2026-010", "冷藏酸奶", 80, future15, "08:00-10:00", "constant", "pending_temp", "allocation", userIDs[0], 0, 2, ""},
+		{"CC-2026-011", "冰鲜金枪鱼", 60, future25, "11:00-13:00", "chilled", "pending_correction", "appointment", userIDs[0], userIDs[1], 3, "入库预约时间已过，请重新预约"},
+		{"CC-2026-012", "冷冻羊肉", 350, future30, "09:00-11:00", "frozen", "completed", "confirmation", userIDs[0], userIDs[1], 4, ""},
+
+		{"CC-DEMO-OVERDUE-DRAFT", "过期冷冻鸡翅", 200, past60, "09:00-11:00", "frozen", "draft", "appointment", userIDs[0], 0, 1, ""},
+		{"CC-DEMO-OVERDUE-TEMP", "过期冰鲜带鱼", 150, past45, "10:00-12:00", "chilled", "pending_temp", "allocation", userIDs[0], 0, 2, ""},
+		{"CC-DEMO-OVERDUE-REVIEW", "过期冷藏螃蟹", 80, past30, "08:00-10:00", "constant", "under_review", "confirmation", userIDs[0], userIDs[1], 3, ""},
+		{"CC-DEMO-OVERDUE-CORRECT", "过期速冻包子", 300, past25, "14:00-16:00", "frozen", "pending_correction", "appointment", userIDs[0], userIDs[1], 3, "预计入库日期已逾期，请确认后重新提交"},
+
+		{"CC-DEMO-MISSING-EVIDENCE", "", 0, "", "10:00-12:00", "", "draft", "appointment", userIDs[0], 0, 1, ""},
+		{"CC-DEMO-MISSING-CORRECT", "", 0, "", "09:00-11:00", "", "pending_correction", "appointment", userIDs[0], userIDs[1], 2, "缺少产品基本信息，请补充品名、数量和到期日"},
+
+		{"CC-DEMO-CROSSROLE-CLERK", "越权测试-温控草稿", 100, past15, "09:00-11:00", "frozen", "draft", "appointment", userIDs[0], 0, 1, ""},
+		{"CC-DEMO-CROSSROLE-SUPV", "越权测试-主管分配中", 100, past20, "10:00-12:00", "chilled", "pending_temp", "allocation", userIDs[0], userIDs[1], 2, ""},
+		{"CC-DEMO-CROSSROLE-MGR", "越权测试-经理复核中", 100, past15, "08:00-10:00", "constant", "under_review", "confirmation", userIDs[0], userIDs[1], 3, ""},
 	}
 
 	appIDs := make([]int64, len(apps))
@@ -228,6 +252,17 @@ func seedData() error {
 		{appIDs[11], userIDs[0], "submit", "draft", "pending_temp", ""},
 		{appIDs[11], userIDs[1], "allocate", "pending_temp", "under_review", "分配冷冻区A-05库位"},
 		{appIDs[11], userIDs[2], "confirm", "under_review", "completed", "确认入库完成"},
+
+		{appIDs[13], userIDs[0], "submit", "draft", "pending_temp", ""},
+		{appIDs[14], userIDs[0], "submit", "draft", "pending_temp", ""},
+		{appIDs[14], userIDs[1], "allocate", "pending_temp", "under_review", "分配恒温区C-04库位"},
+		{appIDs[15], userIDs[0], "submit", "draft", "pending_temp", ""},
+		{appIDs[15], userIDs[1], "return", "pending_temp", "pending_correction", "预计入库日期已逾期"},
+		{appIDs[17], userIDs[0], "submit", "draft", "pending_temp", ""},
+		{appIDs[17], userIDs[1], "return", "pending_temp", "pending_correction", "缺少产品基本信息"},
+		{appIDs[19], userIDs[0], "submit", "draft", "pending_temp", ""},
+		{appIDs[20], userIDs[0], "submit", "draft", "pending_temp", ""},
+		{appIDs[20], userIDs[1], "allocate", "pending_temp", "under_review", "分配恒温区C-06库位"},
 	}
 
 	for _, r := range records {
@@ -252,6 +287,14 @@ func seedData() error {
 		{appIDs[6], userIDs[2], "status_conflict", "温度区间与产品类型不匹配，需返回修正"},
 		{appIDs[8], userIDs[0], "timeout", "草稿单据超时未提交，预计入库日期已过"},
 		{appIDs[10], userIDs[1], "returned", "入库预约时间已过，需重新预约后提交"},
+
+		{appIDs[12], userIDs[0], "overdue", "草稿单据逾期未提交，预计入库日期已过60天"},
+		{appIDs[13], userIDs[1], "overdue", "待温控分配单据逾期，预计入库日期已过45天"},
+		{appIDs[14], userIDs[2], "overdue", "复核中单据逾期，预计入库日期已过30天"},
+		{appIDs[15], userIDs[0], "overdue", "待补正单据逾期，预计入库日期已过25天"},
+
+		{appIDs[16], userIDs[0], "evidence_missing", "缺少必填证据：品名/预计到期日，无法提交"},
+		{appIDs[17], userIDs[1], "evidence_missing", "待补正单据缺少必填证据：品名/数量/预计到期日"},
 	}
 
 	for _, e := range exceptions {

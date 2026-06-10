@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { listApplications, batchProcess } from '$lib/api';
-	import { STATUS_LABELS, TEMP_ZONE_LABELS } from '$lib/types';
+	import { STATUS_LABELS, TEMP_ZONE_LABELS, STATUS_COLORS, ROLE_LABELS } from '$lib/types';
 	import type { Application, BatchResultItem } from '$lib/types';
 
 	let applications: Application[] = [];
@@ -130,21 +130,26 @@
 	<div class="results-card">
 		<h3 class="card-title">处理结果</h3>
 		<div class="results-summary">
-			<span class="success-count">成功: {successCount}</span>
-			<span class="fail-count">失败: {failCount}</span>
+			<span class="success-count">✅ 成功: {successCount}</span>
+			<span class="fail-count">❌ 失败: {failCount}</span>
 		</div>
-		<table class="data-table">
-			<thead><tr><th>单号</th><th>结果</th><th>原因</th></tr></thead>
-			<tbody>
-				{#each batchResults as r}
-					<tr>
-						<td>{r.order_no}</td>
-						<td>{r.success ? '✅' : '❌'}</td>
-						<td>{r.reason || '-'}</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
+		<div class="result-list">
+			{#each batchResults as r, i}
+				<div class="result-item {r.success ? 'success' : 'fail'}">
+					<div class="result-header">
+						<span class="result-index">#{i + 1}</span>
+						<span class="result-order">{r.order_no}</span>
+						<span class="badge small" style="background:{r.success ? '#4caf50' : '#f44336'}">{r.success ? '成功' : '失败'}</span>
+						{#if r.error_code}
+							<span class="badge small error-code" style="background:#ff9800">{r.error_code}</span>
+						{/if}
+					</div>
+					{#if !r.success && r.reason}
+						<div class="result-reason">{r.reason}</div>
+					{/if}
+				</div>
+			{/each}
+		</div>
 	</div>
 {/if}
 
@@ -161,11 +166,12 @@
 					<th>数量</th>
 					<th>预计到期</th>
 					<th>状态</th>
+					<th>当前处理人</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#if applications.length === 0}
-					<tr><td colspan="6" class="empty">暂无符合条件的入库单</td></tr>
+					<tr><td colspan="7" class="empty">暂无符合条件的入库单</td></tr>
 				{/if}
 				{#each applications as app}
 					<tr>
@@ -174,7 +180,18 @@
 						<td>{app.product_name}</td>
 						<td>{app.product_count}</td>
 						<td>{app.expected_date}</td>
-						<td>{STATUS_LABELS[app.status] || app.status}</td>
+						<td><span class="badge small" style="background:{STATUS_COLORS[app.status] || '#999'}">{STATUS_LABELS[app.status] || app.status}</span></td>
+						<td>
+							{#if app.status === 'draft' || app.status === 'pending_correction'}
+								{app.creator_name || '-'}
+							{:else if app.status === 'pending_temp'}
+								{app.handler_name || '待分配'}
+							{:else if app.status === 'under_review'}
+								仓储经理
+							{:else}
+								-
+							{/if}
+						</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -281,5 +298,61 @@
 		text-align: center;
 		padding: 40px;
 		color: var(--text-light);
+	}
+	.badge {
+		display: inline-block;
+		padding: 3px 10px;
+		border-radius: 12px;
+		color: white;
+		font-size: 12px;
+		font-weight: 500;
+	}
+	.badge.small { padding: 2px 8px; font-size: 11px; }
+	.result-list {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		margin-top: 12px;
+	}
+	.result-item {
+		border-radius: 8px;
+		padding: 12px 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.result-item.success {
+		background: #f1f8e9;
+		border-left: 4px solid #4caf50;
+	}
+	.result-item.fail {
+		background: #fff8f8;
+		border-left: 4px solid #f44336;
+	}
+	.result-header {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+	.result-index {
+		font-size: 12px;
+		color: var(--text-light);
+		font-weight: 600;
+	}
+	.result-order {
+		font-size: 14px;
+		font-weight: 600;
+		color: var(--text);
+	}
+	.error-code {
+		font-family: monospace;
+		letter-spacing: 0.5px;
+	}
+	.result-reason {
+		font-size: 13px;
+		color: var(--text);
+		padding-left: 2px;
+		line-height: 1.5;
 	}
 </style>

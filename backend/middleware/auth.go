@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"database/sql"
 	"net/http"
 	"strconv"
 
@@ -8,6 +9,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+var DB *sql.DB
+
+func SetDB(db *sql.DB) {
+	DB = db
+}
 
 func RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -33,8 +40,28 @@ func RequireAuth() gin.HandlerFunc {
 			return
 		}
 
+		var dbRole string
+		err = DB.QueryRow("SELECT role FROM users WHERE id = ?", userID).Scan(&dbRole)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, models.APIError{
+				Code:    "UNAUTHORIZED",
+				Message: "用户不存在",
+			})
+			c.Abort()
+			return
+		}
+
+		if dbRole != role {
+			c.JSON(http.StatusForbidden, models.APIError{
+				Code:    "ROLE_MISMATCH",
+				Message: "角色与用户身份不匹配，请重新登录",
+			})
+			c.Abort()
+			return
+		}
+
 		c.Set("userID", userID)
-		c.Set("role", role)
+		c.Set("role", dbRole)
 		c.Next()
 	}
 }
