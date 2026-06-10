@@ -1,0 +1,20 @@
+{
+  "name": "material-change-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite dev --port 3005",
+    "build": "vite build",
+    "preview": "vite preview --port 3005"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-auto": "^3.0.0",
+    "@sveltejs/kit": "^2.0.0",
+    "@sveltejs/vite-plugin-svelte": "^3.0.0",
+    "svelte": "^4.2.7",
+    "vite": "^5.0.3"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.10"
+  }
+}
