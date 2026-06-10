@@ -10,7 +10,7 @@ from auth import verify_password, create_access_token
 from config import settings
 from database import get_db_session
 from dependencies import get_current_user
-from models import User, TransportOrder
+from models import User, TransportOrder, ExceptionReason
 from schemas import (
     LoginRequest, TokenResponse, UserOut,
     TransportOrderCreate, TransportOrderUpdate, TransportOrderOut,
@@ -120,6 +120,14 @@ class OrderController(Controller):
         service = OrderService(db)
         existing = db.query(TransportOrder).filter(TransportOrder.order_no == data.order_no).first()
         if existing:
+            service._add_exception(
+                order_id=existing.id,
+                category=ExceptionReason.CATEGORY_STATUS,
+                reason=f"重复订单号：{data.order_no} 已存在，不可重复创建",
+                reported_by=current_user.full_name,
+                node_handler=current_user.full_name
+            )
+            db.commit()
             raise ClientException(f"订单号 {data.order_no} 已存在")
         order = service.create_order(data, current_user)
         return TransportOrderOut.model_validate(order)

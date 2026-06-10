@@ -14,6 +14,9 @@ import { AuthService } from '../../services/auth.service';
       <div class="page-header">
         <h2 class="page-title">{{ pageTitle }}</h2>
         <div class="page-actions">
+          <button class="btn btn-primary" *ngIf="canCreate()" (click)="openCreateModal()">
+            + 新建订单
+          </button>
           <button class="btn btn-primary" (click)="showBatchModal = true" [disabled]="selectedIds().length === 0">
             批量处理 ({{ selectedIds().length }})
           </button>
@@ -204,6 +207,101 @@ import { AuthService } from '../../services/auth.service';
           </div>
         </div>
       </div>
+
+      <div class="modal-overlay" *ngIf="showCreateModal" (click.self)="closeCreateModal()">
+        <div class="modal-card modal-large">
+          <div class="modal-header">
+            <h3>新建运输订单</h3>
+            <button class="btn-close" (click)="closeCreateModal()">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="create-form-grid">
+              <div class="form-group">
+                <label>订单号 <span class="required">*</span></label>
+                <input type="text" [(ngModel)]="newForm.order_no" placeholder="如：YT20240601006" />
+              </div>
+              <div class="form-group">
+                <label>优先级</label>
+                <select [(ngModel)]="newForm.priority">
+                  <option value="高">高</option>
+                  <option value="中">中</option>
+                  <option value="低">低</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>责任人 <span class="required">*</span></label>
+                <select [(ngModel)]="newForm.responsible_person">
+                  <option value="张客服">张客服</option>
+                  <option value="李调度">李调度</option>
+                  <option value="王运营">王运营</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>截止时间 <span class="required">*</span></label>
+                <input type="datetime-local" [(ngModel)]="newForm.deadline" />
+              </div>
+              <div class="form-group">
+                <label>发货人名称 <span class="required">*</span></label>
+                <input type="text" [(ngModel)]="newForm.consignor_name" placeholder="如：上海XX贸易公司" />
+              </div>
+              <div class="form-group">
+                <label>发货人联系人</label>
+                <input type="text" [(ngModel)]="newForm.consignor_contact" placeholder="如：张三" />
+              </div>
+              <div class="form-group">
+                <label>发货人电话</label>
+                <input type="text" [(ngModel)]="newForm.consignor_phone" placeholder="如：13800138000" />
+              </div>
+              <div class="form-group">
+                <label>收货人名称 <span class="required">*</span></label>
+                <input type="text" [(ngModel)]="newForm.consignee_name" placeholder="如：北京XX科技公司" />
+              </div>
+              <div class="form-group">
+                <label>收货人联系人</label>
+                <input type="text" [(ngModel)]="newForm.consignee_contact" placeholder="如：李四" />
+              </div>
+              <div class="form-group">
+                <label>收货人电话</label>
+                <input type="text" [(ngModel)]="newForm.consignee_phone" placeholder="如：13900139000" />
+              </div>
+              <div class="form-group">
+                <label>货物名称 <span class="required">*</span></label>
+                <input type="text" [(ngModel)]="newForm.cargo_name" placeholder="如：电子产品" />
+              </div>
+              <div class="form-group">
+                <label>货物数量</label>
+                <input type="text" [(ngModel)]="newForm.cargo_quantity" placeholder="如：100箱" />
+              </div>
+              <div class="form-group">
+                <label>货物重量</label>
+                <input type="text" [(ngModel)]="newForm.cargo_weight" placeholder="如：500kg" />
+              </div>
+              <div class="form-group">
+                <label>货物体积</label>
+                <input type="text" [(ngModel)]="newForm.cargo_volume" placeholder="如：10m³" />
+              </div>
+              <div class="form-group">
+                <label>起运地 <span class="required">*</span></label>
+                <input type="text" [(ngModel)]="newForm.departure" placeholder="如：上海市浦东新区" />
+              </div>
+              <div class="form-group">
+                <label>目的地 <span class="required">*</span></label>
+                <input type="text" [(ngModel)]="newForm.destination" placeholder="如：北京市朝阳区" />
+              </div>
+              <div class="form-group" style="grid-column: span 2;">
+                <label>运输要求</label>
+                <textarea [(ngModel)]="newForm.transport_requirements" rows="2" placeholder="如：需恒温运输，轻拿轻放"></textarea>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn" (click)="closeCreateModal()">取消</button>
+            <button class="btn btn-primary" (click)="submitCreate()" [disabled]="createLoading()">
+              {{ createLoading() ? '提交中...' : '创建订单' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   `,
   styles: [`
@@ -268,6 +366,8 @@ import { AuthService } from '../../services/auth.service';
     .handler-cell { font-weight: 500; }
     .me-tag { color: #1677ff; font-size: 12px; margin-left: 4px; font-weight: 600; }
     .btn-link.disabled { color: #bfbfbf; cursor: not-allowed; text-decoration: none; pointer-events: none; }
+    .create-form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 20px; }
+    .required { color: #cf1322; margin-left: 2px; }
   `]
 })
 export class OrderListComponent implements OnInit, OnDestroy {
@@ -284,8 +384,36 @@ export class OrderListComponent implements OnInit, OnDestroy {
   batchLoading = signal(false);
   batchResults = signal<BatchResultItem[]>([]);
   useVersionCheck = true;
+  showCreateModal = false;
+  createLoading = signal(false);
+  newForm = this.getDefaultNewForm();
   private sub: any;
   private tab = '';
+
+  getDefaultNewForm() {
+    const now = new Date();
+    now.setDate(now.getDate() + 7);
+    const iso = now.toISOString().slice(0, 16);
+    return {
+      order_no: '',
+      priority: '中',
+      responsible_person: this.authService.currentUser()?.full_name || '张客服',
+      deadline: iso,
+      consignor_name: '',
+      consignor_contact: '',
+      consignor_phone: '',
+      consignee_name: '',
+      consignee_contact: '',
+      consignee_phone: '',
+      cargo_name: '',
+      cargo_quantity: '',
+      cargo_weight: '',
+      cargo_volume: '',
+      departure: '',
+      destination: '',
+      transport_requirements: '',
+    };
+  }
 
   constructor(
     private orderService: OrderService,
@@ -424,5 +552,74 @@ export class OrderListComponent implements OnInit, OnDestroy {
   closeResult() {
     this.showResultModal = false;
     this.batchResults.set([]);
+  }
+
+  canCreate(): boolean {
+    if (this.tab !== '') return false;
+    return this.authService.isCustomerService();
+  }
+
+  openCreateModal() {
+    this.newForm = this.getDefaultNewForm();
+    this.showCreateModal = true;
+  }
+
+  closeCreateModal() {
+    this.showCreateModal = false;
+  }
+
+  validateNewForm(): string | null {
+    if (!this.newForm.order_no.trim()) return '请填写订单号';
+    if (!this.newForm.responsible_person) return '请选择责任人';
+    if (!this.newForm.deadline) return '请选择截止时间';
+    if (!this.newForm.consignor_name.trim()) return '请填写发货人名称';
+    if (!this.newForm.consignee_name.trim()) return '请填写收货人名称';
+    if (!this.newForm.cargo_name.trim()) return '请填写货物名称';
+    if (!this.newForm.departure.trim()) return '请填写起运地';
+    if (!this.newForm.destination.trim()) return '请填写目的地';
+    return null;
+  }
+
+  submitCreate() {
+    const error = this.validateNewForm();
+    if (error) {
+      alert(error);
+      return;
+    }
+    this.createLoading.set(true);
+
+    const submitData: any = {
+      order_no: this.newForm.order_no.trim(),
+      priority: this.newForm.priority,
+      responsible_person: this.newForm.responsible_person,
+      deadline: new Date(this.newForm.deadline).toISOString(),
+    };
+    if (this.newForm.consignor_name.trim()) submitData.consignor_name = this.newForm.consignor_name.trim();
+    if (this.newForm.consignor_contact.trim()) submitData.consignor_contact = this.newForm.consignor_contact.trim();
+    if (this.newForm.consignor_phone.trim()) submitData.consignor_phone = this.newForm.consignor_phone.trim();
+    if (this.newForm.consignee_name.trim()) submitData.consignee_name = this.newForm.consignee_name.trim();
+    if (this.newForm.consignee_contact.trim()) submitData.consignee_contact = this.newForm.consignee_contact.trim();
+    if (this.newForm.consignee_phone.trim()) submitData.consignee_phone = this.newForm.consignee_phone.trim();
+    if (this.newForm.cargo_name.trim()) submitData.cargo_name = this.newForm.cargo_name.trim();
+    if (this.newForm.cargo_quantity.trim()) submitData.cargo_quantity = this.newForm.cargo_quantity.trim();
+    if (this.newForm.cargo_weight.trim()) submitData.cargo_weight = this.newForm.cargo_weight.trim();
+    if (this.newForm.cargo_volume.trim()) submitData.cargo_volume = this.newForm.cargo_volume.trim();
+    if (this.newForm.departure.trim()) submitData.departure = this.newForm.departure.trim();
+    if (this.newForm.destination.trim()) submitData.destination = this.newForm.destination.trim();
+    if (this.newForm.transport_requirements.trim()) submitData.transport_requirements = this.newForm.transport_requirements.trim();
+
+    this.orderService.createOrder(submitData).subscribe({
+      next: order => {
+        this.createLoading.set(false);
+        this.showCreateModal = false;
+        alert('订单创建成功，即将跳转详情页上传证据');
+        this.loadOrders();
+        this.router.navigate(['/orders', order.id]);
+      },
+      error: err => {
+        this.createLoading.set(false);
+        alert('创建失败：' + (err?.error?.detail || err?.message || '未知错误'));
+      }
+    });
   }
 }

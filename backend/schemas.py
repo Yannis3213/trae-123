@@ -111,18 +111,18 @@ class TransportOrderBase(BaseModel):
     priority: str = "中"
     responsible_person: str
     deadline: datetime
-    consignor_name: Optional[str] = None
+    consignor_name: str
     consignor_contact: Optional[str] = None
     consignor_phone: Optional[str] = None
-    consignee_name: Optional[str] = None
+    consignee_name: str
     consignee_contact: Optional[str] = None
     consignee_phone: Optional[str] = None
-    cargo_name: Optional[str] = None
+    cargo_name: str
     cargo_weight: Optional[str] = None
     cargo_volume: Optional[str] = None
     cargo_quantity: Optional[str] = None
-    departure: Optional[str] = None
-    destination: Optional[str] = None
+    departure: str
+    destination: str
     transport_requirements: Optional[str] = None
     vehicle_plate: Optional[str] = None
     vehicle_type: Optional[str] = None

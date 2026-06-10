@@ -183,7 +183,7 @@ class OrderService:
             priority=data.priority,
             responsible_person=data.responsible_person,
             deadline=data.deadline,
-            current_handler="客服专员",
+            current_handler=current_user.full_name,
             consignor_name=data.consignor_name,
             consignor_contact=data.consignor_contact,
             consignor_phone=data.consignor_phone,
@@ -214,13 +214,13 @@ class OrderService:
 
         self._add_processing_record(
             order_id=order.id,
-            action=ProcessingRecord.ACTION_SUBMIT,
+            action=ProcessingRecord.ACTION_SAVE,
             operator=current_user.full_name,
             operator_role=current_user.role,
             previous_status=None,
             new_status=TransportOrder.STATUS_PENDING_CORRECTION,
             remark="创建运输订单",
-            evidence_summary="订单初始化"
+            evidence_summary="待上传运输委托单"
         )
 
         self.db.commit()
