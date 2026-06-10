@@ -44,6 +44,7 @@ class OrderAction(BaseModel):
 class BatchAction(BaseModel):
     action: str
     order_ids: List[int]
+    order_versions: dict
     opinion: Optional[str] = None
 
 
@@ -124,6 +125,8 @@ class ExceptionReasonOut(BaseModel):
 class BatchResultItem(BaseModel):
     order_id: int
     order_no: str
+    from_status: Optional[str] = None
+    to_status: Optional[str] = None
     success: bool
     message: str
     error_code: Optional[str] = None

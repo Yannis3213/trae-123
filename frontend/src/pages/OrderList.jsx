@@ -80,11 +80,16 @@ const OrderList = (props) => {
       setError('请选择批量操作')
       return
     }
+    const versions = {}
+    orders().forEach(o => {
+      if (selectedIds().has(o.id)) versions[o.id] = o.version
+    })
     setError('')
     try {
       const result = await api.post('/api/orders/batch', {
         action: batchAction(),
         order_ids: Array.from(selectedIds()),
+        order_versions: versions,
         opinion: batchOpinion(),
       })
       setBatchResult(result)
@@ -126,11 +131,19 @@ const OrderList = (props) => {
             <For each={batchResult().items}>
               {(item) => (
                 <div class={`batch-item ${item.success ? 'success' : 'failed'}`}>
-                  <span>📋 {item.order_no}</span>
+                  <span>
+                    📋 {item.order_no}
+                    {item.from_status && (
+                      <span style="margin-left:8px;font-size:12px;color:#64748b;">
+                        [{StatusNames[item.from_status] || item.from_status}
+                        {item.to_status && item.success ? ` → ${StatusNames[item.to_status] || item.to_status}` : ''}]
+                      </span>
+                    )}
+                  </span>
                   <span>
                     {item.success ? '✅ ' : '❌ '}
                     {item.message}
-                    {item.error_code ? ` (${item.error_code})` : ''}
+                    {item.error_code ? <code style="margin-left:6px;">[{item.error_code}]</code> : ''}
                   </span>
                 </div>
               )}

@@ -477,6 +477,7 @@ async def batch_process(request: Request):
     user = request.state.user
     body = await request.json()
     data = BatchAction(**body)
+    order_versions = data.order_versions or {}
 
     try:
         action = Action(data.action)
@@ -500,16 +501,32 @@ async def batch_process(request: Request):
                 continue
             order_info = dict(row)
 
+            submitted_version = order_versions.get(str(order_id)) or order_versions.get(order_id)
+            if submitted_version is None:
+                failed_count += 1
+                add_audit_note(
+                    conn, order_id, "intercept",
+                    f"批量操作拦截[{ACTION_NAMES.get(action, action)}]：缺少版本号参数，请刷新列表后重试",
+                    user["name"], user["role"],
+                )
+                results.append(BatchResultItem(
+                    order_id=order_id, order_no=order_info["order_no"],
+                    from_status=order_info["status"],
+                    success=False,
+                    message="缺少版本号参数，请刷新列表后重试",
+                    error_code=ExceptionCode.VERSION_CONFLICT,
+                ))
+                continue
+
             try:
                 full_row = conn.execute("SELECT * FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
                 order = dict(full_row)
                 to_status = action_to_status(action, order["status"])
 
-                validate_role_action(user, action)
-                validate_handler(user, order)
-                if to_status and to_status != order["status"]:
-                    validate_status_transition(OrderStatus(order["status"]), to_status)
-                validate_evidence(order_id, to_status, conn, None)
+                validate_all(
+                    conn, user, order, action, submitted_version, to_status,
+                    uploaded_attachment_ids=None, check_duplicate=True,
+                )
 
                 ev_attachments = count_attachments(conn, order_id)
 
@@ -541,9 +558,17 @@ async def batch_process(request: Request):
                     ev_attachments, order["version"] + 1,
                 )
 
+                add_audit_note(
+                    conn, order_id, "action",
+                    f"批量执行[{ACTION_NAMES.get(action, action)}]：{data.opinion or '无意见'}",
+                    user["name"], user["role"],
+                )
+
                 success_count += 1
                 results.append(BatchResultItem(
                     order_id=order_id, order_no=order_info["order_no"],
+                    from_status=order["status"],
+                    to_status=to_status.value if to_status else order["status"],
                     success=True, message="操作成功",
                 ))
 
@@ -551,17 +576,24 @@ async def batch_process(request: Request):
                 failed_count += 1
                 add_audit_note(
                     conn, order_id, "intercept",
-                    f"批量操作拦截[{ACTION_NAMES.get(action, action)}]：{e.message}",
+                    f"批量操作拦截[{ACTION_NAMES.get(action, action)}][v{submitted_version}→v{order_info['version']}]：{e.message}",
                     user["name"], user["role"],
                 )
                 results.append(BatchResultItem(
                     order_id=order_id, order_no=order_info["order_no"],
+                    from_status=order_info["status"],
                     success=False, message=e.message, error_code=e.code,
                 ))
             except Exception as e:
                 failed_count += 1
+                add_audit_note(
+                    conn, order_id, "intercept",
+                    f"批量操作未知错误[{ACTION_NAMES.get(action, action)}]：{str(e)}",
+                    user["name"], user["role"],
+                )
                 results.append(BatchResultItem(
                     order_id=order_id, order_no=order_info["order_no"],
+                    from_status=order_info.get("status"),
                     success=False, message=str(e), error_code="unknown",
                 ))
 

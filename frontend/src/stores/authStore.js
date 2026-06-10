@@ -38,10 +38,13 @@ export const useAuth = () => {
   const getRoleName = () => RoleNames[user()?.role] || ''
   const getResponsibility = () => RoleResponsibility[user()?.role] || ''
 
+  const role = () => user()?.role
+
   return {
     user,
     users,
     setUser,
+    role,
     switchRole,
     isRole,
     isRegistrar,
