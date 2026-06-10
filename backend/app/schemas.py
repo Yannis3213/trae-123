@@ -183,6 +183,7 @@ class FreshPurchaseOrderOut(FreshPurchaseOrderBase):
     created_at: datetime
     updated_at: datetime
     closed_at: Optional[datetime] = None
+    exception_types: List[str] = []
     attachments: List[AttachmentOut] = []
     processing_records: List[ProcessingRecordOut] = []
     audit_notes: List[AuditNoteOut] = []

@@ -7,6 +7,7 @@ import {
   PRIORITY_LABELS, PRIORITY_COLORS,
   WARNING_LABELS, WARNING_COLORS,
   ROLE_LABELS,
+  EXCEPTION_TYPE_LABELS, EXCEPTION_TYPE_COLORS,
   type FreshPurchaseOrder,
   type PurchaseStatus,
   type PriorityLevel,
@@ -302,10 +303,22 @@ export default function OrderListIsland() {
                   )}
                 </td>
                 <td>
-                  {o.has_exception ? (
-                    <span class="tag tag-exception" title={o.exception_reason || ""}>
-                      ⚠️ 异常
-                    </span>
+                  {o.exception_types && o.exception_types.length > 0 ? (
+                    <div style="display:flex;flex-direction:column;gap:4px;min-width:160px">
+                      {o.exception_types.slice(0, 3).map((et) => (
+                        <span
+                          key={et}
+                          class="tag"
+                          style={`background:${EXCEPTION_TYPE_COLORS[et] || "#be123c"}20;color:${EXCEPTION_TYPE_COLORS[et] || "#be123c"};font-size:11px;padding:2px 6px`}
+                          title={o.exception_reason || EXCEPTION_TYPE_LABELS[et] || et}
+                        >
+                          {EXCEPTION_TYPE_LABELS[et] || et}
+                        </span>
+                      ))}
+                      {o.exception_types.length > 3 && (
+                        <span class="muted" style="font-size:11px">+{o.exception_types.length - 3} 更多</span>
+                      )}
+                    </div>
                   ) : (
                     <span class="muted">-</span>
                   )}

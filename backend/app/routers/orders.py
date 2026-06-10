@@ -27,6 +27,17 @@ from ..permissions import (
 )
 
 
+def attach_exception_types(order: FreshPurchaseOrder) -> None:
+    seen = set()
+    result: list[str] = []
+    for r in order.processing_records:
+        et = getattr(r, "exception_type", None)
+        if et and et not in seen:
+            seen.add(et)
+            result.append(et)
+    order.exception_types = result
+
+
 def build_visible_query(db: Session, user: User):
     query = db.query(FreshPurchaseOrder)
     if user.role == UserRole.REGISTRAR:
@@ -129,6 +140,9 @@ async def list_orders(
             WarningLevel.OVERDUE.value: warning_query.filter(FreshPurchaseOrder.warning_level == WarningLevel.OVERDUE).count(),
         }
 
+        for o in orders:
+            attach_exception_types(o)
+
         return FreshPurchaseOrderListResponse(
             total=total,
             items=[FreshPurchaseOrderOut.model_validate(o) for o in orders],
@@ -175,6 +189,7 @@ async def get_order(connection: ASGIConnection, order_id: int) -> FreshPurchaseO
             raise NotAuthorizedException("无权查看此单据")
 
         db.refresh(order)
+        attach_exception_types(order)
         return FreshPurchaseOrderOut.model_validate(order)
     finally:
         db.close()
@@ -222,6 +237,7 @@ async def create_order(connection: ASGIConnection, data: FreshPurchaseOrderCreat
         db.add(audit)
         db.commit()
         db.refresh(order)
+        attach_exception_types(order)
 
         return FreshPurchaseOrderOut.model_validate(order)
     finally:
@@ -263,6 +279,7 @@ async def update_order(
 
         db.commit()
         db.refresh(order)
+        attach_exception_types(order)
         return FreshPurchaseOrderOut.model_validate(order)
     finally:
         db.close()
@@ -380,6 +397,7 @@ async def transition_status(
 
         db.commit()
         db.refresh(order)
+        attach_exception_types(order)
         return FreshPurchaseOrderOut.model_validate(order)
     finally:
         db.close()

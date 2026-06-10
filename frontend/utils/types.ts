@@ -98,6 +98,7 @@ export interface FreshPurchaseOrder {
   has_exception: boolean;
   exception_reason: string | null;
   reject_reason: string | null;
+  exception_types: string[];
   version: number;
   created_at: string;
   updated_at: string;

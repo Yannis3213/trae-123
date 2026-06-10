@@ -351,10 +351,24 @@ export default function OrderDetailIsland({ orderId }: Props) {
                 <pre class="content-text">{order.arrival_verification || "（暂无内容）"}</pre>
               </div>
 
-              {(order.has_exception || order.reject_reason || order.exception_reason) && (
+              {((order.has_exception || order.reject_reason || order.exception_reason)
+                || (order.exception_types && order.exception_types.length > 0)) && (
                 <>
                   <h3 class="section-title" style="margin-top:24px;color:#991b1b">⚠️ 异常 / 退回原因</h3>
                   <div class="alert alert-error">
+                    {order.exception_types && order.exception_types.length > 0 && (
+                      <div style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px">
+                        {order.exception_types.map((et) => (
+                          <span
+                            key={et}
+                            class="tag"
+                            style={`background:${EXCEPTION_TYPE_COLORS[et] || "#be123c"}25;color:${EXCEPTION_TYPE_COLORS[et] || "#be123c"}`}
+                          >
+                            {EXCEPTION_TYPE_LABELS[et] || et}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {order.reject_reason && (
                       <div style="margin-bottom:8px">
                         <b>退回原因：</b>{order.reject_reason}

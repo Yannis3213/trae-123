@@ -214,6 +214,7 @@ def add_processing_record(
         result=result,
         comment=comment,
         exception_reason=exception_reason or exception_label,
+        exception_type=exception_type,
         evidence_checked=evidence_checked,
         timestamp=datetime.utcnow()
     )
