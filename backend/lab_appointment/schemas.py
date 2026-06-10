@@ -103,7 +103,7 @@ class AppointmentBase(BaseModel):
 
 
 class AppointmentIn(AppointmentBase):
-    version: int = 1
+    version: Optional[int] = None
     opinion: str = ''
     comment: str = ''
     audit_note: str = ''

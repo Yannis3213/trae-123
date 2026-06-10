@@ -110,9 +110,12 @@
           versionMap[o.id] = o.version;
           opinionMap[o.id] = batchForm.opinion;
           auditNoteMap[o.id] = batchForm.audit_note;
-          if (batchForm.exception_type && batchForm.exception_desc) {
+          if (batchForm.exception_type) {
             excTypeMap[o.id] = batchForm.exception_type;
-            excDescMap[o.id] = batchForm.exception_desc;
+          }
+          const fallbackDesc = batchForm.exception_desc || batchForm.comment || '';
+          if (fallbackDesc) {
+            excDescMap[o.id] = fallbackDesc;
           }
         }
       }
