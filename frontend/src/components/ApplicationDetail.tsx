@@ -103,8 +103,25 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
   const needsResult = selectedAction === 'sign' || selectedAction === 'complete' || selectedAction === 'archive';
   const needsReturnReason = selectedAction === 'return';
 
-  const evidenceAttachments = detail.attachments.filter((a) => a.is_evidence);
-  const hasValidEvidence = evidenceAttachments.length > 0;
+  const returnRecords = detail.processing_records.filter(
+    (r) => r.action === 'return' && (r.to_status === 'exception_returned' || r.to_status === 'correction_pending')
+  );
+  const correctionDeadline = returnRecords.length > 0
+    ? returnRecords.map((r) => new Date(r.processed_at).getTime()).reduce((a, b) => Math.min(a, b), Infinity)
+    : null;
+
+  const classifyAttachment = (a: any): 'regular' | 'pseudo' | 'effective' => {
+    if (!a.is_evidence) return 'regular';
+    if (correctionDeadline === null) return 'effective';
+    return new Date(a.uploaded_at).getTime() > correctionDeadline ? 'effective' : 'pseudo';
+  };
+
+  const regularAttachments = detail.attachments.filter((a) => classifyAttachment(a) === 'regular');
+  const pseudoAttachments = detail.attachments.filter((a) => classifyAttachment(a) === 'pseudo');
+  const effectiveAttachments = detail.attachments.filter((a) => classifyAttachment(a) === 'effective');
+  const evidenceAttachments = effectiveAttachments;
+
+  const hasValidEvidence = effectiveAttachments.length > 0;
   const isCorrectionStatus = app.status === 'exception_returned' || app.status === 'correction_pending';
   const canCorrect = hasValidEvidence;
   const needsEvidenceAlert = selectedAction === 'correct' && !canCorrect;
@@ -197,23 +214,35 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
                 <>
                   <span style={{ fontSize: '20px' }}>✅</span>
                   <strong style={{ color: '#065f46' }}>
-                    已具备 {evidenceAttachments.length} 份有效补正证据（is_evidence=true，已持久化至 SQLite 可追溯）
+                    已具备 {effectiveAttachments.length} 份有效补正证据
                   </strong>
                   <span style={{ color: '#059669' }}>
-                    — 可提交补正，所有证据、处理记录、异常原因将写回同一申请轨迹
+                    — 退回时刻({correctionDeadline ? formatDate(new Date(correctionDeadline).toISOString()) : '-'})之后上传的 is_evidence=true 附件，已持久化至 SQLite
                   </span>
                 </>
               ) : (
                 <>
                   <span style={{ fontSize: '20px' }}>❌</span>
                   <strong style={{ color: '#991b1b' }}>
-                    缺少有效补正证据 — 请先在下方「附件」区上传补正文件
+                    缺少有效补正证据
                   </strong>
                   <span style={{ color: '#b91c1c' }}>
-                    (异常回传/待补正状态下上传的附件会自动标记 is_evidence=true)
+                    — 需在下方「附件」区上传补正文件（退回时刻之后上传，系统自动标记 is_evidence=true）
                   </span>
                 </>
               )}
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '13px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+              <span>📊 附件统计：</span>
+              <span style={{ color: '#6b7280' }}>普通附件 {regularAttachments.length} 份</span>
+              <span style={{ color: '#c2410c' }}>
+                ⚠️ 历史伪证据 {pseudoAttachments.length} 份
+                {pseudoAttachments.length > 0 && '（退回前上传的 is_evidence=true 附件，不计入有效证据）'}
+              </span>
+              <span style={{ color: '#059669' }}>✅ 有效补正证据 {effectiveAttachments.length} 份</span>
+              <span style={{ color: '#374151' }}>
+                可办理人：{getUserName(app.current_handler)}（当前处理人）/ {getUserName(app.created_by)}（创建人）/ {getUserName(app.responsible_person)}（责任人）
+              </span>
             </div>
           </div>
         )}
@@ -223,34 +252,55 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
           <div style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '16px' }}>暂无附件</div>
         ) : (
           <div style={{ marginBottom: '16px' }}>
-            {detail.attachments.map((a) => (
-              <div
-                key={a.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '8px 12px',
-                  background: a.is_evidence ? '#fef3c7' : '#f9fafb',
-                  borderRadius: '6px',
-                  marginBottom: '6px',
-                  fontSize: '14px',
-                }}
-              >
-                📎 <strong>{a.file_name}</strong>
-                {a.is_evidence && (
+            {detail.attachments.map((a) => {
+              const kind = classifyAttachment(a);
+              const bg = kind === 'effective' ? '#ecfdf5'
+                : kind === 'pseudo' ? '#fff7ed'
+                : '#f9fafb';
+              const tagBg = kind === 'effective' ? '#059669'
+                : kind === 'pseudo' ? '#c2410c'
+                : '#6b7280';
+              const tagText = kind === 'effective' ? '✅ 有效补正证据'
+                : kind === 'pseudo' ? '⚠️ 历史伪证据(退回前上传，无效)'
+                : '普通附件';
+              return (
+                <div
+                  key={a.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '8px 12px',
+                    background: bg,
+                    borderRadius: '6px',
+                    marginBottom: '6px',
+                    fontSize: '14px',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  📎 <strong>{a.file_name}</strong>
                   <span
-                    className="tag tag-red"
-                    style={{ background: '#b45309', color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}
+                    className="tag"
+                    style={{ background: tagBg, color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}
                   >
-                    补正证据(SQLite可追溯)
+                    {tagText}
                   </span>
-                )}
-                <span style={{ color: '#6b7280', fontSize: '12px' }}>
-                  由 {getUserName(a.uploaded_by)} 于 {formatDate(a.uploaded_at)} 上传
-                </span>
-              </div>
-            ))}
+                  <span style={{ color: '#6b7280', fontSize: '12px' }}>
+                    由 {getUserName(a.uploaded_by)} 于 {formatDate(a.uploaded_at)} 上传
+                  </span>
+                  {kind === 'pseudo' && correctionDeadline && (
+                    <span style={{ color: '#9a3412', fontSize: '12px' }}>
+                      （早于退回时刻 {formatDate(new Date(correctionDeadline).toISOString())}）
+                    </span>
+                  )}
+                  {kind === 'effective' && a.file_content_base64 && (
+                    <span style={{ color: '#065f46', fontSize: '12px' }}>
+                      （file_content_base64 已持久化至 SQLite，可追溯）
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
         <AttachmentUploader
@@ -326,9 +376,19 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
                 )}
                 {needsEvidenceAlert && (
                   <div style={{ padding: '10px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '13px', marginBottom: '10px' }}>
-                    ⚠️ 补正操作必须具备 <strong>is_evidence=true</strong> 的有效附件。
-                    当前共有 {detail.attachments.length} 份附件，其中 {evidenceAttachments.length} 份为有效补正证据。
-                    请在「异常回传 / 待补正」状态下通过上方附件上传区上传补正文件（系统将自动标记为补正证据并持久化至 SQLite）。
+                    <div><strong>⚠️ 补正证据校验失败</strong></div>
+                    <div>
+                      共 {detail.attachments.length} 份附件：普通附件 {regularAttachments.length} 份、
+                      <span style={{ color: '#9a3412' }}>历史伪证据 {pseudoAttachments.length} 份（退回前上传，不计入有效证据）</span>、
+                      <span style={{ color: '#059669' }}>有效补正证据 {effectiveAttachments.length} 份</span>
+                    </div>
+                    {correctionDeadline && (
+                      <div>
+                        退回时刻：<strong>{formatDate(new Date(correctionDeadline).toISOString())}</strong>
+                        — 必须在此时间之后上传 is_evidence=true 附件才可提交补正。
+                      </div>
+                    )}
+                    <div>请在下方附件上传区上传补正文件（异常回传/待补正状态下系统自动标记为有效证据并持久化 base64 至 SQLite）。</div>
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '10px' }}>

@@ -54,10 +54,13 @@ export default function BatchProcessPanel({ users }: BatchProcessPanelProps) {
       return { label: '版本冲突', color: '#ea580c', detail: '数据已被其他用户更新，请刷新页面后重试。后端使用乐观锁 version 字段拦截并发修改。' };
     }
     if (msg.includes('越权') || msg.includes('无权') || msg.includes('权限') || msg.includes('permission')) {
-      return { label: '越权操作', color: '#dc2626', detail: '当前账号不是该单据的处理人，或角色不在动作白名单内。请切换到正确账号后办理。' };
+      return { label: '越权操作', color: '#dc2626', detail: '当前账号不是该单据的处理人，或角色不在动作白名单内。可办理人：当前处理人 / 创建人 / 责任人。请切换到正确账号后办理。' };
+    }
+    if (msg.includes('伪证据') || (msg.includes('证据') && msg.includes('退回'))) {
+      return { label: '历史伪证据无效', color: '#c2410c', detail: msg + ' — 必须在退回时刻之后重新上传 is_evidence=true 的附件作为补正证据。请进入详情页查看附件分类并重新上传。' };
     }
     if (msg.includes('证据') || msg.includes('材料') || msg.includes('附件') || msg.includes('必填')) {
-      return { label: '缺材料', color: '#b45309', detail: '该操作要求上传附件或填写办理结果作为必填证据。请进入详情页补正后再试。' };
+      return { label: '缺材料', color: '#b45309', detail: '该操作要求上传附件或填写办理结果作为必填证据。补正动作还要求证据在退回时刻之后上传。请进入详情页补正后再试。' };
     }
     if (msg.includes('逾期') || msg.includes('overdue') || msg.includes('截止')) {
       return { label: '已逾期', color: '#991b1b', detail: '单据已超过截止时间，批量处理被自动拦截。请进入详情页逐条处理，留下补正动作与异常原因。' };
@@ -85,8 +88,11 @@ export default function BatchProcessPanel({ users }: BatchProcessPanelProps) {
     setSelectedIds(next);
   };
 
+  const isRowSelectable = (a: ReplenishmentApplication) =>
+    !a.is_overdue && a.status !== 'exception_returned';
+
   const toggleSelectAll = () => {
-    const selectable = apps.filter((a) => !a.is_overdue);
+    const selectable = apps.filter(isRowSelectable);
     if (selectedIds.size === selectable.length) setSelectedIds(new Set());
     else setSelectedIds(new Set(selectable.map((a) => a.id)));
   };
@@ -123,8 +129,9 @@ export default function BatchProcessPanel({ users }: BatchProcessPanelProps) {
     }
   };
 
-  const selectableApps = apps.filter((a) => !a.is_overdue);
+  const selectableApps = apps.filter(isRowSelectable);
   const overdueApps = apps.filter((a) => a.is_overdue);
+  const blockedEvidenceApps = apps.filter((a) => a.status === 'exception_returned');
 
   return (
     <div>
@@ -268,7 +275,30 @@ export default function BatchProcessPanel({ users }: BatchProcessPanelProps) {
             <ul style={{ margin: '8px 0 0 20px' }}>
               {overdueApps.map((a) => (
                 <li key={a.id}>
-                  <strong>{a.application_no}</strong> — {a.title}（{a.store_name}）
+                  <strong>{a.application_no}</strong> — {a.title}（{a.store_name}，当前处理人：{getUserName(a.current_handler)}）
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {blockedEvidenceApps.length > 0 && (
+          <div
+            style={{
+              padding: '12px 16px',
+              background: '#fff7ed',
+              color: '#9a3412',
+              borderRadius: '6px',
+              marginBottom: '16px',
+              fontSize: '14px',
+            }}
+          >
+            ⚠️ 以下 {blockedEvidenceApps.length} 条单据为「异常回传」状态且缺少有效补正证据，不可批量推进：
+            <ul style={{ margin: '8px 0 0 20px' }}>
+              {blockedEvidenceApps.map((a) => (
+                <li key={a.id}>
+                  <strong>{a.application_no}</strong> — {a.title}（{a.store_name}，当前处理人：{getUserName(a.current_handler)}）
+                  — 需进入详情页上传退回时刻之后的 is_evidence=true 附件作为有效补正证据
                 </li>
               ))}
             </ul>
@@ -291,8 +321,10 @@ export default function BatchProcessPanel({ users }: BatchProcessPanelProps) {
                 <th>门店</th>
                 <th>标题</th>
                 <th>责任人</th>
+                <th>当前处理人</th>
                 <th>优先级</th>
                 <th>状态</th>
+                <th>异常标签</th>
                 <th>截止时间</th>
                 <th>预警</th>
                 <th>版本</th>
@@ -301,56 +333,82 @@ export default function BatchProcessPanel({ users }: BatchProcessPanelProps) {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={10} className="empty-state">
+                  <td colSpan={12} className="empty-state">
                     <span className="spinner" /> 加载中...
                   </td>
                 </tr>
               ) : apps.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="empty-state">
+                  <td colSpan={12} className="empty-state">
                     暂无可批量处理的单据
                   </td>
                 </tr>
               ) : (
-                apps.map((app) => (
-                  <tr key={app.id}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(app.id)}
-                        onChange={() => toggleSelect(app.id)}
-                        disabled={app.is_overdue}
-                        style={{ minWidth: 'auto' }}
-                      />
-                    </td>
-                    <td>
-                      <strong>{app.application_no}</strong>
-                    </td>
-                    <td>{app.store_name}</td>
-                    <td>{app.title}</td>
-                    <td>{getUserName(app.responsible_person)}</td>
-                    <td>
-                      <span
-                        className="priority-dot"
-                        style={{ background: PRIORITY_COLOR[app.priority] }}
-                      />
-                      {PRIORITY_DISPLAY[app.priority]}
-                    </td>
-                    <td>
-                      <span
-                        className="status-badge"
-                        style={{ background: STATUS_COLOR[app.status] }}
-                      >
-                        {STATUS_DISPLAY[app.status]}
-                      </span>
-                    </td>
-                    <td>{new Date(app.deadline).toLocaleString('zh-CN')}</td>
-                    <td className={app.is_overdue ? 'warning-overdue' : app.is_near_deadline ? 'warning-near' : 'warning-normal'}>
-                      {app.is_overdue ? '已逾期（拦截）' : app.is_near_deadline ? '临近截止' : '正常'}
-                    </td>
-                    <td>v{app.version}</td>
-                  </tr>
-                ))
+                apps.map((app) => {
+                  const blockedForEvidence = app.status === 'exception_returned';
+                  const rowDisabled = app.is_overdue || blockedForEvidence;
+                  return (
+                    <tr key={app.id} style={{ background: rowDisabled ? '#fff7ed' : undefined }}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(app.id)}
+                          onChange={() => toggleSelect(app.id)}
+                          disabled={rowDisabled}
+                          style={{ minWidth: 'auto' }}
+                          title={
+                            app.is_overdue ? '已逾期，批量处理自动拦截'
+                            : blockedForEvidence ? '异常回传单需先在详情页补正有效证据，不可批量推进'
+                            : ''
+                          }
+                        />
+                      </td>
+                      <td>
+                        <strong>{app.application_no}</strong>
+                      </td>
+                      <td>{app.store_name}</td>
+                      <td>{app.title}</td>
+                      <td>{getUserName(app.responsible_person)}</td>
+                      <td>
+                        <strong>{getUserName(app.current_handler)}</strong>
+                      </td>
+                      <td>
+                        <span
+                          className="priority-dot"
+                          style={{ background: PRIORITY_COLOR[app.priority] }}
+                        />
+                        {PRIORITY_DISPLAY[app.priority]}
+                      </td>
+                      <td>
+                        <span
+                          className="status-badge"
+                          style={{ background: STATUS_COLOR[app.status] }}
+                        >
+                          {STATUS_DISPLAY[app.status]}
+                        </span>
+                      </td>
+                      <td>
+                        {app.exception_tags.length === 0 ? (
+                          <span style={{ color: '#9ca3af' }}>无</span>
+                        ) : (
+                          app.exception_tags.map((t, i) => (
+                            <span key={i} className={`tag ${t.includes('逾期') || t.includes('异常') ? 'tag-red' : 'tag-blue'}`} style={{ marginRight: '4px' }}>
+                              {t}
+                            </span>
+                          ))
+                        )}
+                      </td>
+                      <td>{new Date(app.deadline).toLocaleString('zh-CN')}</td>
+                      <td className={app.is_overdue ? 'warning-overdue' : app.is_near_deadline ? 'warning-near' : 'warning-normal'}>
+                        {app.is_overdue ? '已逾期' : app.is_near_deadline ? '临近截止' : '正常'}
+                        {blockedForEvidence && !app.is_overdue && (
+                          <span style={{ color: '#9a3412', marginLeft: '4px' }}>（缺补正证据）</span>
+                        )}
+                      </td>
+                      <td>v{app.version}</td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

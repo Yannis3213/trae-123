@@ -184,10 +184,37 @@ impl WorkflowService {
         }
     }
 
+    pub fn find_correction_deadline(
+        records: &[ProcessingRecord],
+    ) -> Option<DateTime<Utc>> {
+        records
+            .iter()
+            .filter(|r| r.action == "return"
+                && (r.to_status == ApplicationStatus::ExceptionReturned
+                    || r.to_status == ApplicationStatus::CorrectionPending))
+            .map(|r| r.processed_at)
+            .min()
+    }
+
+    pub fn effective_correction_evidence<'a>(
+        attachments: &'a [Attachment],
+        records: &[ProcessingRecord],
+    ) -> Vec<&'a Attachment> {
+        if let Some(deadline) = Self::find_correction_deadline(records) {
+            attachments
+                .iter()
+                .filter(|a| a.is_evidence && a.uploaded_at > deadline)
+                .collect()
+        } else {
+            attachments.iter().filter(|a| a.is_evidence).collect()
+        }
+    }
+
     pub fn validate_evidence_for_action(
         action: &str,
         req: &ProcessRequest,
         attachments: &[Attachment],
+        records: &[ProcessingRecord],
     ) -> AppResult<()> {
         match action {
             "sign" | "complete" => {
@@ -201,11 +228,18 @@ impl WorkflowService {
                 }
             }
             "correct" => {
-                let evidence_atts: Vec<&Attachment> = attachments.iter().filter(|a| a.is_evidence).collect();
+                let evidence_atts = Self::effective_correction_evidence(attachments, records);
+                let deadline = Self::find_correction_deadline(records);
                 if evidence_atts.is_empty() {
-                    return Err(AppError::MissingEvidence(
-                        "补正必须上传 is_evidence=true 的有效附件（需在异常回传或待补正状态下上传的附件）".into()
-                    ));
+                    let msg = match deadline {
+                        Some(d) => format!(
+                            "补正必须上传退回时间({})之后的 is_evidence=true 附件，当前 {} 份 is_evidence 附件均早于退回时刻（历史伪证据无效）",
+                            d.format("%Y-%m-%d %H:%M:%S"),
+                            attachments.iter().filter(|a| a.is_evidence).count()
+                        ),
+                        None => "补正必须上传 is_evidence=true 的有效附件".into(),
+                    };
+                    return Err(AppError::MissingEvidence(msg));
                 }
             }
             "archive" => {
@@ -262,7 +296,8 @@ impl ApplicationService {
         }
 
         let attachments = AttachmentDao::list_by_application(pool, &app.id)?;
-        if let Err(e) = WorkflowService::validate_evidence_for_action(&req.action, &req, &attachments)
+        let records = ProcessingRecordDao::list_by_application(pool, &app.id)?;
+        if let Err(e) = WorkflowService::validate_evidence_for_action(&req.action, &req, &attachments, &records)
         {
             TraceService::log_exception(
                 pool,
@@ -610,10 +645,36 @@ impl SeedService {
             };
             ApplicationDao::create(pool, &app)?;
 
-            if id == "app5" {
-                for (aid, fname, ftype, by, is_ev, content) in vec![
-                    ("att1-app5", "补货清单.xlsx", "application/vnd.ms-excel", "u4", false, None),
-                    ("att2-app5", "库存明细补正.jpg", "image/jpeg", "u4", true, Some("SGVsbG8gV29ybGQgQmFzZTY0IENvbnRlbnQgZm9yIEFwcDU=".into())),
+            if id == "app2" {
+                for (aid, fname, ftype, by, is_ev, content, uploaded_at) in vec![
+                    ("att1-app2", "补货清单.xlsx", "application/vnd.ms-excel", "u1", false, None, now - Duration::hours(5)),
+                    ("att2-app2", "库存照片.jpg", "image/jpeg", "u1", false, None, now - Duration::hours(5)),
+                    ("att3-app2", "旧库存明细(退回前上传).jpg", "image/jpeg", "u1", true, Some("T2xkIFBzZXVkbyBFdmlkZW5jZQ==".into()), now - Duration::hours(5)),
+                ] {
+                    AttachmentDao::create(pool, &Attachment {
+                        id: aid.into(),
+                        application_id: "app2".into(),
+                        file_name: fname.into(),
+                        file_type: ftype.into(),
+                        uploaded_by: by.into(),
+                        uploaded_at,
+                        is_evidence: is_ev,
+                        file_content_base64: content,
+                    })?;
+                }
+                crate::dao::AuditNoteDao::create(pool, &crate::models::AuditNote {
+                    id: "note-app2".into(),
+                    application_id: "app2".into(),
+                    author_id: "u2".into(),
+                    author_name: "李督导".into(),
+                    note: "退回前上传的 is_evidence=true 附件视为历史伪证据，必须在退回时刻之后重新上传补正证据才能提交补正。".into(),
+                    created_at: now - Duration::hours(2),
+                })?;
+            } else if id == "app5" {
+                for (aid, fname, ftype, by, is_ev, content, uploaded_at) in vec![
+                    ("att1-app5", "补货清单.xlsx", "application/vnd.ms-excel", "u4", false, None, now - Duration::hours(6)),
+                    ("att2-app5", "退回前伪证据.jpg", "image/jpeg", "u4", true, Some("UGhvdG8gYmVmb3JlIHJldHVybg==".into()), now - Duration::hours(6)),
+                    ("att3-app5", "库存明细补正.jpg", "image/jpeg", "u4", true, Some("SGVsbG8gV29ybGQgQmFzZTY0IENvbnRlbnQgZm9yIEFwcDU=".into()), now - Duration::hours(1)),
                 ] {
                     AttachmentDao::create(pool, &Attachment {
                         id: aid.into(),
@@ -621,11 +682,19 @@ impl SeedService {
                         file_name: fname.into(),
                         file_type: ftype.into(),
                         uploaded_by: by.into(),
-                        uploaded_at: now - Duration::hours(1),
+                        uploaded_at,
                         is_evidence: is_ev,
                         file_content_base64: content,
                     })?;
                 }
+                crate::dao::AuditNoteDao::create(pool, &crate::models::AuditNote {
+                    id: "note-app5".into(),
+                    application_id: "app5".into(),
+                    author_id: "u4".into(),
+                    author_name: "陈登记员".into(),
+                    note: "已按退回要求上传补正证据「库存明细补正.jpg」，退回时间之前的伪证据不计入有效证据。所有附件、处理记录、异常原因、审计备注均已回写同一申请轨迹。".into(),
+                    created_at: now - Duration::minutes(30),
+                })?;
             } else {
                 for (aid, fname, ftype, by) in vec![
                     ("att1-".to_string() + id, "补货清单.xlsx", "application/vnd.ms-excel", resp),
@@ -867,20 +936,24 @@ impl ApplicationService {
     ) -> AppResult<Attachment> {
         let app = ApplicationDao::get_by_id(pool, &req.application_id)?
             .ok_or_else(|| AppError::NotFound(format!("申请单 {} 不存在", req.application_id)))?;
-        if app.current_handler != current_user.id {
+        let can_upload = current_user.id == app.current_handler
+            || current_user.id == app.created_by
+            || current_user.id == app.responsible_person;
+        if !can_upload {
             TraceService::log_exception(
                 pool,
                 &req.application_id,
                 "越权-上传附件",
                 &format!(
-                    "用户 {} 尝试上传附件，但当前处理人为 {}",
-                    current_user.display_name, app.current_handler
+                    "用户 {}({:?}) 尝试上传附件，既不是处理人({})、创建人({})也不是责任人({})",
+                    current_user.display_name, current_user.role,
+                    app.current_handler, app.created_by, app.responsible_person
                 ),
                 Some(&current_user.id),
             );
-            return Err(AppError::Forbidden(format!(
-                "只有当前处理人可以上传附件"
-            )));
+            return Err(AppError::Forbidden(
+                "只有当前处理人、创建人或责任人可以上传附件".into()
+            ));
         }
         if app.status == ApplicationStatus::Archived {
             return Err(AppError::StatusConflict("已归档单据不能再上传附件".into()));
