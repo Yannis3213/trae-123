@@ -1,0 +1,63 @@
+---
+interface Props {
+  title?: string;
+  breadcrumb?: string;
+}
+
+const { title = '城市公交公司发车计划系统', breadcrumb = '' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body class="bg-slate-100 font-sans min-w-[1024px]">
+    <div class="flex min-h-screen">
+      <aside class="w-60 bg-brand-dark text-white flex flex-col shrink-0 fixed h-full z-40">
+        <div class="px-5 py-6 border-b border-slate-600">
+          <h1 class="text-base font-bold leading-tight">城市公交公司<br />发车计划系统</h1>
+        </div>
+        <nav class="flex-1 py-4">
+          <a
+            href="/"
+            class="flex items-center gap-3 px-5 py-3 text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+            队列首页
+          </a>
+        </nav>
+        <div class="px-5 py-4 border-t border-slate-600">
+          <div class="text-xs text-slate-400">当前用户</div>
+          <div id="sidebar-user" class="text-sm text-slate-200 mt-1">加载中...</div>
+        </div>
+      </aside>
+      <div class="flex-1 ml-60">
+        <header class="bg-white border-b border-slate-200 px-6 py-3 flex items-center gap-2 sticky top-0 z-30">
+          <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" />
+          </svg>
+          <span class="text-sm text-slate-500">首页</span>
+          {breadcrumb && (
+            <>
+              <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+              <span class="text-sm text-slate-700 font-medium">{breadcrumb}</span>
+            </>
+          )}
+        </header>
+        <main>
+          <slot />
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

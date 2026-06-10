@@ -1,0 +1,10 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import PlanDetailApp from '../../components/PlanDetailApp';
+
+const { id } = Astro.params;
+---
+
+<MainLayout title="计划详情 - 城市公交公司发车计划系统" breadcrumb="计划详情">
+  <PlanDetailApp client:load planId={id} />
+</MainLayout>
