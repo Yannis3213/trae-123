@@ -75,7 +75,7 @@
     <div class="main">
       <header class="header">
         <div class="header-left">
-          <slot name="page-title" />
+          <h2 class="page-header-title">物料变更管理系统</h2>
         </div>
         <div class="header-right">
           <div class="user-info">
@@ -184,6 +184,12 @@
   .user-role {
     font-size: 12px;
     color: #6b7280;
+  }
+  .page-header-title {
+    margin: 0;
+    font-size: 16px;
+    color: #1f2937;
+    font-weight: 600;
   }
   .content {
     flex: 1;

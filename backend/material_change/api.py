@@ -34,6 +34,7 @@ class OrderListSchema(Schema):
     created_at: datetime
     deadline: Optional[datetime]
     current_handler: Optional[str]
+    current_handler_id: Optional[int]
     created_by: Optional[str]
     version: int
 
@@ -210,6 +211,23 @@ class ActionSchema(Schema):
     return_reason: str = ''
     correction_reason: str = ''
     expected_version: Optional[int] = None
+    title: Optional[str] = None
+    change_type: Optional[str] = None
+    urgency: Optional[str] = None
+    old_material_code: Optional[str] = None
+    old_material_name: Optional[str] = None
+    old_material_spec: Optional[str] = None
+    new_material_code: Optional[str] = None
+    new_material_name: Optional[str] = None
+    new_material_spec: Optional[str] = None
+    bom_reference: Optional[str] = None
+    product_model: Optional[str] = None
+    change_reason: Optional[str] = None
+    change_description: Optional[str] = None
+    deadline: Optional[datetime] = None
+    bom_evidence_ready: Optional[bool] = None
+    substitute_evidence_ready: Optional[bool] = None
+    pilot_evidence_ready: Optional[bool] = None
 
 
 class BatchActionSchema(Schema):
@@ -225,6 +243,9 @@ class BatchResultSchema(Schema):
     success: bool
     message: str
     code: str = ''
+    version: Optional[int] = None
+    new_status: Optional[str] = None
+    current_handler_id: Optional[int] = None
 
 
 class EvidenceSchema(Schema):
@@ -674,13 +695,13 @@ def order_action(request: HttpRequest, order_id: int, payload: ActionSchema):
     if not profile:
         return JsonResponse( {'success': False, 'message': '未登录'}, status=401)
 
+    data = payload.dict(exclude_unset=True)
+    data.pop('action', None)
+    data.pop('expected_version', None)
+
     result = OrderService.process_action(
         order_id, profile, payload.action,
-        {
-            'comment': payload.comment,
-            'return_reason': payload.return_reason,
-            'correction_reason': payload.correction_reason,
-        },
+        data,
         payload.expected_version
     )
 

@@ -257,11 +257,10 @@
   }
 </script>
 
-<svelte:fragment slot="page-title">
-  <h2 style="margin: 0; font-size: 18px;">物料变更单列表</h2>
-</svelte:fragment>
-
 <div class="page">
+  <div class="page-header">
+    <h2>物料变更单列表</h2>
+  </div>
   {#if errorMsg}
     <div class="error-banner">{errorMsg}</div>
   {/if}
@@ -578,6 +577,8 @@
             <tr>
               <th>订单ID</th>
               <th>结果</th>
+              <th>错误码</th>
+              <th>版本</th>
               <th>说明</th>
             </tr>
           </thead>
@@ -590,7 +591,22 @@
                     {r.success ? '成功' : '失败'}
                   </span>
                 </td>
-                <td>{r.message}</td>
+                <td>
+                  {#if r.code}
+                    <span class="tag code-tag">{r.code}</span>
+                  {:else}
+                    -
+                  {/if}
+                </td>
+                <td>{r.version ? 'V' + r.version : '-'}</td>
+                <td>
+                  {r.message}
+                  {#if !r.success && r.code === 'OVERDUE_BLOCKED'}
+                    <button class="btn btn-link btn-xs" on:click={() => goto('/orders/' + r.order_id)}>
+                      前往补正
+                    </button>
+                  {/if}
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -608,6 +624,14 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+  .page-header {
+    margin-bottom: 4px;
+  }
+  .page-header h2 {
+    margin: 0;
+    font-size: 18px;
+    color: #1f2937;
   }
   .error-banner {
     background: #fef2f2;
@@ -770,6 +794,29 @@
     border-radius: 4px;
     font-size: 11px;
     font-family: monospace;
+  }
+  .code-tag {
+    background: #fef3c7;
+    color: #92400e;
+    font-family: monospace;
+    font-size: 11px;
+  }
+  .btn-link {
+    background: none !important;
+    border: none !important;
+    padding: 0 !important;
+    color: #3b82f6;
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: 12px;
+    margin-left: 6px;
+  }
+  .btn-link:hover {
+    color: #1d4ed8;
+  }
+  .btn-xs {
+    padding: 0 4px;
+    font-size: 12px;
   }
   .empty {
     text-align: center;

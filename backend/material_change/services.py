@@ -277,7 +277,7 @@ class OrderService:
             'status_change'
         )
 
-        return {'success': True, 'message': f'{action_display}成功', 'order_id': order.id, 'new_status': next_status}
+        return {'success': True, 'message': f'{action_display}成功', 'order_id': order.id, 'new_status': next_status, 'version': order.version}
 
     @staticmethod
     def _do_return(order, profile, data):
@@ -310,7 +310,7 @@ class OrderService:
             'return'
         )
 
-        return {'success': True, 'message': '退回成功', 'order_id': order.id, 'new_status': 'returned'}
+        return {'success': True, 'message': '退回成功', 'order_id': order.id, 'new_status': 'returned', 'version': order.version}
 
     @staticmethod
     def _do_correct(order, profile, data):
@@ -318,47 +318,19 @@ class OrderService:
         correction_reason = data.get('correction_reason', '')
         order.correction_reason = correction_reason
 
-        title = data.get('title')
-        if title:
-            order.title = title
-        old_material_code = data.get('old_material_code')
-        if old_material_code is not None:
-            order.old_material_code = old_material_code
-        old_material_name = data.get('old_material_name')
-        if old_material_name is not None:
-            order.old_material_name = old_material_name
-        old_material_spec = data.get('old_material_spec')
-        if old_material_spec is not None:
-            order.old_material_spec = old_material_spec
-        new_material_code = data.get('new_material_code')
-        if new_material_code is not None:
-            order.new_material_code = new_material_code
-        new_material_name = data.get('new_material_name')
-        if new_material_name is not None:
-            order.new_material_name = new_material_name
-        new_material_spec = data.get('new_material_spec')
-        if new_material_spec is not None:
-            order.new_material_spec = new_material_spec
-        change_reason = data.get('change_reason')
-        if change_reason is not None:
-            order.change_reason = change_reason
-        change_description = data.get('change_description')
-        if change_description is not None:
-            order.change_description = change_description
-
-        bom_evidence = data.get('bom_evidence_ready')
-        if bom_evidence is not None:
-            order.bom_evidence_ready = bom_evidence
-        substitute_evidence = data.get('substitute_evidence_ready')
-        if substitute_evidence is not None:
-            order.substitute_evidence_ready = substitute_evidence
-        pilot_evidence = data.get('pilot_evidence_ready')
-        if pilot_evidence is not None:
-            order.pilot_evidence_ready = pilot_evidence
-
-        deadline = data.get('deadline')
-        if deadline:
-            order.deadline = deadline
+        fields_to_update = [
+            'title', 'change_type', 'urgency',
+            'old_material_code', 'old_material_name', 'old_material_spec',
+            'new_material_code', 'new_material_name', 'new_material_spec',
+            'bom_reference', 'product_model',
+            'change_reason', 'change_description',
+            'bom_evidence_ready', 'substitute_evidence_ready', 'pilot_evidence_ready',
+            'deadline'
+        ]
+        for field in fields_to_update:
+            val = data.get(field)
+            if val is not None:
+                setattr(order, field, val)
 
         order.version += 1
         order.updated_at = timezone.now()
@@ -384,7 +356,7 @@ class OrderService:
             'correction'
         )
 
-        return {'success': True, 'message': '补正成功', 'order_id': order.id}
+        return {'success': True, 'message': '补正成功', 'order_id': order.id, 'version': order.version, 'new_status': from_status}
 
     @staticmethod
     @transaction.atomic
@@ -486,12 +458,27 @@ class OrderService:
         for i, oid in enumerate(order_ids):
             expected_v = expected_versions.get(oid) if isinstance(expected_versions, dict) else None
             try:
+                order = MaterialChangeOrder.objects.filter(id=oid).first()
+                if order and order.warn_status == 'overdue' and action != 'return':
+                    responsible = order.current_handler
+                    responsible_name = responsible.real_name if responsible else '未指定'
+                    results.append({
+                        'order_id': oid,
+                        'success': False,
+                        'message': f'单据已逾期，当前处理人：{responsible_name}，请先到详情页完成补正动作后再推进',
+                        'code': 'OVERDUE_BLOCKED',
+                        'version': order.version,
+                        'current_handler_id': order.current_handler_id,
+                    })
+                    continue
                 result = OrderService.process_action(oid, profile, action, data, expected_v)
                 results.append({
                     'order_id': oid,
                     'success': result.get('success', False),
                     'message': result.get('message', ''),
                     'code': result.get('code', ''),
+                    'version': result.get('version'),
+                    'new_status': result.get('new_status'),
                 })
             except Exception as e:
                 results.append({

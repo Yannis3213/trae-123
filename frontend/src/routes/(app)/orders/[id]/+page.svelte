@@ -246,15 +246,6 @@
   }
 </script>
 
-<svelte:fragment slot="page-title">
-  <div style="display: flex; align-items: center; gap: 12px;">
-    <button class="btn btn-default btn-sm" on:click={goBack}>← 返回</button>
-    <h2 style="margin: 0; font-size: 18px;">
-      {order ? order.order_no : '加载中...'} - 物料变更单详情
-    </h2>
-  </div>
-</svelte:fragment>
-
 {#if loading}
   <div class="loading">加载中...</div>
 {:else if errorMsg}
@@ -264,6 +255,14 @@
   </div>
 {:else if order}
   <div class="detail-page">
+    <div class="page-header detail-page-header">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <button class="btn btn-default btn-sm" on:click={goBack}>← 返回</button>
+        <h2 style="margin: 0; font-size: 18px;">
+          {order ? order.order_no : '加载中...'} - 物料变更单详情
+        </h2>
+      </div>
+    </div>
     <div class="detail-header card">
       <div class="header-top">
         <div class="header-actions">
@@ -821,6 +820,20 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+  .page-header {
+    margin-bottom: 4px;
+  }
+  .page-header h2 {
+    margin: 0;
+    font-size: 18px;
+    color: #1f2937;
+  }
+  .detail-page-header {
+    background: white;
+    padding: 14px 20px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   }
   .error-card {
     text-align: center;
