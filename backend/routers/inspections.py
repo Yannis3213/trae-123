@@ -708,7 +708,7 @@ def upload_attachment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    check_permission(current_user, "maintenance_engineer", "operations_manager")
+    check_permission(current_user, ["maintenance_engineer", "operations_manager"])
     try:
         insp = db.query(Inspection).filter(Inspection.id == inspection_id).first()
         if not insp:

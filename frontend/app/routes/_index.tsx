@@ -137,8 +137,7 @@ export default function Index() {
       setItems((prev) =>
         prev.map((it) => {
           if (successIds.has(it.id)) {
-            const nextStatus: InspectionStatus =
-              batchAction === "process" ? "pending_review" : it.status;
+            const nextStatus: InspectionStatus = "pending_review";
             return {
               ...it,
               status: nextStatus,

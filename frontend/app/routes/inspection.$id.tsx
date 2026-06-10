@@ -284,6 +284,7 @@ export default function InspectionDetailPage() {
           <ExceptionCard reasons={inspection.exception_reasons} />
           <ActionArea
             inspection={inspection}
+            currentUserId={user?.user_id || ""}
             isDuty={isDuty}
             isEngineer={isEngineer}
             isManager={isManager}
@@ -640,6 +641,7 @@ function ExceptionCard({ reasons }: { reasons: ExceptionReason[] }) {
 
 function ActionArea(props: {
   inspection: InspectionDetail;
+  currentUserId: string;
   isDuty: boolean;
   isEngineer: boolean;
   isManager: boolean;
@@ -667,6 +669,7 @@ function ActionArea(props: {
 }) {
   const {
     inspection,
+    currentUserId,
     isDuty,
     isEngineer,
     isManager,
@@ -698,13 +701,18 @@ function ActionArea(props: {
   const showProcess =
     isEngineer &&
     (inspection.processor_id === null ||
-      inspection.processor_id === user?.user_id) &&
+      inspection.processor_id === currentUserId) &&
     inspection.status === "pending_process";
   const showReview =
     isManager &&
-    (inspection.reviewer_id === null || inspection.status === "pending_review") &&
+    (inspection.reviewer_id === null ||
+      inspection.reviewer_id === currentUserId) &&
     inspection.status === "pending_review";
-  const showReturn = isManager && inspection.status === "pending_review";
+  const showReturn =
+    isManager &&
+    (inspection.reviewer_id === null ||
+      inspection.reviewer_id === currentUserId) &&
+    inspection.status === "pending_review";
   const showCorrect = isDuty && isCreator && inspection.status === "returned";
 
   if (!showSubmit && !showProcess && !showReview && !showReturn && !showCorrect) {
