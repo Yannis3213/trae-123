@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api } from '../../../lib/api';
+import { useRefresh } from '../../../lib/useRefresh';
 import type {
   OrderDetailResult, Attachment, ProcessingRecord, AuditNote, ExceptionReason,
 } from '../../../lib/types';
@@ -34,7 +35,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   });
   const [batchResult, setBatchResult] = useState<any>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setMessage(null);
     setActionDialog(null);
@@ -52,24 +53,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     if (r.data!.exceptions.some(e => !e.resolved && e.severity === 'high')) {
       setMessage({ type: 'warn', text: '该住客订单存在高优先级未解决异常，请优先处理' });
     }
-  };
-
-  useEffect(() => { load(); }, [id]);
-  // ====== 统一事件监听：角色切换 / 订单变更 触发重置 + 刷新 ======
-  useEffect(() => {
-    const handleRefresh = () => { setActionDialog(null); setMessage(null); load(); };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('hotel:user-switched', handleRefresh);
-      window.addEventListener('hotel:order-changed', handleRefresh);
-    }
-    return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('hotel:user-switched', handleRefresh);
-        window.removeEventListener('hotel:order-changed', handleRefresh);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // ====== 统一事件监听：角色切换 / 订单变更 ======
+  useRefresh({
+    onAny: load,
+  });
 
   if (loading) return <div className="empty">加载住客订单详情中…</div>;
   if (!data) return <div className="empty">未找到订单</div>;

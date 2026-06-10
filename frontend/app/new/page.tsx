@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '../../lib/api';
+import { useRefresh } from '../../lib/useRefresh';
 
 const EVIDENCE_LABEL: Record<string, string> = {
   id_card: '身份证凭证', registration_form: '入住登记单',

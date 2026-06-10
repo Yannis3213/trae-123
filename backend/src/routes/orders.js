@@ -8,6 +8,7 @@ import { EVIDENCE_RULES, STATUS_LABEL, ROLE_LABEL, EVIDENCE_LABEL, ACTION_MAP } 
 import {
   nowIso, nextId, logProcessingRecord, bumpOrderVersion, computeUrgency,
   getOrderEvidenceTypes, formatOrderDetail, addAuditNote, addException, resolveException,
+  buildOrderSummary,
 } from '../utils/helpers.js';
 
 const EVIDENCE_TYPES = ['id_card', 'registration_form', 'deposit_slip', 'review_note', 'other'];
@@ -238,9 +239,18 @@ export default async function orderRoutes(fastify) {
     });
     tx();
 
-    const order = formatOrderDetail(db, db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId));
+    const createdOrder = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
+    const order = formatOrderDetail(db, createdOrder);
     db.close();
-    return { ok: true, data: { order, message: '住客订单登记成功' } };
+    return {
+      ok: true,
+      data: {
+        order,
+        order_summary: buildOrderSummary(createdOrder),
+        message: '住客订单登记成功，已进入【待分派】队列',
+        refresh_queue: true,
+      },
+    };
   });
 
   fastify.post('/api/orders/:id/transfer', async (req, reply) => {
@@ -286,21 +296,32 @@ export default async function orderRoutes(fastify) {
 
         const urgency = computeUrgency(order.deadline);
         if (urgency.level !== 'overdue') {
-          results.push({ order_id: orderId, order_no: order.order_no,
-            success: false, code: 'NOT_OVERDUE', message: `订单${order.order_no}状态：${urgency.label}，非逾期，跳过` });
+          results.push({
+            order_id: orderId, order_no: order.order_no,
+            success: false, code: 'NOT_OVERDUE',
+            message: `订单${order.order_no}状态：${urgency.label}，非逾期，跳过`,
+            order_summary: buildOrderSummary(order),
+          });
           return;
         }
 
         if (order.current_handler && order.current_handler !== auth.user.id && order.current_role !== auth.user.role) {
-          results.push({ order_id: orderId, order_no: order.order_no,
+          results.push({
+            order_id: orderId, order_no: order.order_no,
             success: false, code: 'PERMISSION_DENIED',
-            message: `订单${order.order_no}当前处理人是${order.current_handler}或${order.current_role}环节，您无权推进` });
+            message: `订单${order.order_no}当前处理人是${order.current_handler}或${order.current_role}环节，您无权推进`,
+            order_summary: buildOrderSummary(order),
+          });
           return;
         }
 
         if (order.status === 'archived') {
-          results.push({ order_id: orderId, order_no: order.order_no,
-            success: false, code: 'ALREADY_ARCHIVED', message: `订单${order.order_no}已归档，不能再次推进` });
+          results.push({
+            order_id: orderId, order_no: order.order_no,
+            success: false, code: 'ALREADY_ARCHIVED',
+            message: `订单${order.order_no}已归档，不能再次推进`,
+            order_summary: buildOrderSummary(order),
+          });
           return;
         }
 
@@ -319,8 +340,11 @@ export default async function orderRoutes(fastify) {
             remark: '逾期批量推进：复核完成订单归档',
             version_before: order.version, version_after: updated.version,
           });
-          results.push({ order_id: orderId, order_no: order.order_no,
-            success: true, message: `订单${order.order_no}已归档` });
+          results.push({
+            order_id: orderId, order_no: order.order_no,
+            success: true, message: `订单${order.order_no}已归档`,
+            order_summary: buildOrderSummary(updated),
+          });
           return;
         }
 
@@ -329,9 +353,13 @@ export default async function orderRoutes(fastify) {
           const requiredEvidence = EVIDENCE_RULES.supervisor;
           const evCheck = checkEvidence(order, evidenceTypes, requiredEvidence);
           if (!evCheck.ok) {
-            results.push({ order_id: orderId, order_no: order.order_no,
+            results.push({
+              order_id: orderId, order_no: order.order_no,
               success: false, code: evCheck.code,
-              message: `订单${order.order_no}缺少必填证据：${evCheck.missing.join('、')}，无法推进` });
+              message: `订单${order.order_no}缺少必填证据：${evCheck.missing.join('、')}，无法推进`,
+              missing: evCheck.missing,
+              order_summary: buildOrderSummary(order),
+            });
             return;
           }
           const updated = bumpOrderVersion(db, orderId, {
@@ -348,22 +376,37 @@ export default async function orderRoutes(fastify) {
             remark: '逾期批量推进：主管审核通过，转办集团复核',
             version_before: order.version, version_after: updated.version,
           });
-          results.push({ order_id: orderId, order_no: order.order_no,
-            success: true, message: `订单${order.order_no}已转办集团复核` });
+          results.push({
+            order_id: orderId, order_no: order.order_no,
+            success: true, message: `订单${order.order_no}已转办集团复核`,
+            order_summary: buildOrderSummary(updated),
+          });
           return;
         }
 
-        results.push({ order_id: orderId, order_no: order.order_no,
+        results.push({
+          order_id: orderId, order_no: order.order_no,
           success: false, code: 'CANNOT_PUSH',
-          message: `订单${order.order_no}当前状态=${order.status}/环节=${order.current_role}，您的角色=${auth.user.role}，不满足批量推进条件` });
+          message: `订单${order.order_no}当前状态=${order.status}/环节=${order.current_role}，您的角色=${auth.user.role}，不满足批量推进条件`,
+          order_summary: buildOrderSummary(order),
+        });
       });
       try { tx(); } catch (err) {
         results.push({ order_id: orderId, success: false, code: 'TX_ERROR', message: err.message });
       }
     }
 
+    const successCount = results.filter(r => r.success).length;
     db.close();
-    return { ok: true, data: { results, total: results.length, success_count: results.filter(r => r.success).length } };
+    return {
+      ok: true,
+      data: {
+        results,
+        total: results.length,
+        success_count: successCount,
+        refresh_queue: successCount > 0,
+      },
+    };
   });
 
   async function handleOrderAction(req, reply, action) {
@@ -532,12 +575,14 @@ export default async function orderRoutes(fastify) {
       return reply.code(500).send({ ok: false, code: 'TX_ERROR', message: `事务执行失败：${err.message}` });
     }
 
-    const after = formatOrderDetail(db, db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id));
+    const afterOrder = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
+    const after = formatOrderDetail(db, afterOrder);
     db.close();
     return {
       ok: true,
       data: {
         order: after,
+        order_summary: buildOrderSummary(afterOrder),
         message: `${ROLE_LABEL[auth.user.role]}执行【${ACTION_MAP[action] || action}】成功，状态已回写为【${STATUS_LABEL[targetStatus]}】，队列将刷新`,
         refresh_queue: true,
       },

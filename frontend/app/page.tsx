@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { api } from '../lib/api';
+import { useRefresh } from '../lib/useRefresh';
 import type { Order, OrderStats, UserRole } from '../lib/types';
 import { fmtAmount, fmtDate, fmtTime, relativeDeadline, statusBadge, urgencyBadge } from '../lib/format';
 
@@ -38,7 +39,7 @@ export default function OrdersListPage() {
     return stats.mine;
   }, [stats]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setMessage(null);
     const res = await api.listOrders({
@@ -58,25 +59,42 @@ export default function OrdersListPage() {
     setOrders(res.data!.list);
     setTotal(res.data!.total);
     setStats(res.data!.stats || null);
-  };
+  }, [tab, keyword, urgencyFilter, handlerScope, orderType, page, pageSize]);
+
+  const handleUserSwitched = useCallback(() => {
+    setPage(1);
+    setMessage(null);
+    // 注意：setPage 是异步的，我们直接用 page=1 调用
+    setLoading(true);
+    setMessage(null);
+    api.listOrders({
+      status: tab,
+      keyword: keyword || undefined,
+      urgency: urgencyFilter || undefined,
+      handler_scope: handlerScope,
+      order_type: orderType || undefined,
+      page: 1,
+      page_size: pageSize,
+    }).then(res => {
+      setLoading(false);
+      if (!res.ok) {
+        setMessage({ type: 'err', text: `加载失败：${res.message}` });
+        return;
+      }
+      setOrders(res.data!.list);
+      setTotal(res.data!.total);
+      setStats(res.data!.stats || null);
+    });
+  }, [tab, keyword, urgencyFilter, handlerScope, orderType, pageSize]);
 
   useEffect(() => { setPage(1); }, [tab, keyword, urgencyFilter, handlerScope, orderType]);
-  useEffect(() => { load(); }, [tab, keyword, urgencyFilter, handlerScope, orderType, page]);
-  // ====== 统一事件监听：角色切换 / 订单变更 触发重置 + 刷新 ======
-  useEffect(() => {
-    const handleRefresh = () => { setPage(1); setMessage(null); load(); };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('hotel:user-switched', handleRefresh);
-      window.addEventListener('hotel:order-changed', handleRefresh);
-    }
-    return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('hotel:user-switched', handleRefresh);
-        window.removeEventListener('hotel:order-changed', handleRefresh);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // ====== 统一事件监听：角色切换 / 订单变更 ======
+  useRefresh({
+    onUserSwitched: handleUserSwitched,
+    onOrderChanged: load,
+  });
 
   const refreshAll = async () => {
     await load();

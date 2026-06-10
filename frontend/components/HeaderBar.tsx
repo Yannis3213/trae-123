@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { api, setCurrentUserId, getCurrentUserId } from '../lib/api';
+import { dispatchUserSwitched } from '../lib/useRefresh';
 import type { User } from '../lib/types';
 
 export default function HeaderBar() {

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { api } from '../../lib/api';
+import { useRefresh } from '../../lib/useRefresh';
 import type { Order, BatchResultItem } from '../../lib/types';
 import { fmtAmount, fmtDate, fmtTime, relativeDeadline, statusBadge, urgencyBadge } from '../../lib/format';
 
@@ -15,7 +16,7 @@ export default function BatchPage() {
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<'overdue' | 'warning' | 'normal' | 'all'>('overdue');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setMessage(null);
     setBatchResults(null);
@@ -27,23 +28,12 @@ export default function BatchPage() {
       return;
     }
     setOrders(r.data!.list);
-  };
-
-  useEffect(() => { load(); }, []);
-  // ====== 统一事件监听：角色切换 / 订单变更 触发重置 + 刷新 ======
-  useEffect(() => {
-    const handleRefresh = () => { setSelectedIds([]); setBatchResults(null); load(); };
-    if (typeof window !== 'undefined') {
-      window.addEventListener('hotel:user-switched', handleRefresh);
-      window.addEventListener('hotel:order-changed', handleRefresh);
-    }
-    return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('hotel:user-switched', handleRefresh);
-        window.removeEventListener('hotel:order-changed', handleRefresh);
-      }
-    };
   }, []);
+
+  // ====== 统一事件监听：角色切换 / 订单变更 ======
+  useRefresh({
+    onAny: load,
+  });
 
   const filtered = useMemo(() => {
     const nonArchived = orders.filter(o => o.status !== 'archived');

@@ -1,7 +1,10 @@
 import { getDb } from '../db/init.js';
 import { authenticate, requireHandler, verifyVersion, checkDuplicateAction } from '../utils/auth.js';
 import { EVIDENCE_LABEL, STATUS_LABEL, ROLE_LABEL } from '../config.js';
-import { nowIso, nextId, formatOrderDetail, logProcessingRecord, bumpOrderVersion, getOrderEvidenceTypes } from '../utils/helpers.js';
+import {
+  nowIso, nextId, formatOrderDetail, logProcessingRecord, bumpOrderVersion,
+  getOrderEvidenceTypes, buildOrderSummary,
+} from '../utils/helpers.js';
 
 const ALLOWED_EVIDENCE = ['id_card', 'registration_form', 'deposit_slip', 'review_note', 'other'];
 
@@ -70,8 +73,17 @@ export default async function attachmentRoutes(fastify) {
       evidence_type, evidence_type_label: EVIDENCE_LABEL[evidence_type],
       uploaded_by: auth.user.id, uploaded_by_name: auth.user.display_name, uploaded_at: ts,
     };
+    const afterOrder = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
     db.close();
-    return { ok: true, data: { attachment, message: '证据上传成功，审计轨迹已记录' } };
+    return {
+      ok: true,
+      data: {
+        attachment,
+        order_summary: buildOrderSummary(afterOrder),
+        message: '证据上传成功，审计轨迹已记录',
+        refresh_queue: true,
+      },
+    };
   });
 
   fastify.get('/api/orders/:id/records', async (req, reply) => {
@@ -116,8 +128,16 @@ export default async function attachmentRoutes(fastify) {
       remark: `标记异常已解决：${ex.reason_label}`,
       version_before: 0, version_after: 0,
     });
+    const afterOrder = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
     db.close();
-    return { ok: true, data: { message: '异常已标记解决' } };
+    return {
+      ok: true,
+      data: {
+        message: '异常已标记解决',
+        order_summary: buildOrderSummary(afterOrder),
+        refresh_queue: true,
+      },
+    };
   });
 
   fastify.get('/api/orders/:id/notes', async (req, reply) => {
@@ -138,14 +158,23 @@ export default async function attachmentRoutes(fastify) {
       return reply.code(400).send({ ok: false, code: 'BAD_NOTE_TYPE', message: '备注类型错误' });
     }
     const db = getDb();
-    const order = db.prepare('SELECT id FROM orders WHERE id = ?').get(req.params.id);
-    if (!order) { db.close(); return reply.code(404).send({ ok: false, code: 'NOT_FOUND' }); }
+    const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
+    if (!order) { db.close(); return reply.code(404).send({ ok: false, code: 'NOT_FOUND', message: '订单不存在' }); }
     const id = nextId('n');
     db.prepare(`
       INSERT INTO audit_notes (id, order_id, note_type, content, created_by, created_by_name, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(id, req.params.id, note_type, content, auth.user.id, auth.user.display_name, nowIso());
+    const afterOrder = db.prepare('SELECT * FROM orders WHERE id = ?').get(req.params.id);
     db.close();
-    return { ok: true, data: { id, message: '备注已添加至审计轨迹' } };
+    return {
+      ok: true,
+      data: {
+        id,
+        message: '备注已添加至审计轨迹',
+        order_summary: buildOrderSummary(afterOrder),
+        refresh_queue: false,
+      },
+    };
   });
 }

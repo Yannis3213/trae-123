@@ -236,10 +236,18 @@ function seedDemoOrders(db) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  insertRecord.run('r_001_1', 'o_001', 'create', '住客登记员登记', null, 'pending',
+    'u_registrar', '王登记', 'registrar', null, 'u_registrar', null, fmt(addDays(now, 1)),
+    'id_card,registration_form', 'id_card,registration_form,deposit_slip', '正常订单，材料齐全待转办', 0, 1, fmt(addDays(now,-3)));
+
   insertRecord.run('r_002_1', 'o_002', 'create', '住客登记员登记', null, 'pending',
     'u_registrar', '王登记', 'registrar', null, 'u_registrar', null, fmt(addDays(now,-1)),
     'id_card,registration_form', 'id_card', '创建订单，缺入住登记单', 0, 1, fmt(addDays(now,-5)));
-  insertRecord.run('r_002_2', 'o_002', 'transfer', '转办至审核主管', 'pending', 'transferred',
+  insertRecord.run('r_002_2', 'o_002', 'attach', '上传证据-身份证', 'pending', 'pending',
+    'u_registrar', '王登记', 'registrar', 'u_registrar', 'u_registrar',
+    fmt(addDays(now,-1)), fmt(addDays(now,-1)),
+    '', 'id_card', '上传身份证凭证，登记单稍后补', 1, 1, fmt(addDays(now,-4.5)));
+  insertRecord.run('r_002_3', 'o_002', 'transfer', '转办至审核主管', 'pending', 'transferred',
     'u_registrar', '王登记', 'registrar', 'u_registrar', 'u_supervisor',
     fmt(addDays(now,-1)), fmt(addDays(now,-1)),
     'id_card,registration_form,deposit_slip', 'id_card', '先转办，材料稍后补', 1, 2, fmt(addDays(now,-4)));
@@ -247,7 +255,11 @@ function seedDemoOrders(db) {
   insertRecord.run('r_003_1', 'o_003', 'create', '住客登记员登记', null, 'pending',
     'u_registrar', '王登记', 'registrar', null, 'u_registrar', null, fmt(addDays(now,0.2)),
     'id_card,registration_form', 'id_card,registration_form', 'VIP客户登记', 0, 1, fmt(addDays(now,-2)));
-  insertRecord.run('r_003_2', 'o_003', 'transfer', '转办至审核主管', 'pending', 'transferred',
+  insertRecord.run('r_003_2', 'o_003', 'attach', '上传证据-押金单', 'pending', 'pending',
+    'u_registrar', '王登记', 'registrar', 'u_registrar', 'u_registrar',
+    fmt(addDays(now,0.2)), fmt(addDays(now,0.2)),
+    '', 'deposit_slip', 'VIP客户押金凭证已上传', 1, 1, fmt(addDays(now,-1.5)));
+  insertRecord.run('r_003_3', 'o_003', 'transfer', '转办至审核主管', 'pending', 'transferred',
     'u_registrar', '王登记', 'registrar', 'u_registrar', 'u_supervisor',
     fmt(addDays(now,0.2)), fmt(addDays(now,0.2)),
     'deposit_slip', 'deposit_slip', 'VIP客户材料齐全', 1, 2, fmt(addDays(now,-1)));
@@ -295,7 +307,11 @@ function seedDemoOrders(db) {
   insertRecord.run('r_007_1', 'o_007', 'create', '住客登记员登记', null, 'pending',
     'u_registrar', '王登记', 'registrar', null, 'u_registrar', null, fmt(addDays(now, 0.5)),
     'id_card,registration_form', 'id_card,registration_form', '客户冲突样例登记', 0, 1, fmt(addDays(now,-2)));
-  insertRecord.run('r_007_2', 'o_007', 'transfer', '转办至审核主管', 'pending', 'transferred',
+  insertRecord.run('r_007_2', 'o_007', 'attach', '上传证据-押金单', 'pending', 'pending',
+    'u_registrar', '王登记', 'registrar', 'u_registrar', 'u_registrar',
+    fmt(addDays(now, 0.5)), fmt(addDays(now, 0.5)),
+    '', 'deposit_slip', '3201房间押金凭证上传，核验记录待主管补齐', 1, 1, fmt(addDays(now,-1.8)));
+  insertRecord.run('r_007_3', 'o_007', 'transfer', '转办至审核主管', 'pending', 'transferred',
     'u_registrar', '王登记', 'registrar', 'u_registrar', 'u_supervisor',
     fmt(addDays(now, 0.5)), fmt(addDays(now, 0.5)),
     'id_card,registration_form', 'id_card,registration_form,deposit_slip', '押金单已上传，核验记录待补齐（临期+可能触发状态冲突）', 1, 2, fmt(addDays(now,-1.5)));
@@ -346,6 +362,8 @@ function seedDemoOrders(db) {
     INSERT INTO audit_notes (id, order_id, note_type, content, created_by, created_by_name, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
+  insertNote.run('n_001_1', 'o_001', 'normal', '8601房客人陈先生，商务出行，已完成身份核验和入住登记，押金已缴纳',
+    'u_registrar', '王登记', fmt(addDays(now,-3)));
   insertNote.run('n_002_1', 'o_002', 'exception', '客户要求尽快结算，材料不齐先转办审核主管协调',
     'u_registrar', '王登记', fmt(addDays(now,-4)));
   insertNote.run('n_003_1', 'o_003', 'normal', 'VIP客户，前厅接待已确认身份信息，客房主管已查房，待值班经理复核',
@@ -358,12 +376,20 @@ function seedDemoOrders(db) {
     'u_reviewer', '张复核', fmt(addDays(now,-2)));
   insertNote.run('n_006_1', 'o_006', 'correction', '入住登记单客人签名缺失，已通知前台联系客人补签后重新提交',
     'u_supervisor', '李审核', fmt(addDays(now,-1)));
+  insertNote.run('n_006_2', 'o_006', 'correction', '登记员视角：客人已通过微信回传签名照片，正在打印补贴后重新提交审核',
+    'u_registrar', '王登记', fmt(addDays(now,-0.5)));
   insertNote.run('n_007_1', 'o_007', 'normal',
     '【状态冲突触发方法】方法A：curl 传错误 page_status → STATUS_SYNC_CONFLICT；方法B：双浏览器同页不刷新并发 submit → VERSION_CONFLICT；方法C：非 u_supervisor 角色操作 → ROLE_MISMATCH / NOT_YOUR_HANDLER；方法D：未补齐 review_note 就转办 → MISSING_EVIDENCE',
     'u_supervisor', '李审核', fmt(addDays(now,-1)));
   insertNote.run('n_007_2', 'o_007', 'correction',
     '缺核验记录 review_note：先点「上传证据」选择类型=核验/回访记录，填写文件名后提交，再执行「转办至酒店集团复核负责人」即可通过 MISSING_EVIDENCE 校验',
     'u_supervisor', '李审核', fmt(addDays(now,-0.8)));
+  insertNote.run('n_007_3', 'o_007', 'normal',
+    '登记员视角：客人冯先生入住 3201 房，押金单已上传，核验记录由客房主管跟进中',
+    'u_registrar', '王登记', fmt(addDays(now,-1.2)));
+  insertNote.run('n_007_4', 'o_007', 'normal',
+    '复核负责人视角：可在「已回访」tab 查看已复核订单，该订单当前在主管办理环节，待材料齐全后进入复核队列',
+    'u_reviewer', '张复核', fmt(addDays(now,-0.6)));
 
   console.log('示例数据导入完成：7条订单 + 对应附件、异常、备注、处理记录');
 }

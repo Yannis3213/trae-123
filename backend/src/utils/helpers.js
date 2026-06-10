@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import dayjs from 'dayjs';
 import { getDb } from '../db/init.js';
-import { ACTION_MAP, STATUS_LABEL, EVIDENCE_LABEL } from '../config.js';
+import { ACTION_MAP, STATUS_LABEL, EVIDENCE_LABEL, ROLE_LABEL } from '../config.js';
 
 export function nowIso() {
   return new Date().toISOString();
@@ -87,4 +87,19 @@ export function resolveException(db, exceptionId, user) {
   db.prepare(`
     UPDATE exception_reasons SET resolved = 1, resolved_by = ?, resolved_at = ? WHERE id = ?
   `).run(user.id, nowIso(), exceptionId);
+}
+
+export function buildOrderSummary(order) {
+  return {
+    id: order.id,
+    order_no: order.order_no,
+    status: order.status,
+    status_label: STATUS_LABEL[order.status] || order.status,
+    version: order.version,
+    current_handler: order.current_handler,
+    current_role: order.current_role,
+    current_role_label: order.current_role ? (ROLE_LABEL[order.current_role] || order.current_role) : null,
+    deadline: order.deadline,
+    updated_at: order.updated_at,
+  };
 }

@@ -116,6 +116,26 @@ export interface OrderPermission {
   can_view_subordinates: boolean;
 }
 
+export interface OrderSummary {
+  id: string;
+  order_no: string;
+  status: OrderStatus;
+  status_label: string;
+  version: number;
+  current_handler: string | null;
+  current_role: UserRole | null;
+  current_role_label: string | null;
+  deadline: string | null;
+  updated_at: string;
+}
+
+export interface OrderActionResult {
+  order?: Order;
+  order_summary?: OrderSummary;
+  message: string;
+  refresh_queue: boolean;
+}
+
 export interface OrderDetailResult {
   order: Order;
   attachments: Attachment[];
@@ -146,6 +166,8 @@ export interface BatchResultItem {
   success: boolean;
   code?: string;
   message: string;
+  missing?: string[];
+  order_summary?: OrderSummary;
 }
 
 export interface ApiResult<T = unknown> {
