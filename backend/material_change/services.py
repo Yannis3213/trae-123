@@ -217,15 +217,29 @@ class OrderService:
         try:
             order = MaterialChangeOrder.objects.select_for_update().get(id=order_id)
         except MaterialChangeOrder.DoesNotExist:
-            return {'success': False, 'message': '物料变更单不存在', 'code': 'NOT_FOUND'}
+            return {'success': False, 'message': '物料变更单不存在', 'code': 'NOT_FOUND', 'version': None, 'current_handler_id': None, 'new_status': None}
 
         version_ok, version_msg = OrderService.validate_version(order, expected_version)
         if not version_ok:
-            return {'success': False, 'message': version_msg, 'code': 'VERSION_CONFLICT'}
+            return {
+                'success': False,
+                'message': version_msg,
+                'code': 'VERSION_CONFLICT',
+                'version': order.version,
+                'current_handler_id': order.current_handler_id,
+                'new_status': order.status,
+            }
 
         can_act, act_msg = OrderService.can_act_on_order(profile, order, action)
         if not can_act:
-            return {'success': False, 'message': act_msg, 'code': 'PERMISSION_DENIED'}
+            return {
+                'success': False,
+                'message': act_msg,
+                'code': 'PERMISSION_DENIED',
+                'version': order.version,
+                'current_handler_id': order.current_handler_id,
+                'new_status': order.status,
+            }
 
         if action == 'return':
             return OrderService._do_return(order, profile, data)
@@ -235,7 +249,14 @@ class OrderService:
         evidence_ok, evidence_msg = OrderService.validate_evidence(order, action)
         if not evidence_ok:
             OrderService._record_exception(order, 'MISSING_EVIDENCE', '缺材料', evidence_msg, profile)
-            return {'success': False, 'message': evidence_msg, 'code': 'MISSING_EVIDENCE'}
+            return {
+                'success': False,
+                'message': evidence_msg,
+                'code': 'MISSING_EVIDENCE',
+                'version': order.version,
+                'current_handler_id': order.current_handler_id,
+                'new_status': order.status,
+            }
 
         flow = STATUS_FLOW.get(order.status)
         next_status = flow.get('next')
@@ -374,6 +395,20 @@ class OrderService:
             'correction'
         )
 
+        ExceptionRecord.objects.filter(
+            order=order,
+            resolved=False,
+            exception_code__in=['RETURNED', 'MISSING_EVIDENCE', 'OVERDUE', 'OVERDUE_BLOCKED']
+        ).update(
+            resolved=True,
+            resolved_at=timezone.now()
+        )
+        OrderService._record_audit(
+            order, profile,
+            f'补正后自动标记相关异常为已解决',
+            'correction'
+        )
+
         return {
             'success': True,
             'message': '补正成功',
@@ -484,9 +519,35 @@ class OrderService:
             expected_v = expected_versions.get(oid) if isinstance(expected_versions, dict) else None
             try:
                 order = MaterialChangeOrder.objects.filter(id=oid).first()
-                if order and order.warn_status == 'overdue' and action != 'return':
+                if not order:
+                    results.append({
+                        'order_id': oid,
+                        'success': False,
+                        'message': '单据不存在',
+                        'code': 'NOT_FOUND',
+                        'version': None,
+                        'current_handler_id': None,
+                        'new_status': None,
+                    })
+                    continue
+                if order.warn_status == 'overdue' and action != 'return':
                     responsible = order.current_handler
                     responsible_name = responsible.real_name if responsible else '未指定'
+                    ProcessingRecord.objects.create(
+                        order=order,
+                        operator=profile,
+                        action='overdue_blocked',
+                        action_display='批量逾期拦截',
+                        from_status=order.status,
+                        to_status=order.status,
+                        comment=f'批量{action}被拦截，单据已逾期',
+                        version=order.version,
+                    )
+                    OrderService._record_audit(
+                        order, profile,
+                        f'批量{action}被拦截：单据已逾期，当前处理人：{responsible_name}',
+                        'overdue_blocked'
+                    )
                     results.append({
                         'order_id': oid,
                         'success': False,
@@ -494,6 +555,7 @@ class OrderService:
                         'code': 'OVERDUE_BLOCKED',
                         'version': order.version,
                         'current_handler_id': order.current_handler_id,
+                        'new_status': order.status,
                     })
                     continue
                 result = OrderService.process_action(oid, profile, action, data, expected_v)
@@ -504,13 +566,18 @@ class OrderService:
                     'code': result.get('code', ''),
                     'version': result.get('version'),
                     'new_status': result.get('new_status'),
+                    'current_handler_id': result.get('current_handler_id'),
                 })
             except Exception as e:
+                order = MaterialChangeOrder.objects.filter(id=oid).first()
                 results.append({
                     'order_id': oid,
                     'success': False,
                     'message': str(e),
                     'code': 'SYSTEM_ERROR',
+                    'version': order.version if order else None,
+                    'current_handler_id': order.current_handler_id if order else None,
+                    'new_status': order.status if order else None,
                 })
         return results
 

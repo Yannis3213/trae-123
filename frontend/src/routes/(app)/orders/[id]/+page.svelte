@@ -1,5 +1,6 @@
 <script>
-  import { goto, page } from '$app/stores';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { orderApi } from '$lib/api';
   import { userStore, statusColors, warnColors } from '$lib/stores';
   import { onMount, onDestroy } from 'svelte';

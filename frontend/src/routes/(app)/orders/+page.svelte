@@ -122,11 +122,18 @@
 
     try {
       const orderIds = Array.from(selected);
+      const expectedVersions = {};
+      orders.forEach(o => {
+        if (selected.has(o.id)) {
+          expectedVersions[o.id] = o.version;
+        }
+      });
       const res = await orderApi.batchAction({
         order_ids: orderIds,
         action: batchAction,
         comment: batchComment,
         return_reason: batchReturnReason,
+        expected_versions: expectedVersions,
       });
       batchResults = Array.isArray(res) ? res : [];
       showBatchResult = true;
@@ -580,12 +587,13 @@
           <span style="color: #22c55e;">成功 {batchResults.filter(r => r.success).length} 条</span>，
           <span style="color: #ef4444;">失败 {batchResults.filter(r => !r.success).length} 条</span>
         </p>
-        <table>
+        <table class="batch-result-table">
           <thead>
             <tr>
               <th>订单ID</th>
               <th>结果</th>
               <th>错误码</th>
+              <th>处理人ID</th>
               <th>版本</th>
               <th>说明</th>
             </tr>
@@ -606,10 +614,12 @@
                     -
                   {/if}
                 </td>
+                <td>{r.current_handler_id || '-'}</td>
                 <td>{r.version ? 'V' + r.version : '-'}</td>
                 <td>
                   {r.message}
                   {#if !r.success && r.code === 'OVERDUE_BLOCKED'}
+                    <br />
                     <button class="btn btn-link btn-xs" on:click={() => goto('/orders/' + r.order_id)}>
                       前往补正
                     </button>
@@ -825,6 +835,23 @@
   .btn-xs {
     padding: 0 4px;
     font-size: 12px;
+  }
+  .batch-result-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 12px;
+  }
+  .batch-result-table th,
+  .batch-result-table td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .batch-result-table th {
+    background: #f9fafb;
+    font-weight: 600;
+    color: #374151;
   }
   .empty {
     text-align: center;

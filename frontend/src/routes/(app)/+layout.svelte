@@ -1,5 +1,6 @@
 <script>
-  import { goto, page } from '$app/stores';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { userStore } from '$lib/stores';
   import { authApi } from '$lib/api';
   import { onMount } from 'svelte';
