@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, g
 from . import db
 from .models import (
@@ -795,6 +795,13 @@ def batch_process():
 
     success_count = sum(1 for r in results if r['success'])
     fail_count = len(results) - success_count
+    by_fail_code = {}
+    for r in results:
+        if not r['success'] and r.get('fail_code'):
+            fc = r['fail_code']
+            if fc not in by_fail_code:
+                by_fail_code[fc] = {'count': 0, 'reason_example': r.get('fail_reason', '')}
+            by_fail_code[fc]['count'] += 1
 
     return jsonify({
         'success': True,
@@ -806,7 +813,9 @@ def batch_process():
                 'total': len(results),
                 'success': success_count,
                 'fail': fail_count,
-                'by_fail_code': {}
+                'by_fail_code': by_fail_code,
+                'current_role': current_role,
+                'current_role_label': Config.ROLE_LABEL.get(current_role, current_role)
             }
         },
         'message': f'批量处理完成：成功 {success_count} 条，失败 {fail_count} 条'
@@ -892,6 +901,37 @@ def get_dashboard_stats():
     for b in all_bookings:
         by_handler_counts[b.current_handler] = by_handler_counts.get(b.current_handler, 0) + 1
 
+    fail_code_summary = {}
+    try:
+        recent_24h = datetime.utcnow() - timedelta(hours=24)
+        from .models import ExceptionReason
+        reasons = ExceptionReason.query.filter(
+            ExceptionReason.reason_type.in_(['校验拦截', '材料缺失', '超时逾期']),
+            ExceptionReason.created_at >= recent_24h
+        ).all()
+
+        _code_map = {
+            '版本冲突': 'VERSION_CONFLICT',
+            '状态冲突': 'STATUS_CONFLICT',
+            '处理人': 'WRONG_HANDLER',
+            '越权': 'PERMISSION_DENIED',
+            '缺': 'MISSING_MODULES',
+            '非逾期': 'NOT_OVERDUE',
+            '重复': 'DUPLICATE_ACTION',
+            '超时': 'NOT_OVERDUE',
+            '数据库': 'DB_ERROR'
+        }
+        for r in reasons:
+            code = 'MISSING_MODULES'
+            for kw, c in _code_map.items():
+                if kw in (r.reason or ''):
+                    code = c
+                    break
+            fail_code_summary.setdefault(code, {'count': 0, 'reason_example': r.reason or ''})
+            fail_code_summary[code]['count'] += 1
+    except Exception as _e:
+        pass
+
     return jsonify({
         'success': True,
         'data': {
@@ -915,6 +955,7 @@ def get_dashboard_stats():
             'my_actionable_count': sum(
                 1 for b in all_bookings
                 if b.current_role == role and b.status != '已同步'
-            )
+            ),
+            'recent_fail_code_summary': fail_code_summary
         }
     })

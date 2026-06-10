@@ -2,13 +2,30 @@ import React, { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext.jsx'
 
+const FAIL_CODE_LABEL = {
+  VERSION_CONFLICT: '版本冲突', STATUS_CONFLICT: '状态冲突', WRONG_HANDLER: '处理人不匹配',
+  PERMISSION_DENIED: '角色越权', MISSING_MODULES: '缺必填证据',
+  NOT_OVERDUE: '非逾期', DUPLICATE_ACTION: '重复操作', DB_ERROR: '数据库异常'
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { stats, fetchStats, userLabel } = useApp()
+  const { stats, fetchStats, userLabel, userRole } = useApp()
 
   useEffect(() => {
     fetchStats()
   }, [fetchStats])
+
+  const myMissing = stats.my_missing_modules || {}
+  const myMissingCount = Object.values(myMissing).reduce((s, v) => s + (v?.count || 0), 0)
+  const byMissing = stats.by_missing_module || {}
+  const actionable = stats.my_actionable_count || 0
+
+  const rolePermissionHints = {
+    dispatcher: '负责：新建预约 / 处理待审核 / 录入团队预约和入园统计',
+    ticketing: '负责：补全票务核销 / 校验票据一致性',
+    manager: '负责：复核 / 归档 / 退回 / 逾期批量推进'
+  }
 
   return (
     <div>
@@ -46,10 +63,36 @@ export default function Dashboard() {
             避免覆盖他人的处理结果。
           </li>
         </ul>
-        <p style={{ marginTop: 12 }}>
-          当前您以「<span className="highlight">{userLabel}</span>」身份登录，
-          可在右上角切换角色体验不同环节的操作权限。
-        </p>
+
+        <div style={{ marginTop: 16, padding: 16, background: '#eef5ff', borderRadius: 8, border: '1px solid #bcd0f5' }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>
+            👤 当前身份：<span style={{ color: '#1a4a8a', fontSize: 16 }}>{userLabel}</span>
+          </div>
+          <div style={{ color: '#444' }}>{rolePermissionHints[userRole] || ''}</div>
+          <div style={{ display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
+            <div style={{ padding: '6px 14px', background: '#fff', borderRadius: 20, border: '1px solid #ddd' }}>
+              📋 待我处理：<strong style={{ color: '#2d7dd2' }}>{actionable}</strong> 张
+            </div>
+            <div style={{ padding: '6px 14px', background: '#fff', borderRadius: 20, border: '1px solid #ffd9d9', color: '#dc3545' }}>
+              ⛔ 我负责补正的缺证据：<strong>{myMissingCount}</strong> 条
+            </div>
+          </div>
+          {myMissingCount > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>需要您补正的模块：</div>
+              <div className="missing-chip-list" style={{ margin: 0 }}>
+                {Object.entries(myMissing).map(([k, v]) => (
+                  v.count > 0 && (
+                    <span key={k} className="missing-chip">
+                      缺 {v.label} × {v.count}
+                      <span className="owner">我负责</span>
+                    </span>
+                  )
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="stats-grid">
@@ -68,6 +111,51 @@ export default function Dashboard() {
         <div className="stat-card overdue">
           <div className="stat-label">已逾期</div>
           <div className="stat-value">{stats.overdue}</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <div className="card">
+          <div className="card-header">
+            <h3>🔍 全量缺证据模块统计</h3>
+          </div>
+          <div className="card-body">
+            {Object.keys(byMissing).length === 0 ? (
+              <div style={{ color: '#28a745' }}>✓ 所有模块证据齐全</div>
+            ) : (
+              <div>
+                {Object.entries(byMissing).map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed #eee' }}>
+                    <div>
+                      <strong>{v.label}</strong>
+                      <div style={{ fontSize: 12, color: '#888' }}>责任人：{v.owner_label}</div>
+                    </div>
+                    <div style={{ color: '#dc3545', fontWeight: 600 }}>缺 {v.count} 张</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <h3>🚨 最近异常类型分布</h3>
+          </div>
+          <div className="card-body">
+            {stats.recent_fail_code_summary && Object.keys(stats.recent_fail_code_summary).length > 0 ? (
+              <div>
+                {Object.entries(stats.recent_fail_code_summary).map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px dashed #eee' }}>
+                    <span className="fail-chip-code">{FAIL_CODE_LABEL[k] || k}</span>
+                    <div style={{ fontWeight: 600 }}>{v.count} 次</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: '#28a745' }}>暂无异常记录</div>
+            )}
+          </div>
         </div>
       </div>
 
