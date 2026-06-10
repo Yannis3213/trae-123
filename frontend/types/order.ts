@@ -77,6 +77,7 @@ export interface ExceptionReason {
   operator: string
   createdAt: string
   resolved: boolean
+  needRole?: string | null
 }
 
 export interface GroupOrder {
@@ -145,7 +146,7 @@ export interface BatchProcessDto {
 
 export interface BatchProcessResult {
   success: { id: number; orderNo: string }[]
-  failed: { id: number; orderNo: string; reason: string; needRole?: UserRole }[]
+  failed: { id: number; orderNo: string; reason: string; needRole?: string }[]
 }
 
 export interface ReturnOrderDto {

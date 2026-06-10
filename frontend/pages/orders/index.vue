@@ -135,7 +135,7 @@ const batchMenuItems = [
     label: '批量派发',
     icon: 'i-heroicons-paper-airplane',
     action: 'assign',
-    allowedRoles: ['GROUPON_REGISTRAR', 'AUDIT_SUPERVISOR'],
+    allowedRoles: ['AUDIT_SUPERVISOR', 'CITY_MANAGER'],
     needsConfig: true,
   },
   {
@@ -156,7 +156,7 @@ const batchMenuItems = [
     label: '批量退回',
     icon: 'i-heroicons-arrow-uturn-left',
     action: 'return',
-    allowedRoles: ['REVIEW_LEADER', 'CITY_MANAGER', 'AUDIT_SUPERVISOR'],
+    allowedRoles: ['AUDIT_SUPERVISOR', 'REVIEW_LEADER', 'CITY_MANAGER', 'FULFILLMENT_SPECIALIST'],
     needsConfig: true,
   },
 ]
@@ -662,7 +662,7 @@ onMounted(async () => {
                     <p><span class="font-medium">失败原因：</span>{{ item.reason }}</p>
                     <p v-if="item.needRole">
                       <span class="font-medium">需补正角色：</span>
-                      {{ ordersStore.getRoleLabel(item.needRole) }}
+                      {{ item.needRole }}
                     </p>
                   </div>
                 </li>

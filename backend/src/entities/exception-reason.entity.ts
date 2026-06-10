@@ -27,4 +27,7 @@ export class ExceptionReason {
 
   @Column({ default: false })
   resolved: boolean;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  needRole: string | null;
 }

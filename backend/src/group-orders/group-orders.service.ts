@@ -556,7 +556,7 @@ export class GroupOrdersService {
           const reason = `订单已逾期，责任人：${order.currentHandler || '未指派'}，需单独处理后再批量推进`;
           const needRole = order.currentRole ? this.getRoleLabel(order.currentRole) : undefined;
           results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole });
-          await this.createExceptionReason(order.id, `批量${this.getActionLabel(action)}拦截：订单已逾期`, 'overdue', user.name);
+          await this.createExceptionReason(order.id, `批量${this.getActionLabel(action)}拦截：订单已逾期`, 'overdue', user.name, needRole);
           await this.createProcessingRecord(
             order.id,
             ActionType.REVIEW,
@@ -566,7 +566,7 @@ export class GroupOrdersService {
             order.orderStatus,
             order.currentHandler,
             order.currentHandler,
-            `批量${this.getActionLabel(action)}失败：${reason}`,
+            `批量${this.getActionLabel(action)}失败：${reason}${needRole ? `（责任角色：${needRole}）` : ''}`,
             order.version,
           );
           continue;
@@ -627,9 +627,10 @@ export class GroupOrdersService {
     actionLabel: string,
     reason: string,
     reasonType: ReasonType = 'other',
+    needRole?: string,
   ): Promise<void> {
     try {
-      await this.createExceptionReason(order.id, `批量${actionLabel}失败：${reason}`, reasonType, user.name);
+      await this.createExceptionReason(order.id, `批量${actionLabel}失败：${reason}`, reasonType, user.name, needRole);
       await this.createProcessingRecord(
         order.id,
         ActionType.REVIEW,
@@ -639,7 +640,7 @@ export class GroupOrdersService {
         order.orderStatus,
         order.currentHandler,
         order.currentHandler,
-        `批量${actionLabel}失败：${reason}`,
+        `批量${actionLabel}失败：${reason}${needRole ? `（责任角色：${needRole}）` : ''}`,
         order.version,
       );
     } catch (e) {
@@ -655,8 +656,9 @@ export class GroupOrdersService {
   ): Promise<boolean> {
     if (![UserRole.AUDIT_SUPERVISOR, UserRole.CITY_MANAGER].includes(user.role)) {
       const reason = '批量派发仅允许「团购审核主管/城市经理」执行';
-      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '团购审核主管/城市经理' });
-      await this.recordBatchFailure(order, user, '派发', reason);
+      const needRole = '团购审核主管/城市经理';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole });
+      await this.recordBatchFailure(order, user, '派发', reason, 'other', needRole);
       return false;
     }
     if (order.orderStatus !== OrderStatus.PENDING_ASSIGN) {
@@ -697,8 +699,9 @@ export class GroupOrdersService {
   ): Promise<boolean> {
     if (user.role !== UserRole.FULFILLMENT_SPECIALIST) {
       const reason = '批量处理仅允许「履约专员」执行';
-      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '履约专员' });
-      await this.recordBatchFailure(order, user, '处理', reason);
+      const needRole = '履约专员';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole });
+      await this.recordBatchFailure(order, user, '处理', reason, 'other', needRole);
       return false;
     }
     if (order.orderStatus !== OrderStatus.PROCESSING) {
@@ -715,8 +718,9 @@ export class GroupOrdersService {
     }
     if (!order.orderEvidence && !dto.orderEvidence) {
       const reason = '缺少「团购下单过程核对凭证(orderEvidence)」，请先补录订单凭证再批量处理';
-      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '履约专员' });
-      await this.recordBatchFailure(order, user, '处理', reason, 'material_missing');
+      const needRole = '履约专员';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole });
+      await this.recordBatchFailure(order, user, '处理', reason, 'material_missing', needRole);
       return false;
     }
     if (dto.orderEvidence) {
@@ -748,8 +752,9 @@ export class GroupOrdersService {
   ): Promise<boolean> {
     if (![UserRole.CITY_MANAGER, UserRole.REVIEW_LEADER].includes(user.role)) {
       const reason = '批量关闭仅允许「城市经理/复核负责人」执行';
-      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '城市经理/复核负责人' });
-      await this.recordBatchFailure(order, user, '关闭', reason);
+      const needRole = '城市经理/复核负责人';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole });
+      await this.recordBatchFailure(order, user, '关闭', reason, 'other', needRole);
       return false;
     }
     if (order.orderStatus !== OrderStatus.PROCESSING) {
@@ -760,14 +765,16 @@ export class GroupOrdersService {
     }
     if (!order.orderEvidence) {
       const reason = '缺少「团购下单过程核对凭证(orderEvidence)」，请先由履约专员补录';
-      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '履约专员' });
-      await this.recordBatchFailure(order, user, '关闭', reason, 'material_missing');
+      const needRole = '履约专员';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole });
+      await this.recordBatchFailure(order, user, '关闭', reason, 'material_missing', needRole);
       return false;
     }
     if (!order.deliveryEvidence && !dto.deliveryEvidence) {
       const reason = '缺少「到货签收最终证据(deliveryEvidence)」，请先补录履约签收凭证再批量关闭';
-      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '城市经理' });
-      await this.recordBatchFailure(order, user, '关闭', reason, 'material_missing');
+      const needRole = '城市经理';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole });
+      await this.recordBatchFailure(order, user, '关闭', reason, 'material_missing', needRole);
       return false;
     }
     if (dto.deliveryEvidence) {
@@ -808,8 +815,9 @@ export class GroupOrdersService {
     ];
     if (!allowedRoles.includes(user.role)) {
       const reason = '批量退回仅允许「审核主管/复核负责人/城市经理/履约专员」执行';
-      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '审核主管/复核负责人' });
-      await this.recordBatchFailure(order, user, '退回', reason);
+      const needRole = '审核主管/复核负责人/城市经理/履约专员';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole });
+      await this.recordBatchFailure(order, user, '退回', reason, 'other', needRole);
       return false;
     }
     if (order.orderStatus === OrderStatus.CLOSED) {
@@ -1040,12 +1048,14 @@ export class GroupOrdersService {
     reason: string,
     reasonType: ReasonType,
     operator: string,
+    needRole?: string,
   ): Promise<ExceptionReason> {
     const exception = this.exceptionReasonRepository.create({
       orderId,
       reason,
       reasonType,
       operator,
+      needRole: needRole || null,
     });
     return this.exceptionReasonRepository.save(exception);
   }

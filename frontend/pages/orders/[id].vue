@@ -250,7 +250,14 @@ onMounted(async () => {
     authStore.login()
   }
   if (ordersStore.lastBatchResult) {
-    batchResult.value = ordersStore.lastBatchResult
+    const all = ordersStore.lastBatchResult
+    batchResult.value = {
+      success: all.success.filter((s) => s.id === orderId.value),
+      failed: all.failed.filter((f) => f.id === orderId.value),
+    }
+    if (batchResult.value.success.length === 0 && batchResult.value.failed.length === 0) {
+      batchResult.value = null
+    }
   }
   await ordersStore.fetchDetail(orderId.value)
 })
@@ -298,7 +305,7 @@ onBeforeUnmount(() => {
               <div class="font-medium">✗ {{ item.orderNo }}</div>
               <div class="text-red-600 ml-4">原因：{{ item.reason }}</div>
               <div v-if="item.needRole" class="text-red-600 ml-4">
-                需补正角色：{{ ordersStore.getRoleLabel(item.needRole) }}
+                需补正角色：{{ item.needRole }}
               </div>
             </li>
           </ul>
@@ -501,6 +508,9 @@ onBeforeUnmount(() => {
                         </UBadge>
                         <UBadge :color="reason.resolved ? 'green' : 'amber'" variant="subtle" size="sm">
                           {{ reason.resolved ? '已解决' : '待解决' }}
+                        </UBadge>
+                        <UBadge v-if="reason.needRole" color="orange" variant="subtle" size="sm">
+                          责任角色：{{ reason.needRole }}
                         </UBadge>
                       </div>
                       <p class="text-xs text-gray-500">{{ formatDate(reason.createdAt) }}</p>
