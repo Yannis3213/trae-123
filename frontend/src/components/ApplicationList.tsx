@@ -53,6 +53,12 @@ export default function ApplicationList({ users, onSelect }: ApplicationListProp
   };
 
   useEffect(() => {
+    if (visibleScope !== undefined && visibleScope !== null) {
+      setOnlyMine(!visibleScope.can_view_all);
+    }
+  }, [visibleScope?.can_view_all]);
+
+  useEffect(() => {
     fetchData();
   }, [statusFilter, priorityFilter, keyword, onlyMine]);
 

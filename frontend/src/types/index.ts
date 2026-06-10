@@ -52,6 +52,8 @@ export interface Attachment {
   file_type: string;
   uploaded_by: string;
   uploaded_at: string;
+  is_evidence: boolean;
+  file_content_base64?: string | null;
 }
 
 export interface ProcessingRecord {

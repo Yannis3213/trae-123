@@ -153,6 +153,8 @@ pub struct Attachment {
     pub file_type: String,
     pub uploaded_by: String,
     pub uploaded_at: DateTime<Utc>,
+    pub is_evidence: bool,
+    pub file_content_base64: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

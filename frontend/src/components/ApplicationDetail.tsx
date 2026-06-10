@@ -189,13 +189,21 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
                   alignItems: 'center',
                   gap: '10px',
                   padding: '8px 12px',
-                  background: '#f9fafb',
+                  background: a.is_evidence ? '#fef3c7' : '#f9fafb',
                   borderRadius: '6px',
                   marginBottom: '6px',
                   fontSize: '14px',
                 }}
               >
                 📎 <strong>{a.file_name}</strong>
+                {a.is_evidence && (
+                  <span
+                    className="tag tag-red"
+                    style={{ background: '#b45309', color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}
+                  >
+                    补正证据(SQLite可追溯)
+                  </span>
+                )}
                 <span style={{ color: '#6b7280', fontSize: '12px' }}>
                   由 {getUserName(a.uploaded_by)} 于 {formatDate(a.uploaded_at)} 上传
                 </span>

@@ -81,7 +81,7 @@ impl UserDao {
 pub struct ApplicationDao;
 
 impl ApplicationDao {
-    pub fn list(pool: &DbPool, filter: &ApplicationFilter, handler_id: Option<&str>) -> AppResult<Vec<ReplenishmentApplication>> {
+    pub fn list(pool: &DbPool, filter: &ApplicationFilter, handler_id: Option<&str>, visibility_user_id: Option<&str>) -> AppResult<Vec<ReplenishmentApplication>> {
         let conn = pool.get()?;
         let mut sql = String::from(
             "SELECT id, application_no, store_id, store_name, title, description, status, priority, \
@@ -89,6 +89,13 @@ impl ApplicationDao {
              FROM replenishment_applications WHERE 1=1"
         );
         let mut params_list: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(visibility_uid) = visibility_user_id {
+            sql.push_str(" AND (current_handler = ? OR created_by = ? OR responsible_person = ?)");
+            params_list.push(Box::new(visibility_uid.to_string()));
+            params_list.push(Box::new(visibility_uid.to_string()));
+            params_list.push(Box::new(visibility_uid.to_string()));
+        }
 
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
@@ -333,8 +340,8 @@ impl AttachmentDao {
     pub fn create(pool: &DbPool, att: &Attachment) -> AppResult<()> {
         let conn = pool.get()?;
         conn.execute(
-            "INSERT INTO attachments (id, application_id, file_name, file_type, uploaded_by, uploaded_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO attachments (id, application_id, file_name, file_type, uploaded_by, uploaded_at, is_evidence, file_content_base64) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 att.id,
                 att.application_id,
@@ -342,6 +349,8 @@ impl AttachmentDao {
                 att.file_type,
                 att.uploaded_by,
                 att.uploaded_at.to_rfc3339(),
+                att.is_evidence as i64,
+                att.file_content_base64,
             ],
         )?;
         Ok(())
@@ -350,10 +359,11 @@ impl AttachmentDao {
     pub fn list_by_application(pool: &DbPool, app_id: &str) -> AppResult<Vec<Attachment>> {
         let conn = pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, application_id, file_name, file_type, uploaded_by, uploaded_at \
+            "SELECT id, application_id, file_name, file_type, uploaded_by, uploaded_at, is_evidence, file_content_base64 \
              FROM attachments WHERE application_id = ?1 ORDER BY uploaded_at ASC"
         )?;
         let rows = stmt.query_map(params![app_id], |row| {
+            let is_evidence_int: i64 = row.get(6)?;
             Ok(Attachment {
                 id: row.get(0)?,
                 application_id: row.get(1)?,
@@ -362,6 +372,8 @@ impl AttachmentDao {
                 uploaded_by: row.get(4)?,
                 uploaded_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(5)?)
                     .map(|d| d.with_timezone(&Utc)).unwrap(),
+                is_evidence: is_evidence_int != 0,
+                file_content_base64: row.get(7)?,
             })
         })?;
         let mut atts = Vec::new();

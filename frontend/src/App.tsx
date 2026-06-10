@@ -8,16 +8,24 @@ import BatchProcessPanel from './components/BatchProcessPanel';
 import type { ReplenishmentApplication } from './types';
 
 export default function App() {
-  const { user, fetchAllUsers, allUsers, token } = useAuthStore();
+  const { user, fetchAllUsers, allUsers, token, fetchScope, visibleScope } = useAuthStore();
   const [currentView, setCurrentView] = useState<'list' | 'detail' | 'batch'>('list');
   const [selectedApp, setSelectedApp] = useState<ReplenishmentApplication | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (token && user) {
       fetchAllUsers();
+      fetchScope();
     }
-  }, [token, user, fetchAllUsers]);
+  }, [token, user, fetchAllUsers, fetchScope]);
+
+  useEffect(() => {
+    setCurrentView('list');
+    setSelectedApp(null);
+    setRefreshKey((k) => k + 1);
+  }, [user?.id]);
 
   useEffect(() => {
     if (user) {
@@ -27,7 +35,7 @@ export default function App() {
         });
       });
     }
-  }, [user, currentView]);
+  }, [user, currentView, refreshKey]);
 
   if (!user) return <LoginView />;
 
@@ -62,16 +70,17 @@ export default function App() {
       pendingCount={pendingCount}
     >
       {currentView === 'list' && (
-        <ApplicationList users={allUsers} onSelect={handleSelect} />
+        <ApplicationList key={`list-${refreshKey}`} users={allUsers} onSelect={handleSelect} />
       )}
       {currentView === 'detail' && selectedApp && (
         <ApplicationDetail
+          key={`detail-${refreshKey}-${selectedApp.id}`}
           application={selectedApp}
           users={allUsers}
           onUpdated={refreshPending}
         />
       )}
-      {currentView === 'batch' && <BatchProcessPanel users={allUsers} />}
+      {currentView === 'batch' && <BatchProcessPanel key={`batch-${refreshKey}`} users={allUsers} />}
     </AppShell>
   );
 }

@@ -63,6 +63,8 @@ pub fn init_database(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
             file_type TEXT NOT NULL,
             uploaded_by TEXT NOT NULL,
             uploaded_at TEXT NOT NULL,
+            is_evidence INTEGER NOT NULL DEFAULT 0,
+            file_content_base64 TEXT,
             FOREIGN KEY (application_id) REFERENCES replenishment_applications(id) ON DELETE CASCADE
         );
 

@@ -2,7 +2,7 @@ use crate::db::DbPool;
 use crate::dao::*;
 use crate::errors::*;
 use crate::models::*;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 pub struct AuthService;
 
@@ -26,6 +26,69 @@ impl AuthService {
 pub struct WorkflowService;
 
 impl WorkflowService {
+    pub fn can_create(role: UserRole) -> bool {
+        matches!(
+            role,
+            UserRole::StoreManager | UserRole::ReplenishmentRegistrar
+        )
+    }
+
+    pub fn can_process(role: UserRole) -> bool {
+        matches!(
+            role,
+            UserRole::StoreManager
+                | UserRole::OperationsSupervisor
+                | UserRole::HeadquartersOperations
+                | UserRole::ReplenishmentRegistrar
+                | UserRole::ReplenishmentAuditor
+                | UserRole::ChainReviewLead
+        )
+    }
+
+    pub fn can_view_all(role: UserRole) -> bool {
+        matches!(
+            role,
+            UserRole::HeadquartersOperations | UserRole::ReplenishmentAuditor | UserRole::ChainReviewLead
+        )
+    }
+
+    pub fn allowed_actions_for_role(role: UserRole) -> Vec<String> {
+        let mut actions: Vec<String> = Vec::new();
+        match role {
+            UserRole::StoreManager | UserRole::ReplenishmentRegistrar => {
+                actions.push("submit".into());
+                actions.push("correct".into());
+                actions.push("create".into());
+                actions.push("上传附件".into());
+            }
+            UserRole::OperationsSupervisor => {
+                actions.push("sign".into());
+                actions.push("return".into());
+                actions.push("recheck".into());
+                actions.push("上传附件".into());
+            }
+            UserRole::ReplenishmentAuditor => {
+                actions.push("sign".into());
+                actions.push("return".into());
+                actions.push("recheck".into());
+                actions.push("上传附件".into());
+            }
+            UserRole::HeadquartersOperations => {
+                actions.push("complete".into());
+                actions.push("return".into());
+                actions.push("archive".into());
+                actions.push("上传附件".into());
+            }
+            UserRole::ChainReviewLead => {
+                actions.push("recheck".into());
+                actions.push("return".into());
+                actions.push("archive".into());
+                actions.push("上传附件".into());
+            }
+        }
+        actions
+    }
+
     pub fn next_handler_for_transition(
         pool: &DbPool,
         from_status: ApplicationStatus,
@@ -77,6 +140,9 @@ impl WorkflowService {
     }
 
     pub fn can_user_perform_action(user: &User, app: &ReplenishmentApplication, action: &str) -> bool {
+        if !Self::allowed_actions_for_role(user.role).iter().any(|a| a == action) && action != "上传附件" {
+            return false;
+        }
         if user.id != app.current_handler && app.status != ApplicationStatus::Draft {
             return false;
         }
@@ -85,12 +151,17 @@ impl WorkflowService {
             (UserRole::ReplenishmentRegistrar, ApplicationStatus::Draft, "submit") => true,
             (UserRole::OperationsSupervisor, ApplicationStatus::PendingSignature, "sign") => true,
             (UserRole::OperationsSupervisor, ApplicationStatus::PendingSignature, "return") => true,
+            (UserRole::ReplenishmentAuditor, ApplicationStatus::PendingSignature, "sign") => true,
+            (UserRole::ReplenishmentAuditor, ApplicationStatus::PendingSignature, "return") => true,
             (UserRole::HeadquartersOperations, ApplicationStatus::PendingSignature, "complete") => true,
             (UserRole::HeadquartersOperations, ApplicationStatus::PendingSignature, "return") => true,
             (UserRole::StoreManager, ApplicationStatus::ExceptionReturned, "correct") => true,
             (UserRole::ReplenishmentRegistrar, ApplicationStatus::ExceptionReturned, "correct") => true,
             (UserRole::OperationsSupervisor, ApplicationStatus::CorrectionPending, "recheck") => true,
             (UserRole::ReplenishmentAuditor, ApplicationStatus::CorrectionPending, "recheck") => true,
+            (UserRole::ChainReviewLead, ApplicationStatus::CorrectionPending, "recheck") => true,
+            (UserRole::ChainReviewLead, ApplicationStatus::CorrectionPending, "return") => true,
+            (UserRole::HeadquartersOperations, ApplicationStatus::SignatureComplete, "archive") => true,
             (UserRole::ChainReviewLead, ApplicationStatus::SignatureComplete, "archive") => true,
             _ => false,
         }
@@ -311,21 +382,33 @@ impl ApplicationService {
             if let Ok(Some(app)) = ApplicationDao::get_by_id(pool, &item.application_id) {
                 if app.is_overdue {
                     fail_count += 1;
+                    let msg = "已逾期，禁止批量推进，请逐条处理并留下补正记录";
                     results.push(BatchResultItem {
-                        application_id: app_id,
-                        application_no: app_no,
+                        application_id: app_id.clone(),
+                        application_no: app_no.clone(),
                         success: false,
-                        message: "已逾期，禁止批量推进，请逐条处理并留下补正记录".into(),
+                        message: msg.into(),
                     });
-                    let exc_log = ExceptionLog {
-                        id: new_uuid(),
-                        application_id: item.application_id.clone(),
-                        exception_type: "批量拦截".into(),
-                        description: "逾期批量推进被拦截，需手动处理".into(),
-                        operator_id: Some(current_user.id.clone()),
-                        created_at: Utc::now(),
-                    };
-                    ExceptionLogDao::create(pool, &exc_log).ok();
+                    TraceService::log_exception(
+                        pool,
+                        &item.application_id,
+                        "批量拦截-逾期",
+                        &format!(
+                            "用户 {} 在批量 {} 时拦截单据 {}（{}），已逾期需逐条补正",
+                            current_user.display_name, item.action, app_no, app.title
+                        ),
+                        Some(&current_user.id),
+                    );
+                    let _ = TraceService::record_timeline(
+                        pool,
+                        &item.application_id,
+                        Some(app.status),
+                        app.status,
+                        "批量拦截",
+                        current_user,
+                        Some(format!("批量 {} 被拦截：{}", item.action, msg)),
+                        None,
+                    );
                     continue;
                 }
             }
@@ -368,9 +451,21 @@ impl ApplicationService {
         })
     }
 
-    pub fn get_detail(pool: &DbPool, id: &str, _user: &User) -> AppResult<ApplicationDetail> {
+    pub fn get_detail(pool: &DbPool, id: &str, user: &User) -> AppResult<ApplicationDetail> {
         let application = ApplicationDao::get_by_id(pool, id)?
             .ok_or_else(|| AppError::NotFound(format!("申请单 {} 不存在", id)))?;
+
+        let can_view = WorkflowService::can_view_all(user.role)
+            || application.current_handler == user.id
+            || application.created_by == user.id
+            || application.responsible_person == user.id;
+        if !can_view {
+            return Err(AppError::Forbidden(format!(
+                "用户 {} 无权查看申请单 {}（非处理人/创建人/责任人，且角色无全局查看权限）",
+                user.display_name, application.application_no
+            )));
+        }
+
         let attachments = AttachmentDao::list_by_application(pool, id)?;
         let processing_records = ProcessingRecordDao::list_by_application(pool, id)?;
         let audit_notes = AuditNoteDao::list_by_application(pool, id)?;
@@ -499,6 +594,8 @@ impl SeedService {
                     file_type: (*ftype).into(),
                     uploaded_by: (*by).into(),
                     uploaded_at: now - Duration::hours(5),
+                    is_evidence: false,
+                    file_content_base64: None,
                 })?;
             }
 
@@ -550,53 +647,11 @@ pub struct ScopeService;
 
 impl ScopeService {
     pub fn get_visible_scope(user: &User) -> VisibleScope {
-        use UserRole::*;
-        let can_create = matches!(
-            user.role,
-            StoreManager | ReplenishmentRegistrar | OperationsSupervisor
-        );
-        let can_process = matches!(
-            user.role,
-            StoreManager
-                | OperationsSupervisor
-                | HeadquartersOperations
-                | ReplenishmentRegistrar
-                | ReplenishmentAuditor
-                | ChainReviewLead
-        );
-        let can_view_all = matches!(
-            user.role,
-            HeadquartersOperations | ReplenishmentAuditor | ChainReviewLead
-        );
-        let mut allowed_actions: Vec<String> = Vec::new();
-        match user.role {
-            StoreManager | ReplenishmentRegistrar => {
-                allowed_actions.push("submit".into());
-                allowed_actions.push("correct".into());
-                allowed_actions.push("create".into());
-            }
-            OperationsSupervisor => {
-                allowed_actions.push("sign".into());
-                allowed_actions.push("return".into());
-                allowed_actions.push("recheck".into());
-                allowed_actions.push("create".into());
-            }
-            HeadquartersOperations => {
-                allowed_actions.push("complete".into());
-                allowed_actions.push("return".into());
-            }
-            ReplenishmentAuditor => {
-                allowed_actions.push("recheck".into());
-            }
-            ChainReviewLead => {
-                allowed_actions.push("archive".into());
-            }
-        }
         VisibleScope {
-            can_create,
-            can_process,
-            can_view_all,
-            allowed_actions,
+            can_create: WorkflowService::can_create(user.role),
+            can_process: WorkflowService::can_process(user.role),
+            can_view_all: WorkflowService::can_view_all(user.role),
+            allowed_actions: WorkflowService::allowed_actions_for_role(user.role),
         }
     }
 }
@@ -654,11 +709,7 @@ impl ApplicationService {
         current_user: &User,
         req: CreateApplicationRequest,
     ) -> AppResult<ReplenishmentApplication> {
-        use UserRole::*;
-        if !matches!(
-            current_user.role,
-            StoreManager | ReplenishmentRegistrar | OperationsSupervisor
-        ) {
+        if !WorkflowService::can_create(current_user.role) {
             return Err(AppError::Forbidden(format!(
                 "角色 {:?} 无权创建补货申请",
                 current_user.role
@@ -725,9 +776,18 @@ impl ApplicationService {
         let app = ApplicationDao::get_by_id(pool, &req.application_id)?
             .ok_or_else(|| AppError::NotFound(format!("申请单 {} 不存在", req.application_id)))?;
         if app.current_handler != current_user.id {
+            TraceService::log_exception(
+                pool,
+                &req.application_id,
+                "越权-上传附件",
+                &format!(
+                    "用户 {} 尝试上传附件，但当前处理人为 {}",
+                    current_user.display_name, app.current_handler
+                ),
+                Some(&current_user.id),
+            );
             return Err(AppError::Forbidden(format!(
-                "只有当前处理人 {} 可以上传附件，当前用户 {}",
-                app.current_handler, current_user.id
+                "只有当前处理人可以上传附件"
             )));
         }
         if app.status == ApplicationStatus::Archived {
@@ -736,9 +796,21 @@ impl ApplicationService {
         if req.file_name.trim().is_empty() {
             return Err(AppError::Validation("文件名不能为空".into()));
         }
-        if matches!(app.status, ApplicationStatus::ExceptionReturned | ApplicationStatus::CorrectionPending)
-            && req.file_content_base64.is_none()
-        {
+        let is_evidence = matches!(
+            app.status,
+            ApplicationStatus::ExceptionReturned | ApplicationStatus::CorrectionPending
+        );
+        if is_evidence && req.file_content_base64.is_none() {
+            TraceService::log_exception(
+                pool,
+                &req.application_id,
+                "缺补正证据",
+                &format!(
+                    "用户 {} 在 {:?} 状态上传附件但未提供 base64 内容",
+                    current_user.display_name, app.status
+                ),
+                Some(&current_user.id),
+            );
             return Err(AppError::MissingEvidence(
                 "补正/异常状态下必须提供文件内容作为补正证据".into(),
             ));
@@ -751,6 +823,8 @@ impl ApplicationService {
             file_type: req.file_type,
             uploaded_by: current_user.id.clone(),
             uploaded_at: Utc::now(),
+            is_evidence,
+            file_content_base64: req.file_content_base64.clone(),
         };
         AttachmentDao::create(pool, &att)?;
 
@@ -759,16 +833,22 @@ impl ApplicationService {
             &req.application_id,
             Some(app.status),
             app.status,
-            "上传附件",
+            if is_evidence { "补正附件上传" } else { "上传附件" },
             current_user,
-            Some(format!("上传附件：{}", att.file_name)),
+            Some(format!(
+                "上传附件：{}{}",
+                att.file_name,
+                if is_evidence { "（作为补正证据已入SQLite可追溯）" } else { "" }
+            )),
             None,
         )?;
 
-        if matches!(app.status, ApplicationStatus::ExceptionReturned) {
+        if is_evidence {
             let mut tags = app.exception_tags.clone();
             tags.retain(|t| t != "异常退回");
-            tags.push("已补正附件".into());
+            if !tags.iter().any(|t| t == "已补正附件") {
+                tags.push("已补正附件".into());
+            }
             let _ = ApplicationDao::update_status_and_version(
                 pool,
                 &app.id,
@@ -781,7 +861,10 @@ impl ApplicationService {
                 pool,
                 &app.id,
                 "补正附件上传",
-                &format!("{} 上传了补正附件 {}", current_user.display_name, att.file_name),
+                &format!(
+                    "{} 上传了补正附件 {}（is_evidence=true，已持久化 file_content_base64 至 SQLite）",
+                    current_user.display_name, att.file_name
+                ),
                 Some(&current_user.id),
             );
         }

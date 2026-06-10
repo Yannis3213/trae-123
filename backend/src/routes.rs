@@ -65,6 +65,7 @@ pub fn list_applications(
     keyword: Option<String>,
     mine: Option<bool>,
 ) -> AppResult<Json<Vec<ReplenishmentApplication>>> {
+    use crate::services::WorkflowService;
     let filter = ApplicationFilter {
         status: status.as_deref().and_then(ApplicationStatus::from_str),
         priority: priority.as_deref().and_then(Priority::from_str),
@@ -74,7 +75,12 @@ pub fn list_applications(
         keyword,
     };
     let handler = if mine.unwrap_or(false) { Some(user.0.id.as_str()) } else { None };
-    crate::dao::ApplicationDao::list(pool, &filter, handler).map(Json)
+    let visibility_user = if WorkflowService::can_view_all(user.0.role) {
+        None
+    } else {
+        Some(user.0.id.as_str())
+    };
+    crate::dao::ApplicationDao::list(pool, &filter, handler, visibility_user).map(Json)
 }
 
 #[get("/api/applications/<id>")]
