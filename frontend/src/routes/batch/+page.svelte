@@ -2,6 +2,7 @@
 	import { listApplications, batchProcess } from '$lib/api';
 	import { STATUS_LABELS, TEMP_ZONE_LABELS, STATUS_COLORS, ROLE_LABELS } from '$lib/types';
 	import type { Application, BatchResultItem } from '$lib/types';
+	import { goto } from '$app/navigation';
 
 	let applications: Application[] = [];
 	let loading = true;
@@ -88,6 +89,29 @@
 	$: successCount = batchResults.filter(r => r.success).length;
 	$: failCount = batchResults.filter(r => !r.success).length;
 
+	function correctionAction(r: BatchResultItem): { label: string; href?: string; tip?: string } {
+		switch (r.error_code) {
+			case 'OVERDUE_CHECK_PASS':
+				return { label: '前往详情页推进', href: `/applications/${r.id}` };
+			case 'CROSS_ROLE':
+				return { label: '切换责任人账号', tip: '该单据指定了其他处理人，请切换到对应角色/账号' };
+			case 'ROLE_FORBIDDEN':
+				return { label: '切换角色', tip: '当前角色无法处理该状态，请切换角色' };
+			case 'EVIDENCE_MISSING':
+				return { label: '前往详情页补正', href: `/applications/${r.id}` };
+			case 'VERSION_CONFLICT':
+				return { label: '刷新详情页', href: `/applications/${r.id}` };
+			case 'NOT_FOUND':
+				return { label: '返回列表查看' };
+			case 'DUPLICATE_SUBMIT':
+				return { label: '查看办结单', href: `/applications/${r.id}` };
+			case 'STATUS_CONFLICT':
+				return { label: '查看单据状态', href: `/applications/${r.id}` };
+			default:
+				return { label: '查看详情', href: `/applications/${r.id}` };
+		}
+	}
+
 	import { onMount } from 'svelte';
 	onMount(() => { loadData(); });
 </script>
@@ -135,6 +159,7 @@
 		</div>
 		<div class="result-list">
 			{#each batchResults as r, i}
+				{@const action = correctionAction(r)}
 				<div class="result-item {r.success ? 'success' : 'fail'}">
 					<div class="result-header">
 						<span class="result-index">#{i + 1}</span>
@@ -147,6 +172,14 @@
 					{#if r.reason}
 						<div class="result-reason">{r.reason}</div>
 					{/if}
+					<div class="result-footer">
+						{#if action.href}
+							<button class="btn-correction" on:click={() => goto(action.href!)}>{action.label}</button>
+						{:else if action.label}
+							<span class="btn-correction disabled" title={action.tip}>⚠️ {action.label}</span>
+						{/if}
+						<button class="btn-refresh" on:click={loadData}>🔄 刷新列表</button>
+					</div>
 				</div>
 			{/each}
 		</div>
@@ -354,5 +387,49 @@
 		color: var(--text);
 		padding-left: 2px;
 		line-height: 1.5;
+	}
+	.result-footer {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-top: 6px;
+		flex-wrap: wrap;
+	}
+	.btn-correction {
+		display: inline-block;
+		padding: 5px 14px;
+		border-radius: 6px;
+		border: 1px solid var(--primary);
+		background: white;
+		color: var(--primary);
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+	.btn-correction:hover:not(.disabled) {
+		background: var(--primary);
+		color: white;
+	}
+	.btn-correction.disabled {
+		border-color: #ff9800;
+		color: #e65100;
+		cursor: help;
+		background: #fff3e0;
+	}
+	.btn-refresh {
+		display: inline-block;
+		padding: 5px 14px;
+		border-radius: 6px;
+		border: 1px solid #888;
+		background: white;
+		color: #555;
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+	.btn-refresh:hover {
+		background: #f5f5f5;
 	}
 </style>

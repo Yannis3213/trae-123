@@ -203,6 +203,8 @@ func seedData() error {
 
 		{"CC-DEMO-VERSION-OLD", "旧版本冲突测试-草稿", 80, future20, "09:00-11:00", "frozen", "draft", "appointment", userIDs[0], 0, 2, ""},
 		{"CC-DEMO-VERSION-CORRECT", "旧版本冲突测试-待补正", 120, past15, "10:00-12:00", "chilled", "pending_correction", "appointment", userIDs[0], userIDs[1], 4, "此单据版本人为标旧，提交时将触发版本冲突"},
+
+		{"CC-DEMO-MISSING-COUNT", "缺数量-逾期待补正", 0, past20, "09:00-11:00", "chilled", "pending_correction", "appointment", userIDs[0], userIDs[1], 3, "产品数量未填写，请补正数量后再提交"},
 	}
 
 	appIDs := make([]int64, len(apps))
@@ -271,6 +273,9 @@ func seedData() error {
 
 		{appIDs[22], userIDs[0], "submit", "draft", "pending_temp", ""},
 		{appIDs[22], userIDs[1], "return", "pending_temp", "pending_correction", "版本冲突演示：此单据版本人为标旧"},
+
+		{appIDs[23], userIDs[0], "submit", "draft", "pending_temp", ""},
+		{appIDs[23], userIDs[1], "return", "pending_temp", "pending_correction", "产品数量未填写，请补正数量"},
 	}
 
 	for _, r := range records {
@@ -310,6 +315,8 @@ func seedData() error {
 
 		{appIDs[21], userIDs[0], "version_conflict", "版本冲突测试：单据版本人为标为v2，前端提交v1时将触发拦截"},
 		{appIDs[22], userIDs[1], "version_conflict", "版本冲突测试：待补正单据版本人为标为v4，前端提交旧版本将拦截"},
+
+		{appIDs[23], userIDs[1], "evidence_missing", "待补正单据缺少必填证据：数量（product_count=0），请补正数量后再推进"},
 	}
 
 	for _, e := range exceptions {
