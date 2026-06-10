@@ -1,0 +1,35 @@
+<div class="login-container">
+  <div class="login-card">
+    <div class="login-header">
+      <div class="logo-icon">✈</div>
+      <h1>航空地服</h1>
+      <h2>月底集中处理值机记录系统</h2>
+    </div>
+
+    <form (ngSubmit)="onSubmit()" class="login-form">
+      <div class="form-group">
+        <label for="username">用户名</label>
+        <input id="username" type="text" [(ngModel)]="username" name="username" placeholder="请输入用户名" autocomplete="username" />
+      </div>
+      <div class="form-group">
+        <label for="password">密码</label>
+        <input id="password" type="password" [(ngModel)]="password" name="password" placeholder="请输入密码" autocomplete="current-password" />
+      </div>
+
+      <div class="error-msg" *ngIf="error">{{ error }}</div>
+
+      <button type="submit" class="btn-login" [disabled]="loading">
+        {{ loading ? '登录中...' : '登 录' }}
+      </button>
+    </form>
+
+    <div class="demo-section">
+      <p class="demo-title">快速切换演示账号</p>
+      <div class="demo-buttons">
+        <button *ngFor="let account of demoAccounts" class="btn-demo" (click)="quickLogin(account)">
+          {{ account.label }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>

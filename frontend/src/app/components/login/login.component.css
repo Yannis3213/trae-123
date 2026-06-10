@@ -1,0 +1,133 @@
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1a5276 0%, #2c3e50 100%);
+}
+
+.login-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 48px 40px;
+  width: 420px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.login-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.logo-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+}
+
+.login-header h1 {
+  color: #1a5276;
+  font-size: 24px;
+  margin: 0 0 4px;
+}
+
+.login-header h2 {
+  color: #7f8c8d;
+  font-size: 14px;
+  font-weight: 400;
+  margin: 0;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 14px;
+  color: #2c3e50;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid #dce1e5;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: #1a5276;
+  box-shadow: 0 0 0 3px rgba(26, 82, 118, 0.1);
+}
+
+.error-msg {
+  color: #e74c3c;
+  font-size: 13px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: #fdecea;
+  border-radius: 4px;
+}
+
+.btn-login {
+  width: 100%;
+  padding: 12px;
+  background: #1a5276;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-login:hover:not(:disabled) {
+  background: #154360;
+}
+
+.btn-login:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.demo-section {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid #eee;
+}
+
+.demo-title {
+  font-size: 13px;
+  color: #95a5a6;
+  margin: 0 0 12px;
+  text-align: center;
+}
+
+.demo-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-demo {
+  padding: 8px 16px;
+  background: #f0f4f8;
+  border: 1px solid #dce1e5;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #2c3e50;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-demo:hover {
+  background: #e8eef3;
+  border-color: #1a5276;
+  color: #1a5276;
+}

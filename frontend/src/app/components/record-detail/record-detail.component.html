@@ -1,0 +1,196 @@
+<div class="detail-page">
+  <div class="detail-header">
+    <button class="btn-back" (click)="goBack()">← 返回列表</button>
+    <div class="header-info" *ngIf="record">
+      <h2>{{ record.flight_no }} - {{ record.passenger_name }}</h2>
+      <span class="status-badge" [style.background]="getStatusColor(record.status)">
+        {{ getStatusLabel(record.status) }}
+      </span>
+      <span class="version-tag">v{{ record.version }}</span>
+    </div>
+  </div>
+
+  <div class="loading" *ngIf="loading">加载中...</div>
+  <div class="error-msg" *ngIf="error">{{ error }}</div>
+
+  <div *ngIf="record && !loading" class="detail-body">
+    <div class="tab-bar">
+      <button class="tab-btn" [class.active]="activeTab === 'basic'" (click)="activeTab = 'basic'">基本信息</button>
+      <button class="tab-btn" [class.active]="activeTab === 'attachments'" (click)="activeTab = 'attachments'">证据附件</button>
+      <button class="tab-btn" [class.active]="activeTab === 'processing'" (click)="activeTab = 'processing'">处理记录</button>
+      <button class="tab-btn" [class.active]="activeTab === 'audit'" (click)="activeTab = 'audit'">审计备注</button>
+      <button class="tab-btn" [class.active]="activeTab === 'exception'" (click)="activeTab = 'exception'">异常原因</button>
+    </div>
+
+    <div class="tab-content">
+      <div *ngIf="activeTab === 'basic'" class="tab-panel">
+        <div class="info-grid">
+          <div class="info-item">
+            <label>航班号</label>
+            <span>{{ record.flight_no }}</span>
+          </div>
+          <div class="info-item">
+            <label>旅客姓名</label>
+            <span>{{ record.passenger_name }}</span>
+          </div>
+          <div class="info-item">
+            <label>证件号</label>
+            <span>{{ record.passenger_id }}</span>
+          </div>
+          <div class="info-item">
+            <label>座位号</label>
+            <span>{{ record.seat_no }}</span>
+          </div>
+          <div class="info-item">
+            <label>值机时间</label>
+            <span>{{ record.checkin_time | date:'yyyy-MM-dd HH:mm' }}</span>
+          </div>
+          <div class="info-item">
+            <label>截止时间</label>
+            <span>{{ record.deadline | date:'yyyy-MM-dd HH:mm' }}</span>
+          </div>
+          <div class="info-item">
+            <label>当前状态</label>
+            <span class="status-badge" [style.background]="getStatusColor(record.status)">
+              {{ getStatusLabel(record.status) }}
+            </span>
+          </div>
+          <div class="info-item">
+            <label>当前处理角色</label>
+            <span>{{ getRoleLabel(record.current_handler_role) }}</span>
+          </div>
+          <div class="info-item">
+            <label>创建人</label>
+            <span>{{ record.creator_name }}</span>
+          </div>
+          <div class="info-item">
+            <label>创建时间</label>
+            <span>{{ record.created_at | date:'yyyy-MM-dd HH:mm' }}</span>
+          </div>
+          <div class="info-item">
+            <label>更新时间</label>
+            <span>{{ record.updated_at | date:'yyyy-MM-dd HH:mm' }}</span>
+          </div>
+        </div>
+
+        <div class="return-reason-box" *ngIf="record.status === 'returned' && record.return_reason">
+          <label>退回原因</label>
+          <p>{{ record.return_reason }}</p>
+        </div>
+
+        <div class="action-section">
+          <h4>操作</h4>
+          <div class="action-buttons">
+            <button *ngFor="let action of getAvailableActions()"
+                    class="btn-action"
+                    [class.btn-approve]="action === 'approve' || action === 'confirm_sync'"
+                    [class.btn-return]="action === 'return'"
+                    [class.btn-submit]="action === 'submit' || action === 'correct'"
+                    (click)="openActionDialog(action)">
+              {{ getActionLabel(action) }}
+            </button>
+            <span *ngIf="getAvailableActions().length === 0" class="no-action">当前无可用操作</span>
+          </div>
+        </div>
+      </div>
+
+      <div *ngIf="activeTab === 'attachments'" class="tab-panel">
+        <div *ngFor="let type of attachmentTypes" class="attachment-section">
+          <h4>{{ ATTACHMENT_TYPE_LABELS[type] }}</h4>
+          <div class="attachment-list">
+            <div *ngFor="let att of getAttachmentsByType(type)" class="attachment-item">
+              <span class="att-name">{{ att.file_name }}</span>
+              <button class="btn-delete" (click)="deleteAttachment(att.id)">删除</button>
+            </div>
+            <div *ngIf="getAttachmentsByType(type).length === 0" class="empty-hint">暂无附件</div>
+          </div>
+          <div class="upload-form">
+            <input type="text" [(ngModel)]="newFileName" placeholder="输入文件名" class="input-sm" />
+            <button class="btn-sm btn-primary" (click)="newAttachmentType = type; uploadAttachment()" [disabled]="uploadingAttachment">
+              上传
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div *ngIf="activeTab === 'processing'" class="tab-panel">
+        <div class="timeline">
+          <div *ngFor="let pr of record.processing_records" class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div class="timeline-content">
+              <div class="timeline-header">
+                <span class="timeline-action">{{ getActionLabel(pr.action) }}</span>
+                <span class="timeline-role">{{ getRoleLabel(pr.handler_role) }}</span>
+                <span class="timeline-time">{{ pr.created_at | date:'yyyy-MM-dd HH:mm' }}</span>
+              </div>
+              <div class="timeline-comment" *ngIf="pr.comment">{{ pr.comment }}</div>
+            </div>
+          </div>
+          <div *ngIf="record.processing_records.length === 0" class="empty-hint">暂无处理记录</div>
+        </div>
+      </div>
+
+      <div *ngIf="activeTab === 'audit'" class="tab-panel">
+        <div class="note-list">
+          <div *ngFor="let note of record.audit_notes" class="note-item">
+            <div class="note-header">
+              <span class="note-time">{{ note.created_at | date:'yyyy-MM-dd HH:mm' }}</span>
+            </div>
+            <p class="note-text">{{ note.note }}</p>
+          </div>
+          <div *ngIf="record.audit_notes.length === 0" class="empty-hint">暂无审计备注</div>
+        </div>
+        <div class="add-form">
+          <textarea [(ngModel)]="newAuditNote" rows="3" placeholder="添加审计备注"></textarea>
+          <button class="btn-sm btn-primary" (click)="addAuditNote()" [disabled]="addingAuditNote || !newAuditNote.trim()">
+            添加备注
+          </button>
+        </div>
+      </div>
+
+      <div *ngIf="activeTab === 'exception'" class="tab-panel">
+        <div class="exception-notice" *ngIf="record.exception_reasons.length > 0">
+          异常日志只作为证据，不能替代详情页的真实处理结果
+        </div>
+        <div class="exception-list">
+          <div *ngFor="let er of record.exception_reasons" class="exception-item">
+            <div class="exception-header">
+              <span class="exception-type">{{ er.reason_type }}</span>
+              <span class="exception-time">{{ er.created_at | date:'yyyy-MM-dd HH:mm' }}</span>
+            </div>
+            <p class="exception-desc">{{ er.description }}</p>
+          </div>
+          <div *ngIf="record.exception_reasons.length === 0" class="empty-hint">暂无异常原因</div>
+        </div>
+        <div class="add-form">
+          <select [(ngModel)]="newExceptionReasonType" class="select-sm">
+            <option value="">选择异常类型</option>
+            <option *ngFor="let rt of exceptionReasonTypes" [value]="rt">{{ rt }}</option>
+          </select>
+          <textarea [(ngModel)]="newExceptionDescription" rows="3" placeholder="异常描述"></textarea>
+          <button class="btn-sm btn-primary" (click)="addExceptionReason()"
+                  [disabled]="addingExceptionReason || !newExceptionReasonType || !newExceptionDescription.trim()">
+            添加异常原因
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="dialog-overlay" *ngIf="showActionDialog" (click)="showActionDialog = false">
+  <div class="dialog-card" (click)="$event.stopPropagation()">
+    <h3>{{ pendingAction ? getActionLabel(pendingAction) : '' }}</h3>
+    <div class="form-group">
+      <label>备注</label>
+      <textarea [(ngModel)]="processComment" rows="3" class="comment-textarea"
+                [placeholder]="pendingAction === 'return' ? '请填写退回原因（必填）' : '备注（可选）'"></textarea>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn-sm" (click)="showActionDialog = false">取消</button>
+      <button class="btn-sm btn-primary" (click)="executeAction()" [disabled]="processing">
+        {{ processing ? '处理中...' : '确认' }}
+      </button>
+    </div>
+  </div>
+</div>

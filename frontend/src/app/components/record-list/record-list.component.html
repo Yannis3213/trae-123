@@ -1,0 +1,163 @@
+<div class="page-layout">
+  <div class="top-bar">
+    <div class="top-bar-left">
+      <span class="system-title">✈ 航空地服-值机记录系统</span>
+      <nav class="nav-tabs">
+        <button class="nav-tab" [class.active]="activeTab === 'records'" (click)="switchTab('records')">值机记录</button>
+        <button class="nav-tab" [class.active]="activeTab === 'warnings'" (click)="switchTab('warnings')">预警队列</button>
+        <button class="nav-tab" [class.active]="activeTab === 'statistics'" (click)="switchTab('statistics')">统计</button>
+      </nav>
+    </div>
+    <div class="top-bar-right">
+      <span class="user-info" *ngIf="auth.currentUserValue">
+        {{ auth.currentUserValue.name }} ({{ getRoleLabel(auth.currentUserValue.role) }})
+      </span>
+      <div class="role-switcher-wrapper">
+        <button class="btn-sm btn-outline" (click)="showRoleSwitcher = !showRoleSwitcher">切换角色</button>
+        <div class="role-dropdown" *ngIf="showRoleSwitcher">
+          <button *ngFor="let account of demoAccounts" class="role-dropdown-item" (click)="switchRole(account)">
+            {{ account.label }}
+          </button>
+        </div>
+      </div>
+      <button class="btn-sm btn-danger" (click)="logout()">退出</button>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <div class="left-main">
+      <div class="filter-bar">
+        <select [(ngModel)]="filterStatus" (ngModelChange)="onFilter()" class="filter-select">
+          <option *ngFor="let opt of statusOptions" [value]="opt.value">{{ opt.label }}</option>
+        </select>
+        <input type="text" [(ngModel)]="filterFlightNo" (keyup.enter)="onFilter()" placeholder="航班号搜索" class="filter-input" />
+        <input type="text" [(ngModel)]="filterPassengerName" (keyup.enter)="onFilter()" placeholder="旅客姓名搜索" class="filter-input" />
+        <button class="btn-sm btn-primary" (click)="onFilter()">查询</button>
+      </div>
+
+      <div class="table-wrapper">
+        <table class="record-table">
+          <thead>
+            <tr>
+              <th class="col-check">
+                <input type="checkbox" [checked]="isAllSelected()" (change)="toggleSelectAll()" />
+              </th>
+              <th>ID</th>
+              <th>航班号</th>
+              <th>旅客姓名</th>
+              <th>座位号</th>
+              <th>状态</th>
+              <th>当前处理角色</th>
+              <th>截止时间</th>
+              <th>更新时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let record of records"
+                class="record-row"
+                [class.hovered]="hoveredRecordId === record.id"
+                (click)="navigateToDetail(record.id)"
+                (mouseenter)="setHoveredRecord(record.id)"
+                (mouseleave)="clearHoveredRecord()">
+              <td class="col-check" (click)="toggleSelect(record.id, $event)">
+                <input type="checkbox" [checked]="selectedIds.has(record.id)" (click)="toggleSelect(record.id, $event)" />
+              </td>
+              <td>{{ record.id }}</td>
+              <td>{{ record.flight_no }}</td>
+              <td>{{ record.passenger_name }}</td>
+              <td>{{ record.seat_no }}</td>
+              <td>
+                <span class="status-badge" [style.background]="getStatusColor(record.status)">
+                  {{ getStatusLabel(record.status) }}
+                </span>
+              </td>
+              <td>{{ getRoleLabel(record.current_handler_role) }}</td>
+              <td>
+                <span [style.color]="getDeadlineColor(record.deadline)" class="deadline-text">
+                  {{ record.deadline | date:'yyyy-MM-dd HH:mm' }}
+                </span>
+              </td>
+              <td>{{ record.updated_at | date:'yyyy-MM-dd HH:mm' }}</td>
+            </tr>
+            <tr *ngIf="records.length === 0">
+              <td colspan="9" class="empty-row">暂无记录</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pagination" *ngIf="totalPages > 1">
+        <button class="btn-sm" [disabled]="page <= 1" (click)="onPageChange(page - 1)">上一页</button>
+        <span class="page-info">第 {{ page }} / {{ totalPages }} 页 (共 {{ total }} 条)</span>
+        <button class="btn-sm" [disabled]="page >= totalPages" (click)="onPageChange(page + 1)">下一页</button>
+      </div>
+
+      <div class="batch-bar" *ngIf="selectedIds.size > 0">
+        <span class="selected-count">已选 {{ selectedIds.size }} 条记录</span>
+        <select [(ngModel)]="batchAction" class="filter-select">
+          <option *ngFor="let opt of batchActionOptions" [value]="opt.value">{{ opt.label }}</option>
+        </select>
+        <button class="btn-sm btn-primary" (click)="openBatchDialog()">批量处理</button>
+      </div>
+    </div>
+
+    <div class="right-sidebar">
+      <h3 class="sidebar-title">证据概览</h3>
+      <div *ngIf="hoveredRecordId; else noSelection" class="evidence-cards">
+        <div *ngFor="let type of attachmentTypes" class="evidence-card">
+          <div class="evidence-card-header">
+            <span class="evidence-type-label">{{ ATTACHMENT_TYPE_LABELS[type] }}</span>
+            <span class="evidence-count">{{ getEvidenceCount(hoveredRecordId, type) }} 份</span>
+          </div>
+          <div class="evidence-card-body">
+            <span *ngIf="getEvidenceCount(hoveredRecordId, type) > 0" class="evidence-file">
+              {{ getEvidenceFirstFile(hoveredRecordId, type) }}
+            </span>
+            <span *ngIf="getEvidenceCount(hoveredRecordId, type) === 0" class="evidence-empty">
+              暂无证据
+            </span>
+          </div>
+        </div>
+        <button class="btn-detail" (click)="navigateToDetail(hoveredRecordId!)">查看详情</button>
+      </div>
+      <ng-template #noSelection>
+        <p class="sidebar-hint">鼠标悬停或点击记录行查看证据概览</p>
+      </ng-template>
+    </div>
+  </div>
+</div>
+
+<div class="dialog-overlay" *ngIf="showBatchDialog" (click)="showBatchDialog = false">
+  <div class="dialog-card" (click)="$event.stopPropagation()">
+    <h3>批量处理 - {{ selectedIds.size }} 条记录</h3>
+    <div class="form-group">
+      <label>处理动作</label>
+      <select [(ngModel)]="batchAction" class="filter-select" style="width:100%">
+        <option *ngFor="let opt of batchActionOptions" [value]="opt.value">{{ opt.label }}</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>备注</label>
+      <textarea [(ngModel)]="batchComment" rows="3" class="comment-textarea" placeholder="请输入备注（退回补正时必填）"></textarea>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn-sm" (click)="showBatchDialog = false">取消</button>
+      <button class="btn-sm btn-primary" (click)="executeBatch()">确认处理</button>
+    </div>
+  </div>
+</div>
+
+<div class="dialog-overlay" *ngIf="showBatchResultDialog" (click)="closeBatchResult()">
+  <div class="dialog-card" (click)="$event.stopPropagation()">
+    <h3>批量处理结果</h3>
+    <div class="batch-results">
+      <div *ngFor="let result of batchResults" class="batch-result-item" [class.success]="result.success" [class.fail]="!result.success">
+        <span class="result-id">记录 #{{ result.record_id }}</span>
+        <span class="result-msg">{{ result.message }}</span>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn-sm btn-primary" (click)="closeBatchResult()">关闭</button>
+    </div>
+  </div>
+</div>

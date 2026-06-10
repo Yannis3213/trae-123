@@ -1,0 +1,54 @@
+<div class="page-layout">
+  <div class="top-bar">
+    <div class="top-bar-left">
+      <span class="system-title">✈ 航空地服-值机记录系统</span>
+      <nav class="nav-tabs">
+        <button class="nav-tab" (click)="switchNav('records')">值机记录</button>
+        <button class="nav-tab" (click)="switchNav('warnings')">预警队列</button>
+        <button class="nav-tab active">统计</button>
+      </nav>
+    </div>
+    <div class="top-bar-right">
+      <span class="user-info" *ngIf="auth.currentUserValue">
+        {{ auth.currentUserValue.name }} ({{ ROLE_LABELS[auth.currentUserValue.role] }})
+      </span>
+      <button class="btn-sm btn-danger" (click)="logout()">退出</button>
+    </div>
+  </div>
+
+  <div class="content-area">
+    <div *ngIf="loading" class="loading">加载中...</div>
+
+    <div *ngIf="!loading && stats">
+      <section class="stat-section">
+        <h3>状态统计</h3>
+        <div class="card-grid">
+          <div *ngFor="let item of statusItems" class="stat-card" [style.border-left-color]="item.color">
+            <div class="card-count" [style.color]="item.color">{{ item.count }}</div>
+            <div class="card-label">{{ item.label }}</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="stat-section">
+        <h3>预警统计</h3>
+        <div class="card-grid">
+          <div *ngFor="let item of warningItems" class="stat-card" [style.border-left-color]="item.color">
+            <div class="card-count" [style.color]="item.color">{{ item.count }}</div>
+            <div class="card-label">{{ item.label }}</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="stat-section">
+        <h3>角色队列统计</h3>
+        <div class="card-grid">
+          <div *ngFor="let item of roleItems" class="stat-card">
+            <div class="card-count">{{ item.count }}</div>
+            <div class="card-label">{{ item.label }}</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>

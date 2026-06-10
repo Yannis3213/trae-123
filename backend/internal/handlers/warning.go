@@ -1,0 +1,103 @@
+package handlers
+
+import (
+	"database/sql"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"aviation-ground-service/internal/models"
+	"aviation-ground-service/internal/services"
+
+	"github.com/labstack/echo/v4"
+)
+
+type WarningHandler struct {
+	DB *sql.DB
+}
+
+func (h *WarningHandler) List(c echo.Context) error {
+	warningType := c.QueryParam("warning_type")
+	page := 1
+	pageSize := 10
+
+	if p := c.QueryParam("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if ps := c.QueryParam("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 {
+			pageSize = v
+		}
+	}
+
+	now := time.Now()
+	nowStr := now.Format("2006-01-02 15:04:05")
+	approachingStr := now.Add(72 * time.Hour).Format("2006-01-02 15:04:05")
+
+	var conditions []string
+	var args []interface{}
+
+	conditions = append(conditions, "cr.status != ?")
+	args = append(args, string(models.StatusSynced))
+
+	switch warningType {
+	case "normal":
+		conditions = append(conditions, "datetime(cr.deadline) > datetime(?)")
+		args = append(args, approachingStr)
+	case "approaching":
+		conditions = append(conditions, "datetime(cr.deadline) <= datetime(?) AND datetime(cr.deadline) > datetime(?, '+24 hours')")
+		args = append(args, approachingStr, nowStr)
+	case "overdue":
+		conditions = append(conditions, "datetime(cr.deadline) <= datetime(?, '+24 hours')")
+		args = append(args, nowStr)
+	}
+
+	whereClause := "WHERE " + strings.Join(conditions, " AND ")
+
+	countQuery := "SELECT COUNT(*) FROM checkin_records cr " + whereClause
+	var total int
+	h.DB.QueryRow(countQuery, args...).Scan(&total)
+
+	offset := (page - 1) * pageSize
+	listQuery := "SELECT cr.id, cr.flight_no, cr.passenger_name, cr.passenger_id, cr.seat_no, cr.checkin_time, cr.status, cr.version, cr.deadline, cr.created_by, cr.current_handler_role, cr.return_reason, cr.created_at, cr.updated_at FROM checkin_records cr " + whereClause + " ORDER BY cr.deadline ASC LIMIT ? OFFSET ?"
+	args = append(args, pageSize, offset)
+
+	rows, err := h.DB.Query(listQuery, args...)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "查询失败"})
+	}
+	defer rows.Close()
+
+	type WarningRecord struct {
+		models.CheckinRecord
+		WarningType string `json:"warning_type"`
+	}
+
+	var records []WarningRecord
+	for rows.Next() {
+		var r models.CheckinRecord
+		if err := rows.Scan(
+			&r.ID, &r.FlightNo, &r.PassengerName, &r.PassengerID, &r.SeatNo,
+			&r.CheckinTime, &r.Status, &r.Version, &r.Deadline, &r.CreatedBy,
+			&r.CurrentHandlerRole, &r.ReturnReason, &r.CreatedAt, &r.UpdatedAt,
+		); err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "数据解析失败"})
+		}
+
+		wt := services.CheckDeadline(r.Deadline)
+		records = append(records, WarningRecord{
+			CheckinRecord: r,
+			WarningType:   wt,
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"data":      records,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
+}

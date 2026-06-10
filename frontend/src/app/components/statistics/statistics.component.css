@@ -1,0 +1,126 @@
+.page-layout {
+  min-height: 100vh;
+  background: #f0f2f5;
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 56px;
+  background: #1a5276;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.system-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.nav-tab {
+  padding: 8px 20px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.nav-tab:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }
+.nav-tab.active { color: #fff; background: rgba(255, 255, 255, 0.2); font-weight: 500; }
+
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-info { font-size: 13px; opacity: 0.9; }
+
+.btn-sm {
+  padding: 6px 14px;
+  font-size: 13px;
+  border: 1px solid #dce1e5;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  cursor: pointer;
+}
+
+.btn-danger { background: rgba(231, 76, 60, 0.8); border-color: transparent; }
+.btn-danger:hover { background: #e74c3c; }
+
+.content-area {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.loading {
+  text-align: center;
+  padding: 60px;
+  color: #95a5a6;
+  font-size: 15px;
+}
+
+.stat-section {
+  margin-bottom: 32px;
+}
+
+.stat-section h3 {
+  font-size: 16px;
+  color: #1a5276;
+  margin: 0 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #e8ecf0;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.stat-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  border-left: 4px solid #dce1e5;
+  text-align: center;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.card-count {
+  font-size: 36px;
+  font-weight: 700;
+  color: #1a5276;
+  line-height: 1;
+  margin-bottom: 8px;
+}
+
+.card-label {
+  font-size: 13px;
+  color: #7f8c8d;
+  font-weight: 500;
+}
