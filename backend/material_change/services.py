@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from .models import (
     UserProfile, MaterialChangeOrder, ProcessingRecord,
     ExceptionRecord, BOMChangeRecord, MaterialSubstituteRecord,
-    PilotVerifyRecord, STATUS_CHOICES
+    PilotVerifyRecord, AuditRemark, STATUS_CHOICES
 )
 
 STATUS_FLOW = {
@@ -269,6 +269,14 @@ class OrderService:
             version=order.version,
         )
 
+        from_status_display = dict(STATUS_CHOICES).get(from_status, from_status)
+        to_status_display = dict(STATUS_CHOICES).get(next_status, next_status)
+        OrderService._record_audit(
+            order, profile,
+            f'{action_display}：从【{from_status_display}】推进到【{to_status_display}】，备注：{data.get("comment", "")}',
+            'status_change'
+        )
+
         return {'success': True, 'message': f'{action_display}成功', 'order_id': order.id, 'new_status': next_status}
 
     @staticmethod
@@ -294,6 +302,13 @@ class OrderService:
         )
 
         OrderService._record_exception(order, 'RETURNED', '退回补正', f'从{order.get_status_display()}退回，原因：{return_reason}', order.created_by)
+
+        from_status_display = dict(STATUS_CHOICES).get(from_status, from_status)
+        OrderService._record_audit(
+            order, profile,
+            f'退回：从【{from_status_display}】退回到【已退回】，退回原因：{return_reason}，备注：{data.get("comment", "")}',
+            'return'
+        )
 
         return {'success': True, 'message': '退回成功', 'order_id': order.id, 'new_status': 'returned'}
 
@@ -362,6 +377,13 @@ class OrderService:
             version=order.version,
         )
 
+        from_status_display = dict(STATUS_CHOICES).get(from_status, from_status)
+        OrderService._record_audit(
+            order, profile,
+            f'补正修改：【{from_status_display}】状态下补正，补正原因：{correction_reason}',
+            'correction'
+        )
+
         return {'success': True, 'message': '补正成功', 'order_id': order.id}
 
     @staticmethod
@@ -407,6 +429,12 @@ class OrderService:
             version=1,
         )
 
+        OrderService._record_audit(
+            order, profile,
+            f'创建物料变更单，单号：{order_no}，标题：{order.title}',
+            'create'
+        )
+
         return {'success': True, 'message': '创建成功', 'order_id': order.id, 'order_no': order_no}
 
     @staticmethod
@@ -420,6 +448,15 @@ class OrderService:
             responsible_role=responsible.role if responsible else '',
         )
         return exception
+
+    @staticmethod
+    def _record_audit(order, operator, content, remark_type='general'):
+        AuditRemark.objects.create(
+            order=order,
+            operator=operator,
+            content=content,
+            remark_type=remark_type,
+        )
 
     @staticmethod
     def update_all_warn_status():

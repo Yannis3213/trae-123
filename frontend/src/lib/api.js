@@ -104,4 +104,7 @@ export const orderApi = {
   metaWarn() {
     return request('GET', '/material/meta/warn-options');
   },
+  auditRemarks(id) {
+    return request('GET', `/material/orders/${id}/audit-remarks`);
+  },
 };

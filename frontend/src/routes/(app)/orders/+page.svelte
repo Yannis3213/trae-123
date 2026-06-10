@@ -35,40 +35,58 @@
 
   let user = null;
   let refreshTimer = null;
+  let errorMsg = '';
 
   $: userStore.subscribe(u => user = u);
 
   async function loadData() {
     loading = true;
+    errorMsg = '';
     try {
       const [listRes, statsRes] = await Promise.all([
         orderApi.list({ ...filters, page: 1, page_size: 50 }),
         orderApi.statistics(),
       ]);
-      orders = listRes;
-      statistics = statsRes;
+      if (Array.isArray(listRes)) {
+        orders = listRes;
+      } else {
+        orders = [];
+        errorMsg = listRes?.message || '加载数据失败';
+      }
+      statistics = statsRes || {};
     } catch (e) {
       console.error('加载失败', e);
+      errorMsg = '网络错误，请检查后端服务是否启动';
+      orders = [];
+      statistics = {};
     }
     loading = false;
   }
 
   async function loadMeta() {
-    const [s, ct, u, w] = await Promise.all([
-      orderApi.metaStatus(),
-      orderApi.metaChangeType(),
-      orderApi.metaUrgency(),
-      orderApi.metaWarn(),
-    ]);
-    statusOptions = s;
-    changeTypeOptions = ct;
-    urgencyOptions = u;
-    warnOptions = w;
+    try {
+      const [s, ct, u, w] = await Promise.all([
+        orderApi.metaStatus(),
+        orderApi.metaChangeType(),
+        orderApi.metaUrgency(),
+        orderApi.metaWarn(),
+      ]);
+      statusOptions = Array.isArray(s) ? s : [];
+      changeTypeOptions = Array.isArray(ct) ? ct : [];
+      urgencyOptions = Array.isArray(u) ? u : [];
+      warnOptions = Array.isArray(w) ? w : [];
+    } catch (e) {
+      console.error('加载元数据失败', e);
+    }
   }
 
   async function refreshWarnings() {
-    await orderApi.refreshWarnings();
-    loadData();
+    try {
+      await orderApi.refreshWarnings();
+      loadData();
+    } catch (e) {
+      alert('刷新预警失败');
+    }
   }
 
   function toggleSelectAll() {
@@ -102,16 +120,20 @@
     if (selected.size === 0) return;
     showBatchModal = false;
 
-    const orderIds = Array.from(selected);
-    const res = await orderApi.batchAction({
-      order_ids: orderIds,
-      action: batchAction,
-      comment: batchComment,
-      return_reason: batchReturnReason,
-    });
-    batchResults = res;
-    showBatchResult = true;
-    loadData();
+    try {
+      const orderIds = Array.from(selected);
+      const res = await orderApi.batchAction({
+        order_ids: orderIds,
+        action: batchAction,
+        comment: batchComment,
+        return_reason: batchReturnReason,
+      });
+      batchResults = Array.isArray(res) ? res : [];
+      showBatchResult = true;
+      loadData();
+    } catch (e) {
+      alert('批量操作失败：' + e.message);
+    }
     selected = new Set();
     selectedAll = false;
   }
@@ -149,22 +171,46 @@
     urgency: 'normal',
     old_material_code: '',
     old_material_name: '',
+    old_material_spec: '',
     new_material_code: '',
     new_material_name: '',
+    new_material_spec: '',
     change_reason: '',
+    change_description: '',
   };
   let creating = false;
 
   async function createOrder() {
-    creating = true;
-    const res = await orderApi.create(newOrder);
-    creating = false;
-    if (res.success) {
-      showCreateModal = false;
-      loadData();
-    } else {
-      alert(res.message);
+    if (!newOrder.title || !newOrder.old_material_code || !newOrder.old_material_name) {
+      alert('请填写标题、原物料编码和原物料名称');
+      return;
     }
+    creating = true;
+    try {
+      const res = await orderApi.create(newOrder);
+      if (res.success) {
+        showCreateModal = false;
+        newOrder = {
+          title: '',
+          change_type: 'bom_change',
+          urgency: 'normal',
+          old_material_code: '',
+          old_material_name: '',
+          old_material_spec: '',
+          new_material_code: '',
+          new_material_name: '',
+          new_material_spec: '',
+          change_reason: '',
+          change_description: '',
+        };
+        loadData();
+      } else {
+        alert(res.message || '创建失败');
+      }
+    } catch (e) {
+      alert('创建失败：' + e.message);
+    }
+    creating = false;
   }
 
   const warnGroups = [
@@ -187,6 +233,8 @@
     { action: 'check_substitute', label: '核对替代', roles: ['quality_engineer'] },
     { action: 'verify_pilot', label: '完成试产', roles: ['quality_engineer'] },
     { action: 'audit_pass', label: '审核通过', roles: ['auditor'] },
+    { action: 'pm_review_pass', label: '生产经理复核通过', roles: ['production_manager'] },
+    { action: 'factory_review_pass', label: '工厂复核归档', roles: ['factory_reviewer'] },
     { action: 'return', label: '批量退回', roles: ['auditor', 'production_manager', 'factory_reviewer'] },
   ];
 
@@ -195,9 +243,29 @@
     const cfg = batchActions.find(a => a.action === action);
     return cfg ? cfg.roles.includes(user.role) : false;
   }
+
+  function resetFilters() {
+    filters = {
+      status: '',
+      warn_status: '',
+      change_type: '',
+      urgency: '',
+      keyword: '',
+      mine: false,
+    };
+    loadData();
+  }
 </script>
 
+<svelte:fragment slot="page-title">
+  <h2 style="margin: 0; font-size: 18px;">物料变更单列表</h2>
+</svelte:fragment>
+
 <div class="page">
+  {#if errorMsg}
+    <div class="error-banner">{errorMsg}</div>
+  {/if}
+
   <div class="stats-row">
     <div class="stat-card">
       <div class="stat-value">{statistics.total || 0}</div>
@@ -277,8 +345,9 @@
       </div>
     </div>
     <div class="filter-actions">
-      <button class="btn btn-primary btn-sm" on:click={loadData}>查询</button>
+      <button class="btn btn-default btn-sm" on:click={resetFilters}>重置</button>
       <button class="btn btn-default btn-sm" on:click={refreshWarnings}>刷新预警</button>
+      <button class="btn btn-primary btn-sm" on:click={loadData}>查询</button>
       {#if user && user.role === 'registrar'}
         <button class="btn btn-success btn-sm" on:click={() => showCreateModal = true}>+ 新建变更单</button>
       {/if}
@@ -301,6 +370,12 @@
         {#if canBatch('audit_pass')}
           <button class="btn btn-success btn-sm" on:click={() => openBatch('audit_pass')}>批量审核通过</button>
         {/if}
+        {#if canBatch('pm_review_pass')}
+          <button class="btn btn-success btn-sm" on:click={() => openBatch('pm_review_pass')}>批量生产经理复核</button>
+        {/if}
+        {#if canBatch('factory_review_pass')}
+          <button class="btn btn-success btn-sm" on:click={() => openBatch('factory_review_pass')}>批量工厂复核</button>
+        {/if}
         {#if canBatch('return')}
           <button class="btn btn-danger btn-sm" on:click={() => openBatch('return')}>批量退回</button>
         {/if}
@@ -311,7 +386,7 @@
   <div class="table-card card">
     {#if loading}
       <div class="loading">加载中...</div>
-    {:else}
+    {:else if orders.length > 0}
       <table>
         <thead>
           <tr>
@@ -328,6 +403,7 @@
             <th>新物料</th>
             <th>当前处理人</th>
             <th>截止时间</th>
+            <th>版本</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -353,31 +429,45 @@
               <td>{order.urgency_display}</td>
               <td><span class="material-code">{order.old_material_code}</span></td>
               <td><span class="material-code">{order.new_material_code || '-'}</span></td>
-              <td>{order.current_handler || '-'}</td>
+              <td>
+                {#if order.current_handler}
+                  <span class="handler">{order.current_handler}</span>
+                  {#if user && order.current_handler_id === user.id}
+                    <span class="tag mine-tag">我的</span>
+                  {/if}
+                {:else}
+                  -
+                {/if}
+              </td>
               <td>{formatDate(order.deadline)}</td>
+              <td><span class="version-tag">V{order.version}</span></td>
               <td>
                 <button class="btn btn-primary btn-sm" on:click={() => viewDetail(order.id)}>详情</button>
               </td>
             </tr>
           {/each}
-          {#if orders.length === 0}
-            <tr>
-              <td colspan="12" class="empty">暂无数据</td>
-            </tr>
-          {/if}
         </tbody>
       </table>
+    {:else}
+      <div class="empty">
+        {#if errorMsg}
+          <p>{errorMsg}</p>
+          <button class="btn btn-primary btn-sm" on:click={loadData}>重试</button>
+        {:else}
+          暂无数据
+        {/if}
+      </div>
     {/if}
   </div>
 </div>
 
 {#if showCreateModal}
   <div class="modal-mask" on:click|self={() => showCreateModal = false}>
-    <div class="modal-content">
+    <div class="modal-content large">
       <div class="modal-header">新建物料变更单</div>
       <div class="modal-body">
         <div class="form-group">
-          <label>标题</label>
+          <label>标题 *</label>
           <input type="text" bind:value={newOrder.title} placeholder="请输入标题" />
         </div>
         <div class="form-row">
@@ -400,13 +490,17 @@
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>原物料编码</label>
+            <label>原物料编码 *</label>
             <input type="text" bind:value={newOrder.old_material_code} />
           </div>
           <div class="form-group">
-            <label>原物料名称</label>
+            <label>原物料名称 *</label>
             <input type="text" bind:value={newOrder.old_material_name} />
           </div>
+        </div>
+        <div class="form-group">
+          <label>原物料规格</label>
+          <input type="text" bind:value={newOrder.old_material_spec} />
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -419,8 +513,16 @@
           </div>
         </div>
         <div class="form-group">
+          <label>新物料规格</label>
+          <input type="text" bind:value={newOrder.new_material_spec} />
+        </div>
+        <div class="form-group">
           <label>变更原因</label>
           <textarea bind:value={newOrder.change_reason} rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label>变更描述</label>
+          <textarea bind:value={newOrder.change_description} rows="3"></textarea>
         </div>
       </div>
       <div class="modal-footer">
@@ -443,7 +545,7 @@
         <p>确定对选中的 {selected.size} 项执行此操作吗？</p>
         {#if batchAction === 'return'}
           <div class="form-group">
-            <label>退回原因</label>
+            <label>退回原因 *</label>
             <textarea bind:value={batchReturnReason} rows="3" placeholder="请输入退回原因"></textarea>
           </div>
         {/if}
@@ -451,10 +553,11 @@
           <label>备注</label>
           <textarea bind:value={batchComment} rows="2"></textarea>
         </div>
+        <p class="tip">批量操作会逐条处理，失败项会保留原状态并提示原因。</p>
       </div>
       <div class="modal-footer">
         <button class="btn btn-default" on:click={() => showBatchModal = false}>取消</button>
-        <button class="btn btn-primary" on:click={doBatchAction}>确认</button>
+        <button class="btn btn-primary" on:click={doBatchAction} disabled={batchAction === 'return' && !batchReturnReason}>确认</button>
       </div>
     </div>
   </div>
@@ -465,6 +568,11 @@
     <div class="modal-content">
       <div class="modal-header">批量操作结果</div>
       <div class="modal-body">
+        <p>
+          共 {batchResults.length} 条，
+          <span style="color: #22c55e;">成功 {batchResults.filter(r => r.success).length} 条</span>，
+          <span style="color: #ef4444;">失败 {batchResults.filter(r => !r.success).length} 条</span>
+        </p>
         <table>
           <thead>
             <tr>
@@ -500,6 +608,13 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+  .error-banner {
+    background: #fef2f2;
+    color: #dc2626;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 14px;
   }
   .stats-row {
     display: grid;
@@ -640,10 +755,33 @@
     font-size: 12px;
     color: #6b7280;
   }
+  .handler {
+    font-size: 13px;
+  }
+  .mine-tag {
+    background: #dbeafe;
+    color: #1d4ed8;
+    margin-left: 4px;
+  }
+  .version-tag {
+    background: #f3f4f6;
+    color: #374151;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: monospace;
+  }
   .empty {
     text-align: center;
     color: #9ca3af;
     padding: 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: center;
+  }
+  .empty p {
+    margin: 0;
   }
   .loading {
     text-align: center;
@@ -652,5 +790,20 @@
   }
   .modal-body {
     padding: 0;
+  }
+  .modal-body p {
+    margin-bottom: 12px;
+    font-size: 14px;
+  }
+  .tip {
+    color: #6b7280;
+    font-size: 12px;
+    background: #f9fafb;
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin-top: 12px;
+  }
+  .modal-content.large {
+    max-width: 700px;
   }
 </style>

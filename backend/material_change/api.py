@@ -269,6 +269,14 @@ def _warn_display(w):
     return w
 
 
+def _role_display(r):
+    from .models import ROLE_CHOICES
+    for c, d in ROLE_CHOICES:
+        if c == r:
+            return d
+    return r
+
+
 def _serialize_order_list(order):
     return {
         'id': order.id,
@@ -289,6 +297,7 @@ def _serialize_order_list(order):
         'created_at': order.created_at,
         'deadline': order.deadline,
         'current_handler': order.current_handler.real_name if order.current_handler else None,
+        'current_handler_id': order.current_handler.id if order.current_handler else None,
         'created_by': order.created_by.real_name if order.created_by else None,
         'version': order.version,
     }
@@ -446,11 +455,13 @@ def get_order_detail(request: HttpRequest, order_id: int):
             'id': order.current_handler.id,
             'name': order.current_handler.real_name,
             'role': order.current_handler.role,
+            'role_display': _role_display(order.current_handler.role),
         } if order.current_handler else None,
         'created_by': {
             'id': order.created_by.id,
             'name': order.created_by.real_name,
             'role': order.created_by.role,
+            'role_display': _role_display(order.created_by.role),
         } if order.created_by else None,
         'available_actions': _get_available_actions(profile, order),
         'can_edit': _can_edit(profile, order),
@@ -732,3 +743,25 @@ def urgency_options(request: HttpRequest):
 @router.get('/meta/warn-options')
 def warn_options(request: HttpRequest):
     return [{'value': s, 'label': d} for s, d in WARN_STATUS_CHOICES]
+
+
+@router.get('/orders/{order_id}/audit-remarks')
+def get_audit_remarks(request: HttpRequest, order_id: int):
+    profile = OrderService.get_user_profile(request.user)
+    try:
+        order = MaterialChangeOrder.objects.get(id=order_id)
+    except MaterialChangeOrder.DoesNotExist:
+        return []
+    if not OrderService.can_view_order(profile, order):
+        return []
+    records = AuditRemark.objects.filter(order=order).order_by('-created_at')
+    result = []
+    for r in records:
+        result.append({
+            'id': r.id,
+            'content': r.content,
+            'remark_type': r.remark_type,
+            'operator': r.operator.real_name if r.operator else None,
+            'created_at': r.created_at,
+        })
+    return result
