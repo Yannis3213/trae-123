@@ -87,11 +87,18 @@ interface PlanFilters {
   role?: Role;
   status?: string;
   expiry?: ExpiryStatus;
+  handler?: string;
+  search?: string;
   page: number;
   limit: number;
 }
 
-export function findAll(filters: PlanFilters): { plans: DispatchPlan[]; total: number } {
+interface QueryConditions {
+  where: string;
+  params: unknown[];
+}
+
+function buildWhereClause(filters: Partial<PlanFilters>): QueryConditions {
   const conditions: string[] = [];
   const params: unknown[] = [];
 
@@ -108,25 +115,52 @@ export function findAll(filters: PlanFilters): { plans: DispatchPlan[]; total: n
     params.push(filters.status);
   }
 
-  const whereClause = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+  if (filters.handler) {
+    conditions.push("current_handler = ?");
+    params.push(filters.handler);
+  }
 
-  const countRow = db.prepare(`SELECT COUNT(*) as count FROM dispatch_plans ${whereClause}`).get(...params) as { count: number };
+  if (filters.search) {
+    conditions.push("(plan_number LIKE ? OR route_name LIKE ?)");
+    const searchTerm = `%${filters.search}%`;
+    params.push(searchTerm, searchTerm);
+  }
+
+  if (filters.expiry) {
+    const now = new Date();
+    if (filters.expiry === "overdue") {
+      conditions.push("due_date < ?");
+      params.push(now.toISOString().split("T")[0]);
+    } else if (filters.expiry === "approaching") {
+      const threeDaysLater = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+      conditions.push("due_date >= ? AND due_date <= ?");
+      params.push(now.toISOString().split("T")[0], threeDaysLater.toISOString().split("T")[0]);
+    } else if (filters.expiry === "normal") {
+      const threeDaysLater = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+      conditions.push("due_date > ?");
+      params.push(threeDaysLater.toISOString().split("T")[0]);
+    }
+  }
+
+  const where = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+  return { where, params };
+}
+
+export function findAll(filters: PlanFilters): { plans: DispatchPlan[]; total: number } {
+  const { where, params } = buildWhereClause(filters);
+
+  const countRow = db.prepare(`SELECT COUNT(*) as count FROM dispatch_plans ${where}`).get(...params) as { count: number };
   const total = countRow.count;
 
   const offset = (filters.page - 1) * filters.limit;
   const rows = db.prepare(
-    `SELECT * FROM dispatch_plans ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    `SELECT * FROM dispatch_plans ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
   ).all(...params, filters.limit, offset) as Record<string, unknown>[];
 
-  let plans = rows.map(mapPlan);
-
+  const plans = rows.map(mapPlan);
   plans.forEach((p) => {
     p.expiryStatus = computeExpiryStatus(p.dueDate);
   });
-
-  if (filters.expiry) {
-    plans = plans.filter((p) => p.expiryStatus === filters.expiry);
-  }
 
   return { plans, total };
 }
@@ -222,8 +256,11 @@ export function createAuditNote(data: { planId: string; noteType: NoteType; cont
   return { id, ...data, createdAt: now };
 }
 
-export function countByExpiryStatus(): { normal: number; approaching: number; overdue: number } {
-  const rows = db.prepare("SELECT due_date FROM dispatch_plans WHERE status != 'archived'").all() as { due_date: string }[];
+export function countByExpiryStatus(filters?: Partial<PlanFilters>): { normal: number; approaching: number; overdue: number } {
+  const baseFilters: Partial<PlanFilters> = { ...filters };
+  const { where, params } = buildWhereClause(baseFilters);
+
+  const rows = db.prepare(`SELECT due_date FROM dispatch_plans ${where} AND status != 'archived'`.replace("WHERE AND", "WHERE")).all(...params) as { due_date: string }[];
   let normal = 0;
   let approaching = 0;
   let overdue = 0;
@@ -236,24 +273,21 @@ export function countByExpiryStatus(): { normal: number; approaching: number; ov
   return { normal, approaching, overdue };
 }
 
-export function countByStatus(role?: Role): { status: string; count: number }[] {
-  let rows: { status: string; count: number }[];
-  if (role === "route_supervisor") {
-    rows = db.prepare("SELECT status, COUNT(*) as count FROM dispatch_plans WHERE status IN ('pending_review', 'reviewing') GROUP BY status").all() as { status: string; count: number }[];
-  } else if (role === "ops_center") {
-    rows = db.prepare("SELECT status, COUNT(*) as count FROM dispatch_plans WHERE status IN ('pending_approval', 'approving') GROUP BY status").all() as { status: string; count: number }[];
-  } else if (role === "dispatcher") {
-    rows = db.prepare("SELECT status, COUNT(*) as count FROM dispatch_plans WHERE current_role = 'dispatcher' GROUP BY status").all() as { status: string; count: number }[];
-  } else {
-    rows = db.prepare("SELECT status, COUNT(*) as count FROM dispatch_plans GROUP BY status").all() as { status: string; count: number }[];
-  }
+export function countByStatus(filters?: Partial<PlanFilters>): { status: string; count: number }[] {
+  const { where, params } = buildWhereClause(filters || {});
+  const sql = `SELECT status, COUNT(*) as count FROM dispatch_plans ${where} GROUP BY status`;
+  const rows = db.prepare(sql).all(...params) as { status: string; count: number }[];
   return rows;
 }
 
-export function countEvidence(): { vehicleSchedule: number; driverCheckin: number; dispatchConfirm: number } {
-  const vehicleSchedule = db.prepare("SELECT COUNT(DISTINCT plan_id) as count FROM attachments WHERE file_type = 'vehicle_schedule' AND plan_id IN (SELECT id FROM dispatch_plans WHERE status != 'archived')").get() as { count: number };
-  const driverCheckin = db.prepare("SELECT COUNT(DISTINCT plan_id) as count FROM attachments WHERE file_type = 'driver_checkin' AND plan_id IN (SELECT id FROM dispatch_plans WHERE status != 'archived')").get() as { count: number };
-  const dispatchConfirm = db.prepare("SELECT COUNT(DISTINCT plan_id) as count FROM attachments WHERE file_type = 'dispatch_confirm' AND plan_id IN (SELECT id FROM dispatch_plans WHERE status != 'archived')").get() as { count: number };
+export function countEvidence(filters?: Partial<PlanFilters>): { vehicleSchedule: number; driverCheckin: number; dispatchConfirm: number } {
+  const { where, params } = buildWhereClause(filters || {});
+  const planIdSql = `SELECT id FROM dispatch_plans ${where} AND status != 'archived'`.replace("WHERE AND", "WHERE");
+
+  const vehicleSchedule = db.prepare(`SELECT COUNT(DISTINCT plan_id) as count FROM attachments WHERE file_type = 'vehicle_schedule' AND plan_id IN (${planIdSql})`).get(...params) as { count: number };
+  const driverCheckin = db.prepare(`SELECT COUNT(DISTINCT plan_id) as count FROM attachments WHERE file_type = 'driver_checkin' AND plan_id IN (${planIdSql})`).get(...params) as { count: number };
+  const dispatchConfirm = db.prepare(`SELECT COUNT(DISTINCT plan_id) as count FROM attachments WHERE file_type = 'dispatch_confirm' AND plan_id IN (${planIdSql})`).get(...params) as { count: number };
+
   return { vehicleSchedule: vehicleSchedule.count, driverCheckin: driverCheckin.count, dispatchConfirm: dispatchConfirm.count };
 }
 

@@ -93,17 +93,19 @@ export async function batchAdvance(data: { planIds: string[]; action: string; co
   });
 }
 
-export async function getExpiryStats() {
-  return request<{ normal: number; approaching: number; overdue: number }>('/stats/expiry');
+export async function getExpiryStats(params?: { role?: string; status?: string; handler?: string }) {
+  const query = params && Object.keys(params).length > 0 ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
+  return request<{ normal: number; approaching: number; overdue: number }>(`/stats/expiry${query}`);
 }
 
-export async function getQueueStats(role?: string) {
-  const query = role ? `?role=${role}` : '';
+export async function getQueueStats(params?: { role?: string; status?: string; handler?: string }) {
+  const query = params && Object.keys(params).length > 0 ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
   return request<any>(`/stats/queue${query}`);
 }
 
-export async function getEvidenceSummary() {
-  return request<{ vehicleSchedule: number; driverCheckin: number; dispatchConfirm: number }>('/evidence/summary');
+export async function getEvidenceSummary(params?: { role?: string; status?: string; handler?: string }) {
+  const query = params && Object.keys(params).length > 0 ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
+  return request<{ vehicleSchedule: number; driverCheckin: number; dispatchConfirm: number }>(`/evidence/summary${query}`);
 }
 
 export async function uploadAttachment(planId: string, data: { fileType: 'vehicle_schedule' | 'driver_checkin' | 'dispatch_confirm' | 'other'; fileName: string }) {

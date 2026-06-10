@@ -351,11 +351,13 @@ export function createAttachment(data: { planId: string; fileType: AttachmentCat
   return planRepo.createAttachment(data);
 }
 
-export function getPlans(filters: { role?: Role; status?: string; expiry?: string; page?: number; limit?: number }) {
+export function getPlans(filters: { role?: Role; status?: string; expiry?: string; handler?: string; search?: string; page?: number; limit?: number }) {
   return planRepo.findAll({
     role: filters.role,
     status: filters.status,
     expiry: filters.expiry as "normal" | "approaching" | "overdue" | undefined,
+    handler: filters.handler,
+    search: filters.search,
     page: filters.page || 1,
     limit: filters.limit || 20,
   });
@@ -365,14 +367,14 @@ export function getPlanDetail(id: string): DispatchPlan | undefined {
   return planRepo.findById(id);
 }
 
-export function getExpiryStats() {
-  return planRepo.countByExpiryStatus();
+export function getExpiryStats(filters?: { role?: Role; status?: string; handler?: string }) {
+  return planRepo.countByExpiryStatus(filters);
 }
 
-export function getQueueStats(role?: Role) {
-  return planRepo.countByStatus(role);
+export function getQueueStats(filters?: { role?: Role; status?: string; handler?: string }) {
+  return planRepo.countByStatus(filters);
 }
 
-export function getEvidenceSummary() {
-  return planRepo.countEvidence();
+export function getEvidenceSummary(filters?: { role?: Role; status?: string; handler?: string }) {
+  return planRepo.countEvidence(filters);
 }

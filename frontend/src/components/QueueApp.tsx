@@ -37,6 +37,7 @@ export default function QueueApp() {
   const [error, setError] = useState('');
   const [expiryFilter, setExpiryFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -46,11 +47,18 @@ export default function QueueApp() {
       if (currentUser?.role) params.role = currentUser.role;
       if (statusFilter) params.status = statusFilter;
       if (expiryFilter) params.expiry = expiryFilter;
+      if (searchQuery.trim()) params.search = searchQuery.trim();
 
       const [plansRes, statsRes, evidenceRes] = await Promise.all([
         getPlans(Object.keys(params).length > 0 ? params : undefined),
-        getExpiryStats(),
-        getEvidenceSummary(),
+        getExpiryStats({
+          role: currentUser?.role,
+          status: statusFilter || undefined,
+        }),
+        getEvidenceSummary({
+          role: currentUser?.role,
+          status: statusFilter || undefined,
+        }),
       ]);
       setPlans(plansRes.plans || []);
       setExpiryStats(statsRes || { normal: 0, approaching: 0, overdue: 0 });
@@ -61,7 +69,7 @@ export default function QueueApp() {
     } finally {
       setLoading(false);
     }
-  }, [currentUser?.role, statusFilter, expiryFilter]);
+  }, [currentUser?.role, statusFilter, expiryFilter, searchQuery]);
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -71,12 +79,17 @@ export default function QueueApp() {
     }
   }, [isLoggedIn, currentUser?.role]);
 
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [statusFilter, expiryFilter, searchQuery]);
+
   function handlePlanClick(id: string) {
     window.location.href = `/plan/${id}`;
   }
 
   function handleBatchSelect(ids: string[]) {
-    setSelectedIds(ids);
+    const validIds = ids.filter(id => plans.some(p => p.id === id));
+    setSelectedIds(validIds);
   }
 
   function handleBatchComplete() {
@@ -86,6 +99,15 @@ export default function QueueApp() {
 
   function handleFilterByExpiry(status: string) {
     setExpiryFilter(expiryFilter === status ? '' : status);
+  }
+
+  function handleSearch(e: React.ChangeEvent<HTMLInputElement>) {
+    setSearchQuery(e.target.value);
+  }
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    loadData();
   }
 
   return (
@@ -127,11 +149,15 @@ export default function QueueApp() {
               currentRole={currentUser?.role || ''}
               statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              onSearchSubmit={loadData}
             />
             <BatchProcessor
               selectedIds={selectedIds}
               currentRole={currentUser?.role || ''}
               onBatchComplete={handleBatchComplete}
+              onClose={handleBatchComplete}
               plans={plans}
             />
           </div>

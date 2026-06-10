@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, Filter } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 import ExpiryIndicator from './ExpiryIndicator';
@@ -24,6 +24,9 @@ interface PlanQueueProps {
   currentRole: string;
   statusFilter?: string;
   onStatusFilterChange?: (v: string) => void;
+  searchQuery?: string;
+  onSearchChange?: (v: string) => void;
+  onSearchSubmit?: () => void;
 }
 
 const STATUS_OPTIONS = [
@@ -43,29 +46,19 @@ const ROLE_LABELS: Record<string, string> = {
   ops_center: '复核负责人',
 };
 
-export default function PlanQueue({ plans, onPlanClick, onBatchSelect, currentRole, statusFilter = '', onStatusFilterChange }: PlanQueueProps) {
+export default function PlanQueue({ plans, onPlanClick, onBatchSelect, currentRole, statusFilter = '', onStatusFilterChange, searchQuery = '', onSearchChange, onSearchSubmit }: PlanQueueProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [search, setSearch] = useState('');
 
-  const filtered = plans.filter((p) => {
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        p.planNumber.toLowerCase().includes(q) ||
-        p.routeName.toLowerCase().includes(q) ||
-        p.vehicleId.toLowerCase().includes(q) ||
-        p.driverId.toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
+  useEffect(() => {
+    setSelected(new Set());
+  }, [plans.length]);
 
   function toggleAll() {
-    if (selected.size === filtered.length) {
+    if (selected.size === plans.length) {
       setSelected(new Set());
       onBatchSelect([]);
     } else {
-      const ids = filtered.map((p) => p.id);
+      const ids = plans.map((p) => p.id);
       setSelected(new Set(ids));
       onBatchSelect(ids);
     }
@@ -77,6 +70,13 @@ export default function PlanQueue({ plans, onPlanClick, onBatchSelect, currentRo
     else next.add(id);
     setSelected(next);
     onBatchSelect(Array.from(next));
+  }
+
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      onSearchSubmit?.();
+    }
   }
 
   return (
@@ -92,16 +92,23 @@ export default function PlanQueue({ plans, onPlanClick, onBatchSelect, currentRo
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
-        <div className="relative flex-1 min-w-[200px]">
+        <form onSubmit={(e) => { e.preventDefault(); onSearchSubmit?.(); }} className="relative flex-1 min-w-[200px] flex items-center gap-2">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="搜索编号、线路、车辆、司机..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索编号、线路..."
+            value={searchQuery}
+            onChange={(e) => onSearchChange?.(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
             className="w-full text-sm border border-slate-200 rounded-lg pl-9 pr-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-accent/30"
           />
-        </div>
+          <button
+            type="submit"
+            className="px-3 py-1.5 text-sm bg-brand-accent text-white rounded-lg hover:bg-orange-600 transition-colors shrink-0"
+          >
+            搜索
+          </button>
+        </form>
       </div>
 
       <div className="overflow-x-auto">
@@ -109,7 +116,7 @@ export default function PlanQueue({ plans, onPlanClick, onBatchSelect, currentRo
           <thead>
             <tr className="bg-slate-50 text-slate-600">
               <th className="px-4 py-3 text-left w-10">
-                <input type="checkbox" checked={selected.size === filtered.length && filtered.length > 0} onChange={toggleAll} className="rounded border-slate-300 text-brand-accent focus:ring-brand-accent" />
+                <input type="checkbox" checked={selected.size === plans.length && plans.length > 0} onChange={toggleAll} className="rounded border-slate-300 text-brand-accent focus:ring-brand-accent" />
               </th>
               <th className="px-4 py-3 text-left font-medium">编号</th>
               <th className="px-4 py-3 text-left font-medium">线路</th>
@@ -124,10 +131,10 @@ export default function PlanQueue({ plans, onPlanClick, onBatchSelect, currentRo
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filtered.length === 0 && (
+            {plans.length === 0 && (
               <tr><td colSpan={11} className="px-4 py-8 text-center text-slate-400">暂无数据</td></tr>
             )}
-            {filtered.map((plan) => (
+            {plans.map((plan) => (
               <tr key={plan.id} className="hover:bg-slate-50 cursor-pointer transition-colors" onClick={() => onPlanClick(plan.id)}>
                 <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   <input type="checkbox" checked={selected.has(plan.id)} onChange={() => toggleOne(plan.id)} className="rounded border-slate-300 text-brand-accent focus:ring-brand-accent" />

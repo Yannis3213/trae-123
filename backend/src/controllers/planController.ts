@@ -35,11 +35,13 @@ router.post("/batch-advance", async (ctx) => {
 });
 
 router.get("/", async (ctx) => {
-  const { role, status, expiry, page, limit } = ctx.query as Record<string, string | undefined>;
+  const { role, status, expiry, handler, search, page, limit } = ctx.query as Record<string, string | undefined>;
   const result = planService.getPlans({
     role: role as Role | undefined,
     status,
     expiry,
+    handler,
+    search,
     page: page ? parseInt(page, 10) : 1,
     limit: limit ? parseInt(limit, 10) : 20,
   });

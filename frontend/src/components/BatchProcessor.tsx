@@ -7,6 +7,7 @@ interface BatchProcessorProps {
   selectedIds: string[];
   currentRole: string;
   onBatchComplete: () => void;
+  onClose?: () => void;
   plans?: any[];
 }
 
@@ -125,7 +126,10 @@ export default function BatchProcessor({ selectedIds, currentRole, onBatchComple
               ))}
             </div>
             <button
-              onClick={() => setShowDialog(false)}
+              onClick={() => {
+                setShowDialog(false);
+                onClose?.();
+              }}
               className="mt-4 w-full px-4 py-2 bg-brand-dark text-white rounded-lg hover:bg-slate-700 transition-colors"
             >
               关闭

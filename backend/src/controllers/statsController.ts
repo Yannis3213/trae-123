@@ -5,18 +5,32 @@ import type { Role } from "../types/index.js";
 const router = new Router();
 
 router.get("/api/stats/expiry", async (ctx) => {
-  const stats = planService.getExpiryStats();
+  const { role, status, handler } = ctx.query as { role?: string; status?: string; handler?: string };
+  const stats = planService.getExpiryStats({
+    role: role as Role | undefined,
+    status,
+    handler,
+  });
   ctx.body = { data: stats };
 });
 
 router.get("/api/stats/queue", async (ctx) => {
-  const { role } = ctx.query as { role?: string };
-  const stats = planService.getQueueStats(role as Role | undefined);
+  const { role, status, handler } = ctx.query as { role?: string; status?: string; handler?: string };
+  const stats = planService.getQueueStats({
+    role: role as Role | undefined,
+    status,
+    handler,
+  });
   ctx.body = { data: stats };
 });
 
 router.get("/api/evidence/summary", async (ctx) => {
-  const summary = planService.getEvidenceSummary();
+  const { role, status, handler } = ctx.query as { role?: string; status?: string; handler?: string };
+  const summary = planService.getEvidenceSummary({
+    role: role as Role | undefined,
+    status,
+    handler,
+  });
   ctx.body = { data: summary };
 });
 
