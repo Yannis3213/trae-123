@@ -241,61 +241,6 @@ function OrderDetail() {
       message.warning(`请填写${cfg.label}数据`);
       return;
     }
-    if (action === 'submit' || action === 'resubmit') {
-      const stageAtts = attachments.filter(
-        (a) => a.stage === order.current_stage && a.order_id === order.id
-      );
-      if (stageAtts.length === 0) {
-        Modal.error({
-          title: '缺少必填材料证据',
-          content: (
-            <div>
-              <p>
-                <strong>{STAGE_CONFIG[order.current_stage].label}</strong>环节需要至少1份材料附件，请先上传以下必填材料：
-              </p>
-              <ul style={{ margin: 0, paddingLeft: 20 }}>
-                {STAGE_CONFIG[order.current_stage].fields.map((f) => (
-                  <li key={f}>{f}</li>
-                ))}
-              </ul>
-              <p style={{ marginTop: 12, color: '#8c8c8c' }}>
-                点击本页面「上传材料」按钮补充附件后再提交。
-              </p>
-            </div>
-          ),
-        });
-        return;
-      }
-      if (selectedAttachmentIds[order.current_stage].length === 0) {
-        Modal.confirm({
-          title: '请绑定本次提交的材料附件',
-          content: (
-            <div>
-              <p>
-                本环节已有 <strong>{stageAtts.length}</strong> 份材料附件，请勾选至少 1 份作为本次提交的证据。
-              </p>
-              <p style={{ color: '#8c8c8c', fontSize: 12 }}>
-                （可在「材料附件」卡片中勾选本次提交对应的附件）
-              </p>
-            </div>
-          ),
-          okText: '去勾选',
-          cancelText: '自动勾选全部并提交',
-          onOk: () => {
-            setAttachmentModalOpen(false);
-          },
-          onCancel: async () => {
-            setSelectedAttachmentIds((prev) => ({
-              ...prev,
-              [order.current_stage]: stageAtts.map((a) => a.id),
-            }));
-            await new Promise((r) => setTimeout(r, 50));
-            handleAction(action);
-          },
-        });
-        return;
-      }
-    }
     if (action === 'return' && !auditNote.trim()) {
       message.warning('请填写退回原因');
       return;
@@ -310,7 +255,7 @@ function OrderDetail() {
         attachment_ids:
           action === 'submit' || action === 'resubmit'
             ? selectedAttachmentIds[order.current_stage]
-            : undefined,
+            : [],
       };
       await orderApi.action(id, action, payload);
       message.success(`${ACTION_LABEL[action]}成功`);
@@ -319,7 +264,31 @@ function OrderDetail() {
       setSelectedAttachmentIds((prev) => ({ ...prev, [order.current_stage]: [] }));
       await loadDetail();
     } catch (e: any) {
-      message.error(e?.response?.data?.error || '操作失败');
+      const errMsg = e?.response?.data?.error || '操作失败';
+      Modal.error({
+        title: `${ACTION_LABEL[action]}失败`,
+        content: (
+          <div>
+            <p style={{ marginBottom: 8 }}>{errMsg}</p>
+            {errMsg.includes('缺材料') && (
+              <Alert
+                message={
+                  <div>
+                    <p style={{ margin: 0 }}>
+                      本次尝试提交的数据已记录为异常留痕，可在下方「处理记录」和「异常原因」中查看。
+                    </p>
+                    <p style={{ margin: '8px 0 0' }}>
+                      请先点击「上传材料」按钮补充附件，或在「材料附件」卡片中勾选至少 1 份作为证据后重新提交。
+                    </p>
+                  </div>
+                }
+                type="warning"
+                showIcon
+              />
+            )}
+          </div>
+        ),
+      });
     } finally {
       setSubmitting(false);
     }
@@ -540,17 +509,17 @@ function OrderDetail() {
     const stageAttCount = attachments.filter(
       (a) => a.stage === order.current_stage && a.order_id === order.id
     ).length;
-    const missingEvidence = canDoAction('submit') && stageAttCount === 0;
+    const missingEvidenceHint = canDoAction('submit') && stageAttCount === 0;
 
     return (
       <Space>
         {canDoAction('submit') && (
           <Tooltip
             title={
-              missingEvidence
-                ? `缺少材料证据：请先在${STAGE_CONFIG[order.current_stage].label}环节上传至少1份附件（如${STAGE_CONFIG[order.current_stage].fields.slice(0, 2).join('、')}等）`
+              missingEvidenceHint
+                ? `⚠ 当前${STAGE_CONFIG[order.current_stage].label}环节还没有材料附件，提交后将被后端拦截并记录缺材料留痕（请先上传${STAGE_CONFIG[order.current_stage].fields.slice(0, 2).join('、')}等）`
                 : selectedAttachmentIds[order.current_stage].length === 0
-                ? '建议在下方「材料附件」卡片中勾选本次提交对应的证据'
+                ? '建议在下方「材料附件」卡片中勾选本次提交对应的证据，未勾选时提交将被后端拦截留痕'
                 : `已绑定 ${selectedAttachmentIds[order.current_stage].length} 份材料附件`
             }
           >
@@ -558,11 +527,10 @@ function OrderDetail() {
               type="primary"
               icon={<PlayCircleOutlined />}
               size="large"
-              danger={missingEvidence}
               onClick={() => setActionModal({ open: true, action: order.current_status === 'returned' ? 'resubmit' : 'submit' })}
             >
               {order.current_status === 'returned' ? '重新提交' : '提交审核'}
-              {missingEvidence && '（缺材料）'}
+              {missingEvidenceHint && '（⚠缺材料）'}
             </Button>
           </Tooltip>
         )}
@@ -962,6 +930,50 @@ function OrderDetail() {
                 style={{ marginBottom: 16 }}
               />
             )}
+            {(attachments.filter(
+              (a) => a.stage === order.current_stage && a.order_id === order.id
+            ).length === 0) && (
+              <Alert
+                message={
+                  <div>
+                    <strong>⚠ 本环节还没有上传任何材料附件</strong>
+                    <p style={{ margin: '8px 0 0' }}>
+                      提交后将被后端拦截，同时自动记录「missing_evidence」异常、审计备注和处理留痕。
+                      建议先取消，点击「上传材料」补充
+                      {STAGE_CONFIG[order.current_stage].fields.slice(0, 2).join('、')}
+                      等附件后再提交。
+                    </p>
+                  </div>
+                }
+                type="error"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {attachments.filter(
+              (a) => a.stage === order.current_stage && a.order_id === order.id
+            ).length > 0 &&
+              selectedAttachmentIds[order.current_stage].length === 0 && (
+                <Alert
+                  message={
+                    <div>
+                      <strong>⚠ 还未勾选任何材料附件作为提交证据</strong>
+                      <p style={{ margin: '8px 0 0' }}>
+                        本环节已有
+                        {
+                          attachments.filter(
+                            (a) => a.stage === order.current_stage && a.order_id === order.id
+                          ).length
+                        }
+                        份附件可供勾选。未勾选任何附件时提交将被后端拦截并记录缺材料留痕。
+                      </p>
+                    </div>
+                  }
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                />
+              )}
             {selectedAttachmentIds[order.current_stage].length > 0 && (
               <Alert
                 message={`本次提交附带 ${selectedAttachmentIds[order.current_stage].length} 份材料附件，提交后将与订单数据一起进入审核`}

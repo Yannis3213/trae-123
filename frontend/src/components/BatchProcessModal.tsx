@@ -69,28 +69,17 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
     return selectedOrders.filter((o) => (o.stage_attach_count || 0) === 0);
   }, [selectedOrders, action]);
 
-  const okEvidenceOrders = useMemo(() => {
-    if (action !== 'submit' && action !== 'resubmit') return selectedOrders;
-    return selectedOrders.filter((o) => (o.stage_attach_count || 0) > 0);
-  }, [selectedOrders, action]);
-
-  const cannotProceed = (action === 'submit' || action === 'resubmit') && okEvidenceOrders.length === 0;
-
   const handleSubmit = async () => {
     if (action === 'return' && !auditNote.trim()) {
       message.warning('批量退回请填写退回原因');
-      return;
-    }
-    if (cannotProceed) {
-      message.error('所有选中订单均缺少材料附件，请先在详情页补充后再批量提交');
       return;
     }
     if (action === 'submit' || action === 'resubmit') {
       if (!includeAttachments) {
         Modal.confirm({
           title: '未勾选「自动携带材料附件」',
-          content: `当前${STAGE_LABELS[stage]}环节要求提交时必须绑定材料附件，取消勾选将导致所有订单因缺材料被后端拦截。建议保持勾选状态。`,
-          okText: '仍然继续',
+          content: `当前${STAGE_LABELS[stage]}环节要求提交时必须绑定材料附件，取消勾选将导致后端拦截所有订单并记录缺材料留痕。建议保持勾选状态。`,
+          okText: '仍然继续（后端将拦截并记录缺材料留痕）',
           okButtonProps: { danger: true },
           cancelText: '恢复勾选',
           onOk: async () => {
@@ -110,27 +99,21 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
     setSubmitting(true);
     setResults(null);
     try {
-      const targetOrders =
-        action === 'submit' || action === 'resubmit' ? okEvidenceOrders : selectedOrders;
-      const skippedOrders = selectedOrders.filter(
-        (o) => !targetOrders.find((t) => t.id === o.id)
-      );
-
       const payload: BatchProcessReq = {
         action,
         stage,
-        order_ids: targetOrders.map((o) => o.id),
-        versions: Object.fromEntries(targetOrders.map((o) => [o.id, o.version])),
+        order_ids: selectedOrders.map((o) => o.id),
+        versions: Object.fromEntries(selectedOrders.map((o) => [o.id, o.version])),
       };
       if (action === 'return' || action === 'approve') {
         payload.audit_notes = Object.fromEntries(
-          targetOrders.map((o) => [o.id, auditNote])
+          selectedOrders.map((o) => [o.id, auditNote])
         );
       }
       if (includeAttachments && (action === 'submit' || action === 'resubmit')) {
         const attachmentMap: Record<string, string[]> = {};
         await Promise.all(
-          targetOrders.map(async (o) => {
+          selectedOrders.map(async (o) => {
             try {
               const detail = await orderApi.get(o.id);
               attachmentMap[o.id] = detail.attachments
@@ -142,27 +125,18 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
           })
         );
         payload.attachment_ids = attachmentMap;
+      } else if (action === 'submit' || action === 'resubmit') {
+        payload.attachment_ids = Object.fromEntries(
+          selectedOrders.map((o) => [o.id, []])
+        );
       }
       const res = await orderApi.batch(payload);
-
-      const allResults: BatchResult[] = [
-        ...res.results,
-        ...skippedOrders.map((o) => ({
-          order_id: o.id,
-          order_no: o.order_no,
-          success: false,
-          message: `前置校验不通过：${STAGE_LABELS[stage]}环节缺少材料附件，请先上传至少1份（如${
-            stage === 'listing' ? '商品规格参数表、高清图片' : stage === 'inventory' ? '入库凭证、盘点表' : '报关单、质检报告'
-          }等）`,
-        })),
-      ];
-
-      setResults(allResults);
+      setResults(res.results);
       if (res.success_count > 0) {
-        message.success(`成功处理 ${res.success_count} 条，失败 ${allResults.length - res.success_count} 条`);
+        message.success(`成功处理 ${res.success_count} 条，失败 ${res.failed_count} 条`);
         onSuccess?.();
       } else {
-        message.error(`全部 ${allResults.length} 条处理失败`);
+        message.error(`全部 ${res.failed_count} 条处理失败`);
       }
     } catch (e: any) {
       message.error(e?.response?.data?.error || '批量处理失败');
@@ -278,16 +252,11 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
               type="primary"
               loading={submitting}
               onClick={handleSubmit}
-              danger={cannotProceed}
-              disabled={cannotProceed}
+              danger={missingEvidenceOrders.length > 0 && missingEvidenceOrders.length === selectedOrders.length}
             >
-              {cannotProceed
-                ? '全部缺材料，无法继续'
-                : `确认${ACTION_LABELS[action]}${
-                    missingEvidenceOrders.length > 0
-                      ? `（仅处理 ${okEvidenceOrders.length} 条有材料的订单）`
-                      : ''
-                  }`}
+              {missingEvidenceOrders.length > 0
+                ? `确认${ACTION_LABELS[action]}（全部${missingEvidenceOrders.length}单缺材料，后端将拦截并逐单记录缺材料留痕）`
+                : `确认${ACTION_LABELS[action]}`}
             </Button>
           </Space>
         )
@@ -343,7 +312,7 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
                   <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
                   <strong>
                     {missingEvidenceOrders.length} 个订单缺少
-                    {STAGE_LABELS[stage]}环节材料证据，将被跳过或拦截：
+                    {STAGE_LABELS[stage]}环节材料附件，确认提交后后端将逐条拦截并记录缺材料留痕：
                   </strong>
                 </Space>
               }
@@ -360,13 +329,7 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
                         <span style={{ fontFamily: 'monospace' }}>{o.order_no}</span>
                         <span style={{ color: '#595959' }}>{o.product_name}</span>
                         <Tag color="orange">
-                          {STAGE_LABELS[stage]}环节需要上传至少1份附件（如
-                          {stage === 'listing'
-                            ? '商品规格参数表、高清图片'
-                            : stage === 'inventory'
-                            ? '入库凭证、盘点表'
-                            : '报关单、质检报告'}
-                          等）
+                          提交后将写入「missing_evidence」异常、审计备注和处理记录，状态保持不变
                         </Tag>
                       </Space>
                     </List.Item>

@@ -45,9 +45,14 @@ type BatchResultItem struct {
 }
 
 const MissingEvidencePrefix = "【缺材料】"
+const AttachmentValidationPrefix = "附件校验失败"
 
 func isMissingEvidenceError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), MissingEvidencePrefix)
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, MissingEvidencePrefix) || strings.Contains(msg, AttachmentValidationPrefix)
 }
 
 func recordMissingEvidenceAudit(
@@ -72,14 +77,24 @@ func recordMissingEvidenceAudit(
 		Now:           now,
 	}
 
-	_, _ = createExceptionLog(auditTx, order.ID, stage,
-		"missing_evidence", reason, userID, "")
+	exceptionType := "missing_evidence"
+	if strings.Contains(reason, AttachmentValidationPrefix) {
+		exceptionType = "attachment_mismatch"
+	}
+	attempted := ""
+	if len(attachmentIDs) > 0 {
+		attempted = fmt.Sprintf("；尝试绑定附件ID: [%s]", strings.Join(attachmentIDs, ","))
+	}
+	fullReason := fmt.Sprintf("%s；提交版本: v%d%s", reason, version, attempted)
 
-	note := fmt.Sprintf("提交被拦截：%s", reason)
+	_, _ = createExceptionLog(auditTx, order.ID, stage,
+		exceptionType, fullReason, userID, "")
+
+	note := fmt.Sprintf("提交被拦截：%s", fullReason)
 	_, _ = createAuditNote(auditTx, order.ID, stage, note, userID)
 
 	_, _ = createProcessingRecord(auditTx, order, ctx,
-		fromStatus, fromStatus, true, reason, note, clientIP, attachmentIDs)
+		fromStatus, fromStatus, true, fullReason, note, clientIP, attachmentIDs)
 
 	auditTx.Commit()
 }
@@ -403,6 +418,7 @@ func validateBusinessRules(ctx *ValidationContext, tx *gorm.DB) (toStatus models
 
 func createExceptionLog(tx *gorm.DB, orderID string, stage models.OrderStage,
 	exType string, reason string, operatorID string, corrected string) (*models.ExceptionLog, error) {
+	now := time.Now()
 	ex := &models.ExceptionLog{
 		OrderID:         orderID,
 		Stage:           stage,
@@ -410,10 +426,9 @@ func createExceptionLog(tx *gorm.DB, orderID string, stage models.OrderStage,
 		Reason:          reason,
 		OperatorID:      operatorID,
 		CorrectedAction: corrected,
-		IsResolved:      corrected != "",
+		IsResolved:      corrected != "" || exType == "attachment_supplement",
 	}
-	if corrected != "" {
-		now := time.Now()
+	if corrected != "" || exType == "attachment_supplement" {
 		ex.ResolvedAt = &now
 	}
 	if err := tx.Create(ex).Error; err != nil {
@@ -1016,8 +1031,26 @@ func (h *OrderHandler) UploadAttachment(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "保存附件失败"})
 	}
 
-	if order.CurrentStatus == models.StatusReturned {
-		reason := fmt.Sprintf("运营专员%s补充上传了材料：%s", username, fileName)
+	if order.CurrentStatus == models.StatusReturned || order.CurrentStatus == models.StatusPending {
+		var hasMissingEvidence := false
+		var unresolvedCount := 0
+		var pendingMissing []models.ExceptionLog
+		database.DB.Where("order_id = ? AND stage = ? AND is_resolved = ? AND exception_type IN ?",
+			id, stage, false, []string{"missing_evidence", "attachment_mismatch"}).Find(&pendingMissing)
+		for _, e := range pendingMissing {
+			hasMissingEvidence = true
+			unresolvedCount++
+			_ = e
+		}
+
+		reason := ""
+		if hasMissingEvidence {
+			reason = fmt.Sprintf("运营专员%s补充上传了材料：%s（用于补正此前%d次缺材料/附件异常）",
+				username, fileName, unresolvedCount)
+		} else {
+			reason = fmt.Sprintf("运营专员%s上传了材料：%s", username, fileName)
+		}
+
 		if _, err := createExceptionLog(tx, id, stage, "attachment_supplement", reason, userID, ""); err != nil {
 			tx.Rollback()
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})

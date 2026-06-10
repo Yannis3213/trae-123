@@ -531,7 +531,8 @@ func seedData() {
 			Reason:          "运营专员张运营补充上传了材料：便携咖啡机-3C认证证书.pdf",
 			OperatorID:      users[0].ID,
 			CorrectedAction: "",
-			IsResolved:      false,
+			IsResolved:      true,
+			ResolvedAt: func() *time.Time { t := now.Add(-3 * time.Hour); return &t }(),
 			CreatedAt:       now.Add(-3 * time.Hour),
 		},
 	}
