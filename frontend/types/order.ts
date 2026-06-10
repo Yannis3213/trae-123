@@ -169,12 +169,14 @@ export interface ProcessOrderDto {
   comment?: string
   version: number
   isMaterialComplete?: boolean
+  orderEvidence?: string
 }
 
 export interface ReviewOrderDto {
   passed: boolean
   comment: string
   version: number
+  deliveryEvidence?: string
   exceptionReasons?: { reason: string; reasonType: ReasonType }[]
 }
 

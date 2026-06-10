@@ -134,28 +134,28 @@ const batchMenuItems = [
   {
     label: '批量派发',
     icon: 'i-heroicons-paper-airplane',
-    action: 'ASSIGN',
+    action: 'assign',
     allowedRoles: ['GROUPON_REGISTRAR', 'AUDIT_SUPERVISOR'],
     needsConfig: true,
   },
   {
     label: '批量处理',
     icon: 'i-heroicons-check-circle',
-    action: 'PROCESS',
+    action: 'process',
     allowedRoles: ['FULFILLMENT_SPECIALIST'],
-    needsConfig: false,
+    needsConfig: true,
   },
   {
     label: '批量关闭',
     icon: 'i-heroicons-x-circle',
-    action: 'CLOSE',
+    action: 'close',
     allowedRoles: ['REVIEW_LEADER', 'CITY_MANAGER'],
-    needsConfig: false,
+    needsConfig: true,
   },
   {
     label: '批量退回',
     icon: 'i-heroicons-arrow-uturn-left',
-    action: 'RETURN',
+    action: 'return',
     allowedRoles: ['REVIEW_LEADER', 'CITY_MANAGER', 'AUDIT_SUPERVISOR'],
     needsConfig: true,
   },
@@ -171,33 +171,42 @@ const batchTargetRole = ref<UserRole>('FULFILLMENT_SPECIALIST')
 const batchTargetHandler = ref('')
 const batchReturnReason = ref('')
 const batchReturnToRole = ref<UserRole>('LEADER_OPERATOR')
+const batchProcessOrderEvidence = ref('')
+const batchCloseDeliveryEvidence = ref('')
+const batchComment = ref('')
 
 const showBatchResult = ref(false)
 const batchResult = ref<BatchProcessResult | null>(null)
 
 function openBatchModal(action: string) {
   batchActionType.value = action
-  const item = batchMenuItems.find((i) => i.action === action)
-  if (item?.needsConfig) {
-    if (action === 'ASSIGN') {
-      batchTargetRole.value = 'FULFILLMENT_SPECIALIST'
-      batchTargetHandler.value = ''
-    } else if (action === 'RETURN') {
-      batchReturnReason.value = ''
-      batchReturnToRole.value = 'LEADER_OPERATOR'
-    }
-    showBatchConfig.value = true
-  } else {
-    confirmBatchAction()
+  batchComment.value = ''
+  if (action === 'assign') {
+    batchTargetRole.value = 'FULFILLMENT_SPECIALIST'
+    batchTargetHandler.value = ''
+  } else if (action === 'return') {
+    batchReturnReason.value = ''
+    batchReturnToRole.value = 'LEADER_OPERATOR'
+  } else if (action === 'process') {
+    batchProcessOrderEvidence.value = ''
+  } else if (action === 'close') {
+    batchCloseDeliveryEvidence.value = ''
   }
+  showBatchConfig.value = true
 }
 
 function canSubmitBatchConfig(): boolean {
-  if (batchActionType.value === 'ASSIGN') {
+  if (batchActionType.value === 'assign') {
     return batchTargetRole.value !== '' && batchTargetHandler.value.trim() !== ''
   }
-  if (batchActionType.value === 'RETURN') {
+  if (batchActionType.value === 'return') {
     return batchReturnReason.value.trim() !== '' && batchReturnToRole.value !== ''
+  }
+  if (batchActionType.value === 'process') {
+    return true
+  }
+  if (batchActionType.value === 'close') {
+    return true
   }
   return true
 }
@@ -210,15 +219,22 @@ async function confirmBatchAction() {
     action: batchActionType.value,
     operator: authStore.userName,
     operatorRole: authStore.currentRole,
+    comment: batchComment.value || undefined,
   }
 
-  if (batchActionType.value === 'ASSIGN') {
+  if (batchActionType.value === 'assign') {
     dto.targetRole = batchTargetRole.value
     dto.targetHandler = batchTargetHandler.value
   }
-  if (batchActionType.value === 'RETURN') {
+  if (batchActionType.value === 'return') {
     dto.reason = batchReturnReason.value
     dto.returnToRole = batchReturnToRole.value
+  }
+  if (batchActionType.value === 'process') {
+    dto.orderEvidence = batchProcessOrderEvidence.value || undefined
+  }
+  if (batchActionType.value === 'close') {
+    dto.deliveryEvidence = batchCloseDeliveryEvidence.value || undefined
   }
 
   showBatchConfig.value = false
@@ -513,28 +529,49 @@ onMounted(async () => {
             已选择 <span class="font-semibold text-primary">{{ selectedRows.length }}</span> 条订单
           </p>
 
-          <div v-if="batchActionType === 'ASSIGN'">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">备注（可选）</label>
+            <UTextarea v-model="batchComment" placeholder="操作备注" rows="2" />
+          </div>
+
+          <div v-if="batchActionType === 'assign'">
             <label class="block text-sm font-medium text-gray-700 mb-1.5">
               目标角色 <span class="text-red-500">*</span>
             </label>
             <USelect v-model="batchTargetRole" :options="roleOptions" placeholder="选择目标角色" />
           </div>
 
-          <div v-if="batchActionType === 'ASSIGN'">
+          <div v-if="batchActionType === 'assign'">
             <label class="block text-sm font-medium text-gray-700 mb-1.5">
               目标处理人 <span class="text-red-500">*</span>
             </label>
             <UInput v-model="batchTargetHandler" placeholder="请输入处理人姓名" />
           </div>
 
-          <div v-if="batchActionType === 'RETURN'">
+          <div v-if="batchActionType === 'process'">
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              团购下单过程核对凭证（可选，将统一补录到所选订单）
+            </label>
+            <UTextarea v-model="batchProcessOrderEvidence" placeholder="请输入订单凭证，未填写则仅处理已有凭证的订单" rows="3" />
+            <p class="text-xs text-gray-500 mt-1">未填写凭证的订单如已存在凭证可正常处理，缺失凭证的订单将被拦截</p>
+          </div>
+
+          <div v-if="batchActionType === 'close'">
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">
+              到货签收最终凭证（可选，将统一补录到所选订单）
+            </label>
+            <UTextarea v-model="batchCloseDeliveryEvidence" placeholder="请输入履约签收凭证，未填写则仅处理已有凭证的订单" rows="3" />
+            <p class="text-xs text-gray-500 mt-1">未填写凭证的订单如已存在凭证可正常关闭，缺失凭证的订单将被拦截</p>
+          </div>
+
+          <div v-if="batchActionType === 'return'">
             <label class="block text-sm font-medium text-gray-700 mb-1.5">
               退回角色 <span class="text-red-500">*</span>
             </label>
             <USelect v-model="batchReturnToRole" :options="returnRoleOptions" placeholder="选择退回角色" />
           </div>
 
-          <div v-if="batchActionType === 'RETURN'">
+          <div v-if="batchActionType === 'return'">
             <label class="block text-sm font-medium text-gray-700 mb-1.5">
               退回原因 <span class="text-red-500">*</span>
             </label>

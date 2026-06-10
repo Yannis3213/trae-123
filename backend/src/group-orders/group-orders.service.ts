@@ -527,9 +527,19 @@ export class GroupOrdersService {
   }
 
   async batchProcess(dto: BatchProcessDto, user: CurrentUser) {
-    const results = {
-      success: [] as number[],
-      failed: [] as { id: number; reason: string; needRole?: string }[],
+    interface BatchResultItem {
+      id: number;
+      orderNo: string;
+    }
+    interface BatchFailedItem {
+      id: number;
+      orderNo: string;
+      reason: string;
+      needRole?: string;
+    }
+    const results: { success: BatchResultItem[]; failed: BatchFailedItem[] } = {
+      success: [],
+      failed: [],
     };
 
     const action = dto.action as 'assign' | 'process' | 'close' | 'return';
@@ -538,21 +548,33 @@ export class GroupOrdersService {
       try {
         const order = await this.groupOrderRepository.findOne({ where: { id } });
         if (!order) {
-          results.failed.push({ id, reason: '订单不存在，已跳过' });
+          results.failed.push({ id, orderNo: '未知', reason: '订单不存在，已跳过' });
           continue;
         }
 
         if (order.isOverdue) {
-          results.failed.push({
-            id,
-            reason: `订单已逾期，责任人：${order.currentHandler || '未指派'}，需单独处理后再批量推进`,
-            needRole: order.currentRole ? this.getRoleLabel(order.currentRole) : undefined,
-          });
+          const reason = `订单已逾期，责任人：${order.currentHandler || '未指派'}，需单独处理后再批量推进`;
+          const needRole = order.currentRole ? this.getRoleLabel(order.currentRole) : undefined;
+          results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole });
           await this.createExceptionReason(order.id, `批量${this.getActionLabel(action)}拦截：订单已逾期`, 'overdue', user.name);
+          await this.createProcessingRecord(
+            order.id,
+            ActionType.REVIEW,
+            user.name,
+            user.role,
+            order.orderStatus,
+            order.orderStatus,
+            order.currentHandler,
+            order.currentHandler,
+            `批量${this.getActionLabel(action)}失败：${reason}`,
+            order.version,
+          );
           continue;
         }
 
         let handled = false;
+        let failReason: string | null = null;
+        let failNeedRole: string | undefined;
 
         switch (action) {
           case 'assign':
@@ -568,14 +590,21 @@ export class GroupOrdersService {
             handled = await this.batchReturn(order, dto, user, results);
             break;
           default:
-            results.failed.push({ id, reason: `不支持的批量操作类型：${action}` });
+            failReason = `不支持的批量操作类型：${action}`;
         }
 
         if (handled) {
-          results.success.push(id);
+          results.success.push({ id: order.id, orderNo: order.orderNo });
+        } else if (failReason) {
+          results.failed.push({ id: order.id, orderNo: order.orderNo, reason: failReason });
         }
       } catch (error: any) {
-        results.failed.push({ id, reason: error.message || '处理失败' });
+        const order = await this.groupOrderRepository.findOne({ where: { id } });
+        results.failed.push({
+          id,
+          orderNo: order?.orderNo || String(id),
+          reason: error.message || '处理失败',
+        });
       }
     }
 
@@ -592,18 +621,48 @@ export class GroupOrdersService {
     return map[action] || action;
   }
 
+  private async recordBatchFailure(
+    order: GroupOrder,
+    user: CurrentUser,
+    actionLabel: string,
+    reason: string,
+    reasonType: ReasonType = 'other',
+  ): Promise<void> {
+    try {
+      await this.createExceptionReason(order.id, `批量${actionLabel}失败：${reason}`, reasonType, user.name);
+      await this.createProcessingRecord(
+        order.id,
+        ActionType.REVIEW,
+        user.name,
+        user.role,
+        order.orderStatus,
+        order.orderStatus,
+        order.currentHandler,
+        order.currentHandler,
+        `批量${actionLabel}失败：${reason}`,
+        order.version,
+      );
+    } catch (e) {
+      // ignore logging errors
+    }
+  }
+
   private async batchAssign(
     order: GroupOrder,
     dto: BatchProcessDto,
     user: CurrentUser,
-    results: { success: number[]; failed: { id: number; reason: string; needRole?: string }[] },
+    results: { success: any[]; failed: any[] },
   ): Promise<boolean> {
     if (![UserRole.AUDIT_SUPERVISOR, UserRole.CITY_MANAGER].includes(user.role)) {
-      results.failed.push({ id: order.id, reason: '批量派发仅允许「团购审核主管/城市经理」执行', needRole: '团购审核主管/城市经理' });
+      const reason = '批量派发仅允许「团购审核主管/城市经理」执行';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '团购审核主管/城市经理' });
+      await this.recordBatchFailure(order, user, '派发', reason);
       return false;
     }
     if (order.orderStatus !== OrderStatus.PENDING_ASSIGN) {
-      results.failed.push({ id: order.id, reason: `当前状态「${this.getStatusLabel(order.orderStatus)}」不是「待派发」，无法批量派发` });
+      const reason = `当前状态「${this.getStatusLabel(order.orderStatus)}」不是「待派发」，无法批量派发`;
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason });
+      await this.recordBatchFailure(order, user, '派发', reason);
       return false;
     }
     const targetRole = dto.targetRole || UserRole.FULFILLMENT_SPECIALIST;
@@ -634,22 +693,30 @@ export class GroupOrdersService {
     order: GroupOrder,
     dto: BatchProcessDto,
     user: CurrentUser,
-    results: { success: number[]; failed: { id: number; reason: string; needRole?: string }[] },
+    results: { success: any[]; failed: any[] },
   ): Promise<boolean> {
     if (user.role !== UserRole.FULFILLMENT_SPECIALIST) {
-      results.failed.push({ id: order.id, reason: '批量处理仅允许「履约专员」执行', needRole: '履约专员' });
+      const reason = '批量处理仅允许「履约专员」执行';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '履约专员' });
+      await this.recordBatchFailure(order, user, '处理', reason);
       return false;
     }
     if (order.orderStatus !== OrderStatus.PROCESSING) {
-      results.failed.push({ id: order.id, reason: `当前状态「${this.getStatusLabel(order.orderStatus)}」不是「处理中」，无法批量处理` });
+      const reason = `当前状态「${this.getStatusLabel(order.orderStatus)}」不是「处理中」，无法批量处理`;
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason });
+      await this.recordBatchFailure(order, user, '处理', reason);
       return false;
     }
     if (order.currentHandler && order.currentHandler !== user.name) {
-      results.failed.push({ id: order.id, reason: `当前处理人是「${order.currentHandler}」，您无权批量处理该订单` });
+      const reason = `当前处理人是「${order.currentHandler}」，您无权批量处理该订单`;
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason });
+      await this.recordBatchFailure(order, user, '处理', reason);
       return false;
     }
     if (!order.orderEvidence && !dto.orderEvidence) {
-      results.failed.push({ id: order.id, reason: '缺少「团购下单过程核对凭证(orderEvidence)」，请先补录订单凭证再批量处理', needRole: '履约专员' });
+      const reason = '缺少「团购下单过程核对凭证(orderEvidence)」，请先补录订单凭证再批量处理';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '履约专员' });
+      await this.recordBatchFailure(order, user, '处理', reason, 'material_missing');
       return false;
     }
     if (dto.orderEvidence) {
@@ -677,22 +744,30 @@ export class GroupOrdersService {
     order: GroupOrder,
     dto: BatchProcessDto,
     user: CurrentUser,
-    results: { success: number[]; failed: { id: number; reason: string; needRole?: string }[] },
+    results: { success: any[]; failed: any[] },
   ): Promise<boolean> {
     if (![UserRole.CITY_MANAGER, UserRole.REVIEW_LEADER].includes(user.role)) {
-      results.failed.push({ id: order.id, reason: '批量关闭仅允许「城市经理/复核负责人」执行', needRole: '城市经理/复核负责人' });
+      const reason = '批量关闭仅允许「城市经理/复核负责人」执行';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '城市经理/复核负责人' });
+      await this.recordBatchFailure(order, user, '关闭', reason);
       return false;
     }
     if (order.orderStatus !== OrderStatus.PROCESSING) {
-      results.failed.push({ id: order.id, reason: `当前状态「${this.getStatusLabel(order.orderStatus)}」不是「处理中」，无法批量关闭` });
+      const reason = `当前状态「${this.getStatusLabel(order.orderStatus)}」不是「处理中」，无法批量关闭`;
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason });
+      await this.recordBatchFailure(order, user, '关闭', reason);
       return false;
     }
     if (!order.orderEvidence) {
-      results.failed.push({ id: order.id, reason: '缺少「团购下单过程核对凭证(orderEvidence)」，请先由履约专员补录', needRole: '履约专员' });
+      const reason = '缺少「团购下单过程核对凭证(orderEvidence)」，请先由履约专员补录';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '履约专员' });
+      await this.recordBatchFailure(order, user, '关闭', reason, 'material_missing');
       return false;
     }
     if (!order.deliveryEvidence && !dto.deliveryEvidence) {
-      results.failed.push({ id: order.id, reason: '缺少「到货签收最终证据(deliveryEvidence)」，请先补录履约签收凭证再批量关闭', needRole: '城市经理' });
+      const reason = '缺少「到货签收最终证据(deliveryEvidence)」，请先补录履约签收凭证再批量关闭';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '城市经理' });
+      await this.recordBatchFailure(order, user, '关闭', reason, 'material_missing');
       return false;
     }
     if (dto.deliveryEvidence) {
@@ -723,7 +798,7 @@ export class GroupOrdersService {
     order: GroupOrder,
     dto: BatchProcessDto,
     user: CurrentUser,
-    results: { success: number[]; failed: { id: number; reason: string; needRole?: string }[] },
+    results: { success: any[]; failed: any[] },
   ): Promise<boolean> {
     const allowedRoles = [
       UserRole.AUDIT_SUPERVISOR,
@@ -732,15 +807,21 @@ export class GroupOrdersService {
       UserRole.FULFILLMENT_SPECIALIST,
     ];
     if (!allowedRoles.includes(user.role)) {
-      results.failed.push({ id: order.id, reason: '批量退回仅允许「审核主管/复核负责人/城市经理/履约专员」执行', needRole: '审核主管/复核负责人' });
+      const reason = '批量退回仅允许「审核主管/复核负责人/城市经理/履约专员」执行';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason, needRole: '审核主管/复核负责人' });
+      await this.recordBatchFailure(order, user, '退回', reason);
       return false;
     }
     if (order.orderStatus === OrderStatus.CLOSED) {
-      results.failed.push({ id: order.id, reason: '订单已归档，无法批量退回' });
+      const reason = '订单已归档为「已关闭」状态，无法批量退回';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason });
+      await this.recordBatchFailure(order, user, '退回', reason);
       return false;
     }
     if (!dto.reason) {
-      results.failed.push({ id: order.id, reason: '批量退回需填写退回原因，请说明需要谁补正' });
+      const reason = '批量退回需填写退回原因，请说明需要谁补正';
+      results.failed.push({ id: order.id, orderNo: order.orderNo, reason });
+      await this.recordBatchFailure(order, user, '退回', reason);
       return false;
     }
     const returnToRole = (dto.returnToRole as UserRole) || UserRole.LEADER_OPERATOR;

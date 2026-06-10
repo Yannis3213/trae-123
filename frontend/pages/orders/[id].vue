@@ -194,6 +194,7 @@ async function submitAction() {
       comment: actionRemark.value || undefined,
       version,
       isMaterialComplete: correctMaterialComplete.value,
+      orderEvidence: processOrderEvidence.value,
     })
   } else if (currentAction.value === 'review_pass' || currentAction.value === 'review_reject') {
     const validReasons = reviewPassed.value
@@ -203,6 +204,7 @@ async function submitAction() {
       passed: currentAction.value === 'review_pass',
       comment: actionRemark.value,
       version,
+      deliveryEvidence: reviewPassed.value ? reviewDeliveryEvidence.value : undefined,
       exceptionReasons: validReasons?.length ? validReasons : undefined,
     })
   } else if (currentAction.value === 'return') {
@@ -226,6 +228,7 @@ async function submitAction() {
   }
 
   showActionModal.value = false
+  await ordersStore.fetchDetail(orderId.value)
 }
 
 async function submitNote() {
