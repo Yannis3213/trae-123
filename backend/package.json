@@ -1,0 +1,17 @@
+{
+  "name": "workorder-backend",
+  "version": "1.0.0",
+  "description": "制造工厂-月底集中处理生产工单系统 - 后端",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "init-db": "node src/db/init.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "uuid": "^10.0.0"
+  }
+}
