@@ -4,10 +4,18 @@ import dayjs from 'dayjs'
 import api from '../api'
 import { useApp } from '../context/AppContext.jsx'
 
-const URGENCY_LABEL = {
-  normal: '正常',
-  approaching: '临期',
-  overdue: '逾期'
+const URGENCY_LABEL = { normal: '正常', approaching: '临期', overdue: '逾期' }
+const FAIL_CODE_LABEL = {
+  VERSION_CONFLICT: '版本冲突',
+  STATUS_CONFLICT: '状态冲突',
+  WRONG_HANDLER: '处理人不匹配',
+  PERMISSION_DENIED: '角色越权',
+  MISSING_MODULES: '缺必填证据',
+  MISSING_FIELDS: '缺必填字段',
+  NOT_FOUND: '单据不存在',
+  NOT_OVERDUE: '非逾期',
+  DUPLICATE_ACTION: '重复操作',
+  DB_ERROR: '数据库异常'
 }
 
 export default function BookingDetail() {
@@ -17,6 +25,9 @@ export default function BookingDetail() {
 
   const [booking, setBooking] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [versionConflictVisible, setVersionConflictVisible] = useState(false)
+  const [lastError, setLastError] = useState(null)
+
   const [showReturnModal, setShowReturnModal] = useState(false)
   const [returnReason, setReturnReason] = useState('')
   const [showModuleModal, setShowModuleModal] = useState(null)
@@ -31,6 +42,7 @@ export default function BookingDetail() {
 
   const fetchDetail = async () => {
     setLoading(true)
+    setVersionConflictVisible(false)
     try {
       const res = await api.get(`/bookings/${id}`)
       if (res.data.success) {
@@ -44,7 +56,7 @@ export default function BookingDetail() {
   }
 
   const handleProcess = async () => {
-    if (!window.confirm(`确认将单据从「${booking.status}」推进到下一状态？`)) return
+    setLastError(null)
     try {
       const res = await api.post(`/bookings/${id}/process`, {
         version: booking.version,
@@ -56,13 +68,26 @@ export default function BookingDetail() {
         setBooking(res.data.data)
         setProcessingRemark('')
         setAuditNote('')
+        setVersionConflictVisible(false)
         await refreshAll()
       }
     } catch (err) {
       const data = err.response?.data
-      showNotification(data?.error || '处理失败', 'error')
-      if (data?.code === 'VERSION_CONFLICT') {
-        fetchDetail()
+      const code = data?.code
+      setLastError(data)
+      if (code === 'VERSION_CONFLICT') {
+        setVersionConflictVisible(true)
+      }
+      if (code === 'MISSING_MODULES' && data?.missing_details) {
+        showNotification(
+          `缺证据：${data.missing_labels?.join('、') || ''}；${data.correction_summary || ''}`,
+          'error'
+        )
+      } else {
+        showNotification(data?.error || '处理失败', 'error')
+      }
+      if (code === 'VERSION_CONFLICT' || code === 'STATUS_CONFLICT') {
+        setTimeout(fetchDetail, 600)
       }
     }
   }
@@ -78,18 +103,26 @@ export default function BookingDetail() {
         reason: returnReason
       })
       if (res.data.success) {
-        showNotification(res.data.warning || res.data.message, res.data.warning ? 'warning' : 'success')
+        const msg = res.data.warning
+          ? `已退回：${res.data.warning}`
+          : res.data.message
+        showNotification(msg, res.data.warning ? 'warning' : 'success')
         setBooking(res.data.data)
         setShowReturnModal(false)
         setReturnReason('')
         await refreshAll()
       }
     } catch (err) {
-      showNotification(err.response?.data?.error || '退回失败', 'error')
+      const data = err.response?.data
+      const code = data?.code
+      setLastError(data)
+      if (code === 'VERSION_CONFLICT') setVersionConflictVisible(true)
+      showNotification(data?.error || '退回失败', 'error')
     }
   }
 
   const handleResubmit = async () => {
+    setLastError(null)
     try {
       const res = await api.post(`/bookings/${id}/resubmit`, { version: booking.version })
       if (res.data.success) {
@@ -99,10 +132,17 @@ export default function BookingDetail() {
       }
     } catch (err) {
       const data = err.response?.data
-      showNotification(data?.error || '重新提交失败', 'error')
-      if (data?.code === 'MISSING_MODULES' && data?.missing_modules) {
-        showNotification(`缺少：${data.missing_modules.join('、')}`, 'error')
+      const code = data?.code
+      setLastError(data)
+      if (code === 'MISSING_MODULES' && data?.missing_details) {
+        showNotification(
+          `仍缺证据：${data.missing_labels?.join('、') || ''}；${data.correction_summary || ''}`,
+          'error'
+        )
+      } else {
+        showNotification(data?.error || '重新提交失败', 'error')
       }
+      if (code === 'VERSION_CONFLICT') setVersionConflictVisible(true)
     }
   }
 
@@ -115,15 +155,19 @@ export default function BookingDetail() {
       })
     } else if (type === 'ticket_verification') {
       setModuleData({
-        ticket_count: booking.ticket_verification?.ticket_count || booking.visitor_count,
-        verified_count: booking.ticket_verification?.verified_count || booking.visitor_count,
+        ticket_count: booking.ticket_verification?.ticket_count ?? booking.visitor_count,
+        verified_count: booking.ticket_verification?.verified_count ?? booking.visitor_count,
         ticket_type: booking.ticket_verification?.ticket_type || '团队通票'
       })
     } else if (type === 'entry_statistics') {
       setModuleData({
-        actual_entry_count: booking.entry_statistics?.actual_entry_count || booking.visitor_count,
-        entry_time: booking.entry_statistics?.entry_time ? dayjs(booking.entry_statistics.entry_time).format('YYYY-MM-DDTHH:mm') : dayjs().format('YYYY-MM-DDTHH:mm'),
-        exit_time: booking.entry_statistics?.exit_time ? dayjs(booking.entry_statistics.exit_time).format('YYYY-MM-DDTHH:mm') : dayjs().add(6, 'hour').format('YYYY-MM-DDTHH:mm')
+        actual_entry_count: booking.entry_statistics?.actual_entry_count ?? booking.visitor_count,
+        entry_time: booking.entry_statistics?.entry_time
+          ? dayjs(booking.entry_statistics.entry_time).format('YYYY-MM-DDTHH:mm')
+          : dayjs().format('YYYY-MM-DDTHH:mm'),
+        exit_time: booking.entry_statistics?.exit_time
+          ? dayjs(booking.entry_statistics.exit_time).format('YYYY-MM-DDTHH:mm')
+          : dayjs().add(6, 'hour').format('YYYY-MM-DDTHH:mm')
       })
     }
   }
@@ -136,13 +180,20 @@ export default function BookingDetail() {
         ...moduleData
       })
       if (res.data.success) {
-        showNotification(res.data.message, 'success')
+        const extra = res.data.all_modules_complete
+          ? '；全部证据已补齐 ✓'
+          : (res.data.still_missing?.correction_summary || '')
+        showNotification(res.data.message + extra, res.data.all_modules_complete ? 'success' : 'info')
         setBooking(res.data.data)
         setShowModuleModal(null)
         await refreshAll()
       }
     } catch (err) {
-      showNotification(err.response?.data?.error || '更新失败', 'error')
+      const data = err.response?.data
+      const code = data?.code
+      setLastError(data)
+      if (code === 'VERSION_CONFLICT') setVersionConflictVisible(true)
+      showNotification(data?.error || '更新失败', 'error')
     }
   }
 
@@ -160,50 +211,90 @@ export default function BookingDetail() {
     }
   }
 
-  const canProcess = () => {
-    if (booking.status === '已同步') return false
-    if (userRole === 'dispatcher' && booking.status === '待审核') return true
-    if (userRole === 'ticketing' && booking.status === '待审核') return true
-    if (userRole === 'manager' && booking.status === '审核通过') return true
-    return false
-  }
+  const actions = booking?.actions_available || {}
 
-  const canReturn = () => {
-    if (booking.status === '已同步' || booking.status === '退回补正') return false
-    if (userRole === 'dispatcher' && booking.status === '待审核') return true
-    if (userRole === 'manager') return true
-    return false
-  }
+  if (loading) return <div className="empty-state">加载中...</div>
+  if (!booking) return <div className="empty-state">预约单不存在</div>
 
-  const canResubmit = () => {
-    return booking.status === '退回补正' && userRole === 'dispatcher'
-  }
-
-  const canEditModule = (type) => {
-    if (booking.status === '已同步') return false
-    if (type === 'ticket_verification') return userRole === 'ticketing' || userRole === 'dispatcher'
-    return userRole === 'dispatcher'
-  }
-
-  if (loading) {
-    return <div className="empty-state">加载中...</div>
-  }
-  if (!booking) {
-    return <div className="empty-state">预约单不存在</div>
-  }
+  const missingList = booking.missing_modules || []
 
   return (
     <div>
       <button className="back-btn" onClick={() => navigate('/bookings')}>← 返回列表</button>
 
-      {(booking.exception_reasons?.length > 0 || booking.status === '退回补正') && (
-        <div className="warning-box">
-          ⚠️ 该预约单存在 {booking.exception_reasons?.length || 0} 条异常记录：
-          {booking.exception_reasons?.slice(0, 2).map((e, i) => (
-            <span key={i} style={{ marginLeft: 8, fontWeight: 600 }}>
-              [{e.category}] {e.reason}
-            </span>
-          ))}
+      {versionConflictVisible && (
+        <div className="alert-banner danger">
+          <div className="alert-icon">⚠️</div>
+          <div className="alert-body">
+            <div className="alert-title">版本冲突：当前页面数据已过期</div>
+            <div>
+              你当前基于的版本
+              <code style={{ background: '#fff', padding: '1px 6px', borderRadius: 3, margin: '0 4px' }}>
+                v{lastError?.submitted_version || lastError?.current_version || '?'}
+              </code>
+              与服务端版本
+              <code style={{ background: '#fff', padding: '1px 6px', borderRadius: 3, margin: '0 4px' }}>
+                v{booking.version}
+              </code>
+              不一致。为避免覆盖他人处理结果，<strong>原状态保留未变更</strong>。
+              <button
+                className="btn btn-sm btn-danger"
+                style={{ marginLeft: 10 }}
+                onClick={fetchDetail}
+              >
+                🔄 刷新详情，获取最新数据
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {missingList.length > 0 && (
+        <div className="alert-banner danger">
+          <div className="alert-icon">📋</div>
+          <div className="alert-body">
+            <div className="alert-title">
+              当前单据缺少 {missingList.length} 项必填证据模块
+              {booking.status !== '已同步' && (
+                <span className="preserve-tag">校验不通过时原状态保留</span>
+              )}
+            </div>
+            <ul>
+              {missingList.map(m => (
+                <li key={m.key}>
+                  缺【{m.label}】 → 需要
+                  <strong style={{ color: '#6941c6' }}>【{m.owner_label}】</strong>
+                  &nbsp;补正完成后，才能推进到下一状态
+                </li>
+              ))}
+            </ul>
+            <div className="missing-chip-list">
+              {missingList.map(m => (
+                <span className="missing-chip" key={m.key}>
+                  ⛔ 缺 {m.label}
+                  <span className="owner">责任：{m.owner_label}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {booking.exception_reasons?.length > 0 && (
+        <div className="alert-banner warning">
+          <div className="alert-icon">⚠️</div>
+          <div className="alert-body">
+            <div className="alert-title">共 {booking.exception_reasons.length} 条异常 / 补正记录</div>
+            <div style={{ fontSize: 12, opacity: .9 }}>
+              （时间线下方可查看完整明细）最近一条：
+              <strong style={{ marginLeft: 4 }}>
+                [{booking.exception_reasons[0].category}] {booking.exception_reasons[0].reason}
+              </strong>
+              <span style={{ color: '#6b5504', marginLeft: 8 }}>
+                — {booking.exception_reasons[0].reporter_label || booking.exception_reasons[0].reporter}
+              </span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -211,10 +302,11 @@ export default function BookingDetail() {
         <div className="card detail-section">
           <div className="card-header">
             <h3>基本信息</h3>
-            <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
               <span className={`status-tag ${booking.status}`}>{booking.status}</span>
               <span className={`urgency-tag ${booking.urgency}`}>{URGENCY_LABEL[booking.urgency]}</span>
               <span style={{ fontSize: 13, color: '#666' }}>版本号：v{booking.version}</span>
+              <span style={{ fontSize: 13, color: '#2d7dd2' }}>当前处理人：{booking.current_handler}</span>
             </div>
           </div>
           <div className="card-body">
@@ -226,100 +318,78 @@ export default function BookingDetail() {
               <div className="info-item"><span className="label">游客人数：</span><span className="value">{booking.visitor_count}人</span></div>
               <div className="info-item"><span className="label">入园时间：</span><span className="value">{booking.visit_date} {booking.visit_time || ''}</span></div>
               <div className="info-item"><span className="label">当前处理人：</span><span className="value">{booking.current_handler}</span></div>
-              <div className="info-item"><span className="label">截止时间：</span><span className="value" style={{ color: booking.urgency === 'overdue' ? '#dc3545' : booking.urgency === 'approaching' ? '#ffc107' : '' }}>
-                {booking.deadline ? dayjs(booking.deadline).format('YYYY-MM-DD HH:mm') : '-'}
-              </span></div>
+              <div className="info-item"><span className="label">截止时间：</span>
+                <span className="value" style={{
+                  color: booking.urgency === 'overdue' ? '#dc3545' : booking.urgency === 'approaching' ? '#ffc107' : ''
+                }}>
+                  {booking.deadline ? dayjs(booking.deadline).format('YYYY-MM-DD HH:mm') : '-'}
+                </span>
+              </div>
               <div className="info-item"><span className="label">创建时间：</span><span className="value">{booking.created_at ? dayjs(booking.created_at).format('YYYY-MM-DD HH:mm') : '-'}</span></div>
             </div>
           </div>
         </div>
 
-        <div className="card">
-          <div className="card-header">
-            <h3>📋 团队预约模块</h3>
-            {canEditModule('team_booking_info') && (
-              <button className="btn btn-sm btn-default" onClick={() => openModuleModal('team_booking_info')}>编辑</button>
-            )}
-          </div>
-          <div className="card-body">
-            <div className={`module-card ${booking.team_booking_info?.is_complete ? 'complete' : 'incomplete'}`}>
-              <div className="module-header">
-                <span className="module-title">团队预约信息</span>
-                <span className={`complete-badge ${booking.team_booking_info?.is_complete ? 'yes' : 'no'}`}>
-                  {booking.team_booking_info?.is_complete ? '✓ 已完善' : '✗ 待完善'}
-                </span>
-              </div>
-              <div style={{ fontSize: 13, lineHeight: 1.8 }}>
-                <div><strong>行程安排：</strong>{booking.team_booking_info?.itinerary || '（未填写）'}</div>
-                <div style={{ marginTop: 6 }}><strong>特殊需求：</strong>{booking.team_booking_info?.requirements || '（未填写）'}</div>
-                <div style={{ marginTop: 6, color: '#999' }}>
-                  提交人：{booking.team_booking_info?.submitted_by || '-'} |
-                  提交时间：{booking.team_booking_info?.submitted_at ? dayjs(booking.team_booking_info.submitted_at).format('MM-DD HH:mm') : '-'}
-                </div>
+        <ModuleCard
+          title="📋 团队预约模块"
+          moduleKey="team_booking_info"
+          data={booking.team_booking_info}
+          canEdit={actions.can_edit_booking_info}
+          onEdit={() => openModuleModal('team_booking_info')}
+          children={
+            <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+              <div><strong>行程安排：</strong>{booking.team_booking_info?.itinerary || '（未填写）'}</div>
+              <div style={{ marginTop: 6 }}><strong>特殊需求：</strong>{booking.team_booking_info?.requirements || '（未填写）'}</div>
+              <div style={{ marginTop: 6, color: '#999' }}>
+                提交人：{booking.team_booking_info?.submitted_by || '-'} |
+                提交时间：{booking.team_booking_info?.submitted_at ? dayjs(booking.team_booking_info.submitted_at).format('MM-DD HH:mm') : '-'}
               </div>
             </div>
-          </div>
-        </div>
+          }
+        />
+
+        <ModuleCard
+          title="🎫 票务核销模块"
+          moduleKey="ticket_verification"
+          data={booking.ticket_verification}
+          canEdit={actions.can_edit_ticket}
+          onEdit={() => openModuleModal('ticket_verification')}
+          children={
+            <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+              <div><strong>应核票数：</strong>{booking.ticket_verification?.ticket_count || 0} 张</div>
+              <div><strong>已核票数：</strong>{booking.ticket_verification?.verified_count || 0} 张</div>
+              <div><strong>票种：</strong>{booking.ticket_verification?.ticket_type || '-'}</div>
+              <div style={{ marginTop: 6, color: '#999' }}>
+                核销人：{booking.ticket_verification?.verified_by || '-'} |
+                核销时间：{booking.ticket_verification?.verified_at ? dayjs(booking.ticket_verification.verified_at).format('MM-DD HH:mm') : '-'}
+              </div>
+            </div>
+          }
+        />
+
+        <ModuleCard
+          title="🚶 入园统计模块"
+          moduleKey="entry_statistics"
+          data={booking.entry_statistics}
+          canEdit={actions.can_edit_entry}
+          onEdit={() => openModuleModal('entry_statistics')}
+          children={
+            <div style={{ fontSize: 13, lineHeight: 1.8 }}>
+              <div><strong>实际入园：</strong>{booking.entry_statistics?.actual_entry_count || 0} 人</div>
+              <div><strong>入园时间：</strong>{booking.entry_statistics?.entry_time ? dayjs(booking.entry_statistics.entry_time).format('YYYY-MM-DD HH:mm') : '-'}</div>
+              <div><strong>离园时间：</strong>{booking.entry_statistics?.exit_time ? dayjs(booking.entry_statistics.exit_time).format('YYYY-MM-DD HH:mm') : '-'}</div>
+              <div style={{ marginTop: 6, color: '#999' }}>
+                登记人：{booking.entry_statistics?.recorded_by || '-'} |
+                登记时间：{booking.entry_statistics?.recorded_at ? dayjs(booking.entry_statistics.recorded_at).format('MM-DD HH:mm') : '-'}
+              </div>
+            </div>
+          }
+        />
 
         <div className="card">
           <div className="card-header">
-            <h3>🎫 票务核销模块</h3>
-            {canEditModule('ticket_verification') && (
-              <button className="btn btn-sm btn-default" onClick={() => openModuleModal('ticket_verification')}>编辑</button>
-            )}
-          </div>
-          <div className="card-body">
-            <div className={`module-card ${booking.ticket_verification?.is_complete ? 'complete' : 'incomplete'}`}>
-              <div className="module-header">
-                <span className="module-title">票务核销信息</span>
-                <span className={`complete-badge ${booking.ticket_verification?.is_complete ? 'yes' : 'no'}`}>
-                  {booking.ticket_verification?.is_complete ? '✓ 已完善' : '✗ 待完善'}
-                </span>
-              </div>
-              <div style={{ fontSize: 13, lineHeight: 1.8 }}>
-                <div><strong>应核票数：</strong>{booking.ticket_verification?.ticket_count || 0} 张</div>
-                <div><strong>已核票数：</strong>{booking.ticket_verification?.verified_count || 0} 张</div>
-                <div><strong>票种：</strong>{booking.ticket_verification?.ticket_type || '-'}</div>
-                <div style={{ marginTop: 6, color: '#999' }}>
-                  核销人：{booking.ticket_verification?.verified_by || '-'} |
-                  核销时间：{booking.ticket_verification?.verified_at ? dayjs(booking.ticket_verification.verified_at).format('MM-DD HH:mm') : '-'}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h3>🚶 入园统计模块</h3>
-            {canEditModule('entry_statistics') && (
-              <button className="btn btn-sm btn-default" onClick={() => openModuleModal('entry_statistics')}>编辑</button>
-            )}
-          </div>
-          <div className="card-body">
-            <div className={`module-card ${booking.entry_statistics?.is_complete ? 'complete' : 'incomplete'}`}>
-              <div className="module-header">
-                <span className="module-title">入园统计信息</span>
-                <span className={`complete-badge ${booking.entry_statistics?.is_complete ? 'yes' : 'no'}`}>
-                  {booking.entry_statistics?.is_complete ? '✓ 已完善' : '✗ 待完善'}
-                </span>
-              </div>
-              <div style={{ fontSize: 13, lineHeight: 1.8 }}>
-                <div><strong>实际入园：</strong>{booking.entry_statistics?.actual_entry_count || 0} 人</div>
-                <div><strong>入园时间：</strong>{booking.entry_statistics?.entry_time ? dayjs(booking.entry_statistics.entry_time).format('YYYY-MM-DD HH:mm') : '-'}</div>
-                <div><strong>离园时间：</strong>{booking.entry_statistics?.exit_time ? dayjs(booking.entry_statistics.exit_time).format('YYYY-MM-DD HH:mm') : '-'}</div>
-                <div style={{ marginTop: 6, color: '#999' }}>
-                  登记人：{booking.entry_statistics?.recorded_by || '-'} |
-                  登记时间：{booking.entry_statistics?.recorded_at ? dayjs(booking.entry_statistics.recorded_at).format('MM-DD HH:mm') : '-'}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h3>⚠️ 异常原因记录</h3>
+            <h3>⚠️ 异常原因 / 补正动作记录</h3>
+            <span style={{ fontSize: 12, color: '#888' }}>共 {booking.exception_reasons?.length || 0} 条</span>
           </div>
           <div className="card-body">
             {booking.exception_reasons?.length > 0 ? (
@@ -328,7 +398,7 @@ export default function BookingDetail() {
                   <span className="exception-category">{e.category}</span>
                   <strong>{e.reason}</strong>
                   <div style={{ marginTop: 4, color: '#999', fontSize: 12 }}>
-                    {e.reporter}（{e.reporter_role}） · {dayjs(e.created_at).format('MM-DD HH:mm')}
+                    {e.reporter_label || e.reporter}（{e.reporter_role}） · {dayjs(e.created_at).format('MM-DD HH:mm')}
                   </div>
                 </div>
               ))
@@ -349,7 +419,7 @@ export default function BookingDetail() {
                   <div key={n.id} className="note-item">
                     <div>
                       <span className="note-author">{n.author}</span>
-                      <span style={{ color: '#999' }}>（{n.author_role}）</span>
+                      <span style={{ color: '#999' }}>（{n.author_label || n.author_role}）</span>
                       <span className="note-time">{dayjs(n.created_at).format('MM-DD HH:mm')}</span>
                     </div>
                     <div className="note-content">{n.note}</div>
@@ -373,7 +443,8 @@ export default function BookingDetail() {
 
         <div className="card detail-section">
           <div className="card-header">
-            <h3>🔄 处理记录（时间线）</h3>
+            <h3>🔄 处理记录（时间线 · 留痕）</h3>
+            <span style={{ fontSize: 12, color: '#888' }}>共 {booking.processing_records?.length || 0} 条</span>
           </div>
           <div className="card-body">
             {booking.processing_records?.length > 0 ? (
@@ -382,9 +453,9 @@ export default function BookingDetail() {
                   <div key={r.id} className="timeline-item">
                     <div className="timeline-action">{r.action}</div>
                     <div className="timeline-meta">
-                      {r.operator}（{r.operator_role}） · {dayjs(r.created_at).format('YYYY-MM-DD HH:mm:ss')}
+                      {r.operator}（{r.operator_label || r.operator_role}） · {dayjs(r.created_at).format('YYYY-MM-DD HH:mm:ss')}
                       {r.from_status && r.to_status && (
-                        <span> · {r.from_status} → {r.to_status}</span>
+                        <span> · {r.from_status} → <strong>{r.to_status}</strong></span>
                       )}
                     </div>
                     {r.remark && <div className="timeline-remark">{r.remark}</div>}
@@ -399,7 +470,7 @@ export default function BookingDetail() {
       </div>
 
       <div className="action-bar">
-        {canProcess() && (
+        {actions.can_process && (
           <>
             <input
               style={{ width: 200 }}
@@ -422,12 +493,22 @@ export default function BookingDetail() {
             </button>
           </>
         )}
-        {canReturn() && (
-          <button className="btn btn-warning" onClick={() => setShowReturnModal(true)}>退回补正</button>
+        {actions.can_return && (
+          <button className="btn btn-warning" onClick={() => setShowReturnModal(true)}>
+            退回补正
+          </button>
         )}
-        {canResubmit() && (
-          <button className="btn btn-primary" onClick={handleResubmit}>补正后重新提交</button>
+        {actions.can_resubmit && (
+          <button className="btn btn-primary" onClick={handleResubmit}>
+            补正后重新提交
+          </button>
         )}
+        {!actions.can_process && !actions.can_return && !actions.can_resubmit && booking.status !== '已同步' && (
+          <div style={{ color: '#b54708', fontSize: 13, marginRight: 'auto' }}>
+            🔒 当前角色 / 状态下无可用办理动作（请切换角色或补正材料）
+          </div>
+        )}
+        <button className="btn btn-default" onClick={fetchDetail}>🔄 刷新详情</button>
         <button className="btn btn-default" onClick={() => navigate('/bookings')}>返回列表</button>
       </div>
 
@@ -439,16 +520,22 @@ export default function BookingDetail() {
               <button className="modal-close" onClick={() => setShowReturnModal(false)}>×</button>
             </div>
             <div className="modal-body">
-              <div className="warning-box">
-                ⚠️ 退回后将进入「退回补正」状态，需要现场调度补正后重新提交。
-                系统会自动检测缺失的模块并提示需谁补正。
+              <div className="alert-banner warning">
+                <div className="alert-icon">⚠️</div>
+                <div className="alert-body">
+                  <div className="alert-title">退回后进入「退回补正」状态</div>
+                  <div>
+                    系统会自动检测缺失的团队预约 / 票务核销 / 入园统计模块，
+                    在异常原因里逐条记录<strong>需谁补正</strong>，并在详情页高亮显示。
+                  </div>
+                </div>
               </div>
               <div className="form-group">
                 <label>退回原因 *</label>
                 <textarea
                   value={returnReason}
                   onChange={e => setReturnReason(e.target.value)}
-                  placeholder="请详细填写退回原因..."
+                  placeholder="请详细填写退回原因，将存入异常原因与处理记录留痕..."
                 />
               </div>
             </div>
@@ -491,16 +578,19 @@ export default function BookingDetail() {
                   <div className="form-row">
                     <div className="form-group">
                       <label>应核票数 *</label>
-                      <input type="number" value={moduleData.ticket_count} onChange={e => setModuleData({ ...moduleData, ticket_count: e.target.value })} />
+                      <input type="number" value={moduleData.ticket_count}
+                        onChange={e => setModuleData({ ...moduleData, ticket_count: e.target.value })} />
                     </div>
                     <div className="form-group">
                       <label>已核票数 *</label>
-                      <input type="number" value={moduleData.verified_count} onChange={e => setModuleData({ ...moduleData, verified_count: e.target.value })} />
+                      <input type="number" value={moduleData.verified_count}
+                        onChange={e => setModuleData({ ...moduleData, verified_count: e.target.value })} />
                     </div>
                   </div>
                   <div className="form-group">
                     <label>票种</label>
-                    <input value={moduleData.ticket_type} onChange={e => setModuleData({ ...moduleData, ticket_type: e.target.value })} />
+                    <input value={moduleData.ticket_type}
+                      onChange={e => setModuleData({ ...moduleData, ticket_type: e.target.value })} />
                   </div>
                 </>
               )}
@@ -508,16 +598,19 @@ export default function BookingDetail() {
                 <>
                   <div className="form-group">
                     <label>实际入园人数</label>
-                    <input type="number" value={moduleData.actual_entry_count} onChange={e => setModuleData({ ...moduleData, actual_entry_count: e.target.value })} />
+                    <input type="number" value={moduleData.actual_entry_count}
+                      onChange={e => setModuleData({ ...moduleData, actual_entry_count: e.target.value })} />
                   </div>
                   <div className="form-row">
                     <div className="form-group">
                       <label>入园时间</label>
-                      <input type="datetime-local" value={moduleData.entry_time} onChange={e => setModuleData({ ...moduleData, entry_time: e.target.value })} />
+                      <input type="datetime-local" value={moduleData.entry_time}
+                        onChange={e => setModuleData({ ...moduleData, entry_time: e.target.value })} />
                     </div>
                     <div className="form-group">
                       <label>离园时间</label>
-                      <input type="datetime-local" value={moduleData.exit_time} onChange={e => setModuleData({ ...moduleData, exit_time: e.target.value })} />
+                      <input type="datetime-local" value={moduleData.exit_time}
+                        onChange={e => setModuleData({ ...moduleData, exit_time: e.target.value })} />
                     </div>
                   </div>
                 </>
@@ -525,11 +618,52 @@ export default function BookingDetail() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-default" onClick={() => setShowModuleModal(null)}>取消</button>
-              <button className="btn btn-primary" onClick={handleUpdateModule}>保存</button>
+              <button className="btn btn-primary" onClick={handleUpdateModule}>保存（版本 v{booking.version}）</button>
             </div>
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function ModuleCard({ title, moduleKey, data, canEdit, onEdit, children }) {
+  const isComplete = !!data?.is_complete
+  const ownerLabel = data?.owner_label || '—'
+  const ownerRole = data?.owner_role
+  return (
+    <div className="card">
+      <div className="card-header">
+        <h3>
+          {title}
+          <span className="owner-chip">责任人：{ownerLabel}</span>
+        </h3>
+        {canEdit && (
+          <button className="btn btn-sm btn-default" onClick={onEdit}>
+            编辑（{ownerRole}）
+          </button>
+        )}
+      </div>
+      <div className="card-body">
+        <div className={`module-card ${isComplete ? 'complete' : 'incomplete'}`}>
+          <div className="module-header">
+            <span className="module-title">模块信息：{moduleKey}</span>
+            <span className={`complete-badge ${isComplete ? 'yes' : 'no'}`}>
+              {isComplete ? '✓ 已完善' : '✗ 待完善'}
+            </span>
+          </div>
+          {children}
+          {!isComplete && (
+            <div className="alert-banner warning" style={{ marginTop: 12, marginBottom: 0 }}>
+              <div className="alert-icon">🔧</div>
+              <div className="alert-body">
+                此模块未完善，推进状态时会<strong>保留原状态</strong>并拦截。
+                需要【<strong style={{ color: '#6941c6' }}>{ownerLabel}</strong>】补正后才能流转。
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
