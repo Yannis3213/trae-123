@@ -1,8 +1,36 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 
 from .models import UserRole, PurchaseStatus, PriorityLevel, WarningLevel
+
+AuditNoteType = Literal[
+    "系统记录",
+    "人工备注",
+    "补充说明",
+    "逾期预警",
+    "异常标记",
+    "退回补正",
+    "状态冲突",
+    "版本冲突",
+    "证据缺失",
+    "批量处理",
+]
+
+EXCEPTION_TYPE_TO_AUDIT_NOTE_TYPE: dict[str, AuditNoteType] = {
+    "version_conflict": "版本冲突",
+    "already_closed": "异常标记",
+    "role_denied": "异常标记",
+    "handler_mismatch": "异常标记",
+    "missing_quotation_evidence": "证据缺失",
+    "missing_quotation_content": "证据缺失",
+    "missing_purchase_evidence": "证据缺失",
+    "missing_arrival_evidence": "证据缺失",
+    "missing_purchase_content": "证据缺失",
+    "missing_arrival_content": "证据缺失",
+    "deadline_overdue": "逾期预警",
+    "state_conflict": "状态冲突",
+}
 
 
 class Token(BaseModel):
@@ -63,6 +91,7 @@ class ProcessingRecordBase(BaseModel):
     result: Optional[str] = None
     comment: Optional[str] = None
     exception_reason: Optional[str] = None
+    exception_type: Optional[str] = None
     evidence_checked: Optional[str] = None
 
 
@@ -80,7 +109,7 @@ class ProcessingRecordOut(ProcessingRecordBase):
 
 class AuditNoteBase(BaseModel):
     note: str
-    note_type: Optional[str] = None
+    note_type: Optional[AuditNoteType] = None
 
 
 class AuditNoteCreate(AuditNoteBase):
@@ -184,6 +213,7 @@ class BatchActionResult(BaseModel):
     success: bool
     message: str
     current_status: Optional[PurchaseStatus] = None
+    exception_type: Optional[str] = None
 
 
 class PurchaseOrderListResponse(BaseModel):

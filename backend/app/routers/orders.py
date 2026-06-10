@@ -22,8 +22,38 @@ from ..schemas import (
 from ..permissions import (
     can_view_order, can_edit_order, validate_status_transition,
     update_warning_level, determine_next_handler_id, add_processing_record,
-    validate_batch_action, check_role_permission
+    validate_batch_action, check_role_permission, add_audit_note_for_exception,
+    check_current_handler,
 )
+
+
+def build_visible_query(db: Session, user: User):
+    query = db.query(FreshPurchaseOrder)
+    if user.role == UserRole.REGISTRAR:
+        query = query.filter(
+            or_(
+                FreshPurchaseOrder.creator_id == user.id,
+                FreshPurchaseOrder.current_handler_id == user.id,
+                and_(
+                    FreshPurchaseOrder.store == user.store,
+                    FreshPurchaseOrder.status == PurchaseStatus.PENDING_DISPATCH
+                )
+            )
+        )
+    elif user.role == UserRole.SUPERVISOR:
+        query = query.filter(FreshPurchaseOrder.store == user.store)
+    return query
+
+
+def refresh_warning_for_visible(db: Session, user: User) -> None:
+    query = build_visible_query(db, user)
+    visible_orders = query.filter(
+        FreshPurchaseOrder.status != PurchaseStatus.CLOSED
+    ).all()
+    for o in visible_orders:
+        update_warning_level(o)
+    if visible_orders:
+        db.commit()
 
 
 def generate_order_no(db: Session) -> str:
@@ -56,40 +86,28 @@ async def list_orders(
     user: User = connection.user
     db: Session = next(get_db())
     try:
-        query = db.query(FreshPurchaseOrder)
+        refresh_warning_for_visible(db, user)
+        db.expire_all()
 
-        if user.role == UserRole.REGISTRAR:
-            if only_mine:
-                query = query.filter(
-                    or_(
-                        FreshPurchaseOrder.creator_id == user.id,
-                        FreshPurchaseOrder.current_handler_id == user.id
+        query = build_visible_query(db, user)
+
+        if user.role == UserRole.REGISTRAR and only_mine:
+            query = query.filter(
+                or_(
+                    FreshPurchaseOrder.creator_id == user.id,
+                    FreshPurchaseOrder.current_handler_id == user.id
+                )
+            )
+        elif user.role == UserRole.SUPERVISOR and only_mine:
+            query = query.filter(
+                or_(
+                    FreshPurchaseOrder.current_handler_id == user.id,
+                    and_(
+                        FreshPurchaseOrder.store == user.store,
+                        FreshPurchaseOrder.status == PurchaseStatus.PROCESSING
                     )
                 )
-            else:
-                query = query.filter(
-                    or_(
-                        FreshPurchaseOrder.creator_id == user.id,
-                        FreshPurchaseOrder.current_handler_id == user.id,
-                        and_(
-                            FreshPurchaseOrder.store == user.store,
-                            FreshPurchaseOrder.status == PurchaseStatus.PENDING_DISPATCH
-                        )
-                    )
-                )
-        elif user.role == UserRole.SUPERVISOR:
-            if only_mine:
-                query = query.filter(
-                    or_(
-                        FreshPurchaseOrder.current_handler_id == user.id,
-                        and_(
-                            FreshPurchaseOrder.store == user.store,
-                            FreshPurchaseOrder.status == PurchaseStatus.PROCESSING
-                        )
-                    )
-                )
-            else:
-                query = query.filter(FreshPurchaseOrder.store == user.store)
+            )
 
         if status:
             query = query.filter(FreshPurchaseOrder.status == status)
@@ -123,21 +141,7 @@ async def list_orders(
 
         orders = query.all()
 
-        for o in orders:
-            update_warning_level(o)
-        db.commit()
-
-        warning_query = db.query(FreshPurchaseOrder)
-        if user.role == UserRole.REGISTRAR:
-            warning_query = warning_query.filter(
-                or_(
-                    FreshPurchaseOrder.creator_id == user.id,
-                    FreshPurchaseOrder.current_handler_id == user.id
-                )
-            )
-        elif user.role == UserRole.SUPERVISOR:
-            warning_query = warning_query.filter(FreshPurchaseOrder.store == user.store)
-
+        warning_query = build_visible_query(db, user)
         warning_counts = {
             WarningLevel.NORMAL.value: warning_query.filter(FreshPurchaseOrder.warning_level == WarningLevel.NORMAL).count(),
             WarningLevel.APPROACHING.value: warning_query.filter(FreshPurchaseOrder.warning_level == WarningLevel.APPROACHING).count(),
@@ -158,16 +162,9 @@ async def get_stats(connection: ASGIConnection) -> PurchaseOrderStats:
     user: User = connection.user
     db: Session = next(get_db())
     try:
-        query = db.query(FreshPurchaseOrder)
-        if user.role == UserRole.REGISTRAR:
-            query = query.filter(
-                or_(
-                    FreshPurchaseOrder.creator_id == user.id,
-                    FreshPurchaseOrder.current_handler_id == user.id
-                )
-            )
-        elif user.role == UserRole.SUPERVISOR:
-            query = query.filter(FreshPurchaseOrder.store == user.store)
+        refresh_warning_for_visible(db, user)
+        db.expire_all()
+        query = build_visible_query(db, user)
 
         return PurchaseOrderStats(
             total=query.count(),
@@ -187,16 +184,16 @@ async def get_order(connection: ASGIConnection, order_id: int) -> FreshPurchaseO
     user: User = connection.user
     db: Session = next(get_db())
     try:
+        refresh_warning_for_visible(db, user)
+        db.expire_all()
+
         order = db.query(FreshPurchaseOrder).filter(FreshPurchaseOrder.id == order_id).first()
         if not order:
             raise NotFoundException("生鲜采购单不存在")
         if not can_view_order(user, order):
             raise NotAuthorizedException("无权查看此单据")
 
-        update_warning_level(order)
-        db.commit()
         db.refresh(order)
-
         return FreshPurchaseOrderOut.model_validate(order)
     finally:
         db.close()
@@ -305,7 +302,7 @@ async def transition_status(
         if not can_view_order(user, order):
             raise NotAuthorizedException("无权操作此单据")
 
-        is_valid, message = validate_status_transition(db, order, user, data)
+        is_valid, message, exception_type = validate_status_transition(db, order, user, data)
         if not is_valid:
             add_processing_record(
                 db=db,
@@ -316,7 +313,15 @@ async def transition_status(
                 to_status=data.target_status.value,
                 result="failed",
                 comment=message,
-                exception_reason=message
+                exception_reason=message,
+                exception_type=exception_type,
+            )
+            add_audit_note_for_exception(
+                db=db,
+                order=order,
+                user=user,
+                exception_type=exception_type,
+                note=message,
             )
             db.commit()
             raise ValidationException(message)
@@ -405,7 +410,8 @@ async def batch_action(
                     order_id=validation["order_id"],
                     order_no=validation["order_no"],
                     success=False,
-                    message="单据不存在"
+                    message="单据不存在",
+                    exception_type=validation.get("exception_type") or "state_conflict",
                 ))
                 continue
 
@@ -440,12 +446,23 @@ async def batch_action(
                         comment=data.comment
                     )
 
+                    audit = AuditNote(
+                        order_id=order.id,
+                        note=data.comment or f"批量操作：{data.action}，状态由 {old_status} 变更为 {data.target_status.value}",
+                        note_type="批量处理",
+                        author_id=user.id,
+                        author_name=user.full_name,
+                        author_role=user.role.value,
+                    )
+                    db.add(audit)
+
                 results.append(BatchActionResult(
                     order_id=order.id,
                     order_no=order.order_no,
                     success=True,
                     message="批量操作成功",
-                    current_status=order.status
+                    current_status=order.status,
+                    exception_type=validation.get("exception_type") or None,
                 ))
             except Exception as e:
                 results.append(BatchActionResult(
@@ -453,7 +470,8 @@ async def batch_action(
                     order_no=order.order_no,
                     success=False,
                     message=f"处理失败: {str(e)}",
-                    current_status=order.status
+                    current_status=order.status,
+                    exception_type="state_conflict",
                 ))
 
         db.commit()

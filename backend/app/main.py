@@ -7,7 +7,8 @@ from litestar.logging import LoggingConfig
 from .config import settings
 from .database import SessionLocal
 from .seed import seed_database
-from .routers.auth import auth_router, jwt_auth
+from .security import jwt_auth
+from .routers.auth import auth_router
 from .routers.orders import orders_router
 
 

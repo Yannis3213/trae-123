@@ -6,13 +6,15 @@ import {
   STATUS_LABELS, STATUS_COLORS,
   PRIORITY_LABELS, PRIORITY_COLORS,
   WARNING_LABELS, WARNING_COLORS,
-  ROLE_LABELS,
+  ROLE_LABELS, AUDIT_NOTE_TYPES, AUDIT_NOTE_TYPE_COLORS,
+  EXCEPTION_TYPE_LABELS, EXCEPTION_TYPE_COLORS,
   type FreshPurchaseOrder,
   type PurchaseStatus,
   type PriorityLevel,
   type BatchActionResult,
   type ProcessingRecord,
   type AuditNote,
+  type AuditNoteType,
   type StatusTransitionRequest,
   type AuditNoteCreate,
 } from "../utils/types.ts";
@@ -481,6 +483,13 @@ export default function OrderDetailIsland({ orderId }: Props) {
                       </div>
                     )}
                     {r.comment && <div class="timeline-comment">💬 {r.comment}</div>}
+                    {r.exception_type && (
+                      <div style="margin:4px 0">
+                        <span class="tag" style={`background:${EXCEPTION_TYPE_COLORS[r.exception_type] || "#be123c"}20;color:${EXCEPTION_TYPE_COLORS[r.exception_type] || "#be123c"}`}>
+                          🔴 {EXCEPTION_TYPE_LABELS[r.exception_type] || r.exception_type}
+                        </span>
+                      </div>
+                    )}
                     {r.exception_reason && <div class="timeline-exception">⚠️ {r.exception_reason}</div>}
                     {r.evidence_checked && <div class="timeline-evidence muted">📋 核验材料：{r.evidence_checked}</div>}
                     <div class="timeline-meta muted">
@@ -503,7 +512,9 @@ export default function OrderDetailIsland({ orderId }: Props) {
                 {order.audit_notes.map(n => (
                   <div class="audit-item" key={n.id}>
                     <div class="audit-header">
-                      <span class="audit-tag">{n.note_type || "备注"}</span>
+                      <span class="audit-tag" style={`background:${AUDIT_NOTE_TYPE_COLORS[(n.note_type || "人工备注") as AuditNoteType]}20;color:${AUDIT_NOTE_TYPE_COLORS[(n.note_type || "人工备注") as AuditNoteType]}`}>
+                        {n.note_type || "人工备注"}
+                      </span>
                       <span class="muted">{n.author_name} · {formatDate(n.created_at)}</span>
                     </div>
                     <div class="audit-content">{n.note}</div>
@@ -584,10 +595,9 @@ export default function OrderDetailIsland({ orderId }: Props) {
               <div class="form-group">
                 <label>备注类型</label>
                 <select value={auditNoteType} onInput={(e: any) => (auditNoteType.value = e.target.value)}>
-                  <option value="人工备注">人工备注</option>
-                  <option value="补充说明">补充说明</option>
-                  <option value="逾期预警">逾期预警</option>
-                  <option value="异常标记">异常标记</option>
+                  {AUDIT_NOTE_TYPES.filter(t => t !== "系统记录").map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
                 </select>
               </div>
               <div class="form-group">

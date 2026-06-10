@@ -225,6 +225,31 @@ def seed_database(db: Session):
                 {"filename": "粽子采购合同.pdf", "file_type": "application/pdf", "category": "采购下单"}
             ],
             "type": "正常流转处理中"
+        },
+        {
+            "order_no": "FPO-2026-0007",
+            "title": "有机蔬菜产地直供采购",
+            "supplier_name": "绿源有机农场",
+            "store": "生鲜超市-朝阳店",
+            "category": "有机蔬菜",
+            "amount": "¥12,800",
+            "priority": PriorityLevel.HIGH,
+            "status": PurchaseStatus.PENDING_DISPATCH,
+            "deadline": now + timedelta(hours=20),
+            "creator": "registrar1",
+            "handler": "registrar1",
+            "supplier_quotation": "绿源有机农场报价：有机生菜6元/斤，有机菠菜7元/斤，有机番茄8元/斤，合计约12800元。",
+            "has_quotation": True,
+            "has_purchase": False,
+            "has_arrival": False,
+            "is_overdue": False,
+            "has_exception": True,
+            "exception_reason": "状态冲突：登记员基于旧版本重新提交，主管已先退回，版本号不一致被拦截",
+            "reject_reason": "请补充有机认证证书编号后重新提交",
+            "attachments": [
+                {"filename": "绿源有机报价单.pdf", "file_type": "application/pdf", "category": "供应商报价"}
+            ],
+            "type": "状态冲突"
         }
     ]
 
@@ -362,6 +387,77 @@ def seed_database(db: Session):
                 author_role=created_users["reviewer1"].role.value
             )
             db.add(audit_overdue)
+
+        if o_data.get("type") == "状态冲突":
+            supervisor = created_users.get("supervisor1")
+            order.version = 2
+
+            record_pending_to_processing = ProcessingRecord(
+                order_id=order.id,
+                action="派发处理",
+                from_status=PurchaseStatus.PENDING_DISPATCH.value,
+                to_status=PurchaseStatus.PROCESSING.value,
+                handler_id=creator.id if creator else None,
+                handler_name=creator.full_name if creator else None,
+                handler_role=creator.role.value if creator else None,
+                result="success",
+                comment="供应商报价已提交，派发至门店主管审核",
+                evidence_checked="供应商报价单",
+                timestamp=now - timedelta(hours=10)
+            )
+            db.add(record_pending_to_processing)
+
+            record_reject = ProcessingRecord(
+                order_id=order.id,
+                action="退回补正",
+                from_status=PurchaseStatus.PROCESSING.value,
+                to_status=PurchaseStatus.PENDING_DISPATCH.value,
+                handler_id=supervisor.id if supervisor else None,
+                handler_name=supervisor.full_name if supervisor else None,
+                handler_role=supervisor.role.value if supervisor else None,
+                result="reject",
+                comment=o_data.get("reject_reason"),
+                exception_reason="缺少有机认证证书编号",
+                exception_type="missing_quotation_content",
+                timestamp=now - timedelta(hours=4)
+            )
+            db.add(record_reject)
+
+            audit_reject = AuditNote(
+                order_id=order.id,
+                note="退回补正：请补充供应商有机认证证书编号及有效期，确保采购蔬菜符合有机标准。",
+                note_type="退回补正",
+                author_id=supervisor.id if supervisor else None,
+                author_name=supervisor.full_name if supervisor else None,
+                author_role=supervisor.role.value if supervisor else None
+            )
+            db.add(audit_reject)
+
+            record_conflict = ProcessingRecord(
+                order_id=order.id,
+                action="派发处理",
+                from_status=PurchaseStatus.PENDING_DISPATCH.value,
+                to_status=PurchaseStatus.PROCESSING.value,
+                handler_id=creator.id if creator else None,
+                handler_name=creator.full_name if creator else None,
+                handler_role=creator.role.value if creator else None,
+                result="failed",
+                comment="版本冲突：当前版本为 2，登记员基于旧版本 1 重新提交被拦截",
+                exception_reason="版本冲突：当前版本为 2，请刷新后重试",
+                exception_type="version_conflict",
+                timestamp=now - timedelta(hours=2)
+            )
+            db.add(record_conflict)
+
+            audit_conflict = AuditNote(
+                order_id=order.id,
+                note="状态/版本冲突拦截：登记员基于退回前的旧版本再次提交派发，被乐观锁拦截。请刷新页面获取最新版本后，补正有机认证编号再重新提交。",
+                note_type="版本冲突",
+                author_id=supervisor.id if supervisor else None,
+                author_name=supervisor.full_name if supervisor else None,
+                author_role=supervisor.role.value if supervisor else None
+            )
+            db.add(audit_conflict)
 
     db.commit()
     print("种子数据植入完成！")

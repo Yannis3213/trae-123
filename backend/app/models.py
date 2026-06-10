@@ -120,6 +120,7 @@ class ProcessingRecord(Base):
     result = Column(String(50))
     comment = Column(Text)
     exception_reason = Column(Text)
+    exception_type = Column(String(50))
     evidence_checked = Column(Text)
     timestamp = Column(DateTime, default=datetime.utcnow)
 

@@ -7,6 +7,7 @@ import {
   PRIORITY_LABELS, PRIORITY_COLORS,
   WARNING_LABELS, WARNING_COLORS,
   ROLE_LABELS,
+  EXCEPTION_TYPE_LABELS, EXCEPTION_TYPE_COLORS,
   type FreshPurchaseOrder,
   type PurchaseStatus,
   type PurchaseOrderListResponse,
@@ -232,26 +233,40 @@ export default function BatchProcessIsland() {
                 <th>单号</th>
                 <th>标题</th>
                 <th>结果</th>
+                <th>异常类型</th>
                 <th>详情</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
-              {results.map(r => (
-                <tr key={r.order_id}>
-                  <td class="cell-order-no">{r.order_no}</td>
-                  <td>{orders.find(o => o.id === r.order_id)?.title || "-"}</td>
-                  <td>
-                    <span class={`tag ${r.success ? "tag-success" : "tag-error"}`}>
-                      {r.success ? "✅ 成功" : "❌ 失败"}
-                    </span>
-                  </td>
-                  <td style={r.success ? "color:#065f46" : "color:#991b1b"}>{r.message}</td>
-                  <td>
-                    <a href={`/orders/${r.order_id}`} class="btn-link">查看详情</a>
-                  </td>
-                </tr>
-              ))}
+              {results.map(r => {
+                const excLabel = r.exception_type ? EXCEPTION_TYPE_LABELS[r.exception_type] || r.exception_type : null;
+                const excColor = r.exception_type ? EXCEPTION_TYPE_COLORS[r.exception_type] || "#be123c" : null;
+                return (
+                  <tr key={r.order_id}>
+                    <td class="cell-order-no">{r.order_no}</td>
+                    <td>{orders.find(o => o.id === r.order_id)?.title || "-"}</td>
+                    <td>
+                      <span class={`tag ${r.success ? "tag-success" : "tag-error"}`}>
+                        {r.success ? "✅ 成功" : "❌ 失败"}
+                      </span>
+                    </td>
+                    <td>
+                      {excLabel ? (
+                        <span class="tag" style={`background:${excColor}20;color:${excColor}`}>
+                          {excLabel}
+                        </span>
+                      ) : (
+                        <span class="muted">-</span>
+                      )}
+                    </td>
+                    <td style={r.success ? "color:#065f46" : "color:#991b1b"}>{r.message}</td>
+                    <td>
+                      <a href={`/orders/${r.order_id}`} class="btn-link">查看详情</a>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

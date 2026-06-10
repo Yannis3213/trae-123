@@ -6,6 +6,18 @@ export type PriorityLevel = "low" | "medium" | "high" | "urgent";
 
 export type WarningLevel = "normal" | "approaching" | "overdue";
 
+export type AuditNoteType =
+  | "系统记录"
+  | "人工备注"
+  | "补充说明"
+  | "逾期预警"
+  | "异常标记"
+  | "退回补正"
+  | "状态冲突"
+  | "版本冲突"
+  | "证据缺失"
+  | "批量处理";
+
 export interface User {
   id: number;
   username: string;
@@ -44,6 +56,7 @@ export interface ProcessingRecord {
   result: string | null;
   comment: string | null;
   exception_reason: string | null;
+  exception_type: string | null;
   evidence_checked: string | null;
   timestamp: string;
 }
@@ -52,7 +65,7 @@ export interface AuditNote {
   id: number;
   order_id: number;
   note: string;
-  note_type: string | null;
+  note_type: AuditNoteType | null;
   author_id: number | null;
   author_name: string | null;
   author_role: string | null;
@@ -132,7 +145,38 @@ export interface BatchActionResult {
   success: boolean;
   message: string;
   current_status: PurchaseStatus | null;
+  exception_type: string | null;
 }
+
+export const EXCEPTION_TYPE_LABELS: Record<string, string> = {
+  version_conflict: "版本冲突",
+  already_closed: "单据已关闭",
+  role_denied: "角色权限不足",
+  handler_mismatch: "当前处理人不匹配",
+  missing_quotation_evidence: "缺少供应商报价材料证据",
+  missing_quotation_content: "供应商报价内容不完整",
+  missing_purchase_evidence: "缺少采购下单证据",
+  missing_arrival_evidence: "缺少到货验收证据",
+  missing_purchase_content: "采购下单内容不完整",
+  missing_arrival_content: "到货验收内容不完整",
+  deadline_overdue: "已超过截止时间",
+  state_conflict: "状态冲突",
+};
+
+export const EXCEPTION_TYPE_COLORS: Record<string, string> = {
+  version_conflict: "#be123c",
+  already_closed: "#6b7280",
+  role_denied: "#ea580c",
+  handler_mismatch: "#ea580c",
+  missing_quotation_evidence: "#b91c1c",
+  missing_quotation_content: "#b91c1c",
+  missing_purchase_evidence: "#b91c1c",
+  missing_arrival_evidence: "#b91c1c",
+  missing_purchase_content: "#b91c1c",
+  missing_arrival_content: "#b91c1c",
+  deadline_overdue: "#dc2626",
+  state_conflict: "#be123c",
+};
 
 export const STATUS_LABELS: Record<PurchaseStatus, string> = {
   pending_dispatch: "待派发",
@@ -176,4 +220,30 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   registrar: "生鲜采购登记员",
   supervisor: "生鲜采购审核主管",
   reviewer: "生鲜超市复核负责人",
+};
+
+export const AUDIT_NOTE_TYPES: AuditNoteType[] = [
+  "系统记录",
+  "人工备注",
+  "补充说明",
+  "逾期预警",
+  "异常标记",
+  "退回补正",
+  "状态冲突",
+  "版本冲突",
+  "证据缺失",
+  "批量处理",
+];
+
+export const AUDIT_NOTE_TYPE_COLORS: Record<AuditNoteType, string> = {
+  "系统记录": "#6b7280",
+  "人工备注": "#4338ca",
+  "补充说明": "#0891b2",
+  "逾期预警": "#dc2626",
+  "异常标记": "#ea580c",
+  "退回补正": "#b45309",
+  "状态冲突": "#be123c",
+  "版本冲突": "#be123c",
+  "证据缺失": "#b91c1c",
+  "批量处理": "#7c3aed",
 };
