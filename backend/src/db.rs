@@ -125,7 +125,7 @@ fn seed_data(conn: &Connection) -> Result<()> {
             "经济学原理", "978-7-301-20778-1",
             Utc::now().checked_sub_signed(Duration::days(20)).unwrap().date_naive(),
             Utc::now().checked_add_signed(Duration::days(10)).unwrap().date_naive(),
-            "已转办", Some("采编馆员小李"), Some("采编馆员"),
+            "已转办", Some("采编馆员小张"), Some("采编馆员"),
             vec!["借阅凭证".to_string(), "身份证明".to_string()],
         ),
         (
@@ -133,15 +133,15 @@ fn seed_data(conn: &Connection) -> Result<()> {
             "高级英语阅读", "978-7-5600-2407-9",
             Utc::now().checked_sub_signed(Duration::days(25)).unwrap().date_naive(),
             Utc::now().checked_add_signed(Duration::days(2)).unwrap().date_naive(),
-            "待分派", None, None,
-            vec![],
+            "退回补正", Some("登记员小李"), Some("借阅登记员"),
+            vec!["身份证明".to_string()],
         ),
         (
             "R2024004", "赵六",
             "机械设计基础", "978-7-04-019209-5",
             Utc::now().checked_sub_signed(Duration::days(15)).unwrap().date_naive(),
             Utc::now().checked_add_signed(Duration::days(15)).unwrap().date_naive(),
-            "已回访", Some("借阅审核主管张主管"), Some("借阅审核主管"),
+            "已回访", Some("审核主管张主管"), Some("借阅审核主管"),
             vec!["借阅凭证".to_string(), "身份证明".to_string(), "回访记录".to_string()],
         ),
     ];
@@ -181,7 +181,7 @@ fn compute_overdue_level(due_date: &NaiveDate) -> (OverdueLevel, bool, Option<St
     let diff = (*due_date - today).num_days();
 
     if diff < 0 {
-        (OverdueLevel::Overdue, true, Some("借阅登记员".to_string()))
+        (OverdueLevel::Overdue, true, Some(Role::CirculationLibrarian.default_operator().to_string()))
     } else if diff <= 3 {
         (OverdueLevel::Approaching, diff <= 0, None)
     } else {
@@ -372,8 +372,8 @@ pub fn create_borrow_record(conn: &Connection, req: &CreateBorrowRecordRequest) 
             req.borrow_date.to_string(),
             req.due_date.to_string(),
             BorrowStatus::PendingAssignment.as_str(),
-            Option::<String>::None,
-            Option::<String>::None,
+            Some(Role::CirculationLibrarian.default_operator()),
+            Some(Role::CirculationLibrarian.as_str().to_string()),
             req.operator,
             req.operator_role.as_str(),
             now_str,
@@ -412,8 +412,8 @@ pub fn create_borrow_record(conn: &Connection, req: &CreateBorrowRecordRequest) 
         due_date: req.due_date,
         return_date: None,
         status: BorrowStatus::PendingAssignment,
-        current_handler: None,
-        current_handler_role: None,
+        current_handler: Some(Role::CirculationLibrarian.default_operator().to_string()),
+        current_handler_role: Some(Role::CirculationLibrarian),
         version: 1,
         created_by: req.operator.clone(),
         created_by_role: req.operator_role,
@@ -597,11 +597,26 @@ pub fn validate_and_process(
         (Some(assign.clone()), req.assign_to_role)
     } else {
         match req.target_status {
-            BorrowStatus::Transferred => (Some("采编馆员默认处理人".to_string()), Some(Role::CatalogingLibrarian)),
-            BorrowStatus::Revisited => (Some("审核主管默认处理人".to_string()), Some(Role::AuditSupervisor)),
-            BorrowStatus::ReviewedArchived => (Some("馆长".to_string()), Some(Role::LibraryDirector)),
-            BorrowStatus::ReturnedForCorrection => (Some("借阅登记员默认处理人".to_string()), Some(Role::RegistrationClerk)),
-            BorrowStatus::Overdue => (Some("流通馆员默认处理人".to_string()), Some(Role::CirculationLibrarian)),
+            BorrowStatus::Transferred => (
+                Some(Role::CatalogingLibrarian.default_operator().to_string()),
+                Some(Role::CatalogingLibrarian),
+            ),
+            BorrowStatus::Revisited => (
+                Some(Role::AuditSupervisor.default_operator().to_string()),
+                Some(Role::AuditSupervisor),
+            ),
+            BorrowStatus::ReviewedArchived => (
+                Some(Role::LibraryDirector.default_operator().to_string()),
+                Some(Role::LibraryDirector),
+            ),
+            BorrowStatus::ReturnedForCorrection => (
+                Some(Role::RegistrationClerk.default_operator().to_string()),
+                Some(Role::RegistrationClerk),
+            ),
+            BorrowStatus::Overdue => (
+                Some(Role::CirculationLibrarian.default_operator().to_string()),
+                Some(Role::CirculationLibrarian),
+            ),
             _ => (record.current_handler.clone(), record.current_handler_role),
         }
     };

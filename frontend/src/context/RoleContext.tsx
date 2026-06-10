@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, ReactNode, useMemo } from 'react';
-import { Role, ROLE_DISPLAY } from '@/types';
+import { Role, ROLE_DISPLAY, ROLE_OPERATORS } from '@/types';
 
 interface RoleContextValue {
   currentRole: Role;
@@ -15,7 +15,7 @@ const RoleContext = createContext<RoleContextValue | null>(null);
 
 export function RoleProvider({ children }: { children: ReactNode }) {
   const [currentRole, setCurrentRole] = useState<Role>('circulation_librarian');
-  const [currentOperator, setCurrentOperator] = useState<string>('流通馆员小王');
+  const [currentOperator, setCurrentOperator] = useState<string>(ROLE_OPERATORS['circulation_librarian']);
 
   const roleDisplayName = useMemo(() => ROLE_DISPLAY[currentRole], [currentRole]);
 

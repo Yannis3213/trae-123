@@ -211,7 +211,7 @@ export default function RecordDetailClient() {
                 <div className="text-library-500 text-xs mb-1">节点超时</div>
                 {record.node_timeout ? (
                   <div className="text-red-600 font-medium">
-                    ⚠ 已超时，责任人：{record.timeout_responsible || '借阅登记员'}
+                    ⚠ 已超时，责任人：{record.timeout_responsible || '-'}
                   </div>
                 ) : (
                   <div className="text-green-600">正常</div>

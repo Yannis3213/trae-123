@@ -43,6 +43,16 @@ impl Role {
             Role::LibraryDirector,
         ]
     }
+
+    pub fn default_operator(&self) -> &'static str {
+        match self {
+            Role::RegistrationClerk => "登记员小李",
+            Role::CirculationLibrarian => "流通馆员小王",
+            Role::CatalogingLibrarian => "采编馆员小张",
+            Role::AuditSupervisor => "审核主管张主管",
+            Role::LibraryDirector => "刘馆长",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]

@@ -2,16 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRole } from '@/context/RoleContext';
-import { Role, RoleInfo, ROLE_DISPLAY } from '@/types';
+import { Role, RoleInfo, ROLE_DISPLAY, ROLE_OPERATORS } from '@/types';
 import { api } from '@/lib/api';
-
-const OPERATOR_NAMES: Record<Role, string> = {
-  registration_clerk: '登记员小李',
-  circulation_librarian: '流通馆员小王',
-  cataloging_librarian: '采编馆员小张',
-  audit_supervisor: '审核主管张主管',
-  library_director: '刘馆长',
-};
 
 export default function RoleSwitcher() {
   const { currentRole, currentOperator, setCurrentRole, setCurrentOperator } = useRole();
@@ -31,7 +23,7 @@ export default function RoleSwitcher() {
 
   const handleChange = (role: Role) => {
     setCurrentRole(role);
-    setCurrentOperator(OPERATOR_NAMES[role]);
+    setCurrentOperator(ROLE_OPERATORS[role]);
     setOpen(false);
   };
 
@@ -65,7 +57,7 @@ export default function RoleSwitcher() {
               <div className="font-medium flex items-center gap-2">
                 {r.role === currentRole && <span className="w-1.5 h-1.5 rounded-full bg-library-600" />}
                 {r.name}
-                <span className="text-xs text-library-400">（{OPERATOR_NAMES[r.role]}）</span>
+                <span className="text-xs text-library-400">（{ROLE_OPERATORS[r.role]}）</span>
               </div>
               <div className="text-xs text-library-500 ml-3.5 mt-0.5">{r.description}</div>
             </button>

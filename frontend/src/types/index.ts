@@ -147,6 +147,14 @@ export const ROLE_DISPLAY: Record<Role, string> = {
   library_director: '馆长',
 };
 
+export const ROLE_OPERATORS: Record<Role, string> = {
+  registration_clerk: '登记员小李',
+  circulation_librarian: '流通馆员小王',
+  cataloging_librarian: '采编馆员小张',
+  audit_supervisor: '审核主管张主管',
+  library_director: '刘馆长',
+};
+
 export const STATUS_DISPLAY: Record<BorrowStatus, string> = {
   pending_assignment: '待分派',
   transferred: '已转办',
