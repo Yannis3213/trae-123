@@ -3,9 +3,8 @@ import { Tabs, Table, Tag, Button, Modal, message } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getExpiryWarnings, batchProcess } from '../api/application';
-import type { BatchProcessResultData } from '../api/application';
 import { STATUS_LABELS, STATUS_COLORS, ROLE_LABELS } from '../constants';
-import type { Application, ExpiryStatus, BatchResult } from '../types';
+import type { Application, ExpiryStatus, BatchResult, BatchProcessResultData } from '../types';
 
 const TAB_CONFIG: { key: ExpiryStatus; label: string; color: string }[] = [
   { key: 'normal', label: '正常', color: 'green' },

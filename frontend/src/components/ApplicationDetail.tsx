@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Descriptions, Tag, Steps, Button, Space, Modal, Input, Upload, message, Divider, Alert, Badge, Tooltip } from 'antd';
-import { ArrowLeftOutlined, UploadOutlined, CheckCircleTwoTone, ExclamationCircleOutlined, FileTextOutlined, VersionOutlined } from '@ant-design/icons';
+import { Card, Descriptions, Tag, Steps, Button, Space, Modal, Input, Upload, message, Divider, Alert, Badge, Tooltip, Tabs, Timeline, List } from 'antd';
+import {
+  ArrowLeftOutlined, UploadOutlined, CheckCircleTwoTone, ExclamationCircleOutlined,
+  FileTextOutlined, VersionOutlined, UserOutlined, RightOutlined,
+} from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getApplication, processApplication, getAuditTrail, uploadAttachment } from '../api/application';
 import {
   STATUS_LABELS, STATUS_COLORS, EXPIRY_LABELS, EXPIRY_COLORS,
   SUB_MODULE_LABELS, ROLE_LABELS, ACTION_LABELS, getUserInfo,
 } from '../constants';
-import type { Application, AuditLog, Role, SubModuleStatus } from '../types';
+import type { Application, AuditLog, Role, SubModuleStatus, ProcessingRecord } from '../types';
 import AuditTrail from './AuditTrail';
 
 interface ApplicationDetailProps {
@@ -344,8 +347,26 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
         </Upload>
       </Card>
 
-      <Card title="审计轨迹">
-        <AuditTrail records={auditLogs} />
+      <Card>
+        <Tabs
+          defaultActiveKey="processing"
+          items={[
+            {
+              key: 'processing',
+              label: '处理记录（含版本/下一处理人）',
+              children: (
+                <div>
+                  <ProcessingRecordsList records={detail.processing_records || []} />
+                </div>
+              ),
+            },
+            {
+              key: 'audit',
+              label: '审计轨迹',
+              children: <AuditTrail records={auditLogs} />,
+            },
+          ]}
+        />
       </Card>
 
       <Modal
@@ -415,6 +436,76 @@ const ApplicationDetail: React.FC<ApplicationDetailProps> = ({ id, onBack, onRef
         />
       </Modal>
     </div>
+  );
+};
+
+interface ProcessingRecordsListProps {
+  records: ProcessingRecord[];
+}
+
+const ProcessingRecordsList: React.FC<ProcessingRecordsListProps> = ({ records }) => {
+  if (!records || records.length === 0) {
+    return <div style={{ color: '#999', textAlign: 'center', padding: 20 }}>暂无处理记录</div>;
+  }
+
+  return (
+    <Timeline
+      items={records.map((record) => {
+        const isFailed = record.action === 'verify_fail';
+        const nextHandler = record.next_handler_name || record.next_handler_role;
+        return {
+          color: isFailed ? 'red' : 'green',
+          dot: isFailed ? <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} /> : <CheckCircleTwoTone twoToneColor="#52c41a" />,
+          children: (
+            <div style={{ padding: '4px 0 12px' }}>
+              <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                <Space wrap size={8}>
+                  <span style={{ fontWeight: 500 }}>
+                    <UserOutlined style={{ marginRight: 4 }} />
+                    {record.handler_name}（{ROLE_LABELS[record.handler_role] || record.handler_role}）
+                  </span>
+                  <Tag color={isFailed ? 'red' : 'blue'}>
+                    {ACTION_LABELS[record.action] || record.action}
+                  </Tag>
+                  {record.version > 0 && (
+                    <Tag color="cyan" icon={<VersionOutlined />}>版本 v{record.version}</Tag>
+                  )}
+                </Space>
+                <div style={{ color: '#555' }}>
+                  <Tag color="default">{STATUS_LABELS[record.from_status as keyof typeof STATUS_LABELS] || record.from_status || '-'}</Tag>
+                  <RightOutlined style={{ margin: '0 6px', color: '#aaa' }} />
+                  <Tag color={isFailed ? 'red' : 'green'}>
+                    {STATUS_LABELS[record.to_status as keyof typeof STATUS_LABELS] || record.to_status || '-'}
+                  </Tag>
+                </div>
+                {record.remark && (
+                  <div style={{ color: '#666', fontSize: 13, background: '#fafafa', padding: '6px 10px', borderRadius: 4 }}>
+                    备注：{record.remark}
+                  </div>
+                )}
+                {record.exception_reason && (
+                  <div>
+                    <Tag color="red" icon={<ExclamationCircleOutlined />}>
+                      异常原因：{record.exception_reason}
+                    </Tag>
+                  </div>
+                )}
+                {record.next_handler_role && (
+                  <div style={{ color: '#1677ff', fontSize: 12 }}>
+                    → 下一处理：{nextHandler
+                      ? `${nextHandler}（${ROLE_LABELS[record.next_handler_role as Role] || record.next_handler_role}）`
+                      : ROLE_LABELS[record.next_handler_role as Role] || record.next_handler_role}
+                  </div>
+                )}
+                <div style={{ color: '#aaa', fontSize: 12 }}>
+                  {dayjs(record.created_at).format('YYYY-MM-DD HH:mm:ss')}
+                </div>
+              </Space>
+            </div>
+          ),
+        };
+      })}
+    />
   );
 };
 

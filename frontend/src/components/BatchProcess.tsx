@@ -1,10 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { Modal, Table, Tag, message, Space, Radio, Input, Alert, Tooltip } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, VersionOutlined } from '@ant-design/icons';
-import { batchProcess } from '../api/application';
-import type { BatchProcessResultData } from '../api/application';
+import { Modal, Table, Tag, message, Space, Radio, Input, Alert, Tooltip, Tabs, Button, Spin } from 'antd';
+import { CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, VersionOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { batchProcess, getBatchFailures } from '../api/application';
 import { getUserInfo, STATUS_LABELS, STATUS_COLORS, ACTION_LABELS, ROLE_LABELS } from '../constants';
-import type { BatchResult, Role, Application } from '../types';
+import type { BatchResult, Role, Application, BatchFailureRecord, BatchProcessResultData } from '../types';
 
 interface BatchProcessProps {
   selectedIds: string[];
@@ -21,6 +20,8 @@ const BatchProcess: React.FC<BatchProcessProps> = ({ selectedIds, selectedRecord
   const [action, setAction] = useState<string>('');
   const [exceptionReason, setExceptionReason] = useState('');
   const [remark, setRemark] = useState('');
+  const [failureDetailLoading, setFailureDetailLoading] = useState(false);
+  const [failureDetails, setFailureDetails] = useState<BatchFailureRecord[]>([]);
 
   const userInfo = getUserInfo();
   const currentRole = userInfo.role as Role;
@@ -288,22 +289,93 @@ const BatchProcess: React.FC<BatchProcessProps> = ({ selectedIds, selectedRecord
           </Space>
         }
         open={resultOpen}
-        onOk={() => setResultOpen(false)}
-        onCancel={() => setResultOpen(false)}
-        width={780}
+        onOk={() => { setResultOpen(false); setFailureDetails([]); }}
+        onCancel={() => { setResultOpen(false); setFailureDetails([]); }}
+        width={820}
       >
-        <div style={{ marginBottom: 16 }}>
-          <Tag color="green" icon={<CheckCircleOutlined />}>成功 {successCount} 条</Tag>
-          <Tag color="red" icon={<CloseCircleOutlined />}>失败 {failCount} 条</Tag>
-          {resultData && <Tag style={{ marginLeft: 8 }}>共 {resultData.total} 条</Tag>}
-        </div>
-        <Table
-          rowKey="application_id"
-          dataSource={results}
-          pagination={false}
-          size="small"
-          columns={resultColumns}
-          scroll={{ y: 360 }}
+        <Tabs
+          defaultActiveKey="instant"
+          onChange={async (key) => {
+            if (key === 'persistent' && resultData?.batch_id && failureDetails.length === 0) {
+              setFailureDetailLoading(true);
+              try {
+                const data = await getBatchFailures(resultData.batch_id);
+                setFailureDetails(data?.list || []);
+              } catch {
+                message.error('查询持久化失败明细失败');
+              } finally {
+                setFailureDetailLoading(false);
+              }
+            }
+          }}
+          items={[
+            {
+              key: 'instant',
+              label: '即时返回结果',
+              children: (
+                <div>
+                  <div style={{ marginBottom: 16 }}>
+                    <Tag color="green" icon={<CheckCircleOutlined />}>成功 {successCount} 条</Tag>
+                    <Tag color="red" icon={<CloseCircleOutlined />}>失败 {failCount} 条</Tag>
+                    {resultData && <Tag style={{ marginLeft: 8 }}>共 {resultData.total} 条</Tag>}
+                  </div>
+                  <Table
+                    rowKey="application_id"
+                    dataSource={results}
+                    pagination={false}
+                    size="small"
+                    columns={resultColumns}
+                    scroll={{ y: 360 }}
+                  />
+                </div>
+              ),
+            },
+            {
+              key: 'persistent',
+              label: (
+                <Space>
+                  <DatabaseOutlined />
+                  SQLite 持久化失败明细
+                </Space>
+              ),
+              children: (
+                <Spin spinning={failureDetailLoading}>
+                  {failureDetails.length === 0 && !failureDetailLoading ? (
+                    <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+                      {failCount === 0 ? '本次批量无失败记录' : '暂无持久化明细数据'}
+                    </div>
+                  ) : (
+                    <Table
+                      rowKey="id"
+                      dataSource={failureDetails}
+                      pagination={false}
+                      size="small"
+                      scroll={{ y: 360 }}
+                      columns={[
+                        { title: '申请编号', dataIndex: 'application_no', key: 'application_no', width: 140 },
+                        {
+                          title: '处理角色',
+                          dataIndex: 'handler_role',
+                          key: 'handler_role',
+                          width: 100,
+                          render: (v: string) => v ? ROLE_LABELS[v as Role] || v : '-',
+                        },
+                        { title: '操作', dataIndex: 'action', key: 'action', width: 80, render: (v: string) => ACTION_LABELS[v] || v },
+                        { title: '失败原因', dataIndex: 'reason', key: 'reason', render: (v: string) => v || '-' },
+                        {
+                          title: '时间',
+                          dataIndex: 'created_at',
+                          key: 'created_at',
+                          width: 150,
+                          render: (v: string) => v,
+                        },
+                      ]}
+                    />
+                  )}
+                </Spin>
+              ),
+            },
+          ]}
         />
       </Modal>
     </>

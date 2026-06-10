@@ -110,6 +110,24 @@ export interface BatchFailureRecord {
   created_at: string;
 }
 
+export interface ProcessResponse {
+  status: ApplicationStatus;
+  version: number;
+  confirmed: boolean;
+  next_handler_role: string;
+  next_handler_id: string;
+  next_handler_name: string;
+}
+
+export interface BatchProcessResultData {
+  batch_id: string;
+  total: number;
+  success_count: number;
+  failure_count: number;
+  failures_saved: boolean;
+  results: BatchResult[];
+}
+
 export interface Statistics {
   total: number;
   pending_verification: number;

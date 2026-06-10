@@ -146,13 +146,17 @@ func GetApplication(c *gin.Context) {
 	}
 
 	records := []models.ProcessingRecord{}
-	recRows, err := database.DB.Query(`SELECT id, application_id, handler_id, handler_name, handler_role, action, from_status, to_status, remark, exception_reason, created_at
-		FROM processing_records WHERE application_id = ? ORDER BY created_at`, id)
+	recRows, err := database.DB.Query(`SELECT id, application_id, handler_id, handler_name, handler_role,
+		action, from_status, to_status, remark, exception_reason, version,
+		next_handler_role, next_handler_id, next_handler_name, created_at
+		FROM processing_records WHERE application_id = ? ORDER BY created_at DESC`, id)
 	if err == nil {
 		defer recRows.Close()
 		for recRows.Next() {
 			var rec models.ProcessingRecord
-			recRows.Scan(&rec.ID, &rec.ApplicationID, &rec.HandlerID, &rec.HandlerName, &rec.HandlerRole, &rec.Action, &rec.FromStatus, &rec.ToStatus, &rec.Remark, &rec.ExceptionReason, &rec.CreatedAt)
+			recRows.Scan(&rec.ID, &rec.ApplicationID, &rec.HandlerID, &rec.HandlerName, &rec.HandlerRole,
+				&rec.Action, &rec.FromStatus, &rec.ToStatus, &rec.Remark, &rec.ExceptionReason, &rec.Version,
+				&rec.NextHandlerRole, &rec.NextHandlerID, &rec.NextHandlerName, &rec.CreatedAt)
 			records = append(records, rec)
 		}
 	}

@@ -7,6 +7,7 @@ import type {
   BatchApplicationItem,
   BatchProcessResultData,
   BatchFailureRecord,
+  ProcessResponse,
   Statistics,
   PaginatedResponse,
   ExpiryStatus,
@@ -70,15 +71,6 @@ export async function createApplication(data: CreateApplicationData) {
 export async function updateApplication(id: string, data: UpdateApplicationData) {
   const res = await client.put<{ data: Application }>(`/applications/${id}`, data);
   return res.data.data;
-}
-
-export interface ProcessResponse {
-  status: ApplicationStatus;
-  version: number;
-  confirmed: boolean;
-  next_handler_role: string;
-  next_handler_id: string;
-  next_handler_name: string;
 }
 
 export async function processApplication(id: string, data: ProcessData) {
