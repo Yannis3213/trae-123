@@ -1,0 +1,16 @@
+{
+  "name": "hotel-order-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "酒店集团-月底集中处理住客订单系统（根目录工程）",
+  "scripts": {
+    "install:all": "cd backend && npm install && cd ../frontend && npm install",
+    "init:db": "cd backend && npm run init-db",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev": "concurrently -k -n backend,frontend -c blue,green \"npm:dev:backend\" \"npm:dev:frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
