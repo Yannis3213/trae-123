@@ -14,7 +14,7 @@ const FAIL_CODE_LABEL = {
 
 export default function BookingList() {
   const navigate = useNavigate()
-  const { bookings, loading, fetchBookings, refreshAll, showNotification, userRole } = useApp()
+  const { bookings, missingSummary, loading, fetchBookings, refreshAll, showNotification, userRole } = useApp()
 
   const [filterStatus, setFilterStatus] = useState('')
   const [filterUrgency, setFilterUrgency] = useState('')
@@ -36,12 +36,10 @@ export default function BookingList() {
   })
 
   useEffect(() => {
-    fetchBookings({ status: filterStatus, urgency: filterUrgency })
-  }, [fetchBookings, filterStatus, filterUrgency])
+    fetchBookings({ status: filterStatus, urgency: filterUrgency, missing_module: filterMissing })
+  }, [fetchBookings, filterStatus, filterUrgency, filterMissing])
 
-  const displayList = filterMissing
-    ? bookings.filter(b => (b.missing_modules || []).some(m => m.key === filterMissing))
-    : bookings
+  const displayList = bookings
 
   const toggleSelect = (id) => {
     setSelectedIds(prev =>
@@ -117,16 +115,6 @@ export default function BookingList() {
     return false
   }
   const showBatchButton = userRole === 'dispatcher' || userRole === 'manager'
-
-  const missingSummary = {}
-  bookings.forEach(b => {
-    (b.missing_modules || []).forEach(m => {
-      if (!missingSummary[m.key]) {
-        missingSummary[m.key] = { label: m.label, owner_label: m.owner_label, owner_role: m.owner_role, count: 0 }
-      }
-      missingSummary[m.key].count++
-    })
-  })
 
   return (
     <div>

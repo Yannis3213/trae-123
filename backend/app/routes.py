@@ -101,8 +101,8 @@ def get_bookings():
     for key, meta in Config.MODULES.items():
         cnt = 0
         for b in bookings:
-            ms = [m['key'] for m in (b.get('missing_modules') or [])]
-            if key in ms:
+            missing_keys = check_required_modules(b)
+            if key in missing_keys:
                 cnt += 1
         missing_summary[key] = {
             'label': meta['label'],
