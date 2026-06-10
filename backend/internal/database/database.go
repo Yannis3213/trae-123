@@ -423,6 +423,16 @@ func seedAttachments(tx *sql.Tx) error {
 		if err != nil {
 			return err
 		}
+
+		_, err = tx.Exec(`
+			INSERT INTO processing_logs (
+				work_order_id, operator_id, operator, action, from_status, to_status, remark
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, a.orderID, a.uploadedBy, a.uploader, "上传附件", "", "",
+			fmt.Sprintf("上传证据附件: %s (%s)", evidenceNames[a.evidenceType], a.fileName))
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

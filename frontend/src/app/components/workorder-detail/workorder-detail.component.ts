@@ -136,6 +136,12 @@ import {
             <div *ngIf="order.attachments.length === 0" style="color:#999;text-align:center;padding:30px">
               暂无附件
             </div>
+            <div *ngIf="downloadError" style="background:#fff2f0;border:1px solid #ffccc7;color:#ff4d4f;padding:10px 15px;border-radius:6px;margin-bottom:12px;font-size:13px">
+              {{downloadError}}
+            </div>
+            <div *ngIf="downloadSuccess" style="background:#f6ffed;border:1px solid #b7eb8f;color:#52c41a;padding:10px 15px;border-radius:6px;margin-bottom:12px;font-size:13px">
+              {{downloadSuccess}}
+            </div>
             <div *ngFor="let att of order.attachments" style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:#fafafa;border-radius:6px;margin-bottom:8px">
               <div style="display:flex;align-items:center;gap:12px">
                 <span style="font-size:20px">📄</span>
@@ -148,10 +154,11 @@ import {
               </div>
               <div style="display:flex;align-items:center;gap:10px">
                 <span style="font-size:12px;color:#888">{{formatFileSize(att.file_size)}}</span>
-                <a [href]="getDownloadUrl(att.id)" target="_blank"
-                  style="padding:4px 10px;background:#e6f7ff;color:#1890ff;border:none;border-radius:4px;cursor:pointer;font-size:12px;text-decoration:none">
-                  下载
-                </a>
+                <button (click)="triggerDownload(att.id, att.file_name)" [disabled]="downloadingId === att.id"
+                  style="padding:4px 10px;background:#e6f7ff;color:#1890ff;border:none;border-radius:4px;cursor:pointer;font-size:12px;opacity:1"
+                  [style.opacity]="downloadingId === att.id ? '0.5' : '1'">
+                  {{downloadingId === att.id ? '下载中...' : '下载'}}
+                </button>
               </div>
             </div>
 
@@ -315,6 +322,9 @@ export class WorkorderDetailComponent implements OnInit {
   uploading = false;
   uploadError = '';
   uploadSuccess = '';
+  downloadingId: number | null = null;
+  downloadError = '';
+  downloadSuccess = '';
 
   processForm: WorkOrderProcessRequest = {
     action: '',
@@ -463,8 +473,34 @@ export class WorkorderDetailComponent implements OnInit {
     });
   }
 
-  getDownloadUrl(attachmentId: number): string {
-    return this.apiService.getAttachmentDownloadUrl(attachmentId);
+  triggerDownload(attachmentId: number, fallbackName: string): void {
+    this.downloadError = '';
+    this.downloadSuccess = '';
+    this.downloadingId = attachmentId;
+
+    this.apiService.downloadAttachment(attachmentId).subscribe(res => {
+      this.downloadingId = null;
+      if (!res.success || !res.blob) {
+        this.downloadError = res.error || '下载失败';
+        return;
+      }
+
+      try {
+        const fileName = res.fileName || fallbackName;
+        const url = window.URL.createObjectURL(res.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        this.downloadSuccess = `已下载：${fileName}`;
+        setTimeout(() => { this.downloadSuccess = ''; }, 3000);
+      } catch (e) {
+        this.downloadError = '文件保存失败';
+      }
+    });
   }
 
   loadDetail(id: number): void {

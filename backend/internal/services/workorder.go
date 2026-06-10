@@ -816,7 +816,7 @@ func (s *WorkOrderService) GetAttachmentByID(attachmentID int64, user *models.Us
 	`, attachmentID).Scan(&a.ID, &a.WorkOrderID, &a.FileName, &a.FileType, &a.FileSize,
 		&a.FilePath, &a.UploadedBy, &a.Uploader, &a.EvidenceType, &a.CreatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("附件不存在")
+		return nil, ErrAttachmentNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -829,4 +829,45 @@ func (s *WorkOrderService) GetAttachmentByID(attachmentID int64, user *models.Us
 	}
 
 	return a, nil
+}
+
+var ErrAttachmentNotFound = errors.New("附件不存在")
+var ErrFileNotFound = errors.New("附件文件不存在")
+
+type DownloadResult struct {
+	Attachment    *models.Attachment
+	FullPath      string
+	IsPlaceholder bool
+	Placeholder   string
+}
+
+func (s *WorkOrderService) DownloadAttachment(attachmentID int64, user *models.User) (*DownloadResult, error) {
+	a, err := s.GetAttachmentByID(attachmentID, user)
+	if err != nil {
+		return nil, err
+	}
+
+	fullPath := filepath.Join(config.AppConfig.UploadPath, a.FilePath)
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		if strings.HasPrefix(a.FilePath, "seed/") {
+			placeholder := fmt.Sprintf(
+				"===== 演示占位附件 =====\n文件名: %s\n证据类型: %s\n下载人: %s\n下载时间: %s\n\n这是演示数据生成的占位文件。\n请通过前端详情页上传真实文件后重新下载。\n",
+				a.FileName, getEvidenceName(a.EvidenceType), user.Name, time.Now().Format("2006-01-02 15:04:05"))
+			s.writeDownloadLog(a, user)
+			return &DownloadResult{Attachment: a, IsPlaceholder: true, Placeholder: placeholder}, nil
+		}
+		return nil, ErrFileNotFound
+	}
+
+	s.writeDownloadLog(a, user)
+	return &DownloadResult{Attachment: a, FullPath: fullPath}, nil
+}
+
+func (s *WorkOrderService) writeDownloadLog(a *models.Attachment, user *models.User) {
+	database.DB.Exec(`
+		INSERT INTO processing_logs (
+			work_order_id, operator_id, operator, action, from_status, to_status, remark
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, a.WorkOrderID, user.ID, user.Name, "下载附件", "", "",
+		fmt.Sprintf("下载证据附件: %s (%s)", getEvidenceName(a.EvidenceType), a.FileName))
 }
