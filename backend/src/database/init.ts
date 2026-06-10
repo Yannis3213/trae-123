@@ -1,19 +1,20 @@
 import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 import { existsSync, mkdirSync } from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const dataDir = join(__dirname, "..", "data");
-if (!existsSync(dataDir)) {
-  mkdirSync(dataDir, { recursive: true });
+const BACKEND_ROOT = resolve(__dirname, "..", "..");
+export const DATA_DIR = join(BACKEND_ROOT, "data");
+export const DB_PATH = join(DATA_DIR, "dispatch.db");
+
+if (!existsSync(DATA_DIR)) {
+  mkdirSync(DATA_DIR, { recursive: true });
 }
 
-const dbPath = join(dataDir, "dispatch.db");
-
-const db = new Database(dbPath);
+const db = new Database(DB_PATH);
 
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
