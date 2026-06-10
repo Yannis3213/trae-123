@@ -60,13 +60,18 @@ export const api = {
     })
     return handleResponse(res)
   },
-  upload: async (url, fileList) => {
-    const fd = new FormData()
-    fileList.forEach(f => fd.append('file', f))
+  upload: async (url, fileListOrFormData) => {
+    let body
+    if (fileListOrFormData instanceof FormData) {
+      body = fileListOrFormData
+    } else {
+      body = new FormData()
+      fileListOrFormData.forEach(f => body.append('file', f))
+    }
     const res = await fetch(url, {
       method: 'POST',
       headers: getBaseHeaders(),
-      body: fd,
+      body,
     })
     return handleResponse(res)
   },

@@ -87,6 +87,23 @@ const OrderDetail = (props) => {
     return [OrderStatus.PENDING_DISPATCH, OrderStatus.RETURNED_FOR_CORRECTION, OrderStatus.CORRECTED, OrderStatus.VISITED].includes(order().status)
   }
 
+  const canUploadAttachment = () => {
+    if (!order() || isArchived()) return false
+    if (!auth.role()) return false
+    const st = order().status
+    const role = auth.role()
+    if (role === Role.REGISTRAR) {
+      return [OrderStatus.PENDING_DISPATCH, OrderStatus.RETURNED_FOR_CORRECTION, OrderStatus.CORRECTED, OrderStatus.VISITED].includes(st)
+    }
+    if (role === Role.SUPERVISOR) {
+      return [OrderStatus.DISPATCHED, OrderStatus.IN_PROGRESS, OrderStatus.TRANSFERRED, OrderStatus.COMPLETED].includes(st)
+    }
+    if (role === Role.REVIEWER) {
+      return [OrderStatus.REVIEWING].includes(st)
+    }
+    return false
+  }
+
   const availableActions = () => {
     if (!order() || isArchived() || submitting()) return []
     const role = auth.role()
@@ -180,16 +197,20 @@ const OrderDetail = (props) => {
       setError('请先选择文件')
       return
     }
+    if (!order()) return
     try {
       setUploading(true)
       setError('')
-      await api.upload(`/api/orders/${props.orderId}/attachments`, pendingFiles())
+      const fd = new FormData()
+      pendingFiles().forEach(f => fd.append('file', f))
+      fd.append('version', String(order().version))
+      const data = await api.upload(`/api/orders/${props.orderId}/attachments`, fd)
       setPendingFiles([])
-      setSuccess('附件上传成功')
+      setSuccess(`附件上传成功（版本 v${data.version || order().version}）`)
       fetchData()
       setTimeout(() => setSuccess(''), 3000)
     } catch (e) {
-      setError(e.message)
+      setError(`${e.errorCode ? `[${e.errorCode}] ` : ''}${e.message}`)
     } finally {
       setUploading(false)
     }
@@ -440,32 +461,53 @@ const OrderDetail = (props) => {
           </Show>
 
           <Show when={activeTab() === 'attachments'}>
-            <div style="margin-bottom:12px;">
-              <input type="file" multiple onChange={onFileSelect} disabled={isArchived()} />
-              <button class="btn btn-primary" style="margin-left:8px;" onClick={uploadFiles} disabled={uploading() || pendingFiles().length === 0}>
-                {uploading() ? '上传中...' : `上传选中文件（${pendingFiles().length}）`}
+            <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <input type="file" multiple onChange={onFileSelect} disabled={!canUploadAttachment()} />
+              <button
+                class="btn btn-primary"
+                onClick={uploadFiles}
+                disabled={uploading() || pendingFiles().length === 0 || !canUploadAttachment()}
+              >
+                {uploading() ? '上传中...' : `上传选中文件（v${order()?.version || '-'}, ${pendingFiles().length}份）`}
               </button>
-              <span class="hint" style="margin-left:8px;">
+              <span class="hint">
                 完成维修、回访、复核归档必须绑定至少 1 份真实附件
               </span>
+              <Show when={!canUploadAttachment() && !isArchived()}>
+                <span class="hint" style="color:#dc2626;">
+                  ⚠ 当前角色/状态下不可上传附件
+                </span>
+              </Show>
+              <Show when={isArchived()}>
+                <span class="hint" style="color:#6b7280;">
+                  已归档，不可上传
+                </span>
+              </Show>
             </div>
             <table class="data-table">
               <thead>
-                <tr><th>文件名</th><th>上传人</th><th>角色</th><th>上传时间</th></tr>
+                <tr><th>文件名</th><th>提交版本</th><th>上传人</th><th>角色</th><th>拦截类型</th><th>上传时间</th></tr>
               </thead>
               <tbody>
                 <For each={attachments()}>
                   {a => (
                     <tr>
                       <td>{a.file_name}</td>
+                      <td>{a.submitted_version ? `v${a.submitted_version}` : '—'}</td>
                       <td>{a.uploaded_by}</td>
                       <td>{RoleNames[a.uploaded_by_role] || a.uploaded_by_role}</td>
+                      <td>
+                        <Show when={a.intercept_type}>
+                          <span class="badge" style="background:#ef4444;color:#fff;">{a.intercept_type}</span>
+                        </Show>
+                        <Show when={!a.intercept_type}>正常</Show>
+                      </td>
                       <td>{a.uploaded_at}</td>
                     </tr>
                   )}
                 </For>
                 <Show when={attachments().length === 0}>
-                  <tr><td colspan="4" class="empty-cell">暂无附件</td></tr>
+                  <tr><td colspan="6" class="empty-cell">暂无附件</td></tr>
                 </Show>
               </tbody>
             </table>

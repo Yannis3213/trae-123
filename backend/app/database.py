@@ -73,6 +73,8 @@ def init_db():
             file_path TEXT NOT NULL,
             uploaded_by TEXT,
             uploaded_by_role TEXT,
+            submitted_version INTEGER,
+            intercept_type TEXT,
             uploaded_at TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (order_id) REFERENCES repair_orders(id) ON DELETE CASCADE
         );
@@ -88,6 +90,7 @@ def init_db():
             opinion TEXT,
             evidence_provided INTEGER DEFAULT 0,
             version INTEGER,
+            intercept_type TEXT,
             created_at TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (order_id) REFERENCES repair_orders(id) ON DELETE CASCADE
         );
@@ -124,4 +127,17 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_records_order ON processing_records(order_id);
         CREATE INDEX IF NOT EXISTS idx_audit_order ON audit_notes(order_id);
         CREATE INDEX IF NOT EXISTS idx_exception_order ON exception_reasons(order_id);
+
         """)
+
+    # 字段升级（兼容旧库）
+    with get_conn() as conn2:
+        for sql in [
+            "ALTER TABLE attachments ADD COLUMN submitted_version INTEGER",
+            "ALTER TABLE attachments ADD COLUMN intercept_type TEXT",
+            "ALTER TABLE processing_records ADD COLUMN intercept_type TEXT",
+        ]:
+            try:
+                conn2.execute(sql)
+            except sqlite3.OperationalError:
+                pass  # 字段已存在，忽略

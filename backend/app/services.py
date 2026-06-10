@@ -178,24 +178,27 @@ def add_processing_record(
     from_status: Optional[str], to_status: Optional[str],
     handler: str, handler_role: str, opinion: Optional[str],
     evidence_provided: int, version: int,
+    intercept_type: Optional[str] = None,
 ):
     conn.execute(
         """
-        INSERT INTO processing_records (order_id, action, from_status, to_status, handler, handler_role, opinion, evidence_provided, version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO processing_records (order_id, action, from_status, to_status, handler, handler_role, opinion, evidence_provided, version, intercept_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (order_id, action, from_status, to_status, handler, handler_role, opinion, evidence_provided, version),
+        (order_id, action, from_status, to_status, handler, handler_role, opinion, evidence_provided, version, intercept_type),
     )
 
 
 def add_attachment(conn: sqlite3.Connection, order_id: int, file_name: str, file_path: str,
-                   uploaded_by: str, uploaded_by_role: str) -> int:
+                   uploaded_by: str, uploaded_by_role: str,
+                   submitted_version: Optional[int] = None,
+                   intercept_type: Optional[str] = None) -> int:
     cur = conn.execute(
         """
-        INSERT INTO attachments (order_id, file_name, file_path, uploaded_by, uploaded_by_role)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO attachments (order_id, file_name, file_path, uploaded_by, uploaded_by_role, submitted_version, intercept_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (order_id, file_name, file_path, uploaded_by, uploaded_by_role),
+        (order_id, file_name, file_path, uploaded_by, uploaded_by_role, submitted_version, intercept_type),
     )
     return cur.lastrowid
 

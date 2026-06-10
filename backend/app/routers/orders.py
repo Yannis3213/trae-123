@@ -20,6 +20,7 @@ from ..constants import (
 from ..services import (
     ValidationError, validate_all, validate_role_action, validate_version,
     validate_handler, validate_status_transition, validate_evidence,
+    validate_duplicate_submit,
     check_overdue_and_near, add_audit_note, add_exception,
     add_processing_record, add_attachment, count_attachments,
     detect_field_exceptions, resolve_field_exceptions, action_to_status,
@@ -438,14 +439,45 @@ async def upload_attachment(request: Request):
 
     form = await request.form()
     files = form.getlist("file")
+    submitted_version_raw = form.get("version")
+    submitted_version = int(submitted_version_raw) if submitted_version_raw else None
+
     if not files:
         return JSONResponse({"detail": "未上传文件"}, status_code=400)
 
     saved = []
     with get_conn() as conn:
-        row = conn.execute("SELECT id, order_no, status FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
+        check_overdue_and_near(conn)
+        row = conn.execute("SELECT * FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
         if not row:
             return JSONResponse({"detail": "工单不存在"}, status_code=404)
+        order = dict(row)
+        order_no = order["order_no"]
+
+        try:
+            if order["status"] == OrderStatus.ARCHIVED:
+                raise ValidationError(
+                    ExceptionCode.STATUS_CONFLICT,
+                    "工单已归档，不可再上传附件",
+                )
+
+            validate_handler(user, order)
+
+            if submitted_version is not None:
+                validate_version(order["version"], submitted_version)
+
+            validate_duplicate_submit(conn, order_id, Action.CREATE, submitted_version or order["version"], window_seconds=3)
+
+        except ValidationError as e:
+            add_audit_note(
+                conn, order_id, "intercept",
+                f"附件上传拦截：{e.message}",
+                user["name"], user["role"],
+            )
+            return JSONResponse(
+                {"detail": e.message, "error_code": e.code, "order_no": order_no},
+                status_code=400,
+            )
 
         for f in files:
             if not isinstance(f, UploadFile):
@@ -461,16 +493,21 @@ async def upload_attachment(request: Request):
                         break
                     await out.write(chunk)
 
-            aid = add_attachment(conn, order_id, f.filename or safe_name, file_path, user["name"], user["role"])
-            saved.append({"id": aid, "file_name": f.filename or safe_name})
+            aid = add_attachment(
+                conn, order_id, f.filename or safe_name, file_path,
+                user["name"], user["role"],
+                submitted_version=submitted_version,
+                intercept_type=None,
+            )
+            saved.append({"id": aid, "file_name": f.filename or safe_name, "submitted_version": submitted_version or order["version"]})
 
         add_audit_note(
             conn, order_id, "evidence",
-            f"上传证据附件 {len(saved)} 份：{', '.join([s['file_name'] for s in saved])}",
+            f"上传证据附件 {len(saved)} 份（v{submitted_version or order['version']}）：{', '.join([s['file_name'] for s in saved])}",
             user["name"], user["role"],
         )
 
-    return JSONResponse({"attachments": saved, "message": f"成功上传 {len(saved)} 个附件"})
+    return JSONResponse({"attachments": saved, "version": submitted_version or order["version"], "message": f"成功上传 {len(saved)} 个附件"})
 
 
 async def batch_process(request: Request):
