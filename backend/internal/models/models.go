@@ -75,13 +75,22 @@ type Attachment struct {
 }
 
 type ProcessingRecord struct {
-	ID          int64         `json:"id" db:"id"`
-	RecordID    int64         `json:"record_id" db:"record_id"`
-	HandlerID   int64         `json:"handler_id" db:"handler_id"`
-	HandlerRole UserRole      `json:"handler_role" db:"handler_role"`
-	Action      ProcessAction `json:"action" db:"action"`
-	Comment     string        `json:"comment" db:"comment"`
-	CreatedAt   string        `json:"created_at" db:"created_at"`
+	ID                  int64         `json:"id" db:"id"`
+	RecordID            int64         `json:"record_id" db:"record_id"`
+	HandlerID           int64         `json:"handler_id" db:"handler_id"`
+	HandlerRole         UserRole      `json:"handler_role" db:"handler_role"`
+	Action              ProcessAction `json:"action" db:"action"`
+	Comment             string        `json:"comment" db:"comment"`
+	FromStatus          RecordStatus  `json:"from_status" db:"from_status"`
+	ToStatus            RecordStatus  `json:"to_status" db:"to_status"`
+	VersionBefore       int           `json:"version_before" db:"version_before"`
+	VersionAfter        int           `json:"version_after" db:"version_after"`
+	PreviousHandlerRole UserRole      `json:"previous_handler_role" db:"previous_handler_role"`
+	NextHandlerRole     UserRole      `json:"next_handler_role" db:"next_handler_role"`
+	BlockReason         string        `json:"block_reason" db:"block_reason"`
+	BlockType           string        `json:"block_type" db:"block_type"`
+	Success             bool          `json:"success" db:"success"`
+	CreatedAt           string        `json:"created_at" db:"created_at"`
 }
 
 type AuditNote struct {
@@ -135,12 +144,22 @@ type BatchProcessRequest struct {
 }
 
 type BatchProcessResult struct {
-	RecordID      int64  `json:"record_id"`
-	Success       bool   `json:"success"`
-	Message       string `json:"message"`
-	ErrorType     string `json:"error_type"`
-	FlightNo      string `json:"flight_no"`
-	PassengerName string `json:"passenger_name"`
+	RecordID            int64         `json:"record_id"`
+	Success             bool          `json:"success"`
+	Message             string        `json:"message"`
+	ErrorType           string        `json:"error_type"`
+	FlightNo            string        `json:"flight_no"`
+	PassengerName       string        `json:"passenger_name"`
+	FromStatus          RecordStatus  `json:"from_status"`
+	ToStatus            RecordStatus  `json:"to_status"`
+	VersionBefore       int           `json:"version_before"`
+	VersionAfter        int           `json:"version_after"`
+	PreviousHandlerRole UserRole      `json:"previous_handler_role"`
+	NextHandlerRole     UserRole      `json:"next_handler_role"`
+	BlockReason         string        `json:"block_reason"`
+	BlockType           string        `json:"block_type"`
+	Action              ProcessAction `json:"action"`
+	HandlerName         string        `json:"handler_name"`
 }
 
 type AvailableAction struct {

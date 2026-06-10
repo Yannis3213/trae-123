@@ -138,15 +138,53 @@
       <div *ngFor="let result of batchResults" class="batch-result-item" [class.success]="result.success" [class.fail]="!result.success">
         <div class="result-header">
           <span class="result-id">{{ result.flight_no }} - {{ result.passenger_name }} (#{{ result.record_id }})</span>
-          <span class="result-badge" [class.success]="result.success" [class.fail]="!result.success">
-            {{ result.success ? '成功' : '失败' }}
-          </span>
+          <div class="result-header-right">
+            <span class="result-action">{{ ACTION_LABELS[result.action] || result.action }}</span>
+            <span class="result-handler">{{ result.handler_name }}</span>
+            <span class="result-badge" [class.success]="result.success" [class.fail]="!result.success">
+              {{ result.success ? '成功' : '失败' }}
+            </span>
+          </div>
         </div>
-        <div *ngIf="!result.success" class="result-detail">
-          <span class="error-type-tag" [style.background]="ERROR_TYPE_COLORS[result.error_type] || '#95a5a6'">
-            {{ ERROR_TYPE_LABELS[result.error_type] || '未知错误' }}
-          </span>
-          <span class="result-msg">{{ result.message }}</span>
+        <div class="result-body">
+          <div class="result-trace-row">
+            <div class="result-trace-item">
+              <label>状态变化</label>
+              <div class="status-transition">
+                <span class="status-tag" [style.background]="STATUS_COLORS[result.from_status]">{{ STATUS_LABELS[result.from_status] }}</span>
+                <span class="status-arrow">→</span>
+                <span class="status-tag" [style.background]="STATUS_COLORS[result.to_status]">{{ STATUS_LABELS[result.to_status] }}</span>
+              </div>
+            </div>
+            <div class="result-trace-item">
+              <label>版本变化</label>
+              <div class="version-transition">
+                <span class="version-tag">v{{ result.version_before }}</span>
+                <span class="version-arrow">→</span>
+                <span class="version-tag" [class.version-up]="result.version_after > result.version_before">v{{ result.version_after }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="result-trace-row">
+            <div class="result-trace-item">
+              <label>上一处理角色</label>
+              <span class="role-text">{{ ROLE_LABELS[result.previous_handler_role] || '无' }}</span>
+            </div>
+            <div class="result-trace-item">
+              <label>下一处理角色</label>
+              <span class="role-text">{{ ROLE_LABELS[result.next_handler_role] || '无' }}</span>
+            </div>
+          </div>
+          <div *ngIf="!result.success && result.block_reason" class="result-block">
+            <span class="error-type-tag" [style.background]="ERROR_TYPE_COLORS[result.block_type] || '#95a5a6'">
+              {{ ERROR_TYPE_LABELS[result.block_type] || '未知错误' }}
+            </span>
+            <span class="result-msg">{{ result.block_reason }}</span>
+          </div>
+          <div *ngIf="result.success" class="result-success-msg">
+            <span class="success-icon">✓</span>
+            <span>{{ result.message }}</span>
+          </div>
         </div>
       </div>
     </div>

@@ -126,32 +126,111 @@ func SeedDemoData(db *sql.DB) error {
 	}
 
 	processingRecords := []struct {
-		RecordIdx   int
-		Handler     string
-		HandlerRole models.UserRole
-		Action      models.ProcessAction
-		Comment     string
+		RecordIdx           int
+		Handler             string
+		HandlerRole         models.UserRole
+		Action              models.ProcessAction
+		Comment             string
+		FromStatus          models.RecordStatus
+		ToStatus            models.RecordStatus
+		VersionBefore       int
+		VersionAfter        int
+		PreviousHandlerRole models.UserRole
+		NextHandlerRole     models.UserRole
+		BlockReason         string
+		BlockType           string
+		Success             bool
 	}{
-		{1, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
-		{2, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
-		{2, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionApprove, "审核通过，行李信息完整"},
-		{3, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
-		{3, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionReturn, "行李信息不完整，请补全重量和件数"},
-		{4, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
-		{5, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
-		{7, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
-		{7, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionApprove, "审核通过"},
-		{7, "zhanDianJingLi", models.RoleStationManager, models.ActionConfirmSync, "确认同步完成"},
-		{8, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
-		{9, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
+		// 记录 #1 (CA1234 王明)：场景1 - 正常流转，草稿→待审核
+		{0, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核",
+			models.StatusDraft, models.StatusPendingReview, 1, 2,
+			models.RoleCheckinAgent, models.RoleBaggageSupervisor, "", "", true},
+
+		// 记录 #2 (CA5678 李红)：场景2 - 正常流转，草稿→待审核
+		{1, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核",
+			models.StatusDraft, models.StatusPendingReview, 1, 2,
+			models.RoleCheckinAgent, models.RoleBaggageSupervisor, "", "", true},
+
+		// 记录 #3 (CA9012 赵强)：场景3 - 正常流转完整链路：草稿→待审核→审核通过
+		{2, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核",
+			models.StatusDraft, models.StatusPendingReview, 1, 2,
+			models.RoleCheckinAgent, models.RoleBaggageSupervisor, "", "", true},
+		{2, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionApprove, "审核通过，行李信息完整",
+			models.StatusPendingReview, models.StatusApproved, 2, 3,
+			models.RoleBaggageSupervisor, models.RoleStationManager, "", "", true},
+
+		// 记录 #4 (CA3456 刘芳)：场景4 - 退回补正链路：草稿→待审核→退回
+		{3, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核",
+			models.StatusDraft, models.StatusPendingReview, 1, 2,
+			models.RoleCheckinAgent, models.RoleBaggageSupervisor, "", "", true},
+		{3, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionReturn, "行李信息不完整，请补全重量和件数",
+			models.StatusPendingReview, models.StatusReturned, 2, 3,
+			models.RoleBaggageSupervisor, models.RoleCheckinAgent, "", "", true},
+
+		// 记录 #5 (CA7890 陈伟)：场景5 - 逾期拦截演示：尝试审核通过但被拦截
+		{4, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核",
+			models.StatusDraft, models.StatusPendingReview, 1, 2,
+			models.RoleCheckinAgent, models.RoleBaggageSupervisor, "", "", true},
+		{4, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionApprove, "尝试审核通过",
+			models.StatusPendingReview, models.StatusPendingReview, 2, 2,
+			models.RoleBaggageSupervisor, models.RoleBaggageSupervisor,
+			"已逾期：该记录的处理责任人是行李主管，截止时间已过，禁止审核通过操作", "deadline", false},
+
+		// 记录 #6 (CA2345 孙丽)：场景6 - 临期状态
+		{5, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核",
+			models.StatusDraft, models.StatusPendingReview, 1, 2,
+			models.RoleCheckinAgent, models.RoleBaggageSupervisor, "", "", true},
+
+		// 记录 #9 (CA5566 郑浩)：场景9 - 版本冲突演示：用旧版本提交被拦截
+		{8, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核",
+			models.StatusDraft, models.StatusPendingReview, 1, 2,
+			models.RoleCheckinAgent, models.RoleBaggageSupervisor, "", "", true},
+		{8, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionApprove, "尝试用旧版本审核",
+			models.StatusPendingReview, models.StatusPendingReview, 2, 2,
+			models.RoleBaggageSupervisor, models.RoleBaggageSupervisor,
+			"版本冲突：当前版本 v3，您提交的是 v2，请刷新后重试", "version", false},
+
+		// 记录 #10 (CA7788 钱雪)：场景10 - 正常待审核，状态流转：草稿→待审核
+		{9, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核",
+			models.StatusDraft, models.StatusPendingReview, 1, 2,
+			models.RoleCheckinAgent, models.RoleBaggageSupervisor, "", "", true},
+
+		// 记录 #8 (CA4321 吴敏)：场景8 - 完整流转链路：草稿→待审核→审核通过→已同步
+		{7, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核",
+			models.StatusDraft, models.StatusPendingReview, 1, 2,
+			models.RoleCheckinAgent, models.RoleBaggageSupervisor, "", "", true},
+		{7, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionApprove, "审核通过",
+			models.StatusPendingReview, models.StatusApproved, 2, 3,
+			models.RoleBaggageSupervisor, models.RoleStationManager, "", "", true},
+		{7, "zhanDianJingLi", models.RoleStationManager, models.ActionConfirmSync, "确认同步完成",
+			models.StatusApproved, models.StatusSynced, 3, 4,
+			models.RoleStationManager, models.RoleStationManager, "", "", true},
+
+		// 记录 #6 (CA6789 周杰)：场景7 - 状态冲突演示：值机员草稿，行李主管尝试处理被拒绝
+		{6, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionApprove, "尝试审核草稿状态的记录",
+			models.StatusDraft, models.StatusDraft, 1, 1,
+			models.RoleCheckinAgent, models.RoleCheckinAgent,
+			"状态冲突：当前状态是草稿，此操作需要待审核状态", "status", false},
 	}
 
 	for i, p := range processingRecords {
 		recordID := recordIDs[p.RecordIdx]
 		createdAt := now.Add(-time.Duration(len(processingRecords)-i) * time.Hour).Format("2006-01-02 15:04:05")
+		successInt := 0
+		if p.Success {
+			successInt = 1
+		}
 		_, err := db.Exec(
-			"INSERT INTO processing_records (record_id, handler_id, handler_role, action, comment, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-			recordID, userIDs[p.Handler], p.HandlerRole, p.Action, p.Comment, createdAt,
+			`INSERT INTO processing_records (
+				record_id, handler_id, handler_role, action, comment,
+				from_status, to_status, version_before, version_after,
+				previous_handler_role, next_handler_role, block_reason, block_type,
+				success, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			recordID, userIDs[p.Handler], p.HandlerRole, p.Action, p.Comment,
+			p.FromStatus, p.ToStatus, p.VersionBefore, p.VersionAfter,
+			p.PreviousHandlerRole, p.NextHandlerRole, p.BlockReason, p.BlockType,
+			successInt, createdAt,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to seed processing record: %w", err)

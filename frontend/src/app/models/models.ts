@@ -47,6 +47,15 @@ export interface ProcessingRecord {
   handler_role: UserRole;
   action: ProcessAction;
   comment: string;
+  from_status: RecordStatus;
+  to_status: RecordStatus;
+  version_before: number;
+  version_after: number;
+  previous_handler_role: UserRole;
+  next_handler_role: UserRole;
+  block_reason: string;
+  block_type: string;
+  success: boolean;
   created_at: string;
 }
 
@@ -97,6 +106,16 @@ export interface BatchProcessResult {
   error_type: string;
   flight_no: string;
   passenger_name: string;
+  from_status: RecordStatus;
+  to_status: RecordStatus;
+  version_before: number;
+  version_after: number;
+  previous_handler_role: UserRole;
+  next_handler_role: UserRole;
+  block_reason: string;
+  block_type: string;
+  action: ProcessAction;
+  handler_name: string;
 }
 
 export interface BatchProcessRequest {

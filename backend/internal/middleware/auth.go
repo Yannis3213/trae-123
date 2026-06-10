@@ -88,3 +88,8 @@ func GetUsername(c echo.Context) string {
 	name, _ := c.Get("name").(string)
 	return name
 }
+
+func GetUserName(c echo.Context) string {
+	name, _ := c.Get("name").(string)
+	return name
+}

@@ -181,7 +181,7 @@ func (h *RecordHandler) getAttachments(recordID int64) ([]models.Attachment, err
 }
 
 func (h *RecordHandler) getProcessingRecords(recordID int64) ([]models.ProcessingRecord, error) {
-	rows, err := h.DB.Query("SELECT id, record_id, handler_id, handler_role, action, comment, created_at FROM processing_records WHERE record_id = ? ORDER BY created_at ASC", recordID)
+	rows, err := h.DB.Query("SELECT id, record_id, handler_id, handler_role, action, comment, from_status, to_status, version_before, version_after, previous_handler_role, next_handler_role, block_reason, block_type, success, created_at FROM processing_records WHERE record_id = ? ORDER BY created_at ASC", recordID)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,12 @@ func (h *RecordHandler) getProcessingRecords(recordID int64) ([]models.Processin
 	var items []models.ProcessingRecord
 	for rows.Next() {
 		var p models.ProcessingRecord
-		if err := rows.Scan(&p.ID, &p.RecordID, &p.HandlerID, &p.HandlerRole, &p.Action, &p.Comment, &p.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.RecordID, &p.HandlerID, &p.HandlerRole, &p.Action, &p.Comment,
+			&p.FromStatus, &p.ToStatus, &p.VersionBefore, &p.VersionAfter,
+			&p.PreviousHandlerRole, &p.NextHandlerRole, &p.BlockReason, &p.BlockType,
+			&p.Success, &p.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, p)
@@ -277,6 +282,7 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	recordID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success":    false,
 			"error":      "无效的记录ID",
 			"error_type": "invalid_input",
 		})
@@ -285,6 +291,7 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	var req models.ProcessRecordRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"success":    false,
 			"error":      "请求参数错误",
 			"error_type": "invalid_input",
 		})
@@ -292,6 +299,7 @@ func (h *RecordHandler) Process(c echo.Context) error {
 
 	userID := middleware.GetUserID(c)
 	userRole := middleware.GetUserRole(c)
+	userName := middleware.GetUserName(c)
 
 	var record models.CheckinRecord
 	query := "SELECT id, flight_no, passenger_name, passenger_id, seat_no, checkin_time, status, version, deadline, created_by, current_handler_role, return_reason, scenario, created_at, updated_at FROM checkin_records WHERE id = ?"
@@ -303,6 +311,7 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]interface{}{
+			"success":    false,
 			"error":      "记录不存在",
 			"error_type": "not_found",
 		})
@@ -322,18 +331,58 @@ func (h *RecordHandler) Process(c echo.Context) error {
 		Comment:            req.Comment,
 	}
 
+	trace := map[string]interface{}{
+		"record_id":             recordID,
+		"flight_no":             record.FlightNo,
+		"passenger_name":        record.PassengerName,
+		"action":                req.Action,
+		"handler_name":          userName,
+		"handler_role":          userRole,
+		"from_status":           record.Status,
+		"to_status":             record.Status,
+		"version_before":        record.Version,
+		"version_after":         record.Version,
+		"previous_handler_role": record.CurrentHandlerRole,
+		"next_handler_role":     record.CurrentHandlerRole,
+		"block_reason":          "",
+		"block_type":            "",
+	}
+
+	newStatus, newHandlerRole := services.GetNextState(req.Action)
+
 	if verr := services.ValidateAll(ctx); verr != nil {
 		statusCode := http.StatusBadRequest
 		if verr.Type == services.ErrTypeVersion {
 			statusCode = http.StatusConflict
 		}
+
+		trace["block_reason"] = verr.Message
+		trace["block_type"] = string(verr.Type)
+		trace["success"] = false
+
+		now := time.Now().Format("2006-01-02 15:04:05")
+		h.DB.Exec(
+			`INSERT INTO processing_records (
+				record_id, handler_id, handler_role, action, comment,
+				from_status, to_status, version_before, version_after,
+				previous_handler_role, next_handler_role, block_reason, block_type,
+				success, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			recordID, userID, userRole, req.Action, req.Comment,
+			record.Status, record.Status, record.Version, record.Version,
+			record.CurrentHandlerRole, record.CurrentHandlerRole,
+			verr.Message, string(verr.Type),
+			0, now,
+		)
+
 		return c.JSON(statusCode, map[string]interface{}{
-			"error":      verr.Message,
+			"success":    false,
+			"message":    verr.Message,
 			"error_type": string(verr.Type),
+			"trace":      trace,
 		})
 	}
 
-	newStatus, newHandlerRole := services.GetNextState(req.Action)
 	now := time.Now().Format("2006-01-02 15:04:05")
 	returnReason := record.ReturnReason
 	if req.Action == models.ActionReturn {
@@ -346,6 +395,7 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	result, err := h.DB.Exec(updateQuery, newStatus, newHandlerRole, returnReason, now, recordID, record.Version)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"success":    false,
 			"error":      "更新记录失败",
 			"error_type": "internal",
 		})
@@ -353,26 +403,64 @@ func (h *RecordHandler) Process(c echo.Context) error {
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
+		trace["block_reason"] = "版本冲突，记录已被修改，请刷新后重试"
+		trace["block_type"] = "version"
+		trace["success"] = false
+
+		h.DB.Exec(
+			`INSERT INTO processing_records (
+				record_id, handler_id, handler_role, action, comment,
+				from_status, to_status, version_before, version_after,
+				previous_handler_role, next_handler_role, block_reason, block_type,
+				success, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			recordID, userID, userRole, req.Action, req.Comment,
+			record.Status, record.Status, record.Version, record.Version,
+			record.CurrentHandlerRole, record.CurrentHandlerRole,
+			"版本冲突，记录已被修改，请刷新后重试", "version",
+			0, now,
+		)
+
 		return c.JSON(http.StatusConflict, map[string]interface{}{
-			"error":      "版本冲突，记录已被修改，请刷新后重试",
+			"success":    false,
+			"message":    "版本冲突，记录已被修改，请刷新后重试",
 			"error_type": "version",
+			"trace":      trace,
 		})
 	}
 
+	newVersion := record.Version + 1
+	trace["to_status"] = newStatus
+	trace["next_handler_role"] = newHandlerRole
+	trace["version_after"] = newVersion
+	trace["success"] = true
+
 	_, err = h.DB.Exec(
-		"INSERT INTO processing_records (record_id, handler_id, handler_role, action, comment, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		recordID, userID, userRole, req.Action, req.Comment, now,
+		`INSERT INTO processing_records (
+			record_id, handler_id, handler_role, action, comment,
+			from_status, to_status, version_before, version_after,
+			previous_handler_role, next_handler_role, block_reason, block_type,
+			success, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		recordID, userID, userRole, req.Action, req.Comment,
+		record.Status, newStatus, record.Version, newVersion,
+		record.CurrentHandlerRole, newHandlerRole,
+		"", "",
+		1, now,
 	)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"success":    false,
 			"error":      "记录处理日志失败",
 			"error_type": "internal",
 		})
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
+		"success":    true,
 		"message":    "处理成功",
 		"new_status": newStatus,
+		"trace":      trace,
 	})
 }
 
@@ -388,11 +476,14 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 
 	userID := middleware.GetUserID(c)
 	userRole := middleware.GetUserRole(c)
+	userName := middleware.GetUserName(c)
 
 	var results []models.BatchProcessResult
 
 	for _, recordID := range req.RecordIDs {
 		result := models.BatchProcessResult{RecordID: recordID}
+		result.Action = req.Action
+		result.HandlerName = userName
 
 		var record models.CheckinRecord
 		query := "SELECT id, flight_no, passenger_name, status, version, current_handler_role, return_reason, scenario, deadline FROM checkin_records WHERE id = ?"
@@ -405,12 +496,26 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 			result.Success = false
 			result.Message = "记录不存在"
 			result.ErrorType = "not_found"
+			result.FromStatus = record.Status
+			result.ToStatus = record.Status
+			result.VersionBefore = record.Version
+			result.VersionAfter = record.Version
+			result.PreviousHandlerRole = record.CurrentHandlerRole
+			result.NextHandlerRole = record.CurrentHandlerRole
+			result.BlockReason = "记录不存在"
+			result.BlockType = "not_found"
 			results = append(results, result)
 			continue
 		}
 
 		result.FlightNo = record.FlightNo
 		result.PassengerName = record.PassengerName
+		result.FromStatus = record.Status
+		result.ToStatus = record.Status
+		result.VersionBefore = record.Version
+		result.VersionAfter = record.Version
+		result.PreviousHandlerRole = record.CurrentHandlerRole
+		result.NextHandlerRole = record.CurrentHandlerRole
 
 		requestVersion := 0
 		if req.RecordVersion != nil {
@@ -436,16 +541,34 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 			Comment:            req.Comment,
 		}
 
+		newStatus, newHandlerRole := services.GetNextState(req.Action)
+		now := time.Now().Format("2006-01-02 15:04:05")
+
 		if verr := services.ValidateAll(ctx); verr != nil {
 			result.Success = false
 			result.Message = verr.Message
 			result.ErrorType = string(verr.Type)
+			result.BlockReason = verr.Message
+			result.BlockType = string(verr.Type)
+
+			h.DB.Exec(
+				`INSERT INTO processing_records (
+					record_id, handler_id, handler_role, action, comment,
+					from_status, to_status, version_before, version_after,
+					previous_handler_role, next_handler_role, block_reason, block_type,
+					success, created_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				recordID, userID, userRole, req.Action, req.Comment,
+				record.Status, record.Status, record.Version, record.Version,
+				record.CurrentHandlerRole, record.CurrentHandlerRole,
+				verr.Message, string(verr.Type),
+				0, now,
+			)
+
 			results = append(results, result)
 			continue
 		}
 
-		newStatus, newHandlerRole := services.GetNextState(req.Action)
-		now := time.Now().Format("2006-01-02 15:04:05")
 		returnReason := record.ReturnReason
 		if req.Action == models.ActionReturn {
 			returnReason = req.Comment
@@ -461,6 +584,23 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 			result.Success = false
 			result.Message = "更新记录失败"
 			result.ErrorType = "internal"
+			result.BlockReason = "更新记录失败"
+			result.BlockType = "internal"
+
+			h.DB.Exec(
+				`INSERT INTO processing_records (
+					record_id, handler_id, handler_role, action, comment,
+					from_status, to_status, version_before, version_after,
+					previous_handler_role, next_handler_role, block_reason, block_type,
+					success, created_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				recordID, userID, userRole, req.Action, req.Comment,
+				record.Status, record.Status, record.Version, record.Version,
+				record.CurrentHandlerRole, record.CurrentHandlerRole,
+				"更新记录失败", "internal",
+				0, now,
+			)
+
 			results = append(results, result)
 			continue
 		}
@@ -468,19 +608,50 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 		rowsAffected, _ := updateResult.RowsAffected()
 		if rowsAffected == 0 {
 			result.Success = false
-			result.Message = "版本冲突，记录已被修改"
+			result.Message = "版本冲突，记录已被修改，请刷新后重试"
 			result.ErrorType = "version"
+			result.BlockReason = "版本冲突，记录已被修改，请刷新后重试"
+			result.BlockType = "version"
+
+			h.DB.Exec(
+				`INSERT INTO processing_records (
+					record_id, handler_id, handler_role, action, comment,
+					from_status, to_status, version_before, version_after,
+					previous_handler_role, next_handler_role, block_reason, block_type,
+					success, created_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				recordID, userID, userRole, req.Action, req.Comment,
+				record.Status, record.Status, record.Version, record.Version,
+				record.CurrentHandlerRole, record.CurrentHandlerRole,
+				"版本冲突，记录已被修改，请刷新后重试", "version",
+				0, now,
+			)
+
 			results = append(results, result)
 			continue
 		}
 
-		h.DB.Exec(
-			"INSERT INTO processing_records (record_id, handler_id, handler_role, action, comment, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-			recordID, userID, userRole, req.Action, req.Comment, now,
-		)
-
+		newVersion := record.Version + 1
+		result.ToStatus = newStatus
+		result.NextHandlerRole = newHandlerRole
+		result.VersionAfter = newVersion
 		result.Success = true
 		result.Message = "处理成功"
+
+		h.DB.Exec(
+			`INSERT INTO processing_records (
+				record_id, handler_id, handler_role, action, comment,
+				from_status, to_status, version_before, version_after,
+				previous_handler_role, next_handler_role, block_reason, block_type,
+				success, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			recordID, userID, userRole, req.Action, req.Comment,
+			record.Status, newStatus, record.Version, newVersion,
+			record.CurrentHandlerRole, newHandlerRole,
+			"", "",
+			1, now,
+		)
+
 		results = append(results, result)
 	}
 

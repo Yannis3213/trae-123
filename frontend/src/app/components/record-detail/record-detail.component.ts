@@ -84,6 +84,18 @@ export class RecordDetailComponent implements OnInit {
     internal: '系统错误',
   };
 
+  ERROR_TYPE_COLORS: Record<string, string> = {
+    version: '#8e44ad',
+    role: '#e74c3c',
+    status: '#e67e22',
+    evidence: '#d35400',
+    deadline: '#c0392b',
+    return_reason: '#7f8c8d',
+    not_found: '#95a5a6',
+    invalid_input: '#34495e',
+    internal: '#2c3e50',
+  };
+
   constructor(
     private route: ActivatedRoute,
     private router: Router,

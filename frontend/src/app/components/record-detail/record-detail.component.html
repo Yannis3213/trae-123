@@ -134,16 +134,55 @@
       </div>
 
       <div *ngIf="activeTab === 'processing'" class="tab-panel">
-        <div class="timeline">
-          <div *ngFor="let pr of record.processing_records" class="timeline-item">
-            <div class="timeline-dot"></div>
-            <div class="timeline-content">
-              <div class="timeline-header">
-                <span class="timeline-action">{{ getActionLabel(pr.action) }}</span>
-                <span class="timeline-role">{{ getRoleLabel(pr.handler_role) }}</span>
-                <span class="timeline-time">{{ pr.created_at | date:'yyyy-MM-dd HH:mm' }}</span>
+        <div class="trace-list">
+          <div *ngFor="let pr of record.processing_records" class="trace-card" [class.trace-fail]="!pr.success">
+            <div class="trace-header">
+              <span class="trace-action">{{ getActionLabel(pr.action) }}</span>
+              <span class="trace-role">{{ getRoleLabel(pr.handler_role) }}</span>
+              <span class="trace-time">{{ pr.created_at | date:'yyyy-MM-dd HH:mm' }}</span>
+              <span class="trace-badge" [class.success]="pr.success" [class.fail]="!pr.success">
+                {{ pr.success ? '成功' : '失败' }}
+              </span>
+            </div>
+            <div class="trace-body">
+              <div class="trace-row">
+                <div class="trace-item">
+                  <label>状态变化</label>
+                  <div class="status-transition">
+                    <span class="status-tag" [style.background]="getStatusColor(pr.from_status)">{{ getStatusLabel(pr.from_status) }}</span>
+                    <span class="status-arrow">→</span>
+                    <span class="status-tag" [style.background]="getStatusColor(pr.to_status)">{{ getStatusLabel(pr.to_status) }}</span>
+                  </div>
+                </div>
+                <div class="trace-item">
+                  <label>版本变化</label>
+                  <div class="version-transition">
+                    <span class="version-tag">v{{ pr.version_before }}</span>
+                    <span class="version-arrow">→</span>
+                    <span class="version-tag" [class.version-up]="pr.version_after > pr.version_before">v{{ pr.version_after }}</span>
+                  </div>
+                </div>
               </div>
-              <div class="timeline-comment" *ngIf="pr.comment">{{ pr.comment }}</div>
+              <div class="trace-row">
+                <div class="trace-item">
+                  <label>上一处理角色</label>
+                  <span class="role-text">{{ getRoleLabel(pr.previous_handler_role) || '无' }}</span>
+                </div>
+                <div class="trace-item">
+                  <label>下一处理角色</label>
+                  <span class="role-text">{{ getRoleLabel(pr.next_handler_role) || '无' }}</span>
+                </div>
+              </div>
+              <div *ngIf="pr.comment" class="trace-comment">
+                <label>处理备注</label>
+                <p>{{ pr.comment }}</p>
+              </div>
+              <div *ngIf="!pr.success && pr.block_reason" class="trace-block">
+                <span class="block-type-tag" [style.background]="ERROR_TYPE_COLORS[pr.block_type] || '#95a5a6'">
+                  {{ ERROR_TYPE_LABELS[pr.block_type] || '操作失败' }}
+                </span>
+                <span class="block-reason">{{ pr.block_reason }}</span>
+              </div>
             </div>
           </div>
           <div *ngIf="record.processing_records.length === 0" class="empty-hint">暂无处理记录</div>
