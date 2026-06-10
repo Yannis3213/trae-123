@@ -47,20 +47,21 @@ type User struct {
 }
 
 type CheckinRecord struct {
-	ID                  int64         `json:"id" db:"id"`
-	FlightNo            string        `json:"flight_no" db:"flight_no"`
-	PassengerName       string        `json:"passenger_name" db:"passenger_name"`
-	PassengerID         string        `json:"passenger_id" db:"passenger_id"`
-	SeatNo              string        `json:"seat_no" db:"seat_no"`
-	CheckinTime         string        `json:"checkin_time" db:"checkin_time"`
-	Status              RecordStatus  `json:"status" db:"status"`
-	Version             int           `json:"version" db:"version"`
-	Deadline            string        `json:"deadline" db:"deadline"`
-	CreatedBy           int64         `json:"created_by" db:"created_by"`
-	CurrentHandlerRole  UserRole      `json:"current_handler_role" db:"current_handler_role"`
-	ReturnReason        string        `json:"return_reason" db:"return_reason"`
-	CreatedAt           string        `json:"created_at" db:"created_at"`
-	UpdatedAt           string        `json:"updated_at" db:"updated_at"`
+	ID                 int64        `json:"id" db:"id"`
+	FlightNo           string       `json:"flight_no" db:"flight_no"`
+	PassengerName      string       `json:"passenger_name" db:"passenger_name"`
+	PassengerID        string       `json:"passenger_id" db:"passenger_id"`
+	SeatNo             string       `json:"seat_no" db:"seat_no"`
+	CheckinTime        string       `json:"checkin_time" db:"checkin_time"`
+	Status             RecordStatus `json:"status" db:"status"`
+	Version            int          `json:"version" db:"version"`
+	Deadline           string       `json:"deadline" db:"deadline"`
+	CreatedBy          int64        `json:"created_by" db:"created_by"`
+	CurrentHandlerRole UserRole     `json:"current_handler_role" db:"current_handler_role"`
+	ReturnReason       string       `json:"return_reason" db:"return_reason"`
+	Scenario           string       `json:"scenario" db:"scenario"`
+	CreatedAt          string       `json:"created_at" db:"created_at"`
+	UpdatedAt          string       `json:"updated_at" db:"updated_at"`
 }
 
 type Attachment struct {
@@ -126,15 +127,43 @@ type ProcessRecordRequest struct {
 }
 
 type BatchProcessRequest struct {
-	RecordIDs []int64        `json:"record_ids"`
-	Action    ProcessAction  `json:"action"`
-	Comment   string         `json:"comment"`
+	RecordIDs []int64       `json:"record_ids"`
+	Action    ProcessAction `json:"action"`
+	Comment   string        `json:"comment"`
+	Version   int           `json:"version"`
 }
 
 type BatchProcessResult struct {
-	RecordID int64 `json:"record_id"`
-	Success  bool  `json:"success"`
-	Message  string `json:"message"`
+	RecordID      int64  `json:"record_id"`
+	Success       bool   `json:"success"`
+	Message       string `json:"message"`
+	ErrorType     string `json:"error_type"`
+	FlightNo      string `json:"flight_no"`
+	PassengerName string `json:"passenger_name"`
+}
+
+type AvailableAction struct {
+	Action  ProcessAction `json:"action"`
+	Label   string        `json:"label"`
+	Enabled bool          `json:"enabled"`
+	Reason  string        `json:"reason"`
+}
+
+type DeadlineInfo struct {
+	WarningType string `json:"warning_type"`
+	Label       string `json:"label"`
+	HoursLeft   int    `json:"hours_left"`
+}
+
+type RecordDetail struct {
+	CheckinRecord
+	Attachments       []Attachment       `json:"attachments"`
+	ProcessingRecords []ProcessingRecord `json:"processing_records"`
+	AuditNotes        []AuditNote        `json:"audit_notes"`
+	ExceptionReasons  []ExceptionReason  `json:"exception_reasons"`
+	CreatorName       string             `json:"creator_name"`
+	AvailableActions  []AvailableAction  `json:"available_actions"`
+	DeadlineInfo      DeadlineInfo       `json:"deadline_info"`
 }
 
 type RecordListQuery struct {
@@ -145,13 +174,4 @@ type RecordListQuery struct {
 	Page               int    `query:"page"`
 	PageSize           int    `query:"page_size"`
 	WarningType        string `query:"warning_type"`
-}
-
-type RecordDetail struct {
-	CheckinRecord
-	Attachments       []Attachment        `json:"attachments"`
-	ProcessingRecords []ProcessingRecord  `json:"processing_records"`
-	AuditNotes        []AuditNote         `json:"audit_notes"`
-	ExceptionReasons  []ExceptionReason   `json:"exception_reasons"`
-	CreatorName       string              `json:"creator_name"`
 }

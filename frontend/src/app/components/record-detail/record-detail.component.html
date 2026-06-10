@@ -7,6 +7,9 @@
         {{ getStatusLabel(record.status) }}
       </span>
       <span class="version-tag">v{{ record.version }}</span>
+      <span class="warning-badge" [style.background]="getWarningColor()">
+        {{ getWarningLabel() }}
+      </span>
     </div>
   </div>
 
@@ -47,7 +50,10 @@
           </div>
           <div class="info-item">
             <label>截止时间</label>
-            <span>{{ record.deadline | date:'yyyy-MM-dd HH:mm' }}</span>
+            <span [style.color]="getWarningColor()">
+              {{ record.deadline | date:'yyyy-MM-dd HH:mm' }}
+              <span class="warning-inline">【{{ getWarningLabel() }}】</span>
+            </span>
           </div>
           <div class="info-item">
             <label>当前状态</label>
@@ -71,25 +77,39 @@
             <label>更新时间</label>
             <span>{{ record.updated_at | date:'yyyy-MM-dd HH:mm' }}</span>
           </div>
+          <div class="info-item info-item-full">
+            <label>场景说明</label>
+            <span class="scenario-desc">{{ record.scenario }}</span>
+          </div>
         </div>
 
         <div class="return-reason-box" *ngIf="record.status === 'returned' && record.return_reason">
-          <label>退回原因</label>
+          <label>退回原因（上一处理人：行李主管）</label>
           <p>{{ record.return_reason }}</p>
         </div>
 
         <div class="action-section">
-          <h4>操作</h4>
+          <h4>可办动作</h4>
           <div class="action-buttons">
-            <button *ngFor="let action of getAvailableActions()"
-                    class="btn-action"
-                    [class.btn-approve]="action === 'approve' || action === 'confirm_sync'"
-                    [class.btn-return]="action === 'return'"
-                    [class.btn-submit]="action === 'submit' || action === 'correct'"
-                    (click)="openActionDialog(action)">
-              {{ getActionLabel(action) }}
-            </button>
-            <span *ngIf="getAvailableActions().length === 0" class="no-action">当前无可用操作</span>
+            <ng-container *ngIf="record.available_actions && record.available_actions.length > 0">
+              <div *ngFor="let action of record.available_actions" class="action-item-wrapper">
+                <button class="btn-action"
+                        [class.btn-approve]="action.action === 'approve' || action.action === 'confirm_sync'"
+                        [class.btn-return]="action.action === 'return'"
+                        [class.btn-submit]="action.action === 'submit' || action.action === 'correct'"
+                        [class.btn-disabled]="!action.enabled"
+                        [disabled]="!action.enabled"
+                        (click)="action.enabled && openActionDialog(action.action)">
+                  {{ action.label }}
+                </button>
+                <div *ngIf="!action.enabled && action.reason" class="action-reason">
+                  原因：{{ action.reason }}
+                </div>
+              </div>
+            </ng-container>
+            <div *ngIf="!record.available_actions || record.available_actions.length === 0" class="no-action">
+              当前角色无可用操作（可能不是当前环节的处理人，或记录已完成流转）
+            </div>
           </div>
         </div>
       </div>
@@ -149,8 +169,8 @@
       </div>
 
       <div *ngIf="activeTab === 'exception'" class="tab-panel">
-        <div class="exception-notice" *ngIf="record.exception_reasons.length > 0">
-          异常日志只作为证据，不能替代详情页的真实处理结果
+        <div class="exception-notice">
+          ⚠️ 异常日志只作为证据，不能替代详情页的真实处理结果。如需处理请返回【基本信息】Tab 执行操作。
         </div>
         <div class="exception-list">
           <div *ngFor="let er of record.exception_reasons" class="exception-item">

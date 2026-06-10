@@ -105,9 +105,9 @@ func (h *RecordHandler) List(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"data":  records,
-		"total": total,
-		"page":  q.Page,
+		"data":      records,
+		"total":     total,
+		"page":      q.Page,
 		"page_size": q.PageSize,
 	})
 }
@@ -117,6 +117,8 @@ func (h *RecordHandler) GetDetail(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "无效的记录ID"})
 	}
+
+	userRole := middleware.GetUserRole(c)
 
 	var detail models.RecordDetail
 	query := "SELECT id, flight_no, passenger_name, passenger_id, seat_no, checkin_time, status, version, deadline, created_by, current_handler_role, return_reason, created_at, updated_at FROM checkin_records WHERE id = ?"
@@ -139,6 +141,23 @@ func (h *RecordHandler) GetDetail(c echo.Context) error {
 	detail.ProcessingRecords, _ = h.getProcessingRecords(id)
 	detail.AuditNotes, _ = h.getAuditNotes(id)
 	detail.ExceptionReasons, _ = h.getExceptionReasons(id)
+
+	warningType, deadlineLabel, hoursLeft := services.GetDeadlineInfo(detail.Deadline)
+	detail.DeadlineInfo = models.DeadlineInfo{
+		WarningType: warningType,
+		Label:       deadlineLabel,
+		HoursLeft:   hoursLeft,
+	}
+
+	actions := services.GetAvailableActions(userRole, detail.CurrentHandlerRole, detail.Status, detail.Deadline, detail.Attachments)
+	for _, a := range actions {
+		detail.AvailableActions = append(detail.AvailableActions, models.AvailableAction{
+			Action:  a.Action,
+			Label:   a.Label,
+			Enabled: a.Enabled,
+			Reason:  a.Reason,
+		})
+	}
 
 	return c.JSON(http.StatusOK, detail)
 }
@@ -257,12 +276,18 @@ func (h *RecordHandler) Create(c echo.Context) error {
 func (h *RecordHandler) Process(c echo.Context) error {
 	recordID, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "无效的记录ID"})
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"error":      "无效的记录ID",
+			"error_type": "invalid_input",
+		})
 	}
 
 	var req models.ProcessRecordRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "请求参数错误"})
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"error":      "请求参数错误",
+			"error_type": "invalid_input",
+		})
 	}
 
 	userID := middleware.GetUserID(c)
@@ -277,26 +302,35 @@ func (h *RecordHandler) Process(c echo.Context) error {
 		&record.ReturnReason, &record.CreatedAt, &record.UpdatedAt,
 	)
 	if err != nil {
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "记录不存在"})
+		return c.JSON(http.StatusNotFound, map[string]interface{}{
+			"error":      "记录不存在",
+			"error_type": "not_found",
+		})
 	}
 
-	if err := services.ValidateTransition(userRole, record.CurrentHandlerRole, record.Status, req.Action); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	attachments, _ := h.getAttachments(recordID)
+
+	ctx := &services.ValidationContext{
+		UserRole:           userRole,
+		CurrentHandlerRole: record.CurrentHandlerRole,
+		CurrentStatus:      record.Status,
+		Action:             req.Action,
+		RequestVersion:     req.Version,
+		RecordVersion:      record.Version,
+		Deadline:           record.Deadline,
+		Attachments:        attachments,
+		Comment:            req.Comment,
 	}
 
-	if req.Version != record.Version {
-		return c.JSON(http.StatusConflict, map[string]string{"error": "版本冲突，记录已被修改，请刷新后重试"})
-	}
-
-	if req.Action == models.ActionApprove || req.Action == models.ActionConfirmSync {
-		attachments, _ := h.getAttachments(recordID)
-		if err := services.ValidateEvidence(req.Action, attachments); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	if verr := services.ValidateAll(ctx); verr != nil {
+		statusCode := http.StatusBadRequest
+		if verr.Type == services.ErrTypeVersion {
+			statusCode = http.StatusConflict
 		}
-	}
-
-	if req.Action == models.ActionReturn && req.Comment == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "退回补正必须填写原因"})
+		return c.JSON(statusCode, map[string]interface{}{
+			"error":      verr.Message,
+			"error_type": string(verr.Type),
+		})
 	}
 
 	newStatus, newHandlerRole := services.GetNextState(req.Action)
@@ -311,12 +345,18 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	updateQuery := "UPDATE checkin_records SET status = ?, version = version + 1, current_handler_role = ?, return_reason = ?, updated_at = ? WHERE id = ? AND version = ?"
 	result, err := h.DB.Exec(updateQuery, newStatus, newHandlerRole, returnReason, now, recordID, record.Version)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "更新记录失败"})
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"error":      "更新记录失败",
+			"error_type": "internal",
+		})
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return c.JSON(http.StatusConflict, map[string]string{"error": "版本冲突，记录已被修改，请刷新后重试"})
+		return c.JSON(http.StatusConflict, map[string]interface{}{
+			"error":      "版本冲突，记录已被修改，请刷新后重试",
+			"error_type": "version",
+		})
 	}
 
 	_, err = h.DB.Exec(
@@ -324,10 +364,16 @@ func (h *RecordHandler) Process(c echo.Context) error {
 		recordID, userID, userRole, req.Action, req.Comment, now,
 	)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "记录处理日志失败"})
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"error":      "记录处理日志失败",
+			"error_type": "internal",
+		})
 	}
 
-	return c.JSON(http.StatusOK, map[string]interface{}{"message": "处理成功", "new_status": newStatus})
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message":    "处理成功",
+		"new_status": newStatus,
+	})
 }
 
 func (h *RecordHandler) BatchProcess(c echo.Context) error {
@@ -349,37 +395,41 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 		result := models.BatchProcessResult{RecordID: recordID}
 
 		var record models.CheckinRecord
-		query := "SELECT id, status, version, current_handler_role, return_reason FROM checkin_records WHERE id = ?"
+		query := "SELECT id, flight_no, passenger_name, status, version, current_handler_role, return_reason, deadline FROM checkin_records WHERE id = ?"
 		err := h.DB.QueryRow(query, recordID).Scan(
-			&record.ID, &record.Status, &record.Version, &record.CurrentHandlerRole, &record.ReturnReason,
+			&record.ID, &record.FlightNo, &record.PassengerName,
+			&record.Status, &record.Version, &record.CurrentHandlerRole,
+			&record.ReturnReason, &record.Deadline,
 		)
 		if err != nil {
 			result.Success = false
 			result.Message = "记录不存在"
+			result.ErrorType = "not_found"
 			results = append(results, result)
 			continue
 		}
 
-		if err := services.ValidateTransition(userRole, record.CurrentHandlerRole, record.Status, req.Action); err != nil {
-			result.Success = false
-			result.Message = err.Error()
-			results = append(results, result)
-			continue
+		result.FlightNo = record.FlightNo
+		result.PassengerName = record.PassengerName
+
+		attachments, _ := h.getAttachments(recordID)
+
+		ctx := &services.ValidationContext{
+			UserRole:           userRole,
+			CurrentHandlerRole: record.CurrentHandlerRole,
+			CurrentStatus:      record.Status,
+			Action:             req.Action,
+			RequestVersion:     req.Version,
+			RecordVersion:      record.Version,
+			Deadline:           record.Deadline,
+			Attachments:        attachments,
+			Comment:            req.Comment,
 		}
 
-		if req.Action == models.ActionApprove || req.Action == models.ActionConfirmSync {
-			attachments, _ := h.getAttachments(recordID)
-			if err := services.ValidateEvidence(req.Action, attachments); err != nil {
-				result.Success = false
-				result.Message = err.Error()
-				results = append(results, result)
-				continue
-			}
-		}
-
-		if req.Action == models.ActionReturn && req.Comment == "" {
+		if verr := services.ValidateAll(ctx); verr != nil {
 			result.Success = false
-			result.Message = "退回补正必须填写原因"
+			result.Message = verr.Message
+			result.ErrorType = string(verr.Type)
 			results = append(results, result)
 			continue
 		}
@@ -400,6 +450,7 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 		if err != nil {
 			result.Success = false
 			result.Message = "更新记录失败"
+			result.ErrorType = "internal"
 			results = append(results, result)
 			continue
 		}
@@ -408,6 +459,7 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 		if rowsAffected == 0 {
 			result.Success = false
 			result.Message = "版本冲突，记录已被修改"
+			result.ErrorType = "version"
 			results = append(results, result)
 			continue
 		}
@@ -462,14 +514,14 @@ func (h *RecordHandler) Statistics(c echo.Context) error {
 	h.DB.QueryRow("SELECT COUNT(*) FROM checkin_records WHERE datetime(deadline) <= datetime(?, '+24 hours')", nowStr).Scan(&overdueCount)
 
 	warningCounts := map[string]int{
-		"normal":     normalCount,
+		"normal":      normalCount,
 		"approaching": approachingCount,
-		"overdue":    overdueCount,
+		"overdue":     overdueCount,
 	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"status_counts": statusCounts,
-		"role_counts":   roleCounts,
+		"status_counts":  statusCounts,
+		"role_counts":    roleCounts,
 		"warning_counts": warningCounts,
 	})
 }

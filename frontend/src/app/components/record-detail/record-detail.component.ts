@@ -60,6 +60,30 @@ export class RecordDetailComponent implements OnInit {
 
   attachmentTypes: AttachmentType[] = ['checkin_evidence', 'baggage_evidence', 'exception_evidence'];
 
+  WARNING_LABELS: Record<string, string> = {
+    normal: '正常',
+    approaching: '临期',
+    overdue: '逾期',
+  };
+
+  WARNING_COLORS: Record<string, string> = {
+    normal: '#27ae60',
+    approaching: '#f39c12',
+    overdue: '#e74c3c',
+  };
+
+  ERROR_TYPE_LABELS: Record<string, string> = {
+    version: '版本冲突',
+    role: '角色越权',
+    status: '状态冲突',
+    evidence: '缺少证据',
+    deadline: '已逾期',
+    return_reason: '缺少退回原因',
+    not_found: '记录不存在',
+    invalid_input: '参数错误',
+    internal: '系统错误',
+  };
+
   constructor(
     private route: ActivatedRoute,
     private router: Router,
@@ -92,26 +116,20 @@ export class RecordDetailComponent implements OnInit {
     return this.record.attachments.filter(a => a.type === type);
   }
 
-  canPerformAction(action: ProcessAction): boolean {
-    if (!this.record || !this.auth.currentUserValue) return false;
-    const role = this.auth.currentUserValue.role;
-    const status = this.record.status;
-    if (role === 'checkin_agent' && status === 'draft' && action === 'submit') return true;
-    if (role === 'checkin_agent' && status === 'returned' && action === 'correct') return true;
-    if (role === 'baggage_supervisor' && status === 'pending_review' && action === 'approve') return true;
-    if (role === 'baggage_supervisor' && status === 'pending_review' && action === 'return') return true;
-    if (role === 'station_manager' && status === 'approved' && action === 'confirm_sync') return true;
-    return false;
+  isOverdue(): boolean {
+    return this.record?.deadline_info?.warning_type === 'overdue';
   }
 
-  getAvailableActions(): ProcessAction[] {
-    const actions: ProcessAction[] = [];
-    if (this.canPerformAction('submit')) actions.push('submit');
-    if (this.canPerformAction('correct')) actions.push('correct');
-    if (this.canPerformAction('approve')) actions.push('approve');
-    if (this.canPerformAction('return')) actions.push('return');
-    if (this.canPerformAction('confirm_sync')) actions.push('confirm_sync');
-    return actions;
+  isApproaching(): boolean {
+    return this.record?.deadline_info?.warning_type === 'approaching';
+  }
+
+  getWarningLabel(): string {
+    return this.record?.deadline_info?.label || '';
+  }
+
+  getWarningColor(): string {
+    return this.WARNING_COLORS[this.record?.deadline_info?.warning_type || 'normal'];
   }
 
   openActionDialog(action: ProcessAction): void {
@@ -135,7 +153,10 @@ export class RecordDetailComponent implements OnInit {
       },
       error: (err) => {
         this.processing = false;
-        alert(err.error?.error || '操作失败');
+        const errType = err.error?.error_type;
+        const errMsg = err.error?.error || '操作失败';
+        const errLabel = this.ERROR_TYPE_LABELS[errType] || '操作失败';
+        alert(`【${errLabel}】${errMsg}`);
         this.showActionDialog = false;
       },
     });

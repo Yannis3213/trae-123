@@ -59,15 +59,18 @@ func SeedDemoData(db *sql.DB) error {
 		DeadlineDays int
 		CreatedBy    string
 		ReturnReason string
+		Scenario     string
 	}{
-		{"CA1234", "王明", "110101199001011234", "12A", models.StatusDraft, models.RoleCheckinAgent, 1, 5, "zhiJiYuan", ""},
-		{"CA5678", "李红", "110101199202022345", "08C", models.StatusPendingReview, models.RoleBaggageSupervisor, 2, 4, "zhiJiYuan", ""},
-		{"CA9012", "赵强", "110101199303033456", "15F", models.StatusApproved, models.RoleStationManager, 3, 3, "zhiJiYuan", ""},
-		{"CA3456", "刘芳", "110101199404044567", "03A", models.StatusReturned, models.RoleCheckinAgent, 2, 2, "zhiJiYuan", "行李信息不完整，请补充"},
-		{"CA7890", "陈伟", "110101199505055678", "22D", models.StatusDraft, models.RoleCheckinAgent, 1, 0, "zhiJiYuan", ""},
-		{"CA2345", "孙丽", "110101199606066789", "07B", models.StatusPendingReview, models.RoleBaggageSupervisor, 2, 1, "zhiJiYuan", ""},
-		{"CA6789", "周杰", "110101199707077890", "18E", models.StatusDraft, models.RoleCheckinAgent, 1, 10, "zhiJiYuan", ""},
-		{"CA4321", "吴敏", "110101199808088901", "11A", models.StatusDraft, models.RoleCheckinAgent, 1, -1, "zhiJiYuan", ""},
+		{"CA1234", "王明", "110101199001011234", "12A", models.StatusDraft, models.RoleCheckinAgent, 1, 5, "zhiJiYuan", "", "场景1：正常流转 - 值机员可直接提交审核"},
+		{"CA5678", "李红", "110101199202022345", "08C", models.StatusPendingReview, models.RoleBaggageSupervisor, 2, 4, "zhiJiYuan", "", "场景2：缺材料 - 缺少行李托运证据，无法审核通过"},
+		{"CA9012", "赵强", "110101199303033456", "15F", models.StatusApproved, models.RoleStationManager, 3, 3, "zhiJiYuan", "", "场景3：已审核 - 站长可确认同步"},
+		{"CA3456", "刘芳", "110101199404044567", "03A", models.StatusReturned, models.RoleCheckinAgent, 2, 2, "zhiJiYuan", "行李信息不完整，请补全重量和件数", "场景4：退回补正 - 值机员需补正后重新提交"},
+		{"CA7890", "陈伟", "110101199505055678", "22D", models.StatusPendingReview, models.RoleBaggageSupervisor, 2, -2, "zhiJiYuan", "", "场景5：已逾期 - 截止时间已过，禁止处理"},
+		{"CA2345", "孙丽", "110101199606066789", "07B", models.StatusPendingReview, models.RoleBaggageSupervisor, 2, 1, "zhiJiYuan", "", "场景6：临期 - 距离截止时间不足24小时"},
+		{"CA6789", "周杰", "110101199707077890", "18E", models.StatusDraft, models.RoleCheckinAgent, 1, 10, "zhiJiYuan", "", "场景7：状态冲突 - 值机员草稿，行李主管不能处理"},
+		{"CA4321", "吴敏", "110101199808088901", "11A", models.StatusSynced, models.RoleStationManager, 4, 7, "zhiJiYuan", "", "场景8：已完成 - 已同步，无可用操作"},
+		{"CA5566", "郑浩", "110101198709099012", "19C", models.StatusPendingReview, models.RoleBaggageSupervisor, 3, -1, "zhiJiYuan", "", "场景9：版本冲突演示 - 版本v3"},
+		{"CA7788", "钱雪", "110101198810100123", "05D", models.StatusPendingReview, models.RoleBaggageSupervisor, 2, 2, "zhiJiYuan", "", "场景10：正常待审核 - 证据齐全可通过"},
 	}
 
 	recordIDs := make([]int64, len(records))
@@ -78,9 +81,9 @@ func SeedDemoData(db *sql.DB) error {
 		updatedAt := createdAt
 
 		result, err := db.Exec(
-			"INSERT INTO checkin_records (flight_no, passenger_name, passenger_id, seat_no, checkin_time, status, version, deadline, created_by, current_handler_role, return_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			"INSERT INTO checkin_records (flight_no, passenger_name, passenger_id, seat_no, checkin_time, status, version, deadline, created_by, current_handler_role, return_reason, scenario, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			r.FlightNo, r.Passenger, r.PassengerID, r.SeatNo, checkinTime,
-			r.Status, r.Version, deadline, userIDs[r.CreatedBy], r.HandlerRole, r.ReturnReason, createdAt, updatedAt,
+			r.Status, r.Version, deadline, userIDs[r.CreatedBy], r.HandlerRole, r.ReturnReason, r.Scenario, createdAt, updatedAt,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to seed record %s: %w", r.FlightNo, err)
@@ -94,12 +97,20 @@ func SeedDemoData(db *sql.DB) error {
 		FileName   string
 		UploadedBy string
 	}{
-		{1, models.AttachCheckinEvidence, "checkin_evidence_ca5678.jpg", "zhiJiYuan"},
-		{1, models.AttachBaggageEvidence, "baggage_evidence_ca5678.jpg", "xingLiZhuGuan"},
-		{2, models.AttachCheckinEvidence, "checkin_evidence_ca9012.jpg", "zhiJiYuan"},
-		{2, models.AttachBaggageEvidence, "baggage_evidence_ca9012.jpg", "xingLiZhuGuan"},
-		{2, models.AttachExceptionEvidence, "exception_evidence_ca9012.jpg", "xingLiZhuGuan"},
-		{5, models.AttachCheckinEvidence, "checkin_evidence_ca2345.jpg", "zhiJiYuan"},
+		{0, models.AttachCheckinEvidence, "checkin_ca1234_wangming.jpg", "zhiJiYuan"},
+		{1, models.AttachCheckinEvidence, "checkin_ca5678_lihong.jpg", "zhiJiYuan"},
+		{2, models.AttachCheckinEvidence, "checkin_ca9012_zhaoqiang.jpg", "zhiJiYuan"},
+		{2, models.AttachBaggageEvidence, "baggage_ca9012_zhaoqiang.jpg", "xingLiZhuGuan"},
+		{2, models.AttachExceptionEvidence, "exception_ca9012_zhaoqiang.jpg", "xingLiZhuGuan"},
+		{3, models.AttachCheckinEvidence, "checkin_ca3456_liufang.jpg", "zhiJiYuan"},
+		{4, models.AttachCheckinEvidence, "checkin_ca7890_chenwei.jpg", "zhiJiYuan"},
+		{4, models.AttachBaggageEvidence, "baggage_ca7890_chenwei.jpg", "xingLiZhuGuan"},
+		{5, models.AttachCheckinEvidence, "checkin_ca2345_sunli.jpg", "zhiJiYuan"},
+		{6, models.AttachCheckinEvidence, "checkin_ca6789_zhoujie.jpg", "zhiJiYuan"},
+		{8, models.AttachCheckinEvidence, "checkin_ca5566_zhenghao.jpg", "zhiJiYuan"},
+		{8, models.AttachBaggageEvidence, "baggage_ca5566_zhenghao.jpg", "xingLiZhuGuan"},
+		{9, models.AttachCheckinEvidence, "checkin_ca7788_qianxue.jpg", "zhiJiYuan"},
+		{9, models.AttachBaggageEvidence, "baggage_ca7788_qianxue.jpg", "xingLiZhuGuan"},
 	}
 
 	for _, a := range attachments {
@@ -125,8 +136,14 @@ func SeedDemoData(db *sql.DB) error {
 		{2, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
 		{2, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionApprove, "审核通过，行李信息完整"},
 		{3, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
-		{3, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionReturn, "行李信息不完整，请补充"},
+		{3, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionReturn, "行李信息不完整，请补全重量和件数"},
+		{4, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
 		{5, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
+		{7, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
+		{7, "xingLiZhuGuan", models.RoleBaggageSupervisor, models.ActionApprove, "审核通过"},
+		{7, "zhanDianJingLi", models.RoleStationManager, models.ActionConfirmSync, "确认同步完成"},
+		{8, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
+		{9, "zhiJiYuan", models.RoleCheckinAgent, models.ActionSubmit, "提交审核"},
 	}
 
 	for i, p := range processingRecords {
@@ -146,9 +163,12 @@ func SeedDemoData(db *sql.DB) error {
 		Handler   string
 		Note      string
 	}{
-		{1, "xingLiZhuGuan", "值机证据清晰，待审核行李信息"},
+		{1, "xingLiZhuGuan", "值机证据齐全，待审核行李信息"},
 		{2, "zhanDianJingLi", "所有证据齐全，可确认同步"},
-		{3, "xingLiZhuGuan", "请补充完整行李信息后重新提交"},
+		{3, "xingLiZhuGuan", "请补充完整行李重量和件数后重新提交"},
+		{4, "xingLiZhuGuan", "已逾期2天，需特殊审批方可处理"},
+		{5, "xingLiZhuGuan", "临期提醒：距离截止时间不足24小时"},
+		{8, "xingLiZhuGuan", "已同步到离港系统，流程结束"},
 	}
 
 	for _, n := range auditNotes {
@@ -169,7 +189,9 @@ func SeedDemoData(db *sql.DB) error {
 		CreatedBy   string
 	}{
 		{2, "late_checkin", "旅客延迟值机，已走特殊通道处理", "zhiJiYuan"},
-		{3, "missing_baggage", "旅客行李标签缺失，需要补打标签", "xingLiZhuGuan"},
+		{3, "missing_baggage_tag", "旅客行李标签缺失，需要补打标签", "xingLiZhuGuan"},
+		{4, "overdue_processing", "超过处理期限，需值班经理审批", "xingLiZhuGuan"},
+		{5, "approaching_deadline", "临近处理截止时间", "xingLiZhuGuan"},
 	}
 
 	for _, e := range exceptionReasons {

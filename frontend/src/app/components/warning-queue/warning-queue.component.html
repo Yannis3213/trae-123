@@ -37,6 +37,7 @@
             <th>状态</th>
             <th>当前处理角色</th>
             <th>截止时间</th>
+            <th>场景</th>
             <th>预警类型</th>
           </tr>
         </thead>
@@ -56,18 +57,35 @@
             </td>
             <td>{{ getRoleLabel(record.current_handler_role) }}</td>
             <td>
-              <span [style.color]="getDeadlineColor(record.deadline)" class="deadline-text">
-                {{ record.deadline | date:'yyyy-MM-dd HH:mm' }}
-              </span>
+              <div class="deadline-wrapper">
+                <span class="deadline-text" [style.color]="getDeadlineColor(record.deadline)">
+                  {{ record.deadline | date:'yyyy-MM-dd HH:mm' }}
+                </span>
+                <span class="warning-mini" [style.background]="getWarningColor(record.warning_type)">
+                  {{ getWarningLabel(record.warning_type) }}
+                </span>
+              </div>
+            </td>
+            <td class="scenario-col">
+              <span class="scenario-text">{{ record.scenario }}</span>
             </td>
             <td>
-              <span class="warning-badge" [style.background]="getWarningColor(record.warning_type)">
-                {{ getWarningLabel(record.warning_type) }}
-              </span>
+              <div class="handler-notice">
+                <span class="handler-badge">{{ getRoleLabel(record.current_handler_role) }}</span>
+                <span class="handler-desc" *ngIf="auth.currentUserValue?.role === record.current_handler_role && record.warning_type === 'overdue'">
+                  ⚠ 您是责任人，已逾期
+                </span>
+                <span class="handler-desc" *ngIf="auth.currentUserValue?.role === record.current_handler_role && record.warning_type === 'approaching'">
+                  ⚡ 您是责任人，即将到期
+                </span>
+                <span class="handler-desc" *ngIf="auth.currentUserValue?.role !== record.current_handler_role">
+                  等待处理
+                </span>
+              </div>
             </td>
           </tr>
           <tr *ngIf="records.length === 0">
-            <td colspan="9" class="empty-row">暂无预警记录</td>
+            <td colspan="10" class="empty-row">暂无预警记录</td>
           </tr>
         </tbody>
       </table>
@@ -110,12 +128,26 @@
 </div>
 
 <div class="dialog-overlay" *ngIf="showBatchResultDialog" (click)="closeBatchResult()">
-  <div class="dialog-card" (click)="$event.stopPropagation()">
+  <div class="dialog-card dialog-wide" (click)="$event.stopPropagation()">
     <h3>批量处理结果</h3>
+    <div class="batch-result-stats">
+      <span class="stat-success">成功：{{ batchResults?.filter(r => r.success).length || 0 }} 条</span>
+      <span class="stat-fail">失败：{{ batchResults?.filter(r => !r.success).length || 0 }} 条</span>
+    </div>
     <div class="batch-results">
       <div *ngFor="let result of batchResults" class="batch-result-item" [class.success]="result.success" [class.fail]="!result.success">
-        <span class="result-id">记录 #{{ result.record_id }}</span>
-        <span class="result-msg">{{ result.message }}</span>
+        <div class="result-header">
+          <span class="result-id">{{ result.flight_no }} - {{ result.passenger_name }} (#{{ result.record_id }})</span>
+          <span class="result-badge" [class.success]="result.success" [class.fail]="!result.success">
+            {{ result.success ? '成功' : '失败' }}
+          </span>
+        </div>
+        <div *ngIf="!result.success" class="result-detail">
+          <span class="error-type-tag" [style.background]="ERROR_TYPE_COLORS[result.error_type] || '#95a5a6'">
+            {{ ERROR_TYPE_LABELS[result.error_type] || '未知错误' }}
+          </span>
+          <span class="result-msg">{{ result.message }}</span>
+        </div>
       </div>
     </div>
     <div class="dialog-actions">

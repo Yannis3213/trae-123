@@ -25,6 +25,7 @@ export interface CheckinRecord {
   created_by: number;
   current_handler_role: UserRole;
   return_reason: string;
+  scenario: string;
   created_at: string;
   updated_at: string;
 }
@@ -66,18 +67,36 @@ export interface ExceptionReason {
   created_at: string;
 }
 
+export interface DeadlineInfo {
+  warning_type: WarningType;
+  label: string;
+  hours_left: number;
+}
+
+export interface AvailableAction {
+  action: ProcessAction;
+  label: string;
+  enabled: boolean;
+  reason: string;
+}
+
 export interface RecordDetail extends CheckinRecord {
   attachments: Attachment[];
   processing_records: ProcessingRecord[];
   audit_notes: AuditNote[];
   exception_reasons: ExceptionReason[];
   creator_name: string;
+  available_actions: AvailableAction[];
+  deadline_info: DeadlineInfo;
 }
 
 export interface BatchProcessResult {
   record_id: number;
   success: boolean;
   message: string;
+  error_type: string;
+  flight_no: string;
+  passenger_name: string;
 }
 
 export interface Statistics {

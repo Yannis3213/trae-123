@@ -50,6 +50,7 @@ func migrate(db *sql.DB) error {
 			created_by INTEGER NOT NULL,
 			current_handler_role TEXT NOT NULL,
 			return_reason TEXT DEFAULT '',
+			scenario TEXT DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
@@ -96,6 +97,14 @@ func migrate(db *sql.DB) error {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("failed to execute migration: %w", err)
 		}
+	}
+
+	alterStmts := []string{
+		"ALTER TABLE checkin_records ADD COLUMN scenario TEXT DEFAULT ''",
+	}
+
+	for _, stmt := range alterStmts {
+		db.Exec(stmt)
 	}
 
 	return nil

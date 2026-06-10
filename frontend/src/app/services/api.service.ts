@@ -64,8 +64,8 @@ export class ApiService {
     return this.http.put<{ message: string; new_status: string }>(`/api/records/${id}/process`, { action, comment, version }, { headers: this.authHeaders() });
   }
 
-  batchProcess(recordIds: number[], action: ProcessAction, comment: string): Observable<{ results: BatchProcessResult[] }> {
-    return this.http.post<{ results: BatchProcessResult[] }>('/api/records/batch', { record_ids: recordIds, action, comment }, { headers: this.authHeaders() });
+  batchProcess(recordIds: number[], action: ProcessAction, comment: string, version: number = 0): Observable<{ results: BatchProcessResult[] }> {
+    return this.http.post<{ results: BatchProcessResult[] }>('/api/records/batch', { record_ids: recordIds, action, comment, version }, { headers: this.authHeaders() });
   }
 
   getStatistics(): Observable<Statistics> {
