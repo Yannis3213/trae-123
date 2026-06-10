@@ -117,16 +117,18 @@
 		</div>
 		<div class="result-list">
 			{#each advanceResults as r, i}
-				<div class="result-item {r.success ? 'success' : 'fail'}">
+				<div class="result-item {r.error_code === 'OVERDUE_CHECK_PASS' ? 'checked' : (r.success ? 'success' : 'fail')}">
 					<div class="result-header">
 						<span class="result-index">#{i + 1}</span>
 						<span class="result-order">{r.order_no}</span>
-						<span class="badge small" style="background:{r.success ? '#4caf50' : '#f44336'}">{r.success ? '成功' : '失败'}</span>
+						<span class="badge small" style="background:{r.error_code === 'OVERDUE_CHECK_PASS' ? '#2196f3' : (r.success ? '#4caf50' : '#f44336')}">
+							{#if r.error_code === 'OVERDUE_CHECK_PASS'}检查通过{:else if r.success}成功{:else}失败{/if}
+						</span>
 						{#if r.error_code}
-							<span class="badge small error-code" style="background:#ff9800">{r.error_code}</span>
+							<span class="badge small error-code" style="background:{r.error_code === 'OVERDUE_CHECK_PASS' ? '#1976d2' : (r.success ? '#388e3c' : '#e65100')}">{r.error_code}</span>
 						{/if}
 					</div>
-					{#if !r.success && r.reason}
+					{#if r.reason}
 						<div class="result-reason">{r.reason}</div>
 					{/if}
 				</div>
@@ -516,6 +518,10 @@
 	.result-item.success {
 		background: #f1f8e9;
 		border-left: 4px solid #4caf50;
+	}
+	.result-item.checked {
+		background: #e3f2fd;
+		border-left: 4px solid #2196f3;
 	}
 	.result-item.fail {
 		background: #fff8f8;

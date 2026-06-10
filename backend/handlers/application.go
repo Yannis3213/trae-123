@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -73,12 +74,7 @@ type ActionResponse struct {
 	OrderNo string
 }
 
-func insertAuditNote(tx interface {
-	Exec(string, ...interface{}) (interface {
-		LastInsertId() (int64, error)
-		RowsAffected() (int64, error)
-	}, error)
-}, appID, userID int64, content, now string) error {
+func insertAuditNote(tx *sql.Tx, appID, userID int64, content, now string) error {
 	_, err := tx.Exec(
 		"INSERT INTO audit_notes (application_id, operator_id, content, created_at) VALUES (?, ?, ?, ?)",
 		appID, userID, content, now,
@@ -86,7 +82,7 @@ func insertAuditNote(tx interface {
 	return err
 }
 
-func verifyRowsAffected(res interface{ RowsAffected() (int64, error) }) bool {
+func verifyRowsAffected(res sql.Result) bool {
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return false

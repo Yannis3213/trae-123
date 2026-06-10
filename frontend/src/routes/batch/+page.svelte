@@ -141,10 +141,10 @@
 						<span class="result-order">{r.order_no}</span>
 						<span class="badge small" style="background:{r.success ? '#4caf50' : '#f44336'}">{r.success ? '成功' : '失败'}</span>
 						{#if r.error_code}
-							<span class="badge small error-code" style="background:#ff9800">{r.error_code}</span>
+							<span class="badge small error-code" style="background:{r.success ? '#388e3c' : '#ff9800'}">{r.error_code}</span>
 						{/if}
 					</div>
-					{#if !r.success && r.reason}
+					{#if r.reason}
 						<div class="result-reason">{r.reason}</div>
 					{/if}
 				</div>
