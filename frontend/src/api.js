@@ -80,6 +80,14 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  getBatches: (params = {}) => {
+    const searchParams = new URLSearchParams(params);
+    return request(`/api/applications/batch/list?${searchParams.toString()}`);
+  },
+
+  getBatchDetail: (batchNo) =>
+    request(`/api/applications/batch/${encodeURIComponent(batchNo)}`),
+
   getWarningStats: () => request('/api/applications/stats/warning'),
 
   getAuditLogs: (id) => request(`/api/applications/${id}/audit-logs`),

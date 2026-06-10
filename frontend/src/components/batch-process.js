@@ -11,10 +11,19 @@ class BatchProcess extends LitElement {
     showResult: { type: Boolean },
     batchResults: { type: Array },
     batchSummary: { type: Object },
+    currentBatchNo: { type: String },
     loading: { type: Boolean },
     processing: { type: Boolean },
     error: { type: String },
     currentUser: { type: Object },
+    activeTab: { type: String },
+    batches: { type: Array },
+    batchesTotal: { type: Number },
+    batchesPage: { type: Number },
+    batchesLoading: { type: Boolean },
+    selectedBatchNo: { type: String },
+    selectedBatchDetail: { type: Object },
+    batchDetailLoading: { type: Boolean },
   };
 
   static styles = css`
@@ -29,7 +38,33 @@ class BatchProcess extends LitElement {
     .page-title {
       font-size: 20px;
       font-weight: 600;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
+    }
+
+    .tab-bar {
+      display: flex;
+      border-bottom: 2px solid #f0f0f0;
+      margin-bottom: 16px;
+    }
+
+    .tab-item {
+      padding: 10px 20px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: #595959;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: all 0.2s;
+    }
+
+    .tab-item:hover {
+      color: #1890ff;
+    }
+
+    .tab-item.active {
+      color: #1890ff;
+      border-bottom-color: #1890ff;
     }
 
     .action-selector {
@@ -398,10 +433,19 @@ class BatchProcess extends LitElement {
     this.showResult = false;
     this.batchResults = [];
     this.batchSummary = {};
+    this.currentBatchNo = '';
     this.loading = false;
     this.processing = false;
     this.error = '';
     this.currentUser = null;
+    this.activeTab = 'process';
+    this.batches = [];
+    this.batchesTotal = 0;
+    this.batchesPage = 1;
+    this.batchesLoading = false;
+    this.selectedBatchNo = '';
+    this.selectedBatchDetail = null;
+    this.batchDetailLoading = false;
   }
 
   firstUpdated() {
@@ -414,13 +458,19 @@ class BatchProcess extends LitElement {
       this.selectedIds = [];
       this.batchAction = '';
       this.showResult = false;
+      this.selectedBatchDetail = null;
+      this.selectedBatchNo = '';
       this._loadApplications();
+      if (this.activeTab === 'history') this._loadBatches();
     });
     window.addEventListener('refresh-data', () => {
       this.selectedIds = [];
       this.batchAction = '';
       this.showResult = false;
+      this.selectedBatchDetail = null;
+      this.selectedBatchNo = '';
       this._loadApplications();
+      if (this.activeTab === 'history') this._loadBatches();
     });
     this._loadApplications();
   }
@@ -559,7 +609,9 @@ class BatchProcess extends LitElement {
 
       const result = await api.batchProcess(data);
       this.batchResults = result.results;
+      this.currentBatchNo = result.batchNo || '';
       this.batchSummary = {
+        batchNo: result.batchNo || '',
         total: result.total,
         successCount: result.successCount,
         failCount: result.failCount,
@@ -569,6 +621,57 @@ class BatchProcess extends LitElement {
       this.error = err.message;
     } finally {
       this.processing = false;
+    }
+  }
+
+  _switchTab(tab) {
+    this.activeTab = tab;
+    this.selectedBatchDetail = null;
+    this.selectedBatchNo = '';
+    if (tab === 'history') {
+      this._loadBatches();
+    } else {
+      this._loadApplications();
+    }
+  }
+
+  async _loadBatches() {
+    this.batchesLoading = true;
+    try {
+      const data = await api.getBatches({ page: this.batchesPage, pageSize: 20 });
+      this.batches = data.list || [];
+      this.batchesTotal = data.total || 0;
+    } catch (err) {
+      this.error = err.message;
+    } finally {
+      this.batchesLoading = false;
+    }
+  }
+
+  async _viewBatchDetail(batchNo) {
+    this.selectedBatchNo = batchNo;
+    this.batchDetailLoading = true;
+    this.selectedBatchDetail = null;
+    try {
+      const data = await api.getBatchDetail(batchNo);
+      this.selectedBatchDetail = data;
+    } catch (err) {
+      this.error = err.message;
+    } finally {
+      this.batchDetailLoading = false;
+    }
+  }
+
+  _backToBatchList() {
+    this.selectedBatchNo = '';
+    this.selectedBatchDetail = null;
+    this._loadBatches();
+  }
+
+  _viewCurrentBatchDetail() {
+    if (this.currentBatchNo) {
+      this.activeTab = 'history';
+      this._viewBatchDetail(this.currentBatchNo);
     }
   }
 
@@ -622,59 +725,86 @@ class BatchProcess extends LitElement {
       <div class="page-container">
         <div class="page-title">批量处理</div>
 
-        ${this.showResult
+        <div class="tab-bar">
+          <div class="tab-item ${this.activeTab === 'process' ? 'active' : ''}" @click=${() => this._switchTab('process')}>
+            办理任务
+          </div>
+          <div class="tab-item ${this.activeTab === 'history' ? 'active' : ''}" @click=${() => this._switchTab('history')}>
+            最近批次
+          </div>
+        </div>
+
+        ${this.error
+          ? html`<div style="background: #fff2f0; border: 1px solid #ffccc7; color: #f5222d; padding: 8px 12px; border-radius: 4px; margin-bottom: 12px;">${this.error}</div>`
+          : ''}
+
+        ${this.activeTab === 'process'
           ? html`
-              <div class="batch-result">
-                <div class="result-header">
-                  <div class="result-title">批量处理结果</div>
-                  <button class="btn-default" @click=${this._resetBatch}>返回继续处理</button>
-                </div>
-
-                <div class="result-summary">
-                  <div class="summary-item">
-                    <div class="summary-label">总计</div>
-                    <div class="summary-value total">${this.batchSummary.total}</div>
-                  </div>
-                  <div class="summary-item">
-                    <div class="summary-label">成功</div>
-                    <div class="summary-value success">${this.batchSummary.successCount}</div>
-                  </div>
-                  <div class="summary-item">
-                    <div class="summary-label">失败</div>
-                    <div class="summary-value fail">${this.batchSummary.failCount}</div>
-                  </div>
-                </div>
-
-                <div class="result-list">
-                  ${this.batchResults.map(
-                    (item) => html`
-                      <div class="result-item ${item.success ? 'success' : 'fail'}">
-                        <div class="result-item-info">
-                          <div class="result-item-app">
-                            ${item.applicationNo || this.applications.find((a) => a.id === item.id)?.applicationNo || item.id}
-                            ${item.nodeName
-                              ? html`<span style="font-size: 11px; color: #8c8c8c; margin-left: 6px; font-weight: normal;">[${item.nodeName}]</span>`
-                              : ''}
-                          </div>
-                          <div class="result-item-status">
-                            ${item.previousStatus || item.status}
-                            ${item.success && item.newStatus && item.newStatus !== (item.previousStatus || item.status)
-                              ? html` → ${item.newStatus}`
-                              : ''}
-                            ${!item.success && item.newStatus && item.newStatus === (item.previousStatus || item.status)
-                              ? html`（状态未变更）`
-                              : ''}
-                          </div>
+              ${this.showResult
+                ? html`
+                    <div class="batch-result">
+                      <div class="result-header">
+                        <div class="result-title">
+                          批量处理结果
+                          ${this.batchSummary.batchNo
+                            ? html`<span style="font-size: 12px; color: #8c8c8c; font-weight: normal; margin-left: 10px;">批次号: ${this.batchSummary.batchNo}</span>`
+                            : ''}
                         </div>
-                        ${item.handlerId
-                          ? html`<div style="font-size: 12px; color: #595959; margin-bottom: 4px;">派发处理人: ${this._getHandlerName(item.handlerId)}</div>`
-                          : ''}
-                        <div class="result-item-reason">${item.reason}</div>
+                        <div style="display: flex; gap: 8px;">
+                          ${this.currentBatchNo
+                            ? html`<button class="btn-default" @click=${this._viewCurrentBatchDetail}>查看批次详情 →</button>`
+                            : ''}
+                          <button class="btn-default" @click=${this._resetBatch}>返回继续处理</button>
+                        </div>
                       </div>
-                    `
-                  )}
-                </div>
-              </div>
+
+                      <div class="result-summary">
+                        <div class="summary-item">
+                          <div class="summary-label">总计</div>
+                          <div class="summary-value total">${this.batchSummary.total}</div>
+                        </div>
+                        <div class="summary-item">
+                          <div class="summary-label">成功</div>
+                          <div class="summary-value success">${this.batchSummary.successCount}</div>
+                        </div>
+                        <div class="summary-item">
+                          <div class="summary-label">失败</div>
+                          <div class="summary-value fail">${this.batchSummary.failCount}</div>
+                        </div>
+                      </div>
+
+                      <div class="result-list">
+                        ${this.batchResults.map(
+                          (item) => html`
+                            <div class="result-item ${item.success ? 'success' : 'fail'}">
+                              <div class="result-item-info">
+                                <div class="result-item-app">
+                                  ${item.applicationNo || this.applications.find((a) => a.id === item.id)?.applicationNo || item.id}
+                                  ${item.nodeName
+                                    ? html`<span style="font-size: 11px; color: #8c8c8c; margin-left: 6px; font-weight: normal;">[${item.nodeName}]</span>`
+                                    : ''}
+                                </div>
+                                <div class="result-item-status">
+                                  ${item.previousStatus || item.status}
+                                  ${item.success && item.newStatus && item.newStatus !== (item.previousStatus || item.status)
+                                    ? html` → ${item.newStatus}`
+                                    : ''}
+                                  ${!item.success && item.newStatus && item.newStatus === (item.previousStatus || item.status)
+                                    ? html`（状态未变更）`
+                                    : ''}
+                                </div>
+                              </div>
+                              ${item.handlerId
+                                ? html`<div style="font-size: 12px; color: #595959; margin-bottom: 4px;">派发处理人: ${this._getHandlerName(item.handlerId)}</div>`
+                                : ''}
+                              <div class="result-item-reason">${item.reason}</div>
+                            </div>
+                          `
+                        )}
+                      </div>
+                    </div>
+                  `
+                : ''}
             `
           : html`
               <div class="action-selector">
@@ -886,6 +1016,146 @@ class BatchProcess extends LitElement {
                       请先选择批量操作类型
                     </div>
                   `}
+            `}
+          : html`
+              ${this.selectedBatchDetail
+                ? this._renderBatchHistoryDetail()
+                : this._renderBatchHistoryList()}
+            `}
+      </div>
+    `;
+  }
+
+  _renderBatchHistoryList() {
+    return html`
+      <div class="action-selector">
+        <div class="selector-title">最近批次列表</div>
+        ${this.batchesLoading
+          ? html`<div class="loading">加载中...</div>`
+          : html`
+              ${this.batches.length === 0
+                ? html`<div style="text-align: center; padding: 40px; color: #8c8c8c;">暂无批次记录</div>`
+                : html`
+                    <table style="width: 100%;">
+                      <thead>
+                        <tr style="background: #fafafa;">
+                          <th style="text-align: left; padding: 10px 12px;">批次号</th>
+                          <th style="text-align: left; padding: 10px 12px;">操作类型</th>
+                          <th style="text-align: left; padding: 10px 12px;">操作人</th>
+                          <th style="text-align: left; padding: 10px 12px;">开始时间</th>
+                          <th style="text-align: center; padding: 10px 12px;">总计</th>
+                          <th style="text-align: center; padding: 10px 12px;">成功</th>
+                          <th style="text-align: center; padding: 10px 12px;">失败</th>
+                          <th style="text-align: center; padding: 10px 12px;">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${this.batches.map(
+                          (b) => html`
+                            <tr style="border-bottom: 1px solid #f0f0f0;">
+                              <td style="padding: 10px 12px; font-family: monospace; font-size: 12px;">${b.batchNo}</td>
+                              <td style="padding: 10px 12px;">${b.actionLabel}</td>
+                              <td style="padding: 10px 12px;">${b.operator}</td>
+                              <td style="padding: 10px 12px; font-size: 12px; color: #595959;">${b.startedAt}</td>
+                              <td style="padding: 10px 12px; text-align: center;">${b.itemCount}</td>
+                              <td style="padding: 10px 12px; text-align: center; color: #52c41a; font-weight: 500;">${b.successCount}</td>
+                              <td style="padding: 10px 12px; text-align: center; color: #f5222d; font-weight: 500;">${b.failCount}</td>
+                              <td style="padding: 10px 12px; text-align: center;">
+                                <button class="btn-default btn-sm" @click=${() => this._viewBatchDetail(b.batchNo)}>
+                                  查看详情
+                                </button>
+                              </td>
+                            </tr>
+                          `
+                        )}
+                      </tbody>
+                    </table>
+                  `}
+              <div style="margin-top: 12px; font-size: 12px; color: #8c8c8c;">
+                共 ${this.batchesTotal} 条批次，按角色可见范围展示
+                ${this.batches.length > 0 ? html` · 数据时间: ${this.batches[0].dataTimestamp}` : ''}
+              </div>
+            `}
+      </div>
+    `;
+  }
+
+  _renderBatchHistoryDetail() {
+    const d = this.selectedBatchDetail;
+    return html`
+      <div>
+        <div class="result-header" style="border-radius: 8px; background: white; padding: 16px 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.06); margin-bottom: 16px;">
+          <div>
+            <div style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">
+              批次详情
+              <span style="font-size: 12px; color: #8c8c8c; font-weight: normal; margin-left: 10px; font-family: monospace;">
+                ${d.batchNo}
+              </span>
+            </div>
+            <div style="font-size: 12px; color: #8c8c8c;">数据时间: ${d.dataTimestamp}</div>
+          </div>
+          <button class="btn-default" @click=${this._backToBatchList}>← 返回批次列表</button>
+        </div>
+
+        <div class="result-summary" style="margin-bottom: 16px;">
+          <div class="summary-item">
+            <div class="summary-label">总计</div>
+            <div class="summary-value total">${d.total}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">成功</div>
+            <div class="summary-value success">${d.successCount}</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-label">失败</div>
+            <div class="summary-value fail">${d.failCount}</div>
+          </div>
+        </div>
+
+        ${this.batchDetailLoading
+          ? html`<div class="loading">加载中...</div>`
+          : html`
+              <div class="result-list">
+                ${d.items.map(
+                  (item) => html`
+                    <div class="result-item ${item.success ? 'success' : 'fail'}">
+                      <div class="result-item-info">
+                        <div class="result-item-app">
+                          ${item.applicationNo}
+                          ${item.nodeName
+                            ? html`<span style="font-size: 11px; color: #8c8c8c; margin-left: 6px; font-weight: normal;">[${item.nodeName}]</span>`
+                            : ''}
+                          ${item.applicantName
+                            ? html`<span style="font-size: 11px; color: #595959; margin-left: 6px; font-weight: normal;">${item.applicantName}</span>`
+                            : ''}
+                        </div>
+                        <div class="result-item-status">
+                          ${item.previousStatus}
+                          ${item.success && item.newStatus && item.newStatus !== item.previousStatus
+                            ? html` → ${item.newStatus}`
+                            : ''}
+                          ${!item.success
+                            ? html`（未变更，当前: ${item.currentStatus || item.previousStatus}）`
+                            : ''}
+                        </div>
+                      </div>
+                      <div style="font-size: 12px; color: #595959; margin-bottom: 4px;">
+                        操作人: ${item.operator}
+                        ${item.currentHandler ? html` · 当前处理人: ${item.currentHandler}` : ''}
+                        ${item.address ? html` · 地址: ${item.address}` : ''}
+                      </div>
+                      <div style="font-size: 12px; color: #8c8c8c; margin-bottom: 4px;">
+                        处理时间: ${item.createdAt}
+                        ${item.exceptionType ? html` · 异常分类: ${item.exceptionType}` : ''}
+                      </div>
+                      <div class="result-item-reason">${item.reason || (item.success ? '操作成功' : '-')}</div>
+                      ${item.prRemark && item.prRemark !== '处理失败'
+                        ? html`<div style="font-size: 12px; color: #8c8c8c; margin-top: 4px;">备注: ${item.prRemark}</div>`
+                        : ''}
+                    </div>
+                  `
+                )}
+              </div>
             `}
       </div>
     `;

@@ -96,6 +96,14 @@ func main() {
 			batchProcessApplications(db, w, r)
 		})
 
+		r.Get("/batch/list", func(w http.ResponseWriter, r *http.Request) {
+			listBatches(db, w, r)
+		})
+
+		r.Get("/batch/{batchNo}", func(w http.ResponseWriter, r *http.Request) {
+			getBatchDetail(db, w, r)
+		})
+
 		r.Get("/export/csv", func(w http.ResponseWriter, r *http.Request) {
 			exportApplicationsCSV(db, w, r)
 		})
@@ -1468,6 +1476,289 @@ func addRemark(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"message": "备注添加成功",
+	})
+}
+
+func buildBatchScopeWhere(user *auth.User) (string, []interface{}) {
+	switch user.Role {
+	case "business_manager":
+		return "", []interface{}{}
+	case "meter_supervisor":
+		return `(a.created_by = ? OR a.current_handler = ? OR a.status = '待派发' OR br.operator = ?)`, []interface{}{user.ID, user.ID, user.ID}
+	case "window_staff":
+		return `(a.created_by = ? OR br.operator = ?)`, []interface{}{user.ID, user.ID}
+	default:
+		return "1=0", []interface{}{}
+	}
+}
+
+func listBatches(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	user := auth.GetCurrentUser(r)
+
+	page, pageSize := 1, 20
+	if v := r.URL.Query().Get("page"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if v := r.URL.Query().Get("pageSize"); v != "" {
+		if ps, err := strconv.Atoi(v); err == nil && ps > 0 {
+			pageSize = ps
+		}
+	}
+
+	scopeWhere, scopeArgs := buildBatchScopeWhere(user)
+	whereSQL := "1=1"
+	args := []interface{}{}
+	argIdx := 1
+
+	if scopeWhere != "" {
+		whereSQL = scopeWhere
+		for _, a := range scopeArgs {
+			args = append(args, a)
+		}
+	}
+
+	totalSQL := fmt.Sprintf(`
+		SELECT COUNT(DISTINCT br.batch_no)
+		FROM batch_results br
+		LEFT JOIN account_applications a ON a.id = br.application_id
+		WHERE %s
+	`, whereSQL)
+	var total int
+	if err := db.QueryRow(totalSQL, args...).Scan(&total); err != nil {
+		writeError(w, http.StatusInternalServerError, "查询批次总数失败")
+		return
+	}
+
+	listArgs := make([]interface{}, len(args))
+	copy(listArgs, args)
+	offset := (page - 1) * pageSize
+	listArgs = append(listArgs, pageSize, offset)
+
+	listSQL := fmt.Sprintf(`
+		SELECT 
+			br.batch_no,
+			br.action,
+			br.operator,
+			MIN(br.created_at) AS batch_started_at,
+			COUNT(CASE WHEN br.success = 1 THEN 1 END) AS success_count,
+			COUNT(CASE WHEN br.success = 0 THEN 1 END) AS fail_count,
+			COUNT(*) AS item_count
+		FROM batch_results br
+		LEFT JOIN account_applications a ON a.id = br.application_id
+		WHERE %s
+		GROUP BY br.batch_no, br.action, br.operator
+		ORDER BY batch_started_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereSQL, argIdx+len(scopeArgs), argIdx+len(scopeArgs)+1)
+
+	rows, err := db.Query(listSQL, listArgs...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "查询批次列表失败")
+		return
+	}
+	defer rows.Close()
+
+	var batches []map[string]interface{}
+	for rows.Next() {
+		var batchNo, action, operatorID string
+		var startedAt time.Time
+		var successCount, failCount, itemCount int
+		if err := rows.Scan(&batchNo, &action, &operatorID, &startedAt,
+			&successCount, &failCount, &itemCount); err != nil {
+			continue
+		}
+
+		actionLabel := ""
+		switch action {
+		case "batch_dispatch":
+			actionLabel = "批量派发"
+		case "batch_close":
+			actionLabel = "批量关闭"
+		case "batch_overdue_advance":
+			actionLabel = "逾期批量推进"
+		default:
+			actionLabel = action
+		}
+
+		batches = append(batches, map[string]interface{}{
+			"batchNo":       batchNo,
+			"action":        action,
+			"actionLabel":   actionLabel,
+			"operator":      getUserNameByID(db, operatorID),
+			"operatorId":    operatorID,
+			"startedAt":     startedAt.Format("2006-01-02 15:04:05"),
+			"successCount":  successCount,
+			"failCount":     failCount,
+			"itemCount":     itemCount,
+			"dataTimestamp": time.Now().Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+		"list":     batches,
+	})
+}
+
+func getBatchDetail(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	user := auth.GetCurrentUser(r)
+	batchNo := chi.URLParam(r, "batchNo")
+
+	if batchNo == "" {
+		writeError(w, http.StatusBadRequest, "批次号不能为空")
+		return
+	}
+
+	scopeWhere, scopeArgs := buildBatchScopeWhere(user)
+	whereParts := []string{"br.batch_no = ?"}
+	args := []interface{}{batchNo}
+	for _, a := range scopeArgs {
+		args = append(args, a)
+	}
+	if scopeWhere != "" {
+		whereParts = append(whereParts, scopeWhere)
+	}
+	whereSQL := strings.Join(whereParts, " AND ")
+
+	var ownerCheck int
+	checkSQL := fmt.Sprintf(`
+		SELECT COUNT(*) FROM batch_results br
+		LEFT JOIN account_applications a ON a.id = br.application_id
+		WHERE %s LIMIT 1
+	`, whereSQL)
+	if err := db.QueryRow(checkSQL, args...).Scan(&ownerCheck); err != nil || ownerCheck == 0 {
+		writeError(w, http.StatusForbidden, "无权查看该批次详情")
+		return
+	}
+
+	detailSQL := fmt.Sprintf(`
+		SELECT 
+			br.id, br.batch_no, br.action, br.operator, br.application_id, br.application_no,
+			br.success, br.previous_status, br.new_status, br.reason, br.created_at,
+			a.status AS current_status, a.applicant_name, a.address, a.current_handler,
+			pr.node_name, pr.remark AS pr_remark, pr.exception_reason AS pr_exception,
+			er.reason_type AS er_type, er.description AS er_desc
+		FROM batch_results br
+		LEFT JOIN account_applications a ON a.id = br.application_id
+		LEFT JOIN (
+			SELECT application_id, node_name, remark, exception_reason, created_at,
+			       ROW_NUMBER() OVER(PARTITION BY application_id ORDER BY created_at DESC) AS rn
+			FROM processing_records
+		) pr ON pr.application_id = br.application_id AND pr.rn = 1
+		LEFT JOIN (
+			SELECT application_id, reason_type, description, created_at,
+			       ROW_NUMBER() OVER(PARTITION BY application_id ORDER BY created_at DESC) AS rn
+			FROM exception_reasons
+		) er ON er.application_id = br.application_id AND er.rn = 1
+		WHERE br.batch_no = ?
+		ORDER BY br.created_at ASC
+	`)
+	rows, err := db.Query(detailSQL, batchNo)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "查询批次详情失败")
+		return
+	}
+	defer rows.Close()
+
+	var items []map[string]interface{}
+	for rows.Next() {
+		var id, bNo, action, operatorID, appID, appNo string
+		var success int
+		var prevStatus, newStatus, reason sql.NullString
+		var createdAt time.Time
+		var curStatus, applicant, address, curHandler sql.NullString
+		var nodeName, prRemark, prException, erType, erDesc sql.NullString
+
+		if err := rows.Scan(&id, &bNo, &action, &operatorID, &appID, &appNo, &success,
+			&prevStatus, &newStatus, &reason, &createdAt,
+			&curStatus, &applicant, &address, &curHandler,
+			&nodeName, &prRemark, &prException, &erType, &erDesc); err != nil {
+			continue
+		}
+
+		consistentReason := reason.String
+		if consistentReason == "" && prException.Valid && prException.String != "" {
+			consistentReason = prException.String
+		}
+		if consistentReason == "" && erDesc.Valid {
+			consistentReason = erDesc.String
+		}
+
+		actionLabel := ""
+		switch action {
+		case "batch_dispatch":
+			actionLabel = "批量派发"
+		case "batch_close":
+			actionLabel = "批量关闭"
+		case "batch_overdue_advance":
+			actionLabel = "逾期批量推进"
+		default:
+			actionLabel = action
+		}
+
+		handlerName := ""
+		if curHandler.Valid && curHandler.String != "" {
+			handlerName = getUserNameByID(db, curHandler.String)
+		}
+
+		finalNode := nodeName.String
+		if finalNode == "" {
+			switch action {
+			case "batch_dispatch":
+				finalNode = "资料审核"
+			case "batch_close":
+				finalNode = "营业经理复核"
+			case "batch_overdue_advance":
+				finalNode = "装表派工"
+			}
+		}
+
+		items = append(items, map[string]interface{}{
+			"id":               id,
+			"batchNo":          bNo,
+			"action":           action,
+			"actionLabel":      actionLabel,
+			"applicationId":    appID,
+			"applicationNo":    appNo,
+			"applicantName":    applicant.String,
+			"address":          address.String,
+			"success":          success == 1,
+			"previousStatus":   prevStatus.String,
+			"newStatus":        newStatus.String,
+			"currentStatus":    curStatus.String,
+			"reason":           consistentReason,
+			"nodeName":         finalNode,
+			"operator":         getUserNameByID(db, operatorID),
+			"operatorId":       operatorID,
+			"currentHandler":   handlerName,
+			"currentHandlerId": curHandler.String,
+			"exceptionType":    erType.String,
+			"prRemark":         prRemark.String,
+			"createdAt":        createdAt.Format("2006-01-02 15:04:05"),
+			"dataTimestamp":    time.Now().Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	totalSuccess, totalFail := 0, 0
+	for _, it := range items {
+		if it["success"].(bool) {
+			totalSuccess++
+		} else {
+			totalFail++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"batchNo":       batchNo,
+		"total":         len(items),
+		"successCount":  totalSuccess,
+		"failCount":     totalFail,
+		"items":         items,
+		"dataTimestamp": time.Now().Format("2006-01-02 15:04:05"),
 	})
 }
 
