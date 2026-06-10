@@ -4,7 +4,7 @@ import { useAuth } from '../stores/authStore'
 import {
   StatusNames, StatusColors, SourceModuleNames,
   PriorityNames, PriorityColors, Action, ActionNames,
-  RoleAllowedActions, OrderStatus,
+  RoleAllowedActions, OrderStatus, ErrorCodeLabels, ErrorCodeColors,
 } from '../utils/constants'
 
 const OrderList = (props) => {
@@ -143,7 +143,14 @@ const OrderList = (props) => {
                   <span>
                     {item.success ? '✅ ' : '❌ '}
                     {item.message}
-                    {item.error_code ? <code style="margin-left:6px;">[{item.error_code}]</code> : ''}
+                    <Show when={item.error_code}>
+                      <span
+                        class="badge"
+                        style={`margin-left:6px;background:${ErrorCodeColors[item.error_code] || '#6b7280'};color:#fff;font-size:11px;`}
+                      >
+                        {ErrorCodeLabels[item.error_code] || item.error_code}
+                      </span>
+                    </Show>
                   </span>
                 </div>
               )}

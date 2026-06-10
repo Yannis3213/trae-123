@@ -396,12 +396,18 @@ async def process_action(request: Request):
                     conn, order_id, "review",
                     f"复核通过/归档：{data.opinion or '无意见'}",
                     user["name"], user["role"],
+                    submitted_version=data.version,
+                    intercept_type=None,
+                    order_status=to_status.value if to_status else order["status"],
                 )
             elif action == Action.REVIEW_REJECT:
                 add_audit_note(
                     conn, order_id, "review",
                     f"复核驳回，退回补正：{data.opinion or '无意见'}",
                     user["name"], user["role"],
+                    submitted_version=data.version,
+                    intercept_type=None,
+                    order_status=to_status.value if to_status else order["status"],
                 )
             elif action == Action.RETURN_FOR_CORRECTION:
                 detect_field_exceptions(conn, order_id, order, user)
@@ -409,12 +415,18 @@ async def process_action(request: Request):
                     conn, order_id, "review",
                     f"退回补正：{data.opinion or '缺项或不合规'}",
                     user["name"], user["role"],
+                    submitted_version=data.version,
+                    intercept_type=None,
+                    order_status=to_status.value if to_status else order["status"],
                 )
             else:
                 add_audit_note(
                     conn, order_id, "action",
                     f"执行[{ACTION_NAMES.get(action, action)}]：{data.opinion or '无意见'}",
                     user["name"], user["role"],
+                    submitted_version=data.version,
+                    intercept_type=None,
+                    order_status=to_status.value if to_status else order["status"],
                 )
 
             row = conn.execute("SELECT * FROM repair_orders WHERE id = ?", (order_id,)).fetchone()
@@ -424,6 +436,17 @@ async def process_action(request: Request):
                 conn, order_id, "intercept",
                 f"操作拦截[{ACTION_NAMES.get(action, action)}]：{e.message}",
                 user["name"], user["role"],
+                submitted_version=data.version,
+                intercept_type=e.code,
+                order_status=order["status"],
+            )
+            add_processing_record(
+                conn, order_id, action,
+                order["status"], order["status"],
+                user["name"], user["role"],
+                f"拦截：{e.message}",
+                count_attachments(conn, order_id), order["version"],
+                intercept_type=e.code,
             )
             return JSONResponse(
                 {"detail": e.message, "error_code": e.code, "order_no": order_no},
@@ -453,29 +476,44 @@ async def upload_attachment(request: Request):
             return JSONResponse({"detail": "工单不存在"}, status_code=404)
         order = dict(row)
         order_no = order["order_no"]
+        current_version = order["version"]
+        sv = submitted_version or current_version
 
         try:
             if order["status"] == OrderStatus.ARCHIVED:
                 raise ValidationError(
-                    ExceptionCode.STATUS_CONFLICT,
+                    ExceptionCode.ATTACHMENT_BLOCKED,
                     "工单已归档，不可再上传附件",
                 )
 
-            validate_handler(user, order)
+            validate_role_action(user, Action.UPLOAD_ATTACHMENT)
+            validate_duplicate_submit(conn, order_id, Action.UPLOAD_ATTACHMENT, sv, window_seconds=3)
 
             if submitted_version is not None:
-                validate_version(order["version"], submitted_version)
+                validate_version(current_version, submitted_version)
 
-            validate_duplicate_submit(conn, order_id, Action.CREATE, submitted_version or order["version"], window_seconds=3)
+            validate_handler(user, order)
 
         except ValidationError as e:
+            intercept_type = e.code
             add_audit_note(
                 conn, order_id, "intercept",
                 f"附件上传拦截：{e.message}",
                 user["name"], user["role"],
+                submitted_version=sv,
+                intercept_type=intercept_type,
+                order_status=order["status"],
+            )
+            add_processing_record(
+                conn, order_id, Action.UPLOAD_ATTACHMENT,
+                order["status"], order["status"],
+                user["name"], user["role"],
+                f"附件上传拦截：{e.message}",
+                count_attachments(conn, order_id), current_version,
+                intercept_type=intercept_type,
             )
             return JSONResponse(
-                {"detail": e.message, "error_code": e.code, "order_no": order_no},
+                {"detail": e.message, "error_code": e.code, "order_no": order_no, "current_version": current_version},
                 status_code=400,
             )
 
@@ -496,18 +534,31 @@ async def upload_attachment(request: Request):
             aid = add_attachment(
                 conn, order_id, f.filename or safe_name, file_path,
                 user["name"], user["role"],
-                submitted_version=submitted_version,
+                submitted_version=sv,
                 intercept_type=None,
             )
-            saved.append({"id": aid, "file_name": f.filename or safe_name, "submitted_version": submitted_version or order["version"]})
+            saved.append({"id": aid, "file_name": f.filename or safe_name, "submitted_version": sv})
+
+        new_ev_count = count_attachments(conn, order_id)
+
+        add_processing_record(
+            conn, order_id, Action.UPLOAD_ATTACHMENT,
+            order["status"], order["status"],
+            user["name"], user["role"],
+            f"上传附件 {len(saved)} 份",
+            new_ev_count, current_version,
+        )
 
         add_audit_note(
             conn, order_id, "evidence",
-            f"上传证据附件 {len(saved)} 份（v{submitted_version or order['version']}）：{', '.join([s['file_name'] for s in saved])}",
+            f"上传证据附件 {len(saved)} 份（v{sv}）：{', '.join([s['file_name'] for s in saved])}",
             user["name"], user["role"],
+            submitted_version=sv,
+            intercept_type=None,
+            order_status=order["status"],
         )
 
-    return JSONResponse({"attachments": saved, "version": submitted_version or order["version"], "message": f"成功上传 {len(saved)} 个附件"})
+    return JSONResponse({"attachments": saved, "version": sv, "current_version": current_version, "message": f"成功上传 {len(saved)} 个附件"})
 
 
 async def batch_process(request: Request):
@@ -545,6 +596,9 @@ async def batch_process(request: Request):
                     conn, order_id, "intercept",
                     f"批量操作拦截[{ACTION_NAMES.get(action, action)}]：缺少版本号参数，请刷新列表后重试",
                     user["name"], user["role"],
+                    submitted_version=None,
+                    intercept_type="version_conflict",
+                    order_status=order_info["status"],
                 )
                 results.append(BatchResultItem(
                     order_id=order_id, order_no=order_info["order_no"],
@@ -599,6 +653,9 @@ async def batch_process(request: Request):
                     conn, order_id, "action",
                     f"批量执行[{ACTION_NAMES.get(action, action)}]：{data.opinion or '无意见'}",
                     user["name"], user["role"],
+                    submitted_version=submitted_version,
+                    intercept_type=None,
+                    order_status=to_status.value if to_status else order["status"],
                 )
 
                 success_count += 1
@@ -615,6 +672,17 @@ async def batch_process(request: Request):
                     conn, order_id, "intercept",
                     f"批量操作拦截[{ACTION_NAMES.get(action, action)}][v{submitted_version}→v{order_info['version']}]：{e.message}",
                     user["name"], user["role"],
+                    submitted_version=submitted_version,
+                    intercept_type=e.code,
+                    order_status=order_info["status"],
+                )
+                add_processing_record(
+                    conn, order_id, action,
+                    order_info["status"], order_info["status"],
+                    user["name"], user["role"],
+                    f"批量拦截：{e.message}",
+                    count_attachments(conn, order_id), order_info["version"],
+                    intercept_type=e.code,
                 )
                 results.append(BatchResultItem(
                     order_id=order_id, order_no=order_info["order_no"],
@@ -627,6 +695,9 @@ async def batch_process(request: Request):
                     conn, order_id, "intercept",
                     f"批量操作未知错误[{ACTION_NAMES.get(action, action)}]：{str(e)}",
                     user["name"], user["role"],
+                    submitted_version=submitted_version,
+                    intercept_type="unknown",
+                    order_status=order_info.get("status"),
                 )
                 results.append(BatchResultItem(
                     order_id=order_id, order_no=order_info["order_no"],

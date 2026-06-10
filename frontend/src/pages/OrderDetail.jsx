@@ -5,6 +5,7 @@ import {
   StatusNames, StatusColors, SourceModuleNames,
   PriorityNames, PriorityColors, ActionNames, RoleNames,
   RoleAllowedActions, OrderStatus, Action, Role,
+  ErrorCodeLabels, ErrorCodeColors,
 } from '../utils/constants'
 
 const REQUIRED_EVIDENCE_ACTIONS = [Action.COMPLETE, Action.VISIT, Action.REVIEW_APPROVE, Action.ARCHIVE]
@@ -440,6 +441,11 @@ const OrderDetail = (props) => {
                         <Show when={r.evidence_provided > 0}>
                           <span class="badge" style="background:#0ea5e9;color:#fff;margin-left:4px;">证据{r.evidence_provided}份</span>
                         </Show>
+                        <Show when={r.intercept_type}>
+                          <span class="badge" style={`margin-left:4px;background:${ErrorCodeColors[r.intercept_type] || '#ef4444'};color:#fff;font-size:11px;`}>
+                            {ErrorCodeLabels[r.intercept_type] || r.intercept_type}
+                          </span>
+                        </Show>
                       </div>
                       <div class="timeline-meta">
                         {r.handler}（{RoleNames[r.handler_role] || r.handler_role}）· {r.created_at}
@@ -555,6 +561,17 @@ const OrderDetail = (props) => {
                           {auditNoteTypeLabel(a.note_type)}
                         </span>
                         <span style="margin-left:8px;">{a.operator || '系统'}（{RoleNames[a.operator_role] || a.operator_role || '—'}）</span>
+                        <Show when={a.submitted_version}>
+                          <span class="badge" style="margin-left:6px;background:#64748b;color:#fff;font-size:11px;">提交v{a.submitted_version}</span>
+                        </Show>
+                        <Show when={a.intercept_type}>
+                          <span class="badge" style={`margin-left:4px;background:${ErrorCodeColors[a.intercept_type] || '#ef4444'};color:#fff;font-size:11px;`}>
+                            {ErrorCodeLabels[a.intercept_type] || a.intercept_type}
+                          </span>
+                        </Show>
+                        <Show when={a.order_status}>
+                          <span style="margin-left:6px;font-size:11px;color:#94a3b8;">[{StatusNames[a.order_status] || a.order_status}]</span>
+                        </Show>
                       </div>
                       <div class="timeline-meta">{a.created_at}</div>
                       <div class="timeline-opinion">{a.content}</div>

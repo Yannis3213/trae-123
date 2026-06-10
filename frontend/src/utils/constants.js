@@ -87,6 +87,7 @@ export const Action = {
   REVIEW_REJECT: 'review_reject',
   ARCHIVE: 'archive',
   BATCH_PROCESS: 'batch_process',
+  UPLOAD_ATTACHMENT: 'upload_attachment',
 }
 
 export const ActionNames = {
@@ -102,6 +103,33 @@ export const ActionNames = {
   [Action.REVIEW_APPROVE]: '复核通过',
   [Action.REVIEW_REJECT]: '复核驳回',
   [Action.ARCHIVE]: '归档',
+  [Action.UPLOAD_ATTACHMENT]: '上传附件',
+}
+
+export const ErrorCodeLabels = {
+  duplicate_submit: '重复提交',
+  version_conflict: '版本冲突',
+  attachment_blocked: '附件拦截',
+  role_violation: '越权操作',
+  status_conflict: '状态冲突',
+  invalid_transition: '非法流转',
+  missing_evidence: '缺证据',
+  missing_owner_info: '缺业主信息',
+  missing_address: '缺地址',
+  missing_description: '缺描述',
+  overdue: '已超期',
+  not_found: '工单不存在',
+  unknown: '未知错误',
+}
+
+export const ErrorCodeColors = {
+  duplicate_submit: '#f59e0b',
+  version_conflict: '#ef4444',
+  attachment_blocked: '#dc2626',
+  role_violation: '#b91c1c',
+  status_conflict: '#dc2626',
+  invalid_transition: '#9333ea',
+  missing_evidence: '#ea580c',
 }
 
 export const RoleAllowedActions = {

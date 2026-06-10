@@ -102,6 +102,9 @@ def init_db():
             content TEXT NOT NULL,
             operator TEXT,
             operator_role TEXT,
+            submitted_version INTEGER,
+            intercept_type TEXT,
+            order_status TEXT,
             created_at TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (order_id) REFERENCES repair_orders(id) ON DELETE CASCADE
         );
@@ -136,6 +139,9 @@ def init_db():
             "ALTER TABLE attachments ADD COLUMN submitted_version INTEGER",
             "ALTER TABLE attachments ADD COLUMN intercept_type TEXT",
             "ALTER TABLE processing_records ADD COLUMN intercept_type TEXT",
+            "ALTER TABLE audit_notes ADD COLUMN submitted_version INTEGER",
+            "ALTER TABLE audit_notes ADD COLUMN intercept_type TEXT",
+            "ALTER TABLE audit_notes ADD COLUMN order_status TEXT",
         ]:
             try:
                 conn2.execute(sql)

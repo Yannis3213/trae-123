@@ -125,12 +125,12 @@ def validate_all(conn: sqlite3.Connection, user: dict, order: dict, action: Acti
                  uploaded_attachment_ids: Optional[list[int]] = None,
                  check_duplicate: bool = True):
     validate_role_action(user, action)
+    if check_duplicate:
+        validate_duplicate_submit(conn, order["id"], action, submitted_version)
     validate_version(order["version"], submitted_version)
     validate_handler(user, order)
     validate_status_transition(OrderStatus(order["status"]), to_status)
     validate_evidence(order["id"], to_status, conn, uploaded_attachment_ids)
-    if check_duplicate:
-        validate_duplicate_submit(conn, order["id"], action, submitted_version)
 
 
 def check_overdue_and_near(conn: sqlite3.Connection):
@@ -147,13 +147,17 @@ def check_overdue_and_near(conn: sqlite3.Connection):
     )
 
 
-def add_audit_note(conn: sqlite3.Connection, order_id: int, note_type: str, content: str, operator: str, operator_role: str):
+def add_audit_note(conn: sqlite3.Connection, order_id: int, note_type: str, content: str,
+                   operator: str, operator_role: str,
+                   submitted_version: Optional[int] = None,
+                   intercept_type: Optional[str] = None,
+                   order_status: Optional[str] = None):
     conn.execute(
         """
-        INSERT INTO audit_notes (order_id, note_type, content, operator, operator_role)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO audit_notes (order_id, note_type, content, operator, operator_role, submitted_version, intercept_type, order_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (order_id, note_type, content, operator, operator_role),
+        (order_id, note_type, content, operator, operator_role, submitted_version, intercept_type, order_status),
     )
 
 

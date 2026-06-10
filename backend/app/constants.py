@@ -80,6 +80,7 @@ class Action(str, Enum):
     REVIEW_REJECT = "review_reject"
     ARCHIVE = "archive"
     BATCH_PROCESS = "batch_process"
+    UPLOAD_ATTACHMENT = "upload_attachment"
 
 
 ACTION_NAMES = {
@@ -96,6 +97,7 @@ ACTION_NAMES = {
     Action.REVIEW_REJECT: "复核驳回",
     Action.ARCHIVE: "归档",
     Action.BATCH_PROCESS: "批量处理",
+    Action.UPLOAD_ATTACHMENT: "上传附件",
 }
 
 
@@ -110,6 +112,7 @@ class ExceptionCode(str, Enum):
     VERSION_CONFLICT = "version_conflict"
     ROLE_VIOLATION = "role_violation"
     INVALID_TRANSITION = "invalid_transition"
+    ATTACHMENT_BLOCKED = "attachment_blocked"
 
 
 EXCEPTION_NAMES = {
@@ -123,6 +126,7 @@ EXCEPTION_NAMES = {
     ExceptionCode.VERSION_CONFLICT: "版本冲突（数据已被修改）",
     ExceptionCode.ROLE_VIOLATION: "越权操作",
     ExceptionCode.INVALID_TRANSITION: "非法状态流转",
+    ExceptionCode.ATTACHMENT_BLOCKED: "附件上传被拦截",
 }
 
 
@@ -132,6 +136,7 @@ ROLE_ALLOWED_ACTIONS = {
         Action.CORRECT,
         Action.DISPATCH,
         Action.SUBMIT_REVIEW,
+        Action.UPLOAD_ATTACHMENT,
     },
     Role.SUPERVISOR: {
         Action.START_PROCESS,
@@ -139,11 +144,13 @@ ROLE_ALLOWED_ACTIONS = {
         Action.RETURN_FOR_CORRECTION,
         Action.COMPLETE,
         Action.VISIT,
+        Action.UPLOAD_ATTACHMENT,
     },
     Role.REVIEWER: {
         Action.REVIEW_APPROVE,
         Action.REVIEW_REJECT,
         Action.ARCHIVE,
+        Action.UPLOAD_ATTACHMENT,
     },
 }
 

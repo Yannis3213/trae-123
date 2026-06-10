@@ -85,6 +85,7 @@ class ProcessingRecordOut(BaseModel):
     opinion: Optional[str]
     evidence_provided: int
     version: int
+    intercept_type: Optional[str] = None
     created_at: str
 
 
@@ -95,6 +96,8 @@ class AttachmentOut(BaseModel):
     file_path: Optional[str] = None
     uploaded_by: Optional[str]
     uploaded_by_role: Optional[str]
+    submitted_version: Optional[int] = None
+    intercept_type: Optional[str] = None
     uploaded_at: str
 
 
@@ -105,6 +108,9 @@ class AuditNoteOut(BaseModel):
     content: str
     operator: Optional[str]
     operator_role: Optional[str]
+    submitted_version: Optional[int] = None
+    intercept_type: Optional[str] = None
+    order_status: Optional[str] = None
     created_at: str
 
 
