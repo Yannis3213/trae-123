@@ -35,8 +35,8 @@ export class AuthService {
     }
   }
 
-  currentUser() { return this._currentUser.asReadonly(); }
-  token() { return this._token.asReadonly(); }
+  currentUser() { return this._currentUser(); }
+  token() { return this._token(); }
   isLoggedIn() { return !!this._token(); }
 
   login(username: string, password: string): Observable<LoginResponse> {

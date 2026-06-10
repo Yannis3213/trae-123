@@ -330,6 +330,9 @@ class OrderService:
                 reported_by=current_user.full_name,
                 node_handler=order.current_handler
             )
+            if data.action in ["通过", "提交", "办结归档"]:
+                self.db.commit()
+                return None, f"时限问题：订单已逾期（截止时间{order.deadline.strftime('%Y-%m-%d %H:%M')}），不可推进，节点超时责任人：{order.current_handler}"
 
         if data.action in ["通过", "提交", "办结归档"]:
             required_evidence = self._get_required_evidence(order.status, data.action)

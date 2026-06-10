@@ -122,8 +122,9 @@ class ProcessingRecord(Base):
     ACTION_REJECT = "退回补正"
     ACTION_COMPLETE = "办结归档"
     ACTION_UPDATE = "更新"
+    ACTION_SAVE = "保存"
 
-    ACTIONS = [ACTION_SUBMIT, ACTION_REVIEW, ACTION_APPROVE, ACTION_REJECT, ACTION_COMPLETE, ACTION_UPDATE]
+    ACTIONS = [ACTION_SUBMIT, ACTION_REVIEW, ACTION_APPROVE, ACTION_REJECT, ACTION_COMPLETE, ACTION_UPDATE, ACTION_SAVE]
 
     order = relationship("TransportOrder", back_populates="processing_records")
 

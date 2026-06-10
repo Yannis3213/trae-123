@@ -313,6 +313,7 @@ def create_demo_orders(db: Session):
                 category=exc_data["category"],
                 reason=exc_data["reason"],
                 reported_by=exc_data["reported_by"],
+                node_handler=exc_data.get("node_handler"),
             )
             db.add(exc)
 
