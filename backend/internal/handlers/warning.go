@@ -62,7 +62,7 @@ func (h *WarningHandler) List(c echo.Context) error {
 	h.DB.QueryRow(countQuery, args...).Scan(&total)
 
 	offset := (page - 1) * pageSize
-	listQuery := "SELECT cr.id, cr.flight_no, cr.passenger_name, cr.passenger_id, cr.seat_no, cr.checkin_time, cr.status, cr.version, cr.deadline, cr.created_by, cr.current_handler_role, cr.return_reason, cr.created_at, cr.updated_at FROM checkin_records cr " + whereClause + " ORDER BY cr.deadline ASC LIMIT ? OFFSET ?"
+	listQuery := "SELECT cr.id, cr.flight_no, cr.passenger_name, cr.passenger_id, cr.seat_no, cr.checkin_time, cr.status, cr.version, cr.deadline, cr.created_by, cr.current_handler_role, cr.return_reason, cr.scenario, cr.created_at, cr.updated_at FROM checkin_records cr " + whereClause + " ORDER BY cr.deadline ASC LIMIT ? OFFSET ?"
 	args = append(args, pageSize, offset)
 
 	rows, err := h.DB.Query(listQuery, args...)
@@ -82,7 +82,7 @@ func (h *WarningHandler) List(c echo.Context) error {
 		if err := rows.Scan(
 			&r.ID, &r.FlightNo, &r.PassengerName, &r.PassengerID, &r.SeatNo,
 			&r.CheckinTime, &r.Status, &r.Version, &r.Deadline, &r.CreatedBy,
-			&r.CurrentHandlerRole, &r.ReturnReason, &r.CreatedAt, &r.UpdatedAt,
+			&r.CurrentHandlerRole, &r.ReturnReason, &r.Scenario, &r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "数据解析失败"})
 		}

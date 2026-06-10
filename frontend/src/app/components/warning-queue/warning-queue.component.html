@@ -131,8 +131,8 @@
   <div class="dialog-card dialog-wide" (click)="$event.stopPropagation()">
     <h3>批量处理结果</h3>
     <div class="batch-result-stats">
-      <span class="stat-success">成功：{{ batchResults?.filter(r => r.success).length || 0 }} 条</span>
-      <span class="stat-fail">失败：{{ batchResults?.filter(r => !r.success).length || 0 }} 条</span>
+      <span class="stat-success">成功：{{ batchSuccessCount }} 条</span>
+      <span class="stat-fail">失败：{{ batchFailCount }} 条</span>
     </div>
     <div class="batch-results">
       <div *ngFor="let result of batchResults" class="batch-result-item" [class.success]="result.success" [class.fail]="!result.success">

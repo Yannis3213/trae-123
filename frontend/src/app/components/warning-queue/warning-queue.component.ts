@@ -26,7 +26,7 @@ import {
   styleUrl: './warning-queue.component.css',
 })
 export class WarningQueueComponent implements OnInit {
-  records: any[] = [];
+  records: (CheckinRecord & { warning_type: WarningType })[] = [];
   total = 0;
   page = 1;
   pageSize = 20;
@@ -36,6 +36,8 @@ export class WarningQueueComponent implements OnInit {
   batchAction: ProcessAction = 'submit';
   batchComment = '';
   batchResults: BatchProcessResult[] | null = null;
+  batchSuccessCount = 0;
+  batchFailCount = 0;
   showBatchDialog = false;
   showBatchResultDialog = false;
 
@@ -180,9 +182,18 @@ export class WarningQueueComponent implements OnInit {
 
   executeBatch(): void {
     const ids = Array.from(this.selectedIds);
-    this.api.batchProcess(ids, this.batchAction, this.batchComment).subscribe({
+    const recordVersions: Record<number, number> = {};
+    for (const id of ids) {
+      const record = this.records.find(r => r.id === id);
+      if (record) {
+        recordVersions[id] = record.version;
+      }
+    }
+    this.api.batchProcess(ids, this.batchAction, this.batchComment, 0, recordVersions).subscribe({
       next: (res) => {
         this.batchResults = res.results || [];
+        this.batchSuccessCount = this.batchResults.filter(r => r.success).length;
+        this.batchFailCount = this.batchResults.filter(r => !r.success).length;
         this.showBatchDialog = false;
         this.showBatchResultDialog = true;
         this.selectedIds.clear();

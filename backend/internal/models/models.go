@@ -127,10 +127,11 @@ type ProcessRecordRequest struct {
 }
 
 type BatchProcessRequest struct {
-	RecordIDs []int64       `json:"record_ids"`
-	Action    ProcessAction `json:"action"`
-	Comment   string        `json:"comment"`
-	Version   int           `json:"version"`
+	RecordIDs     []int64       `json:"record_ids"`
+	Action        ProcessAction `json:"action"`
+	Comment       string        `json:"comment"`
+	Version       int           `json:"version"`
+	RecordVersion map[int64]int `json:"record_versions"`
 }
 
 type BatchProcessResult struct {

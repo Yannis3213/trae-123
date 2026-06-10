@@ -99,6 +99,14 @@ export interface BatchProcessResult {
   passenger_name: string;
 }
 
+export interface BatchProcessRequest {
+  record_ids: number[];
+  action: ProcessAction;
+  comment: string;
+  version?: number;
+  record_versions?: Record<number, number>;
+}
+
 export interface Statistics {
   status_counts: Record<string, number>;
   role_counts: Record<string, number>;

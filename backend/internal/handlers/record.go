@@ -80,7 +80,7 @@ func (h *RecordHandler) List(c echo.Context) error {
 
 	offset := (q.Page - 1) * q.PageSize
 	listQuery := fmt.Sprintf(
-		"SELECT cr.id, cr.flight_no, cr.passenger_name, cr.passenger_id, cr.seat_no, cr.checkin_time, cr.status, cr.version, cr.deadline, cr.created_by, cr.current_handler_role, cr.return_reason, cr.created_at, cr.updated_at FROM checkin_records cr %s ORDER BY cr.updated_at DESC LIMIT ? OFFSET ?",
+		"SELECT cr.id, cr.flight_no, cr.passenger_name, cr.passenger_id, cr.seat_no, cr.checkin_time, cr.status, cr.version, cr.deadline, cr.created_by, cr.current_handler_role, cr.return_reason, cr.scenario, cr.created_at, cr.updated_at FROM checkin_records cr %s ORDER BY cr.updated_at DESC LIMIT ? OFFSET ?",
 		whereClause,
 	)
 	args = append(args, q.PageSize, offset)
@@ -97,7 +97,7 @@ func (h *RecordHandler) List(c echo.Context) error {
 		if err := rows.Scan(
 			&r.ID, &r.FlightNo, &r.PassengerName, &r.PassengerID, &r.SeatNo,
 			&r.CheckinTime, &r.Status, &r.Version, &r.Deadline, &r.CreatedBy,
-			&r.CurrentHandlerRole, &r.ReturnReason, &r.CreatedAt, &r.UpdatedAt,
+			&r.CurrentHandlerRole, &r.ReturnReason, &r.Scenario, &r.CreatedAt, &r.UpdatedAt,
 		); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "数据解析失败"})
 		}
@@ -121,12 +121,12 @@ func (h *RecordHandler) GetDetail(c echo.Context) error {
 	userRole := middleware.GetUserRole(c)
 
 	var detail models.RecordDetail
-	query := "SELECT id, flight_no, passenger_name, passenger_id, seat_no, checkin_time, status, version, deadline, created_by, current_handler_role, return_reason, created_at, updated_at FROM checkin_records WHERE id = ?"
+	query := "SELECT id, flight_no, passenger_name, passenger_id, seat_no, checkin_time, status, version, deadline, created_by, current_handler_role, return_reason, scenario, created_at, updated_at FROM checkin_records WHERE id = ?"
 	err = h.DB.QueryRow(query, id).Scan(
 		&detail.ID, &detail.FlightNo, &detail.PassengerName, &detail.PassengerID,
 		&detail.SeatNo, &detail.CheckinTime, &detail.Status, &detail.Version,
 		&detail.Deadline, &detail.CreatedBy, &detail.CurrentHandlerRole,
-		&detail.ReturnReason, &detail.CreatedAt, &detail.UpdatedAt,
+		&detail.ReturnReason, &detail.Scenario, &detail.CreatedAt, &detail.UpdatedAt,
 	)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "记录不存在"})
@@ -294,12 +294,12 @@ func (h *RecordHandler) Process(c echo.Context) error {
 	userRole := middleware.GetUserRole(c)
 
 	var record models.CheckinRecord
-	query := "SELECT id, flight_no, passenger_name, passenger_id, seat_no, checkin_time, status, version, deadline, created_by, current_handler_role, return_reason, created_at, updated_at FROM checkin_records WHERE id = ?"
+	query := "SELECT id, flight_no, passenger_name, passenger_id, seat_no, checkin_time, status, version, deadline, created_by, current_handler_role, return_reason, scenario, created_at, updated_at FROM checkin_records WHERE id = ?"
 	err = h.DB.QueryRow(query, recordID).Scan(
 		&record.ID, &record.FlightNo, &record.PassengerName, &record.PassengerID,
 		&record.SeatNo, &record.CheckinTime, &record.Status, &record.Version,
 		&record.Deadline, &record.CreatedBy, &record.CurrentHandlerRole,
-		&record.ReturnReason, &record.CreatedAt, &record.UpdatedAt,
+		&record.ReturnReason, &record.Scenario, &record.CreatedAt, &record.UpdatedAt,
 	)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]interface{}{
@@ -395,11 +395,11 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 		result := models.BatchProcessResult{RecordID: recordID}
 
 		var record models.CheckinRecord
-		query := "SELECT id, flight_no, passenger_name, status, version, current_handler_role, return_reason, deadline FROM checkin_records WHERE id = ?"
+		query := "SELECT id, flight_no, passenger_name, status, version, current_handler_role, return_reason, scenario, deadline FROM checkin_records WHERE id = ?"
 		err := h.DB.QueryRow(query, recordID).Scan(
 			&record.ID, &record.FlightNo, &record.PassengerName,
 			&record.Status, &record.Version, &record.CurrentHandlerRole,
-			&record.ReturnReason, &record.Deadline,
+			&record.ReturnReason, &record.Scenario, &record.Deadline,
 		)
 		if err != nil {
 			result.Success = false
@@ -412,6 +412,16 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 		result.FlightNo = record.FlightNo
 		result.PassengerName = record.PassengerName
 
+		requestVersion := 0
+		if req.RecordVersion != nil {
+			if v, ok := req.RecordVersion[recordID]; ok {
+				requestVersion = v
+			}
+		}
+		if requestVersion == 0 && req.Version != 0 {
+			requestVersion = req.Version
+		}
+
 		attachments, _ := h.getAttachments(recordID)
 
 		ctx := &services.ValidationContext{
@@ -419,7 +429,7 @@ func (h *RecordHandler) BatchProcess(c echo.Context) error {
 			CurrentHandlerRole: record.CurrentHandlerRole,
 			CurrentStatus:      record.Status,
 			Action:             req.Action,
-			RequestVersion:     req.Version,
+			RequestVersion:     requestVersion,
 			RecordVersion:      record.Version,
 			Deadline:           record.Deadline,
 			Attachments:        attachments,
