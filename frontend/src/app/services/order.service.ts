@@ -38,6 +38,7 @@ export interface ExceptionReason {
   category: string;
   reason: string;
   reported_by: string;
+  node_handler?: string;
   reported_at: string;
   resolved: boolean;
   resolved_by?: string;

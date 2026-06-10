@@ -148,6 +148,7 @@ class ExceptionReason(Base):
     category = Column(String, nullable=False)
     reason = Column(Text, nullable=False)
     reported_by = Column(String, nullable=False)
+    node_handler = Column(String, nullable=True)
     reported_at = Column(DateTime, default=datetime.utcnow)
     resolved = Column(Boolean, default=False)
     resolved_by = Column(String, nullable=True)

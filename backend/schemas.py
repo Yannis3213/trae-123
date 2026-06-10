@@ -96,6 +96,7 @@ class ExceptionReasonOut(ExceptionReasonBase):
     id: int
     order_id: int
     reported_by: str
+    node_handler: Optional[str] = None
     reported_at: datetime
     resolved: bool = False
     resolved_by: Optional[str] = None

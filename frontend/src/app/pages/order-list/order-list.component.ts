@@ -83,9 +83,12 @@ import { AuthService } from '../../services/auth.service';
             </tr>
           </thead>
           <tbody>
-            <tr *ngFor="let order of orders()">
+            <tr *ngFor="let order of orders()" [class.my-row]="isMyHandler(order)">
               <td>
-                <input type="checkbox" [checked]="selectedIds().includes(order.id)" (change)="toggleSelect(order)" />
+                <input type="checkbox"
+                  [checked]="selectedIds().includes(order.id)"
+                  (change)="toggleSelect(order)"
+                  [disabled]="!canProcess(order)" />
               </td>
               <td><a class="order-link" [routerLink]="['/orders', order.id]">{{ order.order_no }}</a></td>
               <td>
@@ -95,13 +98,18 @@ import { AuthService } from '../../services/auth.service';
               </td>
               <td><span class="priority-{{ order.priority === '高' ? 'high' : order.priority === '中' ? 'medium' : 'low' }}">{{ order.priority }}</span></td>
               <td>{{ order.responsible_person }}</td>
-              <td>{{ order.current_handler }}</td>
+              <td class="handler-cell">
+                {{ order.current_handler }}
+                <span *ngIf="isMyHandler(order)" class="me-tag">（我）</span>
+              </td>
               <td>{{ order.consignor_name || '-' }}</td>
               <td>{{ order.consignee_name || '-' }}</td>
               <td>{{ order.cargo_name || '-' }}</td>
               <td [class.overdue-text]="order.is_overdue">{{ formatDate(order.deadline) }}</td>
               <td>
-                <a class="btn-link" [routerLink]="['/orders', order.id]">办理</a>
+                <a class="btn-link" [routerLink]="['/orders', order.id]" [class.disabled]="!canProcess(order)">
+                  {{ canProcess(order) ? '办理' : '查看' }}
+                </a>
               </td>
             </tr>
             <tr *ngIf="orders().length === 0">
@@ -255,6 +263,11 @@ import { AuthService } from '../../services/auth.service';
     .result-failed { color: #cf1322; font-weight: 600; }
     .result-total { color: #666; }
     .result-table { margin-top: 8px; }
+    .my-row { background: #f6ffed !important; }
+    .my-row:hover { background: #d9f7be !important; }
+    .handler-cell { font-weight: 500; }
+    .me-tag { color: #1677ff; font-size: 12px; margin-left: 4px; font-weight: 600; }
+    .btn-link.disabled { color: #bfbfbf; cursor: not-allowed; text-decoration: none; pointer-events: none; }
   `]
 })
 export class OrderListComponent implements OnInit, OnDestroy {
@@ -329,24 +342,37 @@ export class OrderListComponent implements OnInit, OnDestroy {
   nextPage() { if (this.page() < this.totalPages()) { this.page.set(this.page() + 1); this.loadOrders(); } }
 
   isAllSelected() {
-    return this.orders().length > 0 && this.orders().every(o => this.selectedIds().includes(o.id));
+    const mine = this.orders().filter(o => this.canProcess(o));
+    return mine.length > 0 && mine.every(o => this.selectedIds().includes(o.id));
   }
 
   toggleAll() {
+    const mine = this.orders().filter(o => this.canProcess(o));
     if (this.isAllSelected()) {
-      this.selectedIds.set([]);
+      this.selectedIds.set(this.selectedIds().filter(id => !mine.find(o => o.id === id)));
     } else {
-      this.selectedIds.set(this.orders().map(o => o.id));
+      const ids = [...new Set([...this.selectedIds(), ...mine.map(o => o.id)])];
+      this.selectedIds.set(ids);
     }
   }
 
   toggleSelect(order: TransportOrder) {
+    if (!this.canProcess(order)) return;
     const cur = this.selectedIds();
     if (cur.includes(order.id)) {
       this.selectedIds.set(cur.filter(id => id !== order.id));
     } else {
       this.selectedIds.set([...cur, order.id]);
     }
+  }
+
+  isMyHandler(order: TransportOrder): boolean {
+    return order.current_handler === this.authService.currentUser()?.full_name;
+  }
+
+  canProcess(order: TransportOrder): boolean {
+    if (order.status === '办结') return false;
+    return this.isMyHandler(order);
   }
 
   getStatusClass(order: TransportOrder): string {

@@ -194,6 +194,10 @@ import { AuthService } from '../../services/auth.service';
 
       <div class="card">
         <h3 class="section-title">证据附件</h3>
+        <div class="evidence-missing" *ngIf="getMissingEvidence().length > 0 && order()?.status !== '办结'">
+          <span class="missing-icon">⚠️</span>
+          <span>缺少必要证据：<strong>{{ getMissingEvidence().join('、') }}</strong>，请上传后再提交</span>
+        </div>
         <table class="data-table mini">
           <thead>
             <tr>
@@ -261,6 +265,7 @@ import { AuthService } from '../../services/auth.service';
               <span class="exception-category cat-{{ getCategoryClass(e.category) }}">{{ e.category }}</span>
               <span class="exception-reporter">{{ e.reported_by }}</span>
               <span class="exception-time">{{ formatDate(e.reported_at) }}</span>
+              <span class="exception-handler" *ngIf="e.node_handler">节点责任人：{{ e.node_handler }}</span>
               <span class="exception-status" [class.resolved]="e.resolved">
                 {{ e.resolved ? '已处理' : '待处理' }}
               </span>
@@ -337,6 +342,13 @@ import { AuthService } from '../../services/auth.service';
     .evidence-status { margin-left: auto; font-size: 13px; color: #666; display: flex; align-items: center; gap: 4px; }
     .evidence-status .ok { color: #389e0d; font-weight: bold; }
     .evidence-status .miss { color: #cf1322; font-weight: bold; }
+    .evidence-missing {
+      padding: 10px 14px; background: #fff1f0; color: #cf1322;
+      border-radius: 4px; margin-bottom: 12px; font-size: 13px;
+      border: 1px solid #ffa39e;
+    }
+    .evidence-missing .missing-icon { margin-right: 6px; }
+    .evidence-missing strong { font-weight: 600; }
     .info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
     .info-item label { display: block; font-size: 12px; color: #8c8c8c; margin-bottom: 4px; }
     .info-item span { font-size: 14px; color: #1f1f1f; font-weight: 500; }
@@ -390,6 +402,7 @@ import { AuthService } from '../../services/auth.service';
     .cat-status { background: #0958d9; }
     .exception-reporter { font-size: 13px; color: #595959; }
     .exception-time { font-size: 12px; color: #8c8c8c; margin-left: auto; }
+    .exception-handler { font-size: 12px; color: #1677ff; margin-left: 12px; }
     .exception-status {
       font-size: 12px; padding: 2px 8px; background: #fff1f0; color: #cf1322; border-radius: 4px;
     }
@@ -550,37 +563,49 @@ export class OrderDetailComponent implements OnInit {
   }
 
   canEditConsignment() {
-    return this.order()?.status === '待补正' && this.authService.isCustomerService();
+    return this.canEdit() && this.order()?.status === '待补正' && this.authService.isCustomerService();
   }
   canReviewConsignment() {
-    return this.order()?.status === '复核中' && this.authService.isDispatchSupervisor();
+    const status = this.order()?.status;
+    const handler = this.order()?.current_handler;
+    const me = this.authService.currentUser()?.full_name;
+    return status === '复核中' && handler === me && (this.authService.isDispatchSupervisor() || this.authService.isOperationsManager());
   }
   canEditDispatch() {
-    return this.order()?.status === '复核中' && this.authService.isDispatchSupervisor();
+    return this.canEdit() && this.order()?.status === '复核中' && this.authService.isDispatchSupervisor();
   }
   canReviewDispatch() {
-    return this.order()?.status === '复核中' && this.authService.isOperationsManager();
+    const status = this.order()?.status;
+    const handler = this.order()?.current_handler;
+    const me = this.authService.currentUser()?.full_name;
+    return status === '复核中' && handler === me && this.authService.isOperationsManager();
   }
   canEditReceipt() {
-    return this.order()?.status === '复核中' && this.authService.isDispatchSupervisor();
+    return this.canEdit() && this.order()?.status === '复核中' && this.authService.isDispatchSupervisor();
   }
   canReviewReceipt() {
-    return this.authService.isOperationsManager();
+    const handler = this.order()?.current_handler;
+    const me = this.authService.currentUser()?.full_name;
+    return handler === me && this.authService.isOperationsManager();
   }
   canAddEvidence() {
-    return this.canEdit();
+    return this.canEdit() || this.canApprove();
   }
   canReview() {
     const status = this.order()?.status;
+    const handler = this.order()?.current_handler;
+    const me = this.authService.currentUser()?.full_name;
     if (status === '办结') return false;
-    return this.order()?.current_handler === this.authService.currentUser()?.full_name;
+    return handler === me;
   }
   canReject() {
     const status = this.order()?.status;
     const role = this.authService.currentUser()?.role;
+    const handler = this.order()?.current_handler;
+    const me = this.authService.currentUser()?.full_name;
     if (status === '办结') return false;
-    if (status === '复核中' && role === '调度主管') return true;
-    if (status === '复核中' && role === '运营经理') return true;
+    if (handler !== me) return false;
+    if (status === '复核中' && (role === '调度主管' || role === '运营经理')) return true;
     return false;
   }
   canApprove() {
@@ -588,7 +613,24 @@ export class OrderDetailComponent implements OnInit {
     const handler = this.order()?.current_handler;
     const me = this.authService.currentUser()?.full_name;
     if (status === '办结') return false;
-    return handler === me;
+    if (handler !== me) return false;
+    const role = this.authService.currentUser()?.role;
+    if (status === '待补正' && role === '客服专员') return true;
+    if (status === '复核中' && (role === '调度主管' || role === '运营经理')) return true;
+    return false;
+  }
+
+  getRequiredEvidence(): string[] {
+    const status = this.order()?.status;
+    if (status === '待补正') return ['运输委托单'];
+    if (status === '复核中') return ['车辆调度单', '签收回单'];
+    return [];
+  }
+
+  getMissingEvidence(): string[] {
+    const required = this.getRequiredEvidence();
+    const existing = new Set(this.order()?.attachments?.map(a => a.file_type) || []);
+    return required.filter(r => !existing.has(r) && r !== this.newEvidence.file_type);
   }
 
   submitButtonText() {
@@ -625,9 +667,26 @@ export class OrderDetailComponent implements OnInit {
 
   doAction(action: string) {
     if (!this.order()) return;
+
+    if (action !== '核验') {
+      const missing = this.getMissingEvidence();
+      if (this.newEvidence.file_name && this.newEvidence.file_type) {
+        const idx = missing.indexOf(this.newEvidence.file_type);
+        if (idx >= 0) missing.splice(idx, 1);
+      }
+      if (action !== '退回补正' && missing.length > 0) {
+        alert(`材料校验不通过，仍缺少：${missing.join('、')}。请上传后再提交。`);
+        return;
+      }
+      if (action === '退回补正' && !this.actionRemark.trim()) {
+        alert('退回补正必须填写原因说明');
+        return;
+      }
+    }
+
     this.loading.set(true);
     const evidence_files: any[] = [];
-    if (this.newEvidence.file_name) {
+    if (this.newEvidence.file_name && this.newEvidence.file_type) {
       evidence_files.push({
         file_name: this.newEvidence.file_name,
         file_type: this.newEvidence.file_type,

@@ -73,12 +73,12 @@ import { FormsModule } from '@angular/forms';
             </tr>
           </thead>
           <tbody>
-            <tr *ngFor="let o of activeGroup()?.orders">
+            <tr *ngFor="let o of activeGroup()?.orders" [class.my-row]="o.current_handler === authService.currentUser()?.full_name">
               <td>
                 <input type="checkbox"
                   [checked]="selectedIds().includes(o.id)"
                   (change)="toggleSelect(o)"
-                  [disabled]="o.current_handler !== authService.currentUser()?.full_name" />
+                  [disabled]="!canSelect(o)" />
               </td>
               <td><a class="order-link" [routerLink]="['/orders', o.id]">{{ o.order_no }}</a></td>
               <td>
@@ -121,6 +121,7 @@ import { FormsModule } from '@angular/forms';
                   <th>订单号</th>
                   <th>结果</th>
                   <th>失败原因（逐条）</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -132,6 +133,10 @@ import { FormsModule } from '@angular/forms';
                     </span>
                   </td>
                   <td>{{ r.message }}</td>
+                  <td>
+                    <a *ngIf="!r.success" class="btn-link" [routerLink]="['/orders', r.order_id]" (click)="showResultModal = false">去补正</a>
+                    <span *ngIf="r.success">-</span>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -174,6 +179,8 @@ import { FormsModule } from '@angular/forms';
     .data-table th { background: #fafafa; padding: 10px 12px; text-align: left; border-bottom: 1px solid #f0f0f0; font-weight: 600; }
     .data-table td { padding: 10px 12px; border-bottom: 1px solid #f5f5f5; }
     .data-table tbody tr:hover { background: #fafafa; }
+    .data-table tbody tr.my-row { background: #f6ffed; }
+    .data-table tbody tr.my-row:hover { background: #d9f7be; }
     .empty-cell { text-align: center; color: #999; padding: 40px !important; }
     .overdue-text { color: #cf1322; font-weight: 600; }
     .order-link { color: #1677ff; font-weight: 500; }
@@ -249,15 +256,22 @@ export class WarningsComponent implements OnInit {
     return 'status-completed';
   }
 
+  canSelect(o: TransportOrder): boolean {
+    const me = this.authService.currentUser()?.full_name;
+    if (o.status === '办结') return false;
+    if (o.current_handler !== me) return false;
+    return true;
+  }
+
   isAllSelected() {
     const list = this.activeGroup()?.orders || [];
-    const mine = list.filter(o => o.current_handler === this.authService.currentUser()?.full_name);
+    const mine = list.filter(o => this.canSelect(o));
     return mine.length > 0 && mine.every(o => this.selectedIds().includes(o.id));
   }
 
   toggleAll() {
     const list = this.activeGroup()?.orders || [];
-    const mine = list.filter(o => o.current_handler === this.authService.currentUser()?.full_name);
+    const mine = list.filter(o => this.canSelect(o));
     if (this.isAllSelected()) {
       this.selectedIds.set(this.selectedIds().filter(id => !mine.find(o => o.id === id)));
     } else {
@@ -267,6 +281,7 @@ export class WarningsComponent implements OnInit {
   }
 
   toggleSelect(o: TransportOrder) {
+    if (!this.canSelect(o)) return;
     const cur = this.selectedIds();
     if (cur.includes(o.id)) {
       this.selectedIds.set(cur.filter(id => id !== o.id));

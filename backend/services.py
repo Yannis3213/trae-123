@@ -17,13 +17,12 @@ class OrderService:
     def __init__(self, db: Session):
         self.db = db
 
-    def _get_required_evidence(self, status: str) -> List[str]:
-        if status == TransportOrder.STATUS_PENDING_CORRECTION:
-            return [Attachment.TYPE_CONSIGNMENT]
-        elif status == TransportOrder.STATUS_UNDER_REVIEW:
-            return [Attachment.TYPE_DISPATCH]
-        elif status == TransportOrder.STATUS_COMPLETED:
-            return [Attachment.TYPE_RECEIPT]
+    def _get_required_evidence(self, status: str, action: Optional[str] = None) -> List[str]:
+        if action in ["通过", "提交", "办结归档"]:
+            if status == TransportOrder.STATUS_PENDING_CORRECTION:
+                return [Attachment.TYPE_CONSIGNMENT]
+            elif status == TransportOrder.STATUS_UNDER_REVIEW:
+                return [Attachment.TYPE_DISPATCH, Attachment.TYPE_RECEIPT]
         return []
 
     def _get_role_for_status(self, status: str) -> Optional[str]:
@@ -86,13 +85,15 @@ class OrderService:
         return datetime.utcnow() > order.deadline
 
     def _add_exception(
-        self, order_id: int, category: str, reason: str, reported_by: str
+        self, order_id: int, category: str, reason: str, reported_by: str,
+        node_handler: Optional[str] = None
     ) -> ExceptionReason:
         exc = ExceptionReason(
             order_id=order_id,
             category=category,
             reason=reason,
-            reported_by=reported_by
+            reported_by=reported_by,
+            node_handler=node_handler
         )
         self.db.add(exc)
         return exc
@@ -238,7 +239,8 @@ class OrderService:
                 order_id=order.id,
                 category=ExceptionReason.CATEGORY_PERMISSION,
                 reason=f"角色{current_user.role}无权在状态「{order.status}」下修改订单字段",
-                reported_by=current_user.full_name
+                reported_by=current_user.full_name,
+                node_handler=order.current_handler
             )
             self.db.commit()
             return None, f"权限问题：当前角色「{current_user.role}」无权修改状态为「{order.status}」的订单字段"
@@ -248,7 +250,8 @@ class OrderService:
                 order_id=order.id,
                 category=ExceptionReason.CATEGORY_PERMISSION,
                 reason=f"当前处理人应为{order.current_handler}，实际为{current_user.full_name}",
-                reported_by=current_user.full_name
+                reported_by=current_user.full_name,
+                node_handler=order.current_handler
             )
             self.db.commit()
             return None, f"权限问题：当前处理人应为「{order.current_handler}」"
@@ -287,7 +290,8 @@ class OrderService:
                 order_id=order.id,
                 category=ExceptionReason.CATEGORY_STATUS,
                 reason=f"版本冲突：期望版本{data.expected_version}，当前版本{order.version}",
-                reported_by=current_user.full_name
+                reported_by=current_user.full_name,
+                node_handler=order.current_handler
             )
             self.db.commit()
             return None, f"状态问题：版本冲突，当前版本为{order.version}，请刷新后重试"
@@ -298,7 +302,8 @@ class OrderService:
                 order_id=order.id,
                 category=ExceptionReason.CATEGORY_PERMISSION,
                 reason=f"角色{current_user.role}无权在状态「{order.status}」下执行「{data.action}」操作",
-                reported_by=current_user.full_name
+                reported_by=current_user.full_name,
+                node_handler=order.current_handler
             )
             self.db.commit()
             return None, f"权限问题：当前角色「{current_user.role}」无权在状态「{order.status}」下执行「{data.action}」"
@@ -308,7 +313,8 @@ class OrderService:
                 order_id=order.id,
                 category=ExceptionReason.CATEGORY_PERMISSION,
                 reason=f"当前处理人应为{order.current_handler}，实际操作人{current_user.full_name}",
-                reported_by=current_user.full_name
+                reported_by=current_user.full_name,
+                node_handler=order.current_handler
             )
             self.db.commit()
             return None, f"权限问题：当前处理人应为「{order.current_handler}」，请移交后再操作"
@@ -320,12 +326,13 @@ class OrderService:
             self._add_exception(
                 order_id=order.id,
                 category=ExceptionReason.CATEGORY_DEADLINE,
-                reason=f"订单已逾期，截止时间为{order.deadline.strftime('%Y-%m-%d %H:%M')}",
-                reported_by=current_user.full_name
+                reason=f"订单已逾期，截止时间为{order.deadline.strftime('%Y-%m-%d %H:%M')}，节点超时责任人：{order.current_handler}",
+                reported_by=current_user.full_name,
+                node_handler=order.current_handler
             )
 
         if data.action in ["通过", "提交", "办结归档"]:
-            required_evidence = self._get_required_evidence(order.status)
+            required_evidence = self._get_required_evidence(order.status, data.action)
             existing_types = set(a.file_type for a in order.attachments)
             submitted_types = set(a.file_type for a in (data.evidence_files or []))
             all_types = existing_types | submitted_types
@@ -336,7 +343,8 @@ class OrderService:
                     order_id=order.id,
                     category=ExceptionReason.CATEGORY_MATERIAL,
                     reason=f"缺少必要证据材料: {', '.join(missing)}",
-                    reported_by=current_user.full_name
+                    reported_by=current_user.full_name,
+                    node_handler=order.current_handler
                 )
                 self.db.commit()
                 return None, f"材料问题：缺少必要证据「{', '.join(missing)}」，请补充后再提交"
@@ -369,7 +377,8 @@ class OrderService:
                     order_id=order.id,
                     category=ExceptionReason.CATEGORY_STATUS,
                     reason="重复提交：订单已办结",
-                    reported_by=current_user.full_name
+                    reported_by=current_user.full_name,
+                    node_handler=order.current_handler
                 )
                 self.db.commit()
                 return None, "状态问题：订单已办结，不可重复提交"
