@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import type { User, Entry, BatchResult } from '../types'
+import type { User, Entry, BatchResult, BatchProcessEntry } from '../types'
 import { STATUS_LABELS, PRIORITY_LABELS, CATEGORY_LABELS, OVERDUE_GROUP_LABELS } from '../types'
 import * as api from '../api'
 
@@ -79,8 +79,12 @@ export function EntryList({ user, onEntryClick, onRefresh }: EntryListProps) {
     setBatchLoading(true)
     setBatchResults(null)
     try {
+      const batchEntries: BatchProcessEntry[] = entries
+        .filter(e => selected.has(e.id))
+        .map(e => ({ id: e.id, version: e.version }))
+
       const data = await api.batchProcess({
-        entry_ids: Array.from(selected),
+        entries: batchEntries,
         action: batchAction,
         result: batchAction === 'return' ? batchReturnReason : batchResult,
       })

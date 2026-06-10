@@ -1,4 +1,4 @@
-import type { User, Entry, EntryDetail, Stats, BatchResult, ExceptionLog, Attachment, AuditNote } from './types';
+import type { User, Entry, EntryDetail, Stats, BatchResult, ExceptionLog, Attachment, AuditNote, ProcessingRecord, BatchProcessEntry } from './types';
 
 const BASE = '/api';
 
@@ -96,7 +96,7 @@ export async function processEntry(id: number, data: {
 }
 
 export async function batchProcess(data: {
-  entry_ids: number[];
+  entries: BatchProcessEntry[];
   action: string;
   result?: string;
 }): Promise<{ results: BatchResult[] }> {

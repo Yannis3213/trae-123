@@ -107,10 +107,15 @@ type ProcessEntryRequest struct {
 	Version      int    `json:"version"`
 }
 
+type BatchProcessEntry struct {
+	ID      int `json:"id"`
+	Version int `json:"version"`
+}
+
 type BatchProcessRequest struct {
-	EntryIDs []int  `json:"entry_ids"`
-	Action   string `json:"action"`
-	Result   string `json:"result"`
+	Entries []BatchProcessEntry `json:"entries"`
+	Action  string              `json:"action"`
+	Result  string              `json:"result"`
 }
 
 type CreateAttachmentRequest struct {
@@ -129,6 +134,12 @@ type BatchResult struct {
 	EntryID int    `json:"entry_id"`
 	Success bool   `json:"success"`
 	Reason  string `json:"reason"`
+}
+
+var ROLE_LABELS = map[string]string{
+	"document_clerk":       "资料员",
+	"construction_manager": "施工负责人",
+	"project_manager":      "项目经理",
 }
 
 var (
@@ -752,6 +763,40 @@ func processEntryHandler(c echo.Context) error {
 			db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
 				VALUES (?, ?, ?)`, id, vr.ExceptionType, vr.ExceptionDesc)
 		}
+
+		var handlerRole string
+		if user.Role == "construction_manager" {
+			handlerRole = "construction_manager"
+		} else if user.Role == "project_manager" {
+			handlerRole = "project_manager"
+		} else {
+			handlerRole = user.Role
+		}
+
+		var actionName string
+		switch req.Action {
+		case "approve":
+			actionName = "approve"
+		case "confirm":
+			actionName = "confirm"
+		case "return":
+			actionName = "return"
+		case "resubmit":
+			actionName = "resubmit"
+		default:
+			actionName = req.Action
+		}
+
+		returnReason := ""
+		if req.Action == "return" {
+			returnReason = req.ReturnReason
+		}
+
+		db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason)
+			VALUES (?, ?, ?, ?, '处理失败', ?)`, id, handlerRole, user.Name, actionName, vr.Reason)
+		db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
+			VALUES (?, 'exception', ?, ?)`, id, fmt.Sprintf("处理失败：%s", vr.Reason), user.ID)
+
 		return c.JSON(vr.HTTPStatus, map[string]string{"error": vr.Reason})
 	}
 
@@ -802,10 +847,17 @@ func processEntryHandler(c echo.Context) error {
 		newHandler = "李施工"
 		newHandlerRole = "construction_manager"
 		newExceptionTags = ""
-		db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result)
-			VALUES (?, 'document_clerk', ?, 'resubmit', '重新提交审核')`, id, user.Name)
-		db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
-			VALUES (?, 'audit', ?, ?)`, id, fmt.Sprintf("资料员 %s 重新提交", user.Name), user.ID)
+		if user.Role == "construction_manager" {
+			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result)
+				VALUES (?, 'construction_manager', ?, 'resubmit', '重新提交审核')`, id, user.Name)
+			db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
+				VALUES (?, 'audit', ?, ?)`, id, fmt.Sprintf("施工负责人 %s 重新提交", user.Name), user.ID)
+		} else {
+			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result)
+				VALUES (?, 'document_clerk', ?, 'resubmit', '重新提交审核')`, id, user.Name)
+			db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
+				VALUES (?, 'audit', ?, ?)`, id, fmt.Sprintf("资料员 %s 重新提交", user.Name), user.ID)
+		}
 	}
 
 	db.Exec(`UPDATE subcontractor_entries SET status = ?, current_handler = ?, current_handler_role = ?, version = version + 1, exception_tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
@@ -822,7 +874,7 @@ func batchProcessHandler(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
 	}
 
-	if len(req.EntryIDs) == 0 {
+	if len(req.Entries) == 0 {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "请选择要处理的分包进场单"})
 	}
 
@@ -832,15 +884,18 @@ func batchProcessHandler(c echo.Context) error {
 
 	results := []BatchResult{}
 
-	for _, entryID := range req.EntryIDs {
+	for _, entry := range req.Entries {
+		entryID := entry.ID
+		submittedVersion := entry.Version
+
 		var status, exceptionTags string
-		var version int
+		var dbVersion int
 		var deadline string
 		var currentHandlerRole sql.NullString
 
 		err := db.QueryRow(`SELECT status, version, deadline, exception_tags, current_handler_role
 			FROM subcontractor_entries WHERE id = ?`, entryID).
-			Scan(&status, &version, &deadline, &exceptionTags, &currentHandlerRole)
+			Scan(&status, &dbVersion, &deadline, &exceptionTags, &currentHandlerRole)
 
 		if err != nil {
 			results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: "分包进场单不存在"})
@@ -860,14 +915,40 @@ func batchProcessHandler(c echo.Context) error {
 			returnReason = req.Result
 		}
 
-		vr := validateEntryAction(entryID, req.Action, user, status, version,
-			curHandlerRole, deadline, version, returnReason, attCount)
+		vr := validateEntryAction(entryID, req.Action, user, status, dbVersion,
+			curHandlerRole, deadline, submittedVersion, returnReason, attCount)
 
 		if !vr.Valid {
 			if vr.ExceptionType != "" {
 				db.Exec(`INSERT INTO exception_logs (entry_id, exception_type, description)
 					VALUES (?, ?, ?)`, entryID, vr.ExceptionType, vr.ExceptionDesc)
 			}
+
+			var handlerRole string
+			if user.Role == "construction_manager" {
+				handlerRole = "construction_manager"
+			} else if user.Role == "project_manager" {
+				handlerRole = "project_manager"
+			} else {
+				handlerRole = user.Role
+			}
+
+			var actionName string
+			if req.Action == "approve" {
+				actionName = "batch_approve"
+			} else if req.Action == "confirm" {
+				actionName = "batch_confirm"
+			} else if req.Action == "return" {
+				actionName = "batch_reject"
+			} else {
+				actionName = "batch_" + req.Action
+			}
+
+			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason)
+				VALUES (?, ?, ?, ?, '批量处理失败', ?)`, entryID, handlerRole, user.Name, actionName, vr.Reason)
+			db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
+				VALUES (?, 'exception', ?, ?)`, entryID, fmt.Sprintf("批量处理失败：%s", vr.Reason), user.ID)
+
 			results = append(results, BatchResult{EntryID: entryID, Success: false, Reason: vr.Reason})
 			continue
 		}
@@ -1287,7 +1368,7 @@ func validateEntryAction(entryID int, action string, user User, entryStatus stri
 		}
 	}
 
-	if currentHandlerRole != nil && *currentHandlerRole != user.Role && action != "resubmit" {
+	if currentHandlerRole != nil && *currentHandlerRole != user.Role {
 		return ValidationResult{
 			Valid:         false,
 			Reason:        fmt.Sprintf("当前处理角色应为%s，您的角色%s无权处理", ROLE_LABELS[*currentHandlerRole], ROLE_LABELS[user.Role]),
@@ -1412,12 +1493,12 @@ func validateEntryAction(entryID int, action string, user User, entryStatus stri
 		}
 
 	case "resubmit":
-		if user.Role != "document_clerk" {
+		if currentHandlerRole != nil && *currentHandlerRole != user.Role {
 			return ValidationResult{
 				Valid:         false,
-				Reason:        "仅资料员可重新提交",
+				Reason:        fmt.Sprintf("当前处理角色应为%s，您的角色%s无权重新提交", ROLE_LABELS[*currentHandlerRole], ROLE_LABELS[user.Role]),
 				ExceptionType: "unauthorized_advance",
-				ExceptionDesc: fmt.Sprintf("用户 %s (%s) 无权重新提交", user.Name, user.Role),
+				ExceptionDesc: fmt.Sprintf("用户 %s (%s) 无权重新提交，当前处理角色应为 %s", user.Name, user.Role, *currentHandlerRole),
 				HTTPStatus:    http.StatusForbidden,
 			}
 		}
@@ -1449,12 +1530,6 @@ func validateEntryAction(entryID int, action string, user User, entryStatus stri
 	}
 
 	return ValidationResult{Valid: true}
-}
-
-var ROLE_LABELS = map[string]string{
-	"document_clerk":       "资料员",
-	"construction_manager": "施工负责人",
-	"project_manager":      "项目经理",
 }
 
 func main() {

@@ -132,8 +132,9 @@ export function EntryDetail({ entryId, user, onBack, onRefresh }: EntryDetailPro
   const canConfirm = user.role === 'project_manager' && entry.status === 'approved'
   const canReturn = (user.role === 'construction_manager' && entry.status === 'pending_review') ||
                     (user.role === 'project_manager' && entry.status === 'approved')
-  const canResubmit = user.role === 'document_clerk' && entry.status === 'returned'
-  const canUpload = user.role === 'document_clerk'
+  const canResubmit = entry.status === 'returned' && entry.current_handler_role === user.role
+  const canUpload = (user.role === 'document_clerk') ||
+                    (user.role === 'construction_manager' && entry.status === 'returned' && entry.current_handler_role === 'construction_manager')
 
   const formatTime = (t: string) => {
     try {

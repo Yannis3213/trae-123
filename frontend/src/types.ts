@@ -82,6 +82,11 @@ export interface BatchResult {
   reason: string;
 }
 
+export interface BatchProcessEntry {
+  id: number;
+  version: number;
+}
+
 export interface Stats {
   by_status: Record<string, number>;
   by_priority: Record<string, number>;
