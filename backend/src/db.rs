@@ -13,6 +13,31 @@ pub fn init_db_pool(db_path: &str) -> DbPool {
         .expect("Failed to create DB pool")
 }
 
+fn column_exists(conn: &rusqlite::Connection, table: &str, column: &str) -> bool {
+    let mut stmt = match conn.prepare(&format!("PRAGMA table_info({})", table)) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1));
+    match rows {
+        Ok(rows) => rows.filter_map(|r| r.ok()).any(|c| c == column),
+        Err(_) => false,
+    }
+}
+
+fn add_column_if_missing(
+    conn: &rusqlite::Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !column_exists(conn, table, column) {
+        let sql = format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, definition);
+        conn.execute(&sql, [])?;
+    }
+    Ok(())
+}
+
 pub fn init_database(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = Path::new(db_path).parent() {
         fs::create_dir_all(parent).ok();
@@ -109,6 +134,9 @@ pub fn init_database(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         CREATE INDEX IF NOT EXISTS idx_records_app ON processing_records(application_id);
         ",
     )?;
+
+    add_column_if_missing(&conn, "attachments", "is_evidence", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(&conn, "attachments", "file_content_base64", "TEXT")?;
 
     Ok(())
 }

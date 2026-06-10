@@ -143,8 +143,25 @@ impl WorkflowService {
         if !Self::allowed_actions_for_role(user.role).iter().any(|a| a == action) && action != "上传附件" {
             return false;
         }
-        if user.id != app.current_handler && app.status != ApplicationStatus::Draft {
-            return false;
+        let is_related = user.id == app.current_handler
+            || user.id == app.created_by
+            || user.id == app.responsible_person;
+        match action {
+            "submit" | "correct" => {
+                if !is_related {
+                    return false;
+                }
+            }
+            "archive" => {
+                if user.id != app.current_handler {
+                    return false;
+                }
+            }
+            _ => {
+                if user.id != app.current_handler && app.status != ApplicationStatus::Draft {
+                    return false;
+                }
+            }
         }
         match (user.role, app.status, action) {
             (UserRole::StoreManager, ApplicationStatus::Draft, "submit") => true,
@@ -184,8 +201,11 @@ impl WorkflowService {
                 }
             }
             "correct" => {
-                if attachments.is_empty() {
-                    return Err(AppError::MissingEvidence("补正必须上传附件作为证据".into()));
+                let evidence_atts: Vec<&Attachment> = attachments.iter().filter(|a| a.is_evidence).collect();
+                if evidence_atts.is_empty() {
+                    return Err(AppError::MissingEvidence(
+                        "补正必须上传 is_evidence=true 的有效附件（需在异常回传或待补正状态下上传的附件）".into()
+                    ));
                 }
             }
             "archive" => {
@@ -548,6 +568,12 @@ impl SeedService {
                 ApplicationStatus::SignatureComplete, Priority::High, "u1", "u6",
                 now + Duration::hours(5), false,
             ),
+            (
+                "app5", "RP-2026-06-005", "store005", "丰台便利店",
+                "已补正-待复核", "冷饮缺货退回补正后待复核",
+                ApplicationStatus::CorrectionPending, Priority::High, "u4", "u2",
+                now + Duration::hours(18), false,
+            ),
         ];
 
         for (id, no, store_id, store_name, title, desc, status, priority, resp, handler, deadline, overdue) in &applications {
@@ -555,6 +581,8 @@ impl SeedService {
                 vec!["已逾期".into()]
             } else if *status == ApplicationStatus::ExceptionReturned {
                 vec!["异常退回".into()]
+            } else if *status == ApplicationStatus::CorrectionPending {
+                vec!["异常退回".into(), "已补正附件".into()]
             } else if *status == ApplicationStatus::SignatureComplete {
                 vec!["待复核归档".into()]
             } else {
@@ -582,21 +610,38 @@ impl SeedService {
             };
             ApplicationDao::create(pool, &app)?;
 
-            let atts = vec![
-                ("att1-".to_string() + id, id, "补货清单.xlsx", "application/vnd.ms-excel", resp),
-                ("att2-".to_string() + id, id, "库存照片.jpg", "image/jpeg", resp),
-            ];
-            for (aid, pid, fname, ftype, by) in &atts {
-                AttachmentDao::create(pool, &Attachment {
-                    id: aid.clone(),
-                    application_id: (*pid).into(),
-                    file_name: (*fname).into(),
-                    file_type: (*ftype).into(),
-                    uploaded_by: (*by).into(),
-                    uploaded_at: now - Duration::hours(5),
-                    is_evidence: false,
-                    file_content_base64: None,
-                })?;
+            if id == "app5" {
+                for (aid, fname, ftype, by, is_ev, content) in vec![
+                    ("att1-app5", "补货清单.xlsx", "application/vnd.ms-excel", "u4", false, None),
+                    ("att2-app5", "库存明细补正.jpg", "image/jpeg", "u4", true, Some("SGVsbG8gV29ybGQgQmFzZTY0IENvbnRlbnQgZm9yIEFwcDU=".into())),
+                ] {
+                    AttachmentDao::create(pool, &Attachment {
+                        id: aid.into(),
+                        application_id: "app5".into(),
+                        file_name: fname.into(),
+                        file_type: ftype.into(),
+                        uploaded_by: by.into(),
+                        uploaded_at: now - Duration::hours(1),
+                        is_evidence: is_ev,
+                        file_content_base64: content,
+                    })?;
+                }
+            } else {
+                for (aid, fname, ftype, by) in vec![
+                    ("att1-".to_string() + id, "补货清单.xlsx", "application/vnd.ms-excel", resp),
+                    ("att2-".to_string() + id, "库存照片.jpg", "image/jpeg", resp),
+                ] {
+                    AttachmentDao::create(pool, &Attachment {
+                        id: aid.clone(),
+                        application_id: (*id).into(),
+                        file_name: fname.into(),
+                        file_type: ftype.into(),
+                        uploaded_by: (*by).into(),
+                        uploaded_at: now - Duration::hours(5),
+                        is_evidence: false,
+                        file_content_base64: None,
+                    })?;
+                }
             }
 
             let record = ProcessingRecord {
@@ -636,6 +681,53 @@ impl SeedService {
                     created_at: now - Duration::hours(3),
                 };
                 ExceptionLogDao::create(pool, &exc_log)?;
+            }
+
+            if *status == ApplicationStatus::CorrectionPending {
+                let ret_record = ProcessingRecord {
+                    id: "rec2-".to_string() + id,
+                    application_id: (*id).into(),
+                    from_status: Some(ApplicationStatus::PendingSignature),
+                    to_status: ApplicationStatus::ExceptionReturned,
+                    action: "return".into(),
+                    operator_id: "u2".into(),
+                    operator_name: "李督导".into(),
+                    result: None,
+                    return_reason: Some("库存明细不完整，需补正".into()),
+                    processed_at: now - Duration::hours(5),
+                };
+                ProcessingRecordDao::create(pool, &ret_record)?;
+                let exc_log_ret = ExceptionLog {
+                    id: "exc1-".to_string() + id,
+                    application_id: (*id).into(),
+                    exception_type: "材料缺失".into(),
+                    description: "李督导退回：库存明细不完整，需补正".into(),
+                    operator_id: Some("u2".into()),
+                    created_at: now - Duration::hours(5),
+                };
+                ExceptionLogDao::create(pool, &exc_log_ret)?;
+                let cor_record = ProcessingRecord {
+                    id: "rec3-".to_string() + id,
+                    application_id: (*id).into(),
+                    from_status: Some(ApplicationStatus::ExceptionReturned),
+                    to_status: ApplicationStatus::CorrectionPending,
+                    action: "correct".into(),
+                    operator_id: "u4".into(),
+                    operator_name: "陈登记员".into(),
+                    result: Some("已上传补正附件库存明细补正.jpg".into()),
+                    return_reason: None,
+                    processed_at: now - Duration::hours(1),
+                };
+                ProcessingRecordDao::create(pool, &cor_record)?;
+                let exc_log_cor = ExceptionLog {
+                    id: "exc2-".to_string() + id,
+                    application_id: (*id).into(),
+                    exception_type: "补正附件上传".into(),
+                    description: "陈登记员上传了补正附件 库存明细补正.jpg（is_evidence=true，已持久化 file_content_base64 至 SQLite）".into(),
+                    operator_id: Some("u4".into()),
+                    created_at: now - Duration::hours(1),
+                };
+                ExceptionLogDao::create(pool, &exc_log_cor)?;
             }
         }
 

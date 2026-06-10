@@ -102,7 +102,12 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
 
   const needsResult = selectedAction === 'sign' || selectedAction === 'complete' || selectedAction === 'archive';
   const needsReturnReason = selectedAction === 'return';
-  const needsEvidenceAlert = selectedAction === 'correct' && detail.attachments.length === 0;
+
+  const evidenceAttachments = detail.attachments.filter((a) => a.is_evidence);
+  const hasValidEvidence = evidenceAttachments.length > 0;
+  const isCorrectionStatus = app.status === 'exception_returned' || app.status === 'correction_pending';
+  const canCorrect = hasValidEvidence;
+  const needsEvidenceAlert = selectedAction === 'correct' && !canCorrect;
 
   return (
     <div>
@@ -176,6 +181,43 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
           </div>
         </div>
 
+        {isCorrectionStatus && (
+          <div
+            style={{
+              marginTop: '16px',
+              padding: '14px 18px',
+              borderRadius: '8px',
+              background: hasValidEvidence ? '#ecfdf5' : '#fef2f2',
+              border: `1px solid ${hasValidEvidence ? '#10b981' : '#ef4444'}`,
+              fontSize: '14px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              {hasValidEvidence ? (
+                <>
+                  <span style={{ fontSize: '20px' }}>✅</span>
+                  <strong style={{ color: '#065f46' }}>
+                    已具备 {evidenceAttachments.length} 份有效补正证据（is_evidence=true，已持久化至 SQLite 可追溯）
+                  </strong>
+                  <span style={{ color: '#059669' }}>
+                    — 可提交补正，所有证据、处理记录、异常原因将写回同一申请轨迹
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span style={{ fontSize: '20px' }}>❌</span>
+                  <strong style={{ color: '#991b1b' }}>
+                    缺少有效补正证据 — 请先在下方「附件」区上传补正文件
+                  </strong>
+                  <span style={{ color: '#b91c1c' }}>
+                    (异常回传/待补正状态下上传的附件会自动标记 is_evidence=true)
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="section-title">附件（办理证据）</div>
         {detail.attachments.length === 0 ? (
           <div style={{ color: '#9ca3af', fontSize: '13px', marginBottom: '16px' }}>暂无附件</div>
@@ -230,15 +272,22 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
         ) : (
           <div style={{ marginBottom: '8px' }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
-              {availableActions.map((act) => (
-                <button
-                  key={act}
-                  className={`btn ${act === 'return' ? 'btn-warning' : act === 'correct' ? 'btn-danger' : 'btn-primary'}`}
-                  onClick={() => setSelectedAction(selectedAction === act ? null : act)}
-                >
-                  {ACTION_LABELS[act] || act}
-                </button>
-              ))}
+              {availableActions.map((act) => {
+                const actDisabled = act === 'correct' && !canCorrect;
+                return (
+                  <button
+                    key={act}
+                    className={`btn ${act === 'return' ? 'btn-warning' : act === 'correct' ? 'btn-danger' : 'btn-primary'}`}
+                    onClick={() => setSelectedAction(selectedAction === act ? null : act)}
+                    disabled={actDisabled}
+                    title={actDisabled ? '请先上传 is_evidence=true 的补正证据附件' : ''}
+                    style={actDisabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+                  >
+                    {ACTION_LABELS[act] || act}
+                    {actDisabled && ' (缺证据)'}
+                  </button>
+                );
+              })}
             </div>
 
             {selectedAction && (
@@ -276,12 +325,18 @@ export default function ApplicationDetail({ application, users, onUpdated }: App
                   </div>
                 )}
                 {needsEvidenceAlert && (
-                  <div style={{ color: '#dc2626', fontSize: '13px', marginBottom: '10px' }}>
-                    ⚠️ 补正操作需要上传附件作为证据，当前无附件
+                  <div style={{ padding: '10px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '13px', marginBottom: '10px' }}>
+                    ⚠️ 补正操作必须具备 <strong>is_evidence=true</strong> 的有效附件。
+                    当前共有 {detail.attachments.length} 份附件，其中 {evidenceAttachments.length} 份为有效补正证据。
+                    请在「异常回传 / 待补正」状态下通过上方附件上传区上传补正文件（系统将自动标记为补正证据并持久化至 SQLite）。
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '10px' }}>
-                  <button className="btn btn-primary" onClick={handleAction} disabled={processing}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleAction}
+                    disabled={processing || (selectedAction === 'correct' && !canCorrect)}
+                  >
                     {processing ? <><span className="spinner" /> 处理中</> : '确认办理'}
                   </button>
                   <button className="btn" onClick={() => setSelectedAction(null)} disabled={processing}>
