@@ -66,6 +66,77 @@ def log_exception(conn, contract_id: int, exc: WorkflowException, stage: str, tr
     )
 
 
+def persist_exception(contract_id: int, exc: WorkflowException, stage: str, triggered_by: int):
+    with get_connection() as conn:
+        log_exception(conn, contract_id, exc, stage, triggered_by)
+
+
+def _validate_process(conn, contract: dict, action: ProcessAction, user: dict) -> tuple[str, str, str, int, Optional[int]]:
+    stage_ = contract["current_stage"]
+
+    check_role_access(user["role"], contract["current_stage"], action.action)
+
+    if action.action not in ("return", "reject"):
+        check_handler_match(user["id"], contract.get("current_handler_id"))
+
+    check_version(action.version, contract["version"])
+
+    from_status, to_status = check_status_transition(contract["status"], action.action)
+
+    check_evidence(stage_, action.action, action.evidence)
+
+    if action.customer_patch and not contract.get("customer_id"):
+        raise WorkflowException("合同未关联用电客户，无法补正", "E_NO_CUSTOMER", "材料问题")
+    if action.pricing_patch and not contract.get("pricing_id"):
+        raise WorkflowException("合同未关联报价测算，无法补正", "E_NO_PRICING", "材料问题")
+
+    missing_customer = check_customer_complete(contract.get("customer") or {})
+    missing_pricing = check_pricing_complete(contract.get("pricing"))
+    if action.action in ("submit", "resubmit") and (missing_customer or missing_pricing):
+        all_missing = {}
+        if missing_customer:
+            all_missing["customer"] = missing_customer
+        if missing_pricing:
+            all_missing["pricing"] = missing_pricing
+        raise WorkflowException(
+            "提交前请补全：用电客户/报价测算缺项",
+            "E_MISSING_MATERIAL",
+            "材料问题",
+            all_missing,
+        )
+
+    if action.action in ("approve",) and user.get("role") != "trade_specialist":
+        raise WorkflowException(
+            "进入下一步前确认交易专员是否已处理：当前用户不是交易专员",
+            "E_TRADE_UNHANDLED",
+            "权限问题",
+        )
+
+    if action.action in ("finalize",) and user.get("role") != "risk_manager":
+        raise WorkflowException(
+            "风控经理需具备复核权限：当前角色不具备",
+            "E_RISK_NO_PERMISSION",
+            "权限问题",
+        )
+
+    if action.action in ("submit", "resubmit", "approve", "finalize"):
+        check_deadline_not_overdue(contract["deadline"], strict=False)
+
+    new_stage, to_status = next_stage_and_status(action.action, contract["status"])
+    new_version = contract["version"] + 1
+    next_handler_id = get_handler_for_stage(conn, new_stage, prefer_user_id=user["id"])
+
+    if action.action in ("reject", "return") and contract.get("previous_handler_id"):
+        row = conn.execute(
+            "SELECT id, role FROM users WHERE id = ?",
+            (contract["previous_handler_id"],),
+        ).fetchone()
+        if row and row["role"] == new_stage:
+            next_handler_id = row["id"]
+
+    return stage_, from_status, to_status, new_version, next_handler_id
+
+
 def get_current_user(conn, user_id: int) -> Optional[dict]:
     row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     return row_to_dict(row) if row else None
@@ -277,101 +348,22 @@ def process_contract(conn, action: ProcessAction, user: dict) -> dict:
     if not contract:
         raise WorkflowException(f"合同单不存在：id={action.contract_id}", "E_NOT_FOUND", "状态问题")
 
-    if action.customer_patch:
-        if not contract.get("customer_id"):
-            raise WorkflowException("合同未关联用电客户，无法补正", "E_NO_CUSTOMER", "材料问题")
+    stage_ = contract["current_stage"]
+    try:
+        stage_, from_status, to_status, new_version, next_handler_id = _validate_process(
+            conn, contract, action, user
+        )
+    except WorkflowException as e:
+        persist_exception(contract["id"], e, stage_, user["id"])
+        raise
+
+    new_stage = next_stage_after(action.action, to_status)
+
+    if action.customer_patch and contract.get("customer_id"):
         update_customer(conn, contract["customer_id"], action.customer_patch)
 
-    if action.pricing_patch:
-        if contract.get("pricing_id"):
-            update_pricing(conn, contract["pricing_id"], action.pricing_patch)
-
-    try:
-        check_role_access(user["role"], contract["current_stage"], action.action)
-    except WorkflowException as e:
-        log_exception(conn, contract["id"], e, contract["current_stage"], user["id"])
-        raise
-
-    if action.action not in ("return", "reject"):
-        try:
-            check_handler_match(user["id"], contract.get("current_handler_id"))
-        except WorkflowException as e:
-            log_exception(conn, contract["id"], e, contract["current_stage"], user["id"])
-            raise
-
-    try:
-        check_version(action.version, contract["version"])
-    except WorkflowException as e:
-        log_exception(conn, contract["id"], e, contract["current_stage"], user["id"])
-        raise
-
-    stage_ = contract["current_stage"]
-    from_status, to_status = check_status_transition(contract["status"], action.action)
-
-    try:
-        check_evidence(stage_, action.action, action.evidence)
-    except WorkflowException as e:
-        log_exception(conn, contract["id"], e, stage_, user["id"])
-        raise
-
-    refreshed = get_contract(conn, contract["id"])
-    missing_customer = check_customer_complete(refreshed.get("customer") or {})
-    missing_pricing = check_pricing_complete(refreshed.get("pricing"))
-    if action.action in ("submit", "resubmit") and (missing_customer or missing_pricing):
-        all_missing = {}
-        if missing_customer:
-            all_missing["customer"] = missing_customer
-        if missing_pricing:
-            all_missing["pricing"] = missing_pricing
-        exc = WorkflowException(
-            "提交前请补全：用电客户/报价测算缺项",
-            "E_MISSING_MATERIAL",
-            "材料问题",
-            all_missing,
-        )
-        log_exception(conn, contract["id"], exc, stage_, user["id"])
-        raise exc
-
-    if action.action in ("approve",):
-        role_ = user.get("role")
-        if role_ != "trade_specialist":
-            exc = WorkflowException(
-                "进入下一步前确认交易专员是否已处理：当前用户不是交易专员",
-                "E_TRADE_UNHANDLED",
-                "权限问题",
-            )
-            log_exception(conn, contract["id"], exc, stage_, user["id"])
-            raise exc
-
-    if action.action in ("finalize",):
-        role_ = user.get("role")
-        if role_ != "risk_manager":
-            exc = WorkflowException(
-                "风控经理需具备复核权限：当前角色不具备",
-                "E_RISK_NO_PERMISSION",
-                "权限问题",
-            )
-            log_exception(conn, contract["id"], exc, stage_, user["id"])
-            raise exc
-
-    if action.action in ("submit", "resubmit", "approve", "finalize"):
-        try:
-            check_deadline_not_overdue(contract["deadline"], strict=False)
-        except WorkflowException as e:
-            log_exception(conn, contract["id"], e, stage_, user["id"])
-            raise
-
-    new_stage, to_status = next_stage_and_status(action.action, contract["status"])
-    new_version = contract["version"] + 1
-    next_handler_id = get_handler_for_stage(conn, new_stage, prefer_user_id=user["id"])
-
-    if action.action in ("reject", "return") and contract.get("previous_handler_id"):
-        row = conn.execute(
-            "SELECT id, role FROM users WHERE id = ?",
-            (contract["previous_handler_id"],),
-        ).fetchone()
-        if row and row["role"] == new_stage:
-            next_handler_id = row["id"]
+    if action.pricing_patch and contract.get("pricing_id"):
+        update_pricing(conn, contract["pricing_id"], action.pricing_patch)
 
     conn.execute(
         """
