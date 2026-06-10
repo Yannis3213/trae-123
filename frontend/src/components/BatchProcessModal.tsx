@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Modal,
   Form,
@@ -12,8 +12,9 @@ import {
   Alert,
   Spin,
   Checkbox,
+  List,
 } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, CloseCircleOutlined, PaperClipOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { orderApi, type BatchProcessReq } from '../api';
 import type { OrderWithWarning, OrderStage, OrderStatus } from '../types';
 
@@ -63,29 +64,73 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
 
   const showResults = results !== null;
 
+  const missingEvidenceOrders = useMemo(() => {
+    if (action !== 'submit' && action !== 'resubmit') return [];
+    return selectedOrders.filter((o) => (o.stage_attach_count || 0) === 0);
+  }, [selectedOrders, action]);
+
+  const okEvidenceOrders = useMemo(() => {
+    if (action !== 'submit' && action !== 'resubmit') return selectedOrders;
+    return selectedOrders.filter((o) => (o.stage_attach_count || 0) > 0);
+  }, [selectedOrders, action]);
+
+  const cannotProceed = (action === 'submit' || action === 'resubmit') && okEvidenceOrders.length === 0;
+
   const handleSubmit = async () => {
     if (action === 'return' && !auditNote.trim()) {
       message.warning('批量退回请填写退回原因');
       return;
     }
+    if (cannotProceed) {
+      message.error('所有选中订单均缺少材料附件，请先在详情页补充后再批量提交');
+      return;
+    }
+    if (action === 'submit' || action === 'resubmit') {
+      if (!includeAttachments) {
+        Modal.confirm({
+          title: '未勾选「自动携带材料附件」',
+          content: `当前${STAGE_LABELS[stage]}环节要求提交时必须绑定材料附件，取消勾选将导致所有订单因缺材料被后端拦截。建议保持勾选状态。`,
+          okText: '仍然继续',
+          okButtonProps: { danger: true },
+          cancelText: '恢复勾选',
+          onOk: async () => {
+            await doSubmit();
+          },
+          onCancel: () => {
+            setIncludeAttachments(true);
+          },
+        });
+        return;
+      }
+    }
+    await doSubmit();
+  };
+
+  const doSubmit = async () => {
     setSubmitting(true);
     setResults(null);
     try {
+      const targetOrders =
+        action === 'submit' || action === 'resubmit' ? okEvidenceOrders : selectedOrders;
+      const skippedOrders = selectedOrders.filter(
+        (o) => !targetOrders.find((t) => t.id === o.id)
+      );
+
       const payload: BatchProcessReq = {
         action,
         stage,
-        order_ids: selectedOrders.map((o) => o.id),
-        versions: Object.fromEntries(selectedOrders.map((o) => [o.id, o.version])),
+        order_ids: targetOrders.map((o) => o.id),
+        versions: Object.fromEntries(targetOrders.map((o) => [o.id, o.version])),
       };
       if (action === 'return' || action === 'approve') {
         payload.audit_notes = Object.fromEntries(
-          selectedOrders.map((o) => [o.id, auditNote])
+          targetOrders.map((o) => [o.id, auditNote])
         );
       }
       if (includeAttachments && (action === 'submit' || action === 'resubmit')) {
         const attachmentMap: Record<string, string[]> = {};
         await Promise.all(
-          selectedOrders.map(async (o) => {
+          targetOrders.map(async (o) => {
             try {
               const detail = await orderApi.get(o.id);
               attachmentMap[o.id] = detail.attachments
@@ -99,12 +144,25 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
         payload.attachment_ids = attachmentMap;
       }
       const res = await orderApi.batch(payload);
-      setResults(res.results);
+
+      const allResults: BatchResult[] = [
+        ...res.results,
+        ...skippedOrders.map((o) => ({
+          order_id: o.id,
+          order_no: o.order_no,
+          success: false,
+          message: `前置校验不通过：${STAGE_LABELS[stage]}环节缺少材料附件，请先上传至少1份（如${
+            stage === 'listing' ? '商品规格参数表、高清图片' : stage === 'inventory' ? '入库凭证、盘点表' : '报关单、质检报告'
+          }等）`,
+        })),
+      ];
+
+      setResults(allResults);
       if (res.success_count > 0) {
-        message.success(`成功处理 ${res.success_count} 条，失败 ${res.failed_count} 条`);
+        message.success(`成功处理 ${res.success_count} 条，失败 ${allResults.length - res.success_count} 条`);
         onSuccess?.();
       } else {
-        message.error(`全部 ${res.failed_count} 条处理失败`);
+        message.error(`全部 ${allResults.length} 条处理失败`);
       }
     } catch (e: any) {
       message.error(e?.response?.data?.error || '批量处理失败');
@@ -145,6 +203,25 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
       width: 100,
       render: (v: OrderStatus) => <Tag>{STATUS_LABELS[v]}</Tag>,
     },
+    ...((action === 'submit' || action === 'resubmit')
+      ? [
+          {
+            title: '材料附件',
+            dataIndex: 'stage_attach_count' as const,
+            width: 120,
+            render: (v: number, r: OrderWithWarning) => (
+              <Space>
+                <Tag
+                  icon={<PaperClipOutlined />}
+                  color={v > 0 ? 'blue' : 'red'}
+                >
+                  {v > 0 ? `${v}份 ✓` : '缺材料 ✗'}
+                </Tag>
+              </Space>
+            ),
+          },
+        ]
+      : []),
     {
       title: '版本',
       dataIndex: 'version',
@@ -197,8 +274,20 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
         ) : (
           <Space>
             <Button onClick={handleClose}>取消</Button>
-            <Button type="primary" loading={submitting} onClick={handleSubmit}>
-              确认{ACTION_LABELS[action]}
+            <Button
+              type="primary"
+              loading={submitting}
+              onClick={handleSubmit}
+              danger={cannotProceed}
+              disabled={cannotProceed}
+            >
+              {cannotProceed
+                ? '全部缺材料，无法继续'
+                : `确认${ACTION_LABELS[action]}${
+                    missingEvidenceOrders.length > 0
+                      ? `（仅处理 ${okEvidenceOrders.length} 条有材料的订单）`
+                      : ''
+                  }`}
             </Button>
           </Space>
         )
@@ -246,6 +335,50 @@ function BatchProcessModal({ open, onClose, action, stage, selectedOrders, onSuc
             showIcon
             style={{ marginBottom: 16 }}
           />
+
+          {missingEvidenceOrders.length > 0 && (
+            <Alert
+              message={
+                <Space>
+                  <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
+                  <strong>
+                    {missingEvidenceOrders.length} 个订单缺少
+                    {STAGE_LABELS[stage]}环节材料证据，将被跳过或拦截：
+                  </strong>
+                </Space>
+              }
+              description={
+                <List
+                  size="small"
+                  dataSource={missingEvidenceOrders}
+                  renderItem={(o) => (
+                    <List.Item>
+                      <Space>
+                        <Tag icon={<CloseCircleOutlined />} color="red">
+                          缺材料
+                        </Tag>
+                        <span style={{ fontFamily: 'monospace' }}>{o.order_no}</span>
+                        <span style={{ color: '#595959' }}>{o.product_name}</span>
+                        <Tag color="orange">
+                          {STAGE_LABELS[stage]}环节需要上传至少1份附件（如
+                          {stage === 'listing'
+                            ? '商品规格参数表、高清图片'
+                            : stage === 'inventory'
+                            ? '入库凭证、盘点表'
+                            : '报关单、质检报告'}
+                          等）
+                        </Tag>
+                      </Space>
+                    </List.Item>
+                  )}
+                  style={{ marginTop: 8 }}
+                />
+              }
+              type="error"
+              showIcon={false}
+              style={{ marginBottom: 16 }}
+            />
+          )}
 
           <Card
             title="待处理订单"

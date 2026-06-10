@@ -241,6 +241,61 @@ function OrderDetail() {
       message.warning(`请填写${cfg.label}数据`);
       return;
     }
+    if (action === 'submit' || action === 'resubmit') {
+      const stageAtts = attachments.filter(
+        (a) => a.stage === order.current_stage && a.order_id === order.id
+      );
+      if (stageAtts.length === 0) {
+        Modal.error({
+          title: '缺少必填材料证据',
+          content: (
+            <div>
+              <p>
+                <strong>{STAGE_CONFIG[order.current_stage].label}</strong>环节需要至少1份材料附件，请先上传以下必填材料：
+              </p>
+              <ul style={{ margin: 0, paddingLeft: 20 }}>
+                {STAGE_CONFIG[order.current_stage].fields.map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+              </ul>
+              <p style={{ marginTop: 12, color: '#8c8c8c' }}>
+                点击本页面「上传材料」按钮补充附件后再提交。
+              </p>
+            </div>
+          ),
+        });
+        return;
+      }
+      if (selectedAttachmentIds[order.current_stage].length === 0) {
+        Modal.confirm({
+          title: '请绑定本次提交的材料附件',
+          content: (
+            <div>
+              <p>
+                本环节已有 <strong>{stageAtts.length}</strong> 份材料附件，请勾选至少 1 份作为本次提交的证据。
+              </p>
+              <p style={{ color: '#8c8c8c', fontSize: 12 }}>
+                （可在「材料附件」卡片中勾选本次提交对应的附件）
+              </p>
+            </div>
+          ),
+          okText: '去勾选',
+          cancelText: '自动勾选全部并提交',
+          onOk: () => {
+            setAttachmentModalOpen(false);
+          },
+          onCancel: async () => {
+            setSelectedAttachmentIds((prev) => ({
+              ...prev,
+              [order.current_stage]: stageAtts.map((a) => a.id),
+            }));
+            await new Promise((r) => setTimeout(r, 50));
+            handleAction(action);
+          },
+        });
+        return;
+      }
+    }
     if (action === 'return' && !auditNote.trim()) {
       message.warning('请填写退回原因');
       return;
@@ -482,17 +537,34 @@ function OrderDetail() {
       );
     }
 
+    const stageAttCount = attachments.filter(
+      (a) => a.stage === order.current_stage && a.order_id === order.id
+    ).length;
+    const missingEvidence = canDoAction('submit') && stageAttCount === 0;
+
     return (
       <Space>
         {canDoAction('submit') && (
-          <Button
-            type="primary"
-            icon={<PlayCircleOutlined />}
-            size="large"
-            onClick={() => setActionModal({ open: true, action: order.current_status === 'returned' ? 'resubmit' : 'submit' })}
+          <Tooltip
+            title={
+              missingEvidence
+                ? `缺少材料证据：请先在${STAGE_CONFIG[order.current_stage].label}环节上传至少1份附件（如${STAGE_CONFIG[order.current_stage].fields.slice(0, 2).join('、')}等）`
+                : selectedAttachmentIds[order.current_stage].length === 0
+                ? '建议在下方「材料附件」卡片中勾选本次提交对应的证据'
+                : `已绑定 ${selectedAttachmentIds[order.current_stage].length} 份材料附件`
+            }
           >
-            {order.current_status === 'returned' ? '重新提交' : '提交审核'}
-          </Button>
+            <Button
+              type="primary"
+              icon={<PlayCircleOutlined />}
+              size="large"
+              danger={missingEvidence}
+              onClick={() => setActionModal({ open: true, action: order.current_status === 'returned' ? 'resubmit' : 'submit' })}
+            >
+              {order.current_status === 'returned' ? '重新提交' : '提交审核'}
+              {missingEvidence && '（缺材料）'}
+            </Button>
+          </Tooltip>
         )}
         {canDoAction('approve') && (
           <Button

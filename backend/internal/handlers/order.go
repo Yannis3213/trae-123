@@ -39,9 +39,49 @@ type BatchProcessRequest struct {
 
 type BatchResultItem struct {
 	OrderID string `json:"order_id"`
-	OrderNo string `json:"order_no"`
+	OrderNo string `json:"order_no,omitempty"`
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+}
+
+const MissingEvidencePrefix = "【缺材料】"
+
+func isMissingEvidenceError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), MissingEvidencePrefix)
+}
+
+func recordMissingEvidenceAudit(
+	order *models.CrossBorderOrder, stage models.OrderStage, action string,
+	version int, data string, attachmentIDs []string,
+	userID string, role models.Role, username string,
+	fromStatus models.OrderStatus, clientIP string, reason string,
+) {
+	auditTx := database.DB.Begin()
+	now := time.Now()
+
+	ctx := &ValidationContext{
+		Order:         order,
+		Action:        action,
+		Stage:         stage,
+		Data:          data,
+		Version:       version,
+		AttachmentIDs: attachmentIDs,
+		UserID:        userID,
+		Role:          role,
+		Username:      username,
+		Now:           now,
+	}
+
+	_, _ = createExceptionLog(auditTx, order.ID, stage,
+		"missing_evidence", reason, userID, "")
+
+	note := fmt.Sprintf("提交被拦截：%s", reason)
+	_, _ = createAuditNote(auditTx, order.ID, stage, note, userID)
+
+	_, _ = createProcessingRecord(auditTx, order, ctx,
+		fromStatus, fromStatus, true, reason, note, clientIP, attachmentIDs)
+
+	auditTx.Commit()
 }
 
 type ValidationContext struct {
@@ -271,6 +311,26 @@ func validateEvidence(ctx *ValidationContext, tx *gorm.DB) error {
 		if len(errParts) > 0 {
 			return fmt.Errorf("附件校验失败：%s", strings.Join(errParts, "；"))
 		}
+	} else if ctx.Action == "submit" || ctx.Action == "resubmit" {
+		var stageAttachCount int64
+		tx.Model(&models.OrderAttachment{}).
+			Where("order_id = ? AND stage = ?", ctx.Order.ID, ctx.Stage).
+			Count(&stageAttachCount)
+		requiredHint := ""
+		switch ctx.Stage {
+		case models.StageListing:
+			requiredHint = "（如商品规格参数表、高清图片、品牌授权书等）"
+		case models.StageInventory:
+			requiredHint = "（如入库凭证、盘点表、质检报告等）"
+		case models.StageFulfillment:
+			requiredHint = "（如报关单、物流运单、发票等）"
+		}
+		if stageAttachCount == 0 {
+			return fmt.Errorf("【缺材料】%s环节未上传任何材料附件%s，请先在详情页点击「上传材料」补充后再提交",
+				stageName(ctx.Stage), requiredHint)
+		}
+		return fmt.Errorf("【缺材料】请绑定至少1份%s环节的材料附件作为证据%s；本环节现有%d份可勾选的附件",
+			stageName(ctx.Stage), requiredHint, stageAttachCount)
 	}
 
 	return nil
@@ -742,23 +802,30 @@ func (h *OrderHandler) SubmitOrder(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "订单不存在"})
 	}
 
+	fromStatus := order.CurrentStatus
+
 	tx := database.DB.Begin()
 
 	err := h.processOrderAction(tx, &order, action, req.Stage, req.Data, req.AuditNote,
 		req.Version, req.AttachmentIDs, userID, role, username, clientIP)
 	if err != nil {
 		tx.Rollback()
+		if isMissingEvidenceError(err) {
+			recordMissingEvidenceAudit(&order, req.Stage, action,
+				req.Version, req.Data, req.AttachmentIDs,
+				userID, role, username, fromStatus, clientIP, err.Error())
+		}
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	tx.Commit()
 	return c.JSON(fiber.Map{
-		"success":       true,
-		"message":       fmt.Sprintf("%s操作成功", action),
-		"order_id":      order.ID,
-		"new_status":    order.CurrentStatus,
-		"new_stage":     order.CurrentStage,
-		"version":       order.Version,
+		"success":        true,
+		"message":        fmt.Sprintf("%s操作成功", action),
+		"order_id":       order.ID,
+		"new_status":     order.CurrentStatus,
+		"new_stage":      order.CurrentStage,
+		"version":        order.Version,
 		"attachment_ids": req.AttachmentIDs,
 	})
 }
@@ -813,6 +880,11 @@ func (h *OrderHandler) BatchProcess(c *fiber.Ctx) error {
 			version, attachmentIDs, userID, role, username, clientIP)
 		if err != nil {
 			tx.Rollback()
+			if isMissingEvidenceError(err) {
+				recordMissingEvidenceAudit(&order, req.Stage, req.Action,
+					version, data, attachmentIDs,
+					userID, role, username, order.CurrentStatus, clientIP, err.Error())
+			}
 			item.Success = false
 			item.Message = err.Error()
 			results = append(results, item)

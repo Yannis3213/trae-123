@@ -547,9 +547,50 @@ func seedData() {
 			AuthorID: users[0].ID,
 			CreatedAt: now.Add(-3 * time.Hour),
 		},
+		{
+			OrderID:   orders[0].ID,
+			Stage:     models.StageListing,
+			Content:   "提交被拦截：【缺材料】商品刊登环节未上传任何材料附件（如商品规格参数表、高清图片、品牌授权书等），请先在详情页点击「上传材料」补充后再提交",
+			AuthorID:  users[0].ID,
+			CreatedAt: now.Add(-2 * time.Hour),
+		},
 	}
 	for i := range supplementNotes {
 		DB.Create(&supplementNotes[i])
+	}
+
+	missingEvidenceRecords := []models.ProcessingRecord{
+		{
+			OrderID:         orders[0].ID,
+			Stage:           models.StageListing,
+			Action:          "submit",
+			FromStatus:      models.StatusPending,
+			ToStatus:        models.StatusPending,
+			OperatorID:      users[0].ID,
+			Note:            "提交被拦截：【缺材料】商品刊登环节未上传任何材料附件（如商品规格参数表、高清图片、品牌授权书等），请先在详情页点击「上传材料」补充后再提交",
+			AttachmentIDs:   "",
+			IsException:     true,
+			ExceptionReason: "【缺材料】商品刊登环节未上传任何材料附件（如商品规格参数表、高清图片、品牌授权书等），请先在详情页点击「上传材料」补充后再提交",
+			CreatedAt:       now.Add(-2 * time.Hour),
+		},
+	}
+	for i := range missingEvidenceRecords {
+		DB.Create(&missingEvidenceRecords[i])
+	}
+
+	missingEvidenceExceptions := []models.ExceptionLog{
+		{
+			OrderID:       orders[0].ID,
+			Stage:         models.StageListing,
+			ExceptionType: "missing_evidence",
+			Reason:        "【缺材料】商品刊登环节未上传任何材料附件（如商品规格参数表、高清图片、品牌授权书等），请先在详情页点击「上传材料」补充后再提交",
+			OperatorID:    users[0].ID,
+			IsResolved:    false,
+			CreatedAt:     now.Add(-2 * time.Hour),
+		},
+	}
+	for i := range missingEvidenceExceptions {
+		DB.Create(&missingEvidenceExceptions[i])
 	}
 
 	log.Println("Database seeded with demo data")
