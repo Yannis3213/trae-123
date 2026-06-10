@@ -773,6 +773,28 @@ func updateApplicationStatus(db *sql.DB, w http.ResponseWriter, r *http.Request)
 			return
 		}
 
+		var materialStatus sql.NullString
+		var meterNo sql.NullString
+		var installationAddr sql.NullString
+		err = tx.QueryRow(`SELECT material_status, meter_no, installation_addr FROM account_applications WHERE id = ?`, id).
+			Scan(&materialStatus, &meterNo, &installationAddr)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "查询申请详情失败")
+			return
+		}
+		if !materialStatus.Valid || materialStatus.String != "审核通过" {
+			writeError(w, http.StatusBadRequest, "资料审核未通过，无法复核关闭")
+			return
+		}
+		if !meterNo.Valid || meterNo.String == "" {
+			writeError(w, http.StatusBadRequest, "未分配水表编号，无法复核关闭")
+			return
+		}
+		if !installationAddr.Valid || installationAddr.String == "" {
+			writeError(w, http.StatusBadRequest, "未填写安装地址，无法复核关闭")
+			return
+		}
+
 	case "return_correct":
 		validAction, nodeName, newStatus = true, "退回补正", "处理中"
 		if user.Role != "business_manager" {
@@ -905,21 +927,31 @@ func updateApplicationStatus(db *sql.DB, w http.ResponseWriter, r *http.Request)
 	})
 }
 
+type batchItem struct {
+	ID      string `json:"id"`
+	Version int    `json:"version"`
+	Status  string `json:"status"`
+}
+
 type batchProcessRequest struct {
-	IDs          []string `json:"ids"`
-	Action       string   `json:"action"`
-	Version      int      `json:"version"`
-	Remark       string   `json:"remark"`
-	Reason       string   `json:"reason"`
-	TargetStatus string   `json:"targetStatus"`
-	HandlerID    string   `json:"handlerId"`
+	Items        []batchItem `json:"items"`
+	IDs          []string    `json:"ids"`
+	Action       string      `json:"action"`
+	Version      int         `json:"version"`
+	Remark       string      `json:"remark"`
+	Reason       string      `json:"reason"`
+	TargetStatus string      `json:"targetStatus"`
+	HandlerID    string      `json:"handlerId"`
 }
 
 type batchResultItem struct {
-	ID      string `json:"id"`
-	Success bool   `json:"success"`
-	Reason  string `json:"reason"`
-	Status  string `json:"status"`
+	ID             string `json:"id"`
+	ApplicationNo  string `json:"applicationNo"`
+	Success        bool   `json:"success"`
+	Reason         string `json:"reason"`
+	Status         string `json:"status"`
+	PreviousStatus string `json:"previousStatus"`
+	NewStatus      string `json:"newStatus"`
 }
 
 func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request) {
@@ -931,7 +963,14 @@ func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if len(req.IDs) == 0 {
+	items := req.Items
+	if len(items) == 0 && len(req.IDs) > 0 {
+		for _, id := range req.IDs {
+			items = append(items, batchItem{ID: id, Version: 0, Status: ""})
+		}
+	}
+
+	if len(items) == 0 {
 		writeError(w, http.StatusBadRequest, "请选择要处理的申请")
 		return
 	}
@@ -942,37 +981,42 @@ func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request
 	}
 
 	batchNo := generateBatchNo()
-	results := make([]batchResultItem, 0, len(req.IDs))
+	results := make([]batchResultItem, 0, len(items))
 
-	for _, appID := range req.IDs {
-		result := processSingleBatchItem(db, appID, req, user)
+	tx, err := db.Begin()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "数据库事务失败")
+		return
+	}
+	defer tx.Rollback()
+
+	for _, item := range items {
+		result := processSingleBatchItem(tx, item, req, user)
+		result.ID = item.ID
 		results = append(results, result)
 
-		appNo := getApplicationNoByID(db, appID)
-		newStatus := ""
-		if result.Success {
-			switch req.Action {
-			case "batch_dispatch":
-				newStatus = "处理中"
-			case "batch_close":
-				newStatus = "已关闭"
-			case "batch_overdue_advance":
-				newStatus = result.Status
-			}
-		}
-
+		newStatus := result.NewStatus
 		successInt := 0
 		if result.Success {
 			successInt = 1
 		}
 
-		db.Exec(`
+		_, dbErr := tx.Exec(`
 			INSERT INTO batch_results
 			(id, batch_no, action, operator, application_id, application_no,
 			 success, previous_status, new_status, reason, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-		`, generateUUID(), batchNo, req.Action, user.ID, appID, appNo,
-			successInt, result.Status, newStatus, result.Reason)
+		`, generateUUID(), batchNo, req.Action, user.ID, item.ID, result.ApplicationNo,
+			successInt, result.PreviousStatus, newStatus, result.Reason)
+		if dbErr != nil {
+			result.Success = false
+			result.Reason = "记录批量结果失败: " + dbErr.Error()
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, "提交事务失败")
+		return
 	}
 
 	successCount := 0
@@ -984,29 +1028,29 @@ func batchProcessApplications(db *sql.DB, w http.ResponseWriter, r *http.Request
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"batchNo":      batchNo,
-		"total":        len(req.IDs),
+		"total":        len(items),
 		"successCount": successCount,
-		"failCount":    len(req.IDs) - successCount,
+		"failCount":    len(items) - successCount,
 		"results":      results,
 	})
 }
 
-func processSingleBatchItem(db *sql.DB, appID string, req batchProcessRequest, user *auth.User) batchResultItem {
-	result := batchResultItem{ID: appID, Success: false}
-
-	tx, err := db.Begin()
-	if err != nil {
-		result.Reason = "数据库事务失败"
-		return result
-	}
-	defer tx.Rollback()
+func processSingleBatchItem(tx *sql.Tx, item batchItem, req batchProcessRequest, user *auth.User) batchResultItem {
+	result := batchResultItem{ID: item.ID, Success: false}
 
 	var currentStatus string
 	var currentVersion int
 	var currentHandler sql.NullString
 	var applicationNo string
-	err = tx.QueryRow(`SELECT application_no, status, version, current_handler FROM account_applications WHERE id = ?`, appID).
-		Scan(&applicationNo, &currentStatus, &currentVersion, &currentHandler)
+	var materialStatus sql.NullString
+	var meterNo sql.NullString
+	var installationAddr sql.NullString
+	err := tx.QueryRow(`
+		SELECT application_no, status, version, current_handler,
+		       material_status, meter_no, installation_addr
+		FROM account_applications WHERE id = ?
+	`, item.ID).Scan(&applicationNo, &currentStatus, &currentVersion,
+		&currentHandler, &materialStatus, &meterNo, &installationAddr)
 	if err == sql.ErrNoRows {
 		result.Reason = "申请不存在"
 		return result
@@ -1016,136 +1060,154 @@ func processSingleBatchItem(db *sql.DB, appID string, req batchProcessRequest, u
 		return result
 	}
 
+	result.ApplicationNo = applicationNo
 	result.Status = currentStatus
+	result.PreviousStatus = currentStatus
+
+	if item.Version != 0 && item.Version != currentVersion {
+		result.Reason = fmt.Sprintf("旧版本冲突：页面版本%d，最新版本%d", item.Version, currentVersion)
+		return result
+	}
+
+	if item.Status != "" && item.Status != currentStatus {
+		result.Reason = fmt.Sprintf("状态冲突：页面显示'%s'，实际为'%s'", item.Status, currentStatus)
+		return result
+	}
+
+	if currentStatus == "已关闭" {
+		result.Reason = "申请已关闭"
+		return result
+	}
+
+	var nodeName string
+	var newStatus string
+	var newHandler sql.NullString
+	var excReason string
+	var actionRemark string
+	var reasonType string
+	updateFields := make([]string, 0)
+	updateArgs := make([]interface{}, 0)
 
 	switch req.Action {
 	case "batch_dispatch":
 		if user.Role != "meter_supervisor" {
-			result.Reason = "权限不足，只有抄表主管可以派发"
+			result.Reason = "越权：只有抄表主管可以派发"
 			return result
 		}
 		if currentStatus != "待派发" {
-			result.Reason = fmt.Sprintf("状态冲突：当前为'%s'，只能派发'待派发'状态", currentStatus)
+			result.Reason = fmt.Sprintf("状态冲突：当前为'%s'，只能派发'待派发'", currentStatus)
 			return result
 		}
 		if req.HandlerID == "" {
-			result.Reason = "未指定处理人"
+			result.Reason = "缺证据：未指定处理人"
 			return result
 		}
-
-		_, err := tx.Exec(`
-			UPDATE account_applications 
-			SET status = '处理中', current_handler = ?, version = version + 1, updated_at = datetime('now')
-			WHERE id = ? AND status = '待派发'
-		`, req.HandlerID, appID)
-		if err != nil {
-			result.Reason = "更新状态失败"
-			return result
-		}
-
-		_, err = tx.Exec(`
-			INSERT INTO processing_records
-			(id, application_id, node_name, operator, previous_status, new_status, 
-			 action, remark, created_at)
-			VALUES (?, ?, '资料审核', ?, '待派发', '处理中', 'batch_dispatch', ?, datetime('now'))
-		`, generateUUID(), appID, user.ID, req.Remark)
-		if err != nil {
-			result.Reason = "记录处理日志失败"
-			return result
-		}
+		nodeName, newStatus = "资料审核", "处理中"
+		newHandler = sql.NullString{String: req.HandlerID, Valid: true}
+		updateFields = append(updateFields, "status = ?", "current_handler = ?", "version = version + 1", "updated_at = datetime('now')")
+		updateArgs = append(updateArgs, newStatus, req.HandlerID)
+		actionRemark = req.Remark
 
 	case "batch_close":
 		if user.Role != "business_manager" {
-			result.Reason = "权限不足，只有营业经理可以关闭"
+			result.Reason = "越权：只有营业经理可以关闭"
 			return result
 		}
 		if currentStatus != "处理中" {
-			result.Reason = fmt.Sprintf("状态冲突：当前为'%s'，只能关闭'处理中'状态", currentStatus)
+			result.Reason = fmt.Sprintf("状态冲突：当前为'%s'，只能关闭'处理中'", currentStatus)
 			return result
 		}
-
-		_, err := tx.Exec(`
-			UPDATE account_applications 
-			SET status = '已关闭', version = version + 1, updated_at = datetime('now'), review_remark = ?
-			WHERE id = ? AND status = '处理中'
-		`, req.Remark, appID)
-		if err != nil {
-			result.Reason = "更新状态失败"
+		if !materialStatus.Valid || materialStatus.String != "审核通过" {
+			result.Reason = "缺证据：资料审核未通过"
 			return result
 		}
-
-		_, err = tx.Exec(`
-			INSERT INTO processing_records
-			(id, application_id, node_name, operator, previous_status, new_status, 
-			 action, remark, created_at)
-			VALUES (?, ?, '营业经理复核', ?, '处理中', '已关闭', 'batch_close', ?, datetime('now'))
-		`, generateUUID(), appID, user.ID, req.Remark)
-		if err != nil {
-			result.Reason = "记录处理日志失败"
+		if !meterNo.Valid || meterNo.String == "" {
+			result.Reason = "缺证据：未分配水表编号"
 			return result
 		}
+		if !installationAddr.Valid || installationAddr.String == "" {
+			result.Reason = "缺证据：未填写安装地址"
+			return result
+		}
+		nodeName, newStatus = "营业经理复核", "已关闭"
+		updateFields = append(updateFields, "status = ?", "version = version + 1", "updated_at = datetime('now')", "review_remark = ?")
+		updateArgs = append(updateArgs, newStatus, req.Remark)
+		actionRemark = req.Remark
 
 	case "batch_overdue_advance":
 		if user.Role != "meter_supervisor" {
-			result.Reason = "权限不足，只有抄表主管可以逾期推进"
+			result.Reason = "越权：只有抄表主管可以逾期推进"
 			return result
 		}
 		if currentStatus != "处理中" {
-			result.Reason = fmt.Sprintf("状态冲突：当前为'%s'，只能推进'处理中'状态", currentStatus)
+			result.Reason = fmt.Sprintf("状态冲突：当前为'%s'，只能推进'处理中'", currentStatus)
 			return result
 		}
-		if currentHandler.String != user.ID && currentStatus == "处理中" {
-			result.Reason = "您不是当前处理人"
+		if currentHandler.Valid && currentHandler.String != user.ID {
+			result.Reason = "越权：您不是当前处理人"
 			return result
 		}
 		if req.Reason == "" {
-			result.Reason = "逾期推进必须填写原因"
+			result.Reason = "缺证据：逾期推进必须填写原因"
 			return result
 		}
-
-		_, err := tx.Exec(`
-			UPDATE account_applications 
-			SET exception_reason = ?, version = version + 1, updated_at = datetime('now')
-			WHERE id = ? AND status = '处理中'
-		`, req.Reason, appID)
-		if err != nil {
-			result.Reason = "更新失败"
-			return result
-		}
-
-		_, err = tx.Exec(`
-			INSERT INTO processing_records
-			(id, application_id, node_name, operator, previous_status, new_status, 
-			 action, remark, exception_reason, created_at)
-			VALUES (?, ?, '装表派工', ?, '处理中', '处理中', 'batch_overdue_advance', '逾期推进记录', ?, datetime('now'))
-		`, generateUUID(), appID, user.ID, req.Reason)
-		if err != nil {
-			result.Reason = "记录处理日志失败"
-			return result
-		}
-
-		_, err = tx.Exec(`
-			INSERT INTO exception_reasons
-			(id, application_id, reason_type, description, reported_by, created_at)
-			VALUES (?, ?, '逾期推进', ?, ?, datetime('now'))
-		`, generateUUID(), appID, req.Reason, user.ID)
-		if err != nil {
-			result.Reason = "记录异常原因失败"
-			return result
-		}
+		nodeName, newStatus = "装表派工", "处理中"
+		excReason = req.Reason
+		reasonType = "逾期推进"
+		updateFields = append(updateFields, "exception_reason = ?", "version = version + 1", "updated_at = datetime('now')")
+		updateArgs = append(updateArgs, excReason)
+		actionRemark = "逾期推进记录"
 
 	default:
 		result.Reason = fmt.Sprintf("未知操作: %s", req.Action)
 		return result
 	}
 
-	if err := tx.Commit(); err != nil {
-		result.Reason = "提交事务失败"
+	if len(updateFields) > 0 {
+		updateSQL := "UPDATE account_applications SET " + strings.Join(updateFields, ", ") + " WHERE id = ? AND version = ?"
+		updateArgs = append(updateArgs, item.ID, currentVersion)
+		updateResult, dbErr := tx.Exec(updateSQL, updateArgs...)
+		if dbErr != nil {
+			result.Reason = "更新状态失败"
+			return result
+		}
+		rowsAffected, _ := updateResult.RowsAffected()
+		if rowsAffected == 0 {
+			result.Reason = fmt.Sprintf("版本冲突：页面版本%d，最新已变更", item.Version)
+			return result
+		}
+	}
+
+	_, dbErr := tx.Exec(`
+		INSERT INTO processing_records
+		(id, application_id, node_name, operator, previous_status, new_status, 
+		 action, remark, exception_reason, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+	`, generateUUID(), item.ID, nodeName, user.ID, currentStatus, newStatus,
+		req.Action, actionRemark, excReason)
+	if dbErr != nil {
+		result.Reason = "记录处理日志失败"
 		return result
+	}
+
+	if excReason != "" {
+		if reasonType == "" {
+			reasonType = "其他异常"
+		}
+		_, dbErr = tx.Exec(`
+			INSERT INTO exception_reasons
+			(id, application_id, reason_type, description, reported_by, created_at)
+			VALUES (?, ?, ?, ?, ?, datetime('now'))
+		`, generateUUID(), item.ID, reasonType, excReason, user.ID)
+		if dbErr != nil {
+			result.Reason = "记录异常原因失败"
+			return result
+		}
 	}
 
 	result.Success = true
 	result.Reason = "操作成功"
+	result.NewStatus = newStatus
 	return result
 }
 

@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { api } from './api.js';
+import { api } from '../api.js';
 
 class AppRoot extends LitElement {
   static properties = {

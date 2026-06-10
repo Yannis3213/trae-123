@@ -543,8 +543,16 @@ class BatchProcess extends LitElement {
     this.error = '';
 
     try {
+      const items = this.applications
+        .filter((a) => this.selectedIds.includes(a.id))
+        .map((a) => ({
+          id: a.id,
+          version: a.version,
+          status: a.status,
+        }));
+
       const data = {
-        ids: this.selectedIds,
+        items,
         action: this.batchAction,
         ...this.batchForm,
       };
@@ -633,9 +641,14 @@ class BatchProcess extends LitElement {
                       <div class="result-item ${item.success ? 'success' : 'fail'}">
                         <div class="result-item-info">
                           <div class="result-item-app">
-                            ${this.applications.find((a) => a.id === item.id)?.applicationNo || item.id}
+                            ${item.applicationNo || this.applications.find((a) => a.id === item.id)?.applicationNo || item.id}
                           </div>
-                          <div class="result-item-status">原状态: ${item.status}</div>
+                          <div class="result-item-status">
+                            ${item.previousStatus || item.status}
+                            ${item.success && item.newStatus
+                              ? html` → ${item.newStatus}`
+                              : ''}
+                          </div>
                         </div>
                         <div class="result-item-reason">${item.reason}</div>
                       </div>
