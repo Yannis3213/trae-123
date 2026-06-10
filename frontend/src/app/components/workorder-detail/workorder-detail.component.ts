@@ -230,20 +230,26 @@ import {
             </div>
 
             <div *ngIf="needExceptionReason" style="margin-bottom:15px">
-              <label style="display:block;margin-bottom:8px;color:#333;font-size:14px">异常/退回原因 <span style="color:#ff4d4f">*</span></label>
-              <textarea [(ngModel)]="processForm.exception_reason" rows="3" placeholder="请输入异常/退回原因（必填）"
-                style="width:100%;padding:10px;border:1px solid #d9d9d9;border-radius:4px;resize:vertical"></textarea>
+              <label style="display:block;margin-bottom:8px;color:#333;font-size:14px">
+                异常/退回原因 <span style="color:#ff4d4f">*</span>
+                <span style="color:#999;font-weight:normal;font-size:12px;margin-left:8px">执行退回补正前请填写</span>
+              </label>
+              <textarea [(ngModel)]="processForm.exception_reason" rows="3" placeholder="请输入异常/退回原因（执行退回操作时必填）"
+                [style.border]="exceptionReasonRequired ? '2px solid #ff4d4f' : '1px solid #d9d9d9'"
+                style="width:100%;padding:10px;border-radius:4px;resize:vertical"></textarea>
+              <div *ngIf="exceptionReasonRequired" style="margin-top:5px;color:#ff4d4f;font-size:12px">
+                ⚠️ 请先填写退回原因后再执行退回操作
+              </div>
             </div>
 
             <div style="display:flex;flex-direction:column;gap:10px">
-              <button *ngFor="let action of availableActions" (click)="executeAction(action.value)"
-                [disabled]="loading || (action.evidenceRequired && !allEvidenceFulfilled) || (action.needReason && !processForm.exception_reason?.trim())"
+              <button *ngFor="let action of availableActions" (click)="executeAction(action.value, action.needReason)"
+                [disabled]="loading || (action.evidenceRequired && !allEvidenceFulfilled)"
                 [style.background]="getActionButtonStyle(action)"
                 style="padding:12px;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;opacity:1"
-                [style.opacity]="(action.evidenceRequired && !allEvidenceFulfilled) || (action.needReason && !processForm.exception_reason?.trim()) ? '0.5' : '1'">
+                [style.opacity]="(action.evidenceRequired && !allEvidenceFulfilled) ? '0.5' : '1'">
                 {{loading ? '处理中...' : action.label}}
                 <span *ngIf="action.evidenceRequired && !allEvidenceFulfilled" style="font-size:11px;margin-left:5px">(证据不足)</span>
-                <span *ngIf="action.needReason && !processForm.exception_reason?.trim()" style="font-size:11px;margin-left:5px">(需填原因)</span>
               </button>
             </div>
           </div>
@@ -316,6 +322,7 @@ export class WorkorderDetailComponent implements OnInit {
     exception_reason: '',
     version: 0
   };
+  exceptionReasonRequired = false;
 
   STATUS_LABELS = STATUS_LABELS;
   WARNING_LABELS = WARNING_LABELS;
@@ -351,7 +358,7 @@ export class WorkorderDetailComponent implements OnInit {
   }
 
   get needExceptionReason(): boolean {
-    return ['reject', 'send_back'].includes(this.processForm.action);
+    return this.availableActions.some(a => a.needReason);
   }
 
   get availableActions(): { value: string; label: string; danger?: boolean; evidenceRequired?: boolean; needReason?: boolean }[] {
@@ -475,12 +482,15 @@ export class WorkorderDetailComponent implements OnInit {
     });
   }
 
-  executeAction(action: string): void {
+  executeAction(action: string, needReason: boolean = false): void {
     if (!this.order) return;
 
-    if (['reject', 'send_back'].includes(action) && !this.processForm.exception_reason?.trim()) {
+    if (needReason && !this.processForm.exception_reason?.trim()) {
+      this.exceptionReasonRequired = true;
       this.error = '退回补正操作必须填写异常原因';
       return;
+    } else {
+      this.exceptionReasonRequired = false;
     }
 
     const actionDef = this.availableActions.find(a => a.value === action);
@@ -506,6 +516,7 @@ export class WorkorderDetailComponent implements OnInit {
         this.processForm.remark = '';
         this.processForm.exception_reason = '';
         this.processForm.action = '';
+        this.exceptionReasonRequired = false;
         this.loading = false;
       },
       error: err => {

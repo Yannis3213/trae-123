@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"workshop-system/internal/config"
@@ -150,7 +151,7 @@ func (h *Handler) ProcessWorkOrder(w http.ResponseWriter, r *http.Request) {
 			utils.ErrorResponse(w, http.StatusForbidden, err.Error())
 		case services.ErrVersionMismatch, services.ErrStatusConflict:
 			utils.ErrorResponse(w, http.StatusConflict, err.Error())
-		case services.ErrMissingEvidence, services.ErrInvalidStatus:
+		case services.ErrMissingEvidence, services.ErrInvalidStatus, services.ErrExceptionReasonMissing:
 			utils.ErrorResponse(w, http.StatusBadRequest, err.Error())
 		default:
 			utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
@@ -249,9 +250,12 @@ func (h *Handler) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 
 	attachment, err := h.workOrderService.UploadAttachment(id, header, evidenceType, user)
 	if err != nil {
-		if err == services.ErrWorkOrderNotFound {
+		switch err {
+		case services.ErrWorkOrderNotFound:
 			utils.ErrorResponse(w, http.StatusNotFound, err.Error())
-		} else {
+		case services.ErrPermissionDenied:
+			utils.ErrorResponse(w, http.StatusForbidden, err.Error())
+		default:
 			utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 		return
@@ -261,11 +265,19 @@ func (h *Handler) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetAttachments(w http.ResponseWriter, r *http.Request) {
+	user := utils.GetUserFromContext(r)
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 
-	attachments, err := h.workOrderService.GetAttachments(id)
+	attachments, err := h.workOrderService.GetAttachments(id, user)
 	if err != nil {
-		utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
+		switch err {
+		case services.ErrWorkOrderNotFound:
+			utils.ErrorResponse(w, http.StatusNotFound, err.Error())
+		case services.ErrPermissionDenied:
+			utils.ErrorResponse(w, http.StatusForbidden, err.Error())
+		default:
+			utils.ErrorResponse(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
@@ -273,16 +285,28 @@ func (h *Handler) GetAttachments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
+	user := utils.GetUserFromContext(r)
 	attachID, _ := strconv.ParseInt(chi.URLParam(r, "attachId"), 10, 64)
 
-	attachment, err := h.workOrderService.GetAttachmentByID(attachID)
+	attachment, err := h.workOrderService.GetAttachmentByID(attachID, user)
 	if err != nil {
-		utils.ErrorResponse(w, http.StatusNotFound, "附件不存在")
+		if err == services.ErrPermissionDenied {
+			utils.ErrorResponse(w, http.StatusForbidden, err.Error())
+		} else {
+			utils.ErrorResponse(w, http.StatusNotFound, "附件不存在")
+		}
 		return
 	}
 
 	fullPath := filepath.Join(config.AppConfig.UploadPath, attachment.FilePath)
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		if strings.HasPrefix(attachment.FilePath, "seed/") {
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", attachment.FileName))
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprintf(w, "演示占位附件 - %s\n工单号附件ID: %d\n这是演示数据生成的占位文件。\n请通过前端上传真实附件后再下载。\n",
+				attachment.FileName, attachment.ID)
+			return
+		}
 		utils.ErrorResponse(w, http.StatusNotFound, "文件不存在")
 		return
 	}

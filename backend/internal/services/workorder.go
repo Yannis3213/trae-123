@@ -24,14 +24,15 @@ func NewWorkOrderService() *WorkOrderService {
 }
 
 var (
-	ErrPermissionDenied  = errors.New("权限不足")
-	ErrInvalidStatus     = errors.New("状态无效")
-	ErrStatusConflict    = errors.New("状态冲突，工单已被其他操作修改")
-	ErrVersionMismatch   = errors.New("版本冲突，请刷新后重试")
-	ErrMissingEvidence   = errors.New("缺少必填证据附件")
-	ErrInvalidHandler    = errors.New("当前处理人不匹配")
-	ErrOverdueNotAllowed = errors.New("工单已逾期，需先处理逾期问题")
-	ErrWorkOrderNotFound = errors.New("工单不存在")
+	ErrPermissionDenied       = errors.New("权限不足")
+	ErrInvalidStatus          = errors.New("状态无效")
+	ErrStatusConflict         = errors.New("状态冲突，工单已被其他操作修改")
+	ErrVersionMismatch        = errors.New("版本冲突，请刷新后重试")
+	ErrMissingEvidence        = errors.New("缺少必填证据附件")
+	ErrInvalidHandler         = errors.New("当前处理人不匹配")
+	ErrOverdueNotAllowed      = errors.New("工单已逾期，需先处理逾期问题")
+	ErrWorkOrderNotFound      = errors.New("工单不存在")
+	ErrExceptionReasonMissing = errors.New("退回补正操作必须填写异常原因")
 )
 
 type StateTransition struct {
@@ -160,16 +161,36 @@ func (s *WorkOrderService) GetList(req *models.WorkOrderListRequest, user *model
 	var orders []*models.WorkOrder
 	for rows.Next() {
 		o := &models.WorkOrder{}
+		var supervisorID sql.NullInt64
+		var supervisorName sql.NullString
+		var managerID sql.NullInt64
+		var managerName sql.NullString
 		err := rows.Scan(
 			&o.ID, &o.OrderNo, &o.AppointmentClue, &o.CustomerName, &o.Phone, &o.LicensePlate,
 			&o.CarModel, &o.Mileage, &o.FaultDescription, &o.Status,
 			&o.RegistrarID, &o.RegistrarName, &o.CurrentHandlerID, &o.CurrentHandlerName,
-			&o.SupervisorID, &o.SupervisorName, &o.ManagerID, &o.ManagerName,
+			&supervisorID, &supervisorName, &managerID, &managerName,
 			&o.ExpectedCompleteAt, &o.WarningLevel, &o.IsOverdue, &o.Version,
 			&o.CreatedAt, &o.UpdatedAt,
 		)
 		if err != nil {
 			return nil, 0, err
+		}
+		if supervisorID.Valid {
+			v := supervisorID.Int64
+			o.SupervisorID = &v
+		}
+		if supervisorName.Valid {
+			v := supervisorName.String
+			o.SupervisorName = &v
+		}
+		if managerID.Valid {
+			v := managerID.Int64
+			o.ManagerID = &v
+		}
+		if managerName.Valid {
+			v := managerName.String
+			o.ManagerName = &v
 		}
 		orders = append(orders, o)
 	}
@@ -181,6 +202,10 @@ func (s *WorkOrderService) GetDetail(id int64, user *models.User) (*models.WorkO
 	database.UpdateWarningLevels()
 
 	o := &models.WorkOrderDetail{}
+	var supervisorID sql.NullInt64
+	var supervisorName sql.NullString
+	var managerID sql.NullInt64
+	var managerName sql.NullString
 	err := database.DB.QueryRow(`
 		SELECT id, order_no, appointment_clue, customer_name, phone, license_plate,
 			car_model, mileage, fault_description, status,
@@ -193,7 +218,7 @@ func (s *WorkOrderService) GetDetail(id int64, user *models.User) (*models.WorkO
 		&o.ID, &o.OrderNo, &o.AppointmentClue, &o.CustomerName, &o.Phone, &o.LicensePlate,
 		&o.CarModel, &o.Mileage, &o.FaultDescription, &o.Status,
 		&o.RegistrarID, &o.RegistrarName, &o.CurrentHandlerID, &o.CurrentHandlerName,
-		&o.SupervisorID, &o.SupervisorName, &o.ManagerID, &o.ManagerName,
+		&supervisorID, &supervisorName, &managerID, &managerName,
 		&o.ExpectedCompleteAt, &o.WarningLevel, &o.IsOverdue, &o.Version,
 		&o.CreatedAt, &o.UpdatedAt,
 	)
@@ -202,6 +227,22 @@ func (s *WorkOrderService) GetDetail(id int64, user *models.User) (*models.WorkO
 	}
 	if err != nil {
 		return nil, err
+	}
+	if supervisorID.Valid {
+		v := supervisorID.Int64
+		o.SupervisorID = &v
+	}
+	if supervisorName.Valid {
+		v := supervisorName.String
+		o.SupervisorName = &v
+	}
+	if managerID.Valid {
+		v := managerID.Int64
+		o.ManagerID = &v
+	}
+	if managerName.Valid {
+		v := managerName.String
+		o.ManagerName = &v
 	}
 
 	if user.Role != models.RoleManager && o.CurrentHandlerID != user.ID {
@@ -370,7 +411,7 @@ func (s *WorkOrderService) Process(id int64, req *models.WorkOrderProcessRequest
 
 	if req.Action == "reject" || req.Action == "send_back" {
 		if req.ExceptionReason == "" {
-			return nil, fmt.Errorf("退回补正操作必须填写异常原因")
+			return nil, ErrExceptionReasonMissing
 		}
 	}
 
@@ -575,6 +616,10 @@ func (s *WorkOrderService) GetStatistics(user *models.User) (*models.Statistics,
 
 func (s *WorkOrderService) GetByID(id int64) (*models.WorkOrder, error) {
 	o := &models.WorkOrder{}
+	var supervisorID sql.NullInt64
+	var supervisorName sql.NullString
+	var managerID sql.NullInt64
+	var managerName sql.NullString
 	err := database.DB.QueryRow(`
 		SELECT id, order_no, appointment_clue, customer_name, phone, license_plate,
 			car_model, mileage, fault_description, status,
@@ -587,12 +632,28 @@ func (s *WorkOrderService) GetByID(id int64) (*models.WorkOrder, error) {
 		&o.ID, &o.OrderNo, &o.AppointmentClue, &o.CustomerName, &o.Phone, &o.LicensePlate,
 		&o.CarModel, &o.Mileage, &o.FaultDescription, &o.Status,
 		&o.RegistrarID, &o.RegistrarName, &o.CurrentHandlerID, &o.CurrentHandlerName,
-		&o.SupervisorID, &o.SupervisorName, &o.ManagerID, &o.ManagerName,
+		&supervisorID, &supervisorName, &managerID, &managerName,
 		&o.ExpectedCompleteAt, &o.WarningLevel, &o.IsOverdue, &o.Version,
 		&o.CreatedAt, &o.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if supervisorID.Valid {
+		v := supervisorID.Int64
+		o.SupervisorID = &v
+	}
+	if supervisorName.Valid {
+		v := supervisorName.String
+		o.SupervisorName = &v
+	}
+	if managerID.Valid {
+		v := managerID.Int64
+		o.ManagerID = &v
+	}
+	if managerName.Valid {
+		v := managerName.String
+		o.ManagerName = &v
 	}
 	return o, nil
 }
@@ -630,10 +691,17 @@ func getEvidenceName(evidenceType string) string {
 }
 
 func (s *WorkOrderService) UploadAttachment(workOrderID int64, file *multipart.FileHeader, evidenceType string, user *models.User) (*models.Attachment, error) {
-	var count int
-	database.DB.QueryRow("SELECT COUNT(*) FROM work_orders WHERE id = ?", workOrderID).Scan(&count)
-	if count == 0 {
+	var currentHandlerID int64
+	err := database.DB.QueryRow("SELECT current_handler_id FROM work_orders WHERE id = ?", workOrderID).Scan(&currentHandlerID)
+	if err == sql.ErrNoRows {
 		return nil, ErrWorkOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if user.Role != models.RoleManager && currentHandlerID != user.ID {
+		return nil, ErrPermissionDenied
 	}
 
 	uploadPath := config.AppConfig.UploadPath
@@ -704,7 +772,19 @@ func (s *WorkOrderService) UploadAttachment(workOrderID int64, file *multipart.F
 	return attachment, nil
 }
 
-func (s *WorkOrderService) GetAttachments(workOrderID int64) ([]models.Attachment, error) {
+func (s *WorkOrderService) GetAttachments(workOrderID int64, user *models.User) ([]models.Attachment, error) {
+	var currentHandlerID int64
+	err := database.DB.QueryRow("SELECT current_handler_id FROM work_orders WHERE id = ?", workOrderID).Scan(&currentHandlerID)
+	if err == sql.ErrNoRows {
+		return nil, ErrWorkOrderNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if user.Role != models.RoleManager && currentHandlerID != user.ID {
+		return nil, ErrPermissionDenied
+	}
+
 	rows, err := database.DB.Query(`
 		SELECT id, work_order_id, file_name, file_type, file_size, file_path,
 			uploaded_by, uploader, evidence_type, created_at
@@ -725,12 +805,14 @@ func (s *WorkOrderService) GetAttachments(workOrderID int64) ([]models.Attachmen
 	return attachments, nil
 }
 
-func (s *WorkOrderService) GetAttachmentByID(attachmentID int64) (*models.Attachment, error) {
+func (s *WorkOrderService) GetAttachmentByID(attachmentID int64, user *models.User) (*models.Attachment, error) {
 	a := &models.Attachment{}
 	err := database.DB.QueryRow(`
-		SELECT id, work_order_id, file_name, file_type, file_size, file_path,
-			uploaded_by, uploader, evidence_type, created_at
-		FROM attachments WHERE id = ?
+		SELECT a.id, a.work_order_id, a.file_name, a.file_type, a.file_size, a.file_path,
+			a.uploaded_by, a.uploader, a.evidence_type, a.created_at
+		FROM attachments a
+		INNER JOIN work_orders w ON w.id = a.work_order_id
+		WHERE a.id = ?
 	`, attachmentID).Scan(&a.ID, &a.WorkOrderID, &a.FileName, &a.FileType, &a.FileSize,
 		&a.FilePath, &a.UploadedBy, &a.Uploader, &a.EvidenceType, &a.CreatedAt)
 	if err == sql.ErrNoRows {
@@ -739,5 +821,12 @@ func (s *WorkOrderService) GetAttachmentByID(attachmentID int64) (*models.Attach
 	if err != nil {
 		return nil, err
 	}
+
+	var currentHandlerID int64
+	database.DB.QueryRow("SELECT current_handler_id FROM work_orders WHERE id = ?", a.WorkOrderID).Scan(&currentHandlerID)
+	if user.Role != models.RoleManager && currentHandlerID != user.ID {
+		return nil, ErrPermissionDenied
+	}
+
 	return a, nil
 }

@@ -55,10 +55,10 @@ type WorkOrder struct {
 	RegistrarName       string          `json:"registrar_name"`
 	CurrentHandlerID    int64           `json:"current_handler_id"`
 	CurrentHandlerName  string          `json:"current_handler_name"`
-	SupervisorID        int64           `json:"supervisor_id,omitempty"`
-	SupervisorName      string          `json:"supervisor_name,omitempty"`
-	ManagerID           int64           `json:"manager_id,omitempty"`
-	ManagerName         string          `json:"manager_name,omitempty"`
+	SupervisorID        *int64          `json:"supervisor_id,omitempty"`
+	SupervisorName      *string         `json:"supervisor_name,omitempty"`
+	ManagerID           *int64          `json:"manager_id,omitempty"`
+	ManagerName         *string         `json:"manager_name,omitempty"`
 	ExpectedCompleteAt  time.Time       `json:"expected_complete_at"`
 	WarningLevel        WarningLevel    `json:"warning_level"`
 	IsOverdue           bool            `json:"is_overdue"`

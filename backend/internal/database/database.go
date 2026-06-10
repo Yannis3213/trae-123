@@ -380,12 +380,45 @@ func seedAttachments(tx *sql.Tx) error {
 		{4, "工单登记表_丰田凯美瑞.pdf", "application/pdf", 95000, "registration_form", 1, "张登记"},
 	}
 
+	evidenceNames := map[string]string{
+		"registration_form":     "工单登记表",
+		"vehicle_checklist":     "车辆检测清单",
+		"inspection_report":     "检测报告",
+		"repair_quote":          "维修报价单",
+		"parts_confirmation":    "配件确认单",
+		"final_inspection":      "终检报告",
+		"delivery_note":         "派修单",
+		"customer_confirmation": "客户确认单",
+	}
+
+	uploadPath := config.AppConfig.UploadPath
+	if err := os.MkdirAll(uploadPath, 0755); err != nil {
+		return fmt.Errorf("创建上传目录失败: %w", err)
+	}
+
 	for _, a := range attachments {
-		_, err := tx.Exec(`
+		relPath := fmt.Sprintf("seed/order_%d/%s", a.orderID, a.fileName)
+		fullPath := filepath.Join(uploadPath, relPath)
+
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			return fmt.Errorf("创建seed目录失败: %w", err)
+		}
+
+		content := fmt.Sprintf("===== 演示占位附件 =====\n文件名: %s\n证据类型: %s\n所属工单ID: %d\n上传者: %s\n\n这是演示数据自动生成的占位文件。\n可通过前端详情页上传真实文件替换。\n",
+			a.fileName, evidenceNames[a.evidenceType], a.orderID, a.uploader)
+		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+			return fmt.Errorf("创建占位文件失败: %w", err)
+		}
+
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Exec(`
 			INSERT INTO attachments (work_order_id, file_name, file_type, file_size, file_path, uploaded_by, uploader, evidence_type)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, a.orderID, a.fileName, a.fileType, a.fileSize,
-			fmt.Sprintf("seed/order_%d/%s", a.orderID, a.fileName),
+		`, a.orderID, a.fileName, "text/plain", info.Size(), relPath,
 			a.uploadedBy, a.uploader, a.evidenceType)
 		if err != nil {
 			return err
