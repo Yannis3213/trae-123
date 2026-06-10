@@ -430,8 +430,8 @@ export default component$(() => {
                           {overdueState === 'normal' && <span class="badge badge-normal">正常</span>}
                         </td>
                         <td style="font-size: 12px; color: var(--text-secondary);">
-                          {order.current_handler_name || order.status === 'pending_audit' ? '审核组' :
-                            order.status === 'pending_review' ? '复核组' : '—'}
+                          {order.current_handler_name || (order.status === 'pending_audit' ? '审核组' :
+                            order.status === 'pending_review' ? '复核组' : '—')}
                         </td>
                         <td>v{order.version}</td>
                         <td>{fmtDate(order.updated_at)}</td>

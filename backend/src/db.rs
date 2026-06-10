@@ -332,46 +332,38 @@ async fn add_seed_records(
     };
 
     let now = Utc::now().to_rfc3339();
-
     let (handler_id, handler_name, handler_role) = find_user(created_by);
 
-    let mut push_record = |from: Option<&OrderStatus>, to: &OrderStatus, action: &str| -> Result<()> {
-        let id = Uuid::new_v4();
-        sqlx::query(
-            r#"
-            INSERT INTO processing_records (
-                id, order_id, from_status, to_status, action,
-                handler_id, handler_name, handler_role, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+    let push = |from: Option<&OrderStatus>, to: &OrderStatus, action: &str| -> String {
+        format!(
+            "INSERT INTO processing_records \
+            (id, order_id, from_status, to_status, action, handler_id, handler_name, handler_role, created_at) \
+            VALUES ('{}', '{}', {}, '{}', '{}', '{}', '{}', '{}', '{}')",
+            Uuid::new_v4().to_string(),
+            order_id.to_string(),
+            from.map(|s| format!("'{}'", s.as_str())).unwrap_or_else(|| "NULL".to_string()),
+            to.as_str(),
+            action,
+            &handler_id,
+            &handler_name,
+            &handler_role,
+            &now,
         )
-        .bind(id.to_string())
-        .bind(order_id.to_string())
-        .bind(from.map(|s| s.as_str()))
-        .bind(to.as_str())
-        .bind(action)
-        .bind(&handler_id)
-        .bind(&handler_name)
-        .bind(&handler_role)
-        .bind(&now)
-        .execute(pool)?;
-        Ok(())
     };
 
     match version {
         1 => {
-            push_record(None, status, "创建草稿")?;
+            sqlx::query(&push(None, status, "创建草稿")).execute(pool).await?;
         }
         2 => {
-            push_record(None, &OrderStatus::Draft, "创建草稿")?;
-            push_record(Some(&OrderStatus::Draft), status, "提交审核")?;
+            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿")).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::Draft), status, "提交审核")).execute(pool).await?;
         }
         3 => {
-            push_record(None, &OrderStatus::Draft, "创建草稿")?;
-            push_record(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核")?;
-            push_record(Some(&OrderStatus::PendingAudit), status, "退回补正（逾期）")?;
+            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿")).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核")).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::PendingAudit), status, "退回补正（逾期）")).execute(pool).await?;
 
-            let exception_id = Uuid::new_v4();
             sqlx::query(
                 r#"
                 UPDATE processing_records
@@ -383,13 +375,13 @@ async fn add_seed_records(
             .bind("请登记员在24小时内补正行程细节和客户身份证信息")
             .bind(order_id.to_string())
             .bind(OrderStatus::PendingCorrection.as_str())
-            .execute(pool)?;
-            let _ = exception_id;
+            .execute(pool)
+            .await?;
         }
         4 => {
-            push_record(None, &OrderStatus::Draft, "创建草稿")?;
-            push_record(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核")?;
-            push_record(Some(&OrderStatus::PendingAudit), &OrderStatus::PendingReview, "审核通过，待复核")?;
+            sqlx::query(&push(None, &OrderStatus::Draft, "创建草稿")).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::Draft), &OrderStatus::PendingAudit, "提交审核")).execute(pool).await?;
+            sqlx::query(&push(Some(&OrderStatus::PendingAudit), &OrderStatus::PendingReview, "审核通过，待复核")).execute(pool).await?;
         }
         _ => {}
     }

@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use crate::error::AppError;
 use crate::models::*;
 use crate::auth::AuthUser;
+use crate::auth::parse_db_datetime;
 use crate::services::{
     allowed_visible_statuses, available_actions,
     check_state_change, can_view_order, EvidenceState,
@@ -19,9 +20,7 @@ use crate::services::{
 use crate::db::{refresh_overdue_flags, get_user_name};
 
 fn parse_dt(s: &str) -> DateTime<Utc> {
-    chrono::DateTime::parse_from_rfc3339(s)
-        .unwrap_or_else(|_| Utc::now())
-        .with_timezone(&Utc)
+    parse_db_datetime(s)
 }
 
 fn parse_dt_opt(s: &Option<String>) -> Option<DateTime<Utc>> {
@@ -269,7 +268,7 @@ pub async fn create_order(
     let now = Utc::now();
     let version = 1;
 
-    let (handler_id, handler_name) = next_handler_for(&status, &auth.id);
+    let (handler_id, handler_name, _) = next_handler_for(&status, &auth.id);
 
     let mut tx = pool.begin().await.map_err(AppError::DatabaseError)?;
 

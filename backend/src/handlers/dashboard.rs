@@ -4,15 +4,14 @@ use axum::{
 };
 use sqlx::{SqlitePool, Row, sqlite::SqliteRow};
 use crate::auth::AuthUser;
+use crate::auth::parse_db_datetime;
 use crate::error::AppError;
 use crate::models::{DashboardStats, OrderStatus, TourOrder, UserRole};
 use crate::services::allowed_visible_statuses;
 use crate::db::refresh_overdue_flags;
 
 fn parse_dt(s: &str) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::parse_from_rfc3339(s)
-        .unwrap_or_else(|_| chrono::Utc::now())
-        .with_timezone(&chrono::Utc)
+    parse_db_datetime(s)
 }
 
 fn get_order(row: &SqliteRow) -> TourOrder {

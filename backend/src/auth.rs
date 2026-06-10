@@ -97,7 +97,7 @@ pub async fn login(
             role: UserRole::from_str(&r.role).unwrap(),
             display_name: r.display_name,
             password_hash: r.password_hash,
-            created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at).unwrap().with_timezone(&Utc),
+            created_at: parse_db_datetime(&r.created_at),
         },
         None => return Err(AppError::AuthError("用户名或密码错误".to_string())),
     };
@@ -160,4 +160,18 @@ struct UserRecord {
     role: String,
     display_name: String,
     created_at: String,
+}
+
+/// 解析 SQLite 时间戳：同时兼容 RFC3339（手动写入）和 sqlite datetime('now') 格式（YYYY-MM-DD HH:MM:SS）。
+pub fn parse_db_datetime(s: &str) -> chrono::DateTime<Utc> {
+    // 1. 先尝试 RFC3339
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return dt.with_timezone(&Utc);
+    }
+    // 2. 再尝试 sqlite datetime('now') 格式（UTC）
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return chrono::DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
+    }
+    // 3. 兜底：当前时间
+    Utc::now()
 }
