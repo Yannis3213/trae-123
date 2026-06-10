@@ -108,7 +108,7 @@ type ProcessEntryRequest struct {
 }
 
 type BatchProcessEntry struct {
-	ID      int `json:"id"`
+	EntryID int `json:"entry_id"`
 	Version int `json:"version"`
 }
 
@@ -788,15 +788,23 @@ func processEntryHandler(c echo.Context) error {
 			actionName = req.Action
 		}
 
-		failReturnReason := vr.Reason
-		if req.Action == "return" && req.ReturnReason != "" {
-			failReturnReason = req.ReturnReason + "；" + vr.Reason
+		failReturnReason := ""
+		failResult := "处理失败"
+		if req.Action == "return" {
+			failReturnReason = req.ReturnReason
+			failResult = "退回失败"
+		} else if req.Action == "resubmit" {
+			failResult = "重新提交失败"
+		} else if req.Action == "approve" {
+			failResult = "审核失败"
+		} else if req.Action == "confirm" {
+			failResult = "确认失败"
 		}
 
 		db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason)
-			VALUES (?, ?, ?, ?, '处理失败', ?)`, id, handlerRole, user.Name, actionName, failReturnReason)
+			VALUES (?, ?, ?, ?, ?, ?)`, id, handlerRole, user.Name, actionName, failResult, failReturnReason)
 		db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
-			VALUES (?, 'exception', ?, ?)`, id, fmt.Sprintf("处理失败：%s", vr.Reason), user.ID)
+			VALUES (?, 'exception', ?, ?)`, id, fmt.Sprintf("%s，原因：%s", failResult, vr.Reason), user.ID)
 
 		return c.JSON(vr.HTTPStatus, map[string]string{"error": vr.Reason})
 	}
@@ -886,7 +894,11 @@ func batchProcessHandler(c echo.Context) error {
 	results := []BatchResult{}
 
 	for _, entry := range req.Entries {
-		entryID := entry.ID
+		if entry.EntryID == 0 {
+			results = append(results, BatchResult{EntryID: entry.EntryID, EntryTitle: "", Success: false, Reason: "缺少 entry_id 字段"})
+			continue
+		}
+		entryID := entry.EntryID
 		submittedVersion := entry.Version
 
 		var status, exceptionTags, entryTitle string
@@ -945,10 +957,17 @@ func batchProcessHandler(c echo.Context) error {
 				actionName = "batch_" + req.Action
 			}
 
+			failReturnReason := ""
+			failResult := "批量处理失败"
+			if req.Action == "return" {
+				failReturnReason = req.Result
+				failResult = "批量退回失败"
+			}
+
 			db.Exec(`INSERT INTO processing_records (entry_id, handler_role, handler_name, action, result, return_reason)
-				VALUES (?, ?, ?, ?, '批量处理失败', ?)`, entryID, handlerRole, user.Name, actionName, vr.Reason)
+				VALUES (?, ?, ?, ?, ?, ?)`, entryID, handlerRole, user.Name, actionName, failResult, failReturnReason)
 			db.Exec(`INSERT INTO audit_notes (entry_id, note_type, content, created_by)
-				VALUES (?, 'exception', ?, ?)`, entryID, fmt.Sprintf("批量处理失败：%s", vr.Reason), user.ID)
+				VALUES (?, 'exception', ?, ?)`, entryID, fmt.Sprintf("%s，原因：%s", failResult, vr.Reason), user.ID)
 
 			results = append(results, BatchResult{EntryID: entryID, EntryTitle: entryTitle, Success: false, Reason: vr.Reason})
 			continue

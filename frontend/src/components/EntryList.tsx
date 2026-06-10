@@ -81,7 +81,7 @@ export function EntryList({ user, onEntryClick, onRefresh }: EntryListProps) {
     try {
       const batchEntries: BatchProcessEntry[] = entries
         .filter(e => selected.has(e.id))
-        .map(e => ({ id: e.id, version: e.version }))
+        .map(e => ({ entry_id: e.id, version: e.version }))
 
       const data = await api.batchProcess({
         entries: batchEntries,

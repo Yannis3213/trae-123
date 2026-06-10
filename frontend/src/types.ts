@@ -84,7 +84,7 @@ export interface BatchResult {
 }
 
 export interface BatchProcessEntry {
-  id: number;
+  entry_id: number;
   version: number;
 }
 
