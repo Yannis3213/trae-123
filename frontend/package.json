@@ -1,0 +1,26 @@
+{
+  "name": "replenishment-frontend",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "cross-env FRONTEND_PORT=${FRONTEND_PORT:-4321} BACKEND_PORT=${BACKEND_PORT:-8000} astro dev --port ${FRONTEND_PORT:-4321}",
+    "start": "npm run dev",
+    "build": "cross-env FRONTEND_PORT=${FRONTEND_PORT:-4321} BACKEND_PORT=${BACKEND_PORT:-8000} astro build",
+    "preview": "cross-env FRONTEND_PORT=${FRONTEND_PORT:-4321} BACKEND_PORT=${BACKEND_PORT:-8000} astro preview --port ${FRONTEND_PORT:-4321}"
+  },
+  "dependencies": {
+    "astro": "^4.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@astrojs/react": "^3.0.0",
+    "zustand": "^4.4.0",
+    "axios": "^1.6.0",
+    "cross-env": "^7.0.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.3.0"
+  }
+}

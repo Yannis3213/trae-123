@@ -1,0 +1,9 @@
+[default]
+address = "0.0.0.0"
+workers = 4
+log_level = "normal"
+
+[default.limits]
+form = "64 kB"
+file = "1 MiB"
+json = "1 MiB"
