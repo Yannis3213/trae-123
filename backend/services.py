@@ -146,6 +146,8 @@ class OrderService:
         page_size: int = 20,
         current_user: Optional[User] = None
     ) -> Tuple[List[TransportOrder], int]:
+        from models import ExceptionReason, Attachment, ProcessingRecord, AuditNote
+
         query = self.db.query(TransportOrder)
 
         if status:
@@ -165,6 +167,19 @@ class OrderService:
 
         for item in items:
             item.is_overdue = self._check_overdue(item)
+            item.exception_count = self.db.query(ExceptionReason).filter(
+                ExceptionReason.order_id == item.id
+            ).count()
+            required_evidence = self._get_required_evidence(item.status, "通过")
+            existing_types = set(a.file_type for a in item.attachments)
+            item.evidence_gap = len([e for e in required_evidence if e not in existing_types])
+            last_record = self.db.query(ProcessingRecord).filter(
+                ProcessingRecord.order_id == item.id
+            ).order_by(ProcessingRecord.created_at.desc()).first()
+            item.last_record_summary = f"[{last_record.action}] {last_record.remark}" if last_record else None
+            item.audit_note_count = self.db.query(AuditNote).filter(
+                AuditNote.order_id == item.id
+            ).count()
 
         return items, total
 

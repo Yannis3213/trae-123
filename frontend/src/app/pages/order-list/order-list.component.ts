@@ -93,7 +93,22 @@ import { AuthService } from '../../services/auth.service';
                   (change)="toggleSelect(order)"
                   [disabled]="!canProcess(order)" />
               </td>
-              <td><a class="order-link" [routerLink]="['/orders', order.id]">{{ order.order_no }}</a></td>
+              <td><a class="order-link" [routerLink]="['/orders', order.id]">{{ order.order_no }}</a>
+                <div class="order-summary">
+                  <span class="summary-item summary-exc" *ngIf="order.exception_count && order.exception_count > 0">
+                    ⚠ {{ order.exception_count }} 个异常
+                  </span>
+                  <span class="summary-item summary-gap" *ngIf="order.evidence_gap && order.evidence_gap > 0">
+                    📎 缺{{ order.evidence_gap }}份证据
+                  </span>
+                  <span class="summary-item summary-record" *ngIf="order.last_record_summary">
+                    {{ order.last_record_summary }}
+                  </span>
+                  <span class="summary-item summary-note" *ngIf="order.audit_note_count && order.audit_note_count > 0">
+                    📝 {{ order.audit_note_count }} 条备注
+                  </span>
+                </div>
+              </td>
               <td>
                 <span class="status-tag" [ngClass]="getStatusClass(order)">
                   {{ order.is_overdue ? '逾期' : '' }}{{ order.status }}
@@ -215,6 +230,10 @@ import { AuthService } from '../../services/auth.service';
             <button class="btn-close" (click)="closeCreateModal()">&times;</button>
           </div>
           <div class="modal-body">
+            <div class="form-tip" *ngIf="createError">
+              <span class="tip-icon">⚠</span>
+              <span>{{ createError }}</span>
+            </div>
             <div class="create-form-grid">
               <div class="form-group">
                 <label>订单号 <span class="required">*</span></label>
@@ -320,6 +339,12 @@ import { AuthService } from '../../services/auth.service';
     .data-table th { background: #fafafa; padding: 10px 12px; text-align: left; border-bottom: 1px solid #f0f0f0; color: #000000d9; font-weight: 600; }
     .data-table td { padding: 10px 12px; border-bottom: 1px solid #f5f5f5; }
     .data-table tbody tr:hover { background: #fafafa; }
+    .order-summary { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: #8c8c8c; }
+    .summary-item { padding: 1px 6px; background: #f5f5f5; border-radius: 3px; }
+    .summary-exc { background: #fff1f0; color: #cf1322; }
+    .summary-gap { background: #fff7e6; color: #d46b08; }
+    .summary-note { background: #e6f4ff; color: #0958d9; }
+    .summary-record { color: #595959; background: #f0f0f0; }
     .empty-cell { text-align: center; color: #999; padding: 40px !important; }
     .overdue-text { color: #cf1322; font-weight: 500; }
     .order-link { color: #1677ff; font-weight: 500; }
@@ -368,6 +393,12 @@ import { AuthService } from '../../services/auth.service';
     .btn-link.disabled { color: #bfbfbf; cursor: not-allowed; text-decoration: none; pointer-events: none; }
     .create-form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 20px; }
     .required { color: #cf1322; margin-left: 2px; }
+    .form-tip {
+      padding: 10px 14px; background: #fff1f0; color: #cf1322;
+      border-radius: 4px; margin-bottom: 16px; font-size: 13px;
+      border: 1px solid #ffa39e;
+    }
+    .form-tip .tip-icon { margin-right: 6px; font-weight: bold; }
   `]
 })
 export class OrderListComponent implements OnInit, OnDestroy {
@@ -386,6 +417,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
   useVersionCheck = true;
   showCreateModal = false;
   createLoading = signal(false);
+  createError = '';
   newForm = this.getDefaultNewForm();
   private sub: any;
   private tab = '';
@@ -561,6 +593,7 @@ export class OrderListComponent implements OnInit, OnDestroy {
 
   openCreateModal() {
     this.newForm = this.getDefaultNewForm();
+    this.createError = '';
     this.showCreateModal = true;
   }
 
@@ -581,9 +614,10 @@ export class OrderListComponent implements OnInit, OnDestroy {
   }
 
   submitCreate() {
+    this.createError = '';
     const error = this.validateNewForm();
     if (error) {
-      alert(error);
+      this.createError = '表单校验失败：' + error;
       return;
     }
     this.createLoading.set(true);
@@ -618,7 +652,8 @@ export class OrderListComponent implements OnInit, OnDestroy {
       },
       error: err => {
         this.createLoading.set(false);
-        alert('创建失败：' + (err?.error?.detail || err?.message || '未知错误'));
+        const detail = err?.error?.detail || err?.message || '未知错误';
+        this.createError = '创建失败：' + detail;
       }
     });
   }

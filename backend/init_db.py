@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from database import engine, Base, SessionLocal
-from models import User, TransportOrder, Attachment, ProcessingRecord, ExceptionReason
+from models import User, TransportOrder, Attachment, ProcessingRecord, ExceptionReason, AuditNote
 from auth import get_password_hash
 
 
@@ -302,6 +302,19 @@ def create_demo_orders(db: Session):
                 {"action": ProcessingRecord.ACTION_SAVE, "operator": "张客服", "operator_role": User.ROLE_CUSTOMER_SERVICE,
                  "previous_status": None, "new_status": TransportOrder.STATUS_PENDING_CORRECTION,
                  "remark": "创建运输订单，已填写基础信息", "evidence_summary": "待上传运输委托单"},
+                {"action": ProcessingRecord.ACTION_SAVE, "operator": "张客服", "operator_role": User.ROLE_CUSTOMER_SERVICE,
+                 "previous_status": TransportOrder.STATUS_PENDING_CORRECTION, "new_status": TransportOrder.STATUS_PENDING_CORRECTION,
+                 "remark": "补充运输要求和货物明细", "evidence_summary": "待上传运输委托单"},
+            ],
+            "audit_notes": [
+                {"note": "客户加急，优先安排运输方案", "noted_by": "张客服"},
+                {"note": "需确认车辆是否有防震设施", "noted_by": "张客服"},
+            ],
+            "exceptions": [
+                {"category": ExceptionReason.CATEGORY_MATERIAL,
+                 "reason": "缺少运输委托单证据，待补正阶段必须上传",
+                 "reported_by": "系统",
+                 "node_handler": "张客服"},
             ],
         },
     ]
@@ -316,6 +329,7 @@ def create_demo_orders(db: Session):
         attachments_data = o.pop("attachments", [])
         records_data = o.pop("records", [])
         exceptions_data = o.pop("exceptions", [])
+        audit_notes_data = o.pop("audit_notes", [])
 
         order = TransportOrder(**o)
         db.add(order)
@@ -354,6 +368,14 @@ def create_demo_orders(db: Session):
                 node_handler=exc_data.get("node_handler"),
             )
             db.add(exc)
+
+        for note_data in audit_notes_data:
+            note = AuditNote(
+                order_id=order.id,
+                note=note_data["note"],
+                noted_by=note_data["noted_by"],
+            )
+            db.add(note)
 
     db.commit()
 

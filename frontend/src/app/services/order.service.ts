@@ -86,6 +86,10 @@ export interface TransportOrder {
   processing_records: ProcessingRecord[];
   audit_notes: AuditNote[];
   exception_reasons: ExceptionReason[];
+  exception_count?: number;
+  evidence_gap?: number;
+  last_record_summary?: string;
+  audit_note_count?: number;
 }
 
 export interface OrderListResponse {

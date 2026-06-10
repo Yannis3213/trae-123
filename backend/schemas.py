@@ -201,6 +201,10 @@ class TransportOrderListOut(BaseModel):
     consignee_name: Optional[str] = None
     cargo_name: Optional[str] = None
     version: int
+    exception_count: int = 0
+    evidence_gap: int = 0
+    last_record_summary: Optional[str] = None
+    audit_note_count: int = 0
 
     class Config:
         from_attributes = True
