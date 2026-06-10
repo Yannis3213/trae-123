@@ -148,6 +148,83 @@ function createException(workorderId, type, reason, node, responsibleRole, respo
   return id;
 }
 
+function validateNotOverdue(workorder, action) {
+  const warningLevel = getWarningLevel(workorder.deadline);
+  if (warningLevel === 'overdue') {
+    const blockedActions = ['submit_for_review', 'batch_submit', 'review_approve', 'factory_confirm', 'batch_review_approve', 'batch_factory_confirm'];
+    if (blockedActions.includes(action)) {
+      return {
+        valid: false,
+        error: '工单已逾期，无法推进，请先在详情页补正后再操作',
+        code: 'OVERDUE_BLOCKED'
+      };
+    }
+  }
+  return { valid: true };
+}
+
+function validateStepOrder(workorder, action) {
+  const hasSchedule = !!workorder.production_schedule;
+  const hasMaterial = !!workorder.material_issue;
+  const hasCompletion = !!workorder.completion_report;
+
+  const stepRules = {
+    'issue_material': { requires: ['production_schedule'], error: '请先完成生产排程', code: 'MISSING_SCHEDULE' },
+    'report_completion': { requires: ['material_issue'], error: '请先完成领料确认', code: 'MISSING_MATERIAL' },
+    'submit_for_review': { requires: ['production_schedule', 'material_issue', 'completion_report'], error: '缺少必填证据', code: 'MISSING_EVIDENCE' },
+    'batch_submit': { requires: ['production_schedule', 'material_issue', 'completion_report'], error: '缺少必填证据', code: 'MISSING_EVIDENCE' }
+  };
+
+  const rule = stepRules[action];
+  if (!rule) return { valid: true };
+
+  const missing = [];
+  for (const field of rule.requires) {
+    if (!workorder[field]) {
+      const fieldNames = {
+        'production_schedule': '生产排程',
+        'material_issue': '领料确认',
+        'completion_report': '完工报工'
+      };
+      missing.push(fieldNames[field] || field);
+    }
+  }
+
+  if (missing.length > 0) {
+    return {
+      valid: false,
+      error: `${rule.error}：${missing.join('、')}`,
+      code: rule.code,
+      missing
+    };
+  }
+
+  return { valid: true };
+}
+
+function validateNoDuplicateAction(workorder, action) {
+  const duplicateRules = {
+    'schedule_production': !!workorder.production_schedule,
+    'issue_material': !!workorder.material_issue,
+    'report_completion': !!workorder.completion_report
+  };
+
+  if (duplicateRules[action]) {
+    const actionNames = {
+      'schedule_production': '生产排程',
+      'issue_material': '领料确认',
+      'report_completion': '完工报工'
+    };
+    return {
+      valid: false,
+      error: `${actionNames[action]}已完成，请勿重复提交`,
+      code: 'DUPLICATE_ACTION'
+    };
+  }
+
+  return { valid: true };
+}
+
 function updateWorkorderStatus(workorderId, newStatus, newHandlerRole, newHandler, version) {
   const newVersion = version + 1;
   const stmt = db.prepare(`
@@ -169,6 +246,9 @@ module.exports = {
   validateHandler,
   validateRequiredEvidence,
   canPerformAction,
+  validateNotOverdue,
+  validateStepOrder,
+  validateNoDuplicateAction,
   getWarningLevel,
   getCurrentNode,
   getNodeResponsible,

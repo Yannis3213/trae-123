@@ -5,6 +5,8 @@ const {
   validateVersion,
   validateHandler,
   validateRequiredEvidence,
+  validateNotOverdue,
+  validateStepOrder,
   createProcessingRecord,
   updateWorkorderStatus
 } = require('../utils/workorderUtils');
@@ -65,6 +67,31 @@ function batchSubmitForReview(req, res) {
           success: false,
           error: handlerCheck.error,
           error_code: handlerCheck.code
+        };
+      }
+
+      const overdueCheck = validateNotOverdue(wo, 'batch_submit');
+      if (!overdueCheck.valid) {
+        failCount++;
+        return {
+          id,
+          code: wo.code,
+          success: false,
+          error: overdueCheck.error,
+          error_code: overdueCheck.code
+        };
+      }
+
+      const stepCheck = validateStepOrder(wo, 'batch_submit');
+      if (!stepCheck.valid) {
+        failCount++;
+        return {
+          id,
+          code: wo.code,
+          success: false,
+          error: stepCheck.error,
+          error_code: stepCheck.code,
+          missing: stepCheck.missing
         };
       }
 
@@ -196,6 +223,19 @@ function batchReview(req, res) {
       }
 
       if (action === 'approve') {
+        const overdueCheck = validateNotOverdue(wo, 'batch_review_approve');
+        if (!overdueCheck.valid) {
+          failCount++;
+          results.push({
+            id, code: wo.code, success: false,
+            error: overdueCheck.error,
+            error_code: overdueCheck.code
+          });
+          continue;
+        }
+      }
+
+      if (action === 'approve') {
         const newVersion = updateWorkorderStatus(
           id, STATUS.UNDER_REVIEW, ROLES.FACTORY_MANAGER, wo.factory_manager, version
         );
@@ -296,6 +336,17 @@ function batchFactoryConfirm(req, res) {
           id, code: wo.code, success: false,
           error: '您不是该工单的厂务经理',
           error_code: 'HANDLER_MISMATCH'
+        });
+        continue;
+      }
+
+      const overdueCheck = validateNotOverdue(wo, 'batch_factory_confirm');
+      if (!overdueCheck.valid) {
+        failCount++;
+        results.push({
+          id, code: wo.code, success: false,
+          error: overdueCheck.error,
+          error_code: overdueCheck.code
         });
         continue;
       }

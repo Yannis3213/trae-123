@@ -12,15 +12,18 @@
       </div>
     </header>
     <main class="container">
-      <NuxtPage />
+      <NuxtPage :key="refreshKey" />
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref, computed, watch } from 'vue'
 import { useAuth } from '~/composables/useAuth'
 
-const { currentRole, roleOptions, setRole, setUserName } = useAuth()
+const { currentRole, roleOptions, setRole, isInitialized } = useAuth()
+
+const refreshKey = ref(0)
 
 const selectedRole = computed({
   get: () => currentRole.value,
@@ -32,8 +35,13 @@ function handleRoleChange(event: Event) {
   const role = roleOptions.find(r => r.value === target.value)
   if (role) {
     setRole(role.value)
-    setUserName(role.name)
-    window.location.reload()
+    refreshKey.value++
   }
 }
+
+watch(isInitialized, (val) => {
+  if (val) {
+    refreshKey.value++
+  }
+})
 </script>

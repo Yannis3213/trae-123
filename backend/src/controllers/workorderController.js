@@ -7,6 +7,9 @@ const {
   validateHandler,
   validateRequiredEvidence,
   canPerformAction,
+  validateNotOverdue,
+  validateStepOrder,
+  validateNoDuplicateAction,
   getWarningLevel,
   getCurrentNode,
   getNodeResponsible,
@@ -218,6 +221,11 @@ function scheduleProduction(req, res) {
     return res.status(403).json({ success: false, error: actionCheck.error, code: actionCheck.code });
   }
 
+  const duplicateCheck = validateNoDuplicateAction(wo, 'schedule_production');
+  if (!duplicateCheck.valid) {
+    return res.status(400).json({ success: false, error: duplicateCheck.error, code: duplicateCheck.code });
+  }
+
   if (userRole === ROLES.PLANNER && wo.planner !== username) {
     return res.status(403).json({ success: false, error: '只能排程自己负责的工单', code: 'PERMISSION_DENIED' });
   }
@@ -278,8 +286,14 @@ function issueMaterial(req, res) {
     return res.status(403).json({ success: false, error: handlerCheck.error, code: handlerCheck.code });
   }
 
-  if (!wo.production_schedule) {
-    return res.status(400).json({ success: false, error: '请先完成生产排程', code: 'MISSING_SCHEDULE' });
+  const stepCheck = validateStepOrder(wo, 'issue_material');
+  if (!stepCheck.valid) {
+    return res.status(400).json({ success: false, error: stepCheck.error, code: stepCheck.code, missing: stepCheck.missing });
+  }
+
+  const duplicateCheck = validateNoDuplicateAction(wo, 'issue_material');
+  if (!duplicateCheck.valid) {
+    return res.status(400).json({ success: false, error: duplicateCheck.error, code: duplicateCheck.code });
   }
 
   const materialInfo = {
@@ -338,8 +352,14 @@ function reportCompletion(req, res) {
     return res.status(403).json({ success: false, error: handlerCheck.error, code: handlerCheck.code });
   }
 
-  if (!wo.material_issue) {
-    return res.status(400).json({ success: false, error: '请先完成领料确认', code: 'MISSING_MATERIAL' });
+  const stepCheck = validateStepOrder(wo, 'report_completion');
+  if (!stepCheck.valid) {
+    return res.status(400).json({ success: false, error: stepCheck.error, code: stepCheck.code, missing: stepCheck.missing });
+  }
+
+  const duplicateCheck = validateNoDuplicateAction(wo, 'report_completion');
+  if (!duplicateCheck.valid) {
+    return res.status(400).json({ success: false, error: duplicateCheck.error, code: duplicateCheck.code });
   }
 
   const completionInfo = {
@@ -391,6 +411,16 @@ function submitForReview(req, res) {
   const handlerCheck = validateHandler(wo, userRole, username);
   if (!handlerCheck.valid) {
     return res.status(403).json({ success: false, error: handlerCheck.error, code: handlerCheck.code });
+  }
+
+  const overdueCheck = validateNotOverdue(wo, 'submit_for_review');
+  if (!overdueCheck.valid) {
+    return res.status(400).json({ success: false, error: overdueCheck.error, code: overdueCheck.code });
+  }
+
+  const stepCheck = validateStepOrder(wo, 'submit_for_review');
+  if (!stepCheck.valid) {
+    return res.status(400).json({ success: false, error: stepCheck.error, code: stepCheck.code, missing: stepCheck.missing });
   }
 
   const evidenceCheck = validateRequiredEvidence(wo, 'submit_for_review');
@@ -447,6 +477,11 @@ function reviewApprove(req, res) {
 
   if (wo.workshop_director !== username) {
     return res.status(403).json({ success: false, error: '您不是该工单的车间主任', code: 'HANDLER_MISMATCH' });
+  }
+
+  const overdueCheck = validateNotOverdue(wo, 'review_approve');
+  if (!overdueCheck.valid) {
+    return res.status(400).json({ success: false, error: overdueCheck.error, code: overdueCheck.code });
   }
 
   const newVersion = updateWorkorderStatus(
@@ -545,6 +580,11 @@ function factoryConfirm(req, res) {
 
   if (wo.factory_manager !== username) {
     return res.status(403).json({ success: false, error: '您不是该工单的厂务经理', code: 'HANDLER_MISMATCH' });
+  }
+
+  const overdueCheck = validateNotOverdue(wo, 'factory_confirm');
+  if (!overdueCheck.valid) {
+    return res.status(400).json({ success: false, error: overdueCheck.error, code: overdueCheck.code });
   }
 
   const newVersion = version + 1;

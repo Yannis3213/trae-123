@@ -1,19 +1,29 @@
 <template>
   <div>
-    <div class="stats-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px;">
-      <div class="stat-card">
-        <div class="stat-number">{{ stats?.pending_correction_count || 0 }}</div>
+    <div class="stats-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 20px;">
+      <div class="stat-card" @click="switchTab('pending_correction')" style="cursor: pointer;">
+        <div class="stat-number" :class="{ 'text-danger': pendingOverdue > 0 }">
+          {{ stats?.pending_correction_count || 0 }}
+          <span v-if="pendingOverdue > 0" style="font-size: 14px; color: #dc2626;">({{ pendingOverdue }}逾期)</span>
+        </div>
         <div class="stat-label">待补正</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-number">{{ stats?.under_review_count || 0 }}</div>
+      <div class="stat-card" @click="switchTab('under_review')" style="cursor: pointer;">
+        <div class="stat-number" :class="{ 'text-danger': reviewOverdue > 0 }">
+          {{ stats?.under_review_count || 0 }}
+          <span v-if="reviewOverdue > 0" style="font-size: 14px; color: #dc2626;">({{ reviewOverdue }}逾期)</span>
+        </div>
         <div class="stat-label">复核中</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" style="cursor: pointer;">
         <div class="stat-number" style="color: #16a34a;">{{ stats?.completed_count || 0 }}</div>
         <div class="stat-label">已办结</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" @click="setWarningFilter('warning')" style="cursor: pointer;">
+        <div class="stat-number" style="color: #d97706;">{{ warningCount }}</div>
+        <div class="stat-label">临期工单</div>
+      </div>
+      <div class="stat-card" @click="setWarningFilter('overdue')" style="cursor: pointer;">
         <div class="stat-number" style="color: #dc2626;">{{ overdueCount }}</div>
         <div class="stat-label">逾期工单</div>
       </div>
@@ -30,11 +40,14 @@
             @click="switchTab(tab.value)"
           >
             {{ tab.label }}
+            <span v-if="getTabCount(tab.value) > 0" class="badge" :class="getTabBadgeClass(tab.value)" style="margin-left: 6px;">
+              {{ getTabCount(tab.value) }}
+            </span>
           </div>
         </div>
         <div class="flex gap-2">
           <button
-            v-if="activeTab === 'pending_correction' && currentRole === 'planner'"
+            v-if="showBatchSubmit"
             class="btn btn-primary"
             @click="showBatchModal = true"
             :disabled="selectedIds.length === 0"
@@ -42,7 +55,7 @@
             批量提交复核 ({{ selectedIds.length }})
           </button>
           <button
-            v-if="activeTab === 'under_review' && currentRole === 'workshop_director'"
+            v-if="showBatchReview"
             class="btn btn-success"
             @click="showBatchReviewModal = true"
             :disabled="selectedIds.length === 0"
@@ -50,7 +63,7 @@
             批量复核 ({{ selectedIds.length }})
           </button>
           <button
-            v-if="activeTab === 'under_review' && currentRole === 'factory_manager'"
+            v-if="showBatchConfirm"
             class="btn btn-success"
             @click="showBatchConfirmModal = true"
             :disabled="selectedIds.length === 0"
@@ -80,6 +93,15 @@
           </select>
         </div>
         <div>
+          <select v-model="nodeFilter" class="form-select" style="width: 160px;">
+            <option value="">全部节点</option>
+            <option value="生产排程">生产排程</option>
+            <option value="领料确认">领料确认</option>
+            <option value="完工报工">完工报工</option>
+            <option value="复核确认">复核确认</option>
+          </select>
+        </div>
+        <div>
           <button class="btn btn-outline btn-sm" @click="loadWorkorders">搜索</button>
         </div>
         <div style="margin-left: auto;">
@@ -90,9 +112,16 @@
         </div>
       </div>
 
+      <div v-if="activeWarningFilter" class="alert" :class="activeWarningFilter === 'overdue' ? 'alert-error' : 'alert-warning'">
+        当前筛选：{{ activeWarningFilter === 'overdue' ? '逾期' : '临期' }}工单
+        <button class="btn btn-outline btn-sm" style="margin-left: 12px; padding: 2px 8px;" @click="clearWarningFilter">
+          清除筛选
+        </button>
+      </div>
+
       <div v-if="error" class="alert alert-error">{{ error }}</div>
 
-      <table v-if="workorders.length > 0">
+      <table v-if="filteredWorkorders.length > 0">
         <thead>
           <tr>
             <th style="width: 40px;">
@@ -110,6 +139,7 @@
             <th>数量</th>
             <th>状态</th>
             <th>当前节点</th>
+            <th>计划员</th>
             <th>截止日期</th>
             <th>预警</th>
             <th>当前处理人</th>
@@ -117,7 +147,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="wo in workorders" :key="wo.id">
+          <tr v-for="wo in filteredWorkorders" :key="wo.id" :class="{ 'row-overdue': wo.warning_level === 'overdue' }">
             <td>
               <input
                 type="checkbox"
@@ -134,8 +164,15 @@
             <td>
               <span class="badge" :class="getBadgeClass(wo.status)">{{ wo.status_name }}</span>
             </td>
-            <td class="text-sm text-muted">{{ wo.current_node }}</td>
-            <td class="text-sm">{{ formatDate(wo.deadline) }}</td>
+            <td>
+              <span class="text-sm" :class="{ 'text-danger': wo.warning_level === 'overdue' }">
+                {{ wo.current_node }}
+              </span>
+            </td>
+            <td class="text-sm text-muted">{{ wo.planner }}</td>
+            <td class="text-sm" :class="{ 'text-danger': wo.warning_level === 'overdue' }">
+              {{ formatDate(wo.deadline) }}
+            </td>
             <td>
               <span class="badge" :class="getWarningClass(wo.warning_level)">
                 {{ getWarningLabel(wo.warning_level) }}
@@ -149,6 +186,10 @@
         </tbody>
       </table>
 
+      <div v-if="workorders.length > 0 && filteredWorkorders.length === 0 && !loading" class="text-center" style="padding: 40px 0; color: #9ca3af;">
+        当前筛选条件下无工单
+      </div>
+
       <div v-if="workorders.length === 0 && !loading" class="text-center" style="padding: 40px 0; color: #9ca3af;">
         暂无工单数据
       </div>
@@ -158,6 +199,9 @@
       <div class="flex-between mt-4">
         <div class="text-sm text-muted">
           共 {{ total }} 条
+          <span v-if="filteredWorkorders.length !== total" style="margin-left: 12px;">
+            当前显示 {{ filteredWorkorders.length }} 条
+          </span>
         </div>
         <div class="flex gap-2">
           <button class="btn btn-outline btn-sm" :disabled="page <= 1" @click="changePage(-1)">上一页</button>
@@ -175,6 +219,9 @@
         </div>
         <div class="modal-body">
           <p>确认将选中的 <strong>{{ selectedIds.length }}</strong> 条工单提交复核？</p>
+          <div v-if="batchOverdueCount > 0" class="alert alert-warning mt-4">
+            其中 {{ batchOverdueCount }} 条已逾期，提交时会被拦截
+          </div>
           <div v-if="batchResult" class="mt-4">
             <div v-if="batchResult.success_count > 0" class="alert alert-success">
               成功 {{ batchResult.success_count }} 条
@@ -210,6 +257,9 @@
         </div>
         <div class="modal-body">
           <p>选中 <strong>{{ selectedIds.length }}</strong> 条工单</p>
+          <div v-if="batchOverdueCount > 0" class="alert alert-warning mt-4">
+            其中 {{ batchOverdueCount }} 条已逾期
+          </div>
           <div class="form-group mt-4">
             <label class="form-label">操作</label>
             <select v-model="batchAction" class="form-select">
@@ -256,6 +306,9 @@
         </div>
         <div class="modal-body">
           <p>确认将选中的 <strong>{{ selectedIds.length }}</strong> 条工单确认办结？</p>
+          <div v-if="batchOverdueCount > 0" class="alert alert-warning mt-4">
+            其中 {{ batchOverdueCount }} 条已逾期
+          </div>
           <div v-if="batchResult" class="mt-4">
             <div v-if="batchResult.success_count > 0" class="alert alert-success">
               成功 {{ batchResult.success_count }} 条
@@ -292,7 +345,7 @@ import { useApi } from '~/composables/useApi'
 import { useAuth } from '~/composables/useAuth'
 
 const { get, post } = useApi()
-const { currentRole, currentUserName } = useAuth()
+const { baseRole, currentUserName, isInitialized } = useAuth()
 const router = useRouter()
 
 const tabs = [
@@ -306,14 +359,18 @@ const workorders = ref<any[]>([])
 const stats = ref<any>({})
 const total = ref(0)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(50)
 const keyword = ref('')
 const warningFilter = ref('')
+const nodeFilter = ref('')
 const onlyMine = ref(false)
 const loading = ref(false)
 const error = ref('')
 const selectedIds = ref<string[]>([])
 const overdueCount = ref(0)
+const warningCount = ref(0)
+const pendingOverdue = ref(0)
+const reviewOverdue = ref(0)
 
 const showBatchModal = ref(false)
 const showBatchReviewModal = ref(false)
@@ -323,28 +380,73 @@ const batchResult = ref<any>(null)
 const batchAction = ref('approve')
 const batchRejectReason = ref('')
 
+const filteredWorkorders = computed(() => {
+  let result = workorders.value
+
+  if (warningFilter.value) {
+    result = result.filter(wo => wo.warning_level === warningFilter.value)
+  }
+
+  if (nodeFilter.value) {
+    result = result.filter(wo => wo.current_node === nodeFilter.value)
+  }
+
+  return result
+})
+
+const activeWarningFilter = computed(() => warningFilter.value)
+
+const showBatchSubmit = computed(() => {
+  return activeTab.value === 'pending_correction' && baseRole.value === 'planner'
+})
+
+const showBatchReview = computed(() => {
+  return activeTab.value === 'under_review' && baseRole.value === 'workshop_director'
+})
+
+const showBatchConfirm = computed(() => {
+  return activeTab.value === 'under_review' && baseRole.value === 'factory_manager'
+})
+
 const canBatchSelect = computed(() => {
-  if (activeTab.value === 'pending_correction' && currentRole.value === 'planner') return true
-  if (activeTab.value === 'under_review' && currentRole.value === 'workshop_director') return true
-  if (activeTab.value === 'under_review' && currentRole.value === 'factory_manager') return true
-  return false
+  return showBatchSubmit.value || showBatchReview.value || showBatchConfirm.value
 })
 
 const isAllSelected = computed(() => {
-  if (workorders.value.length === 0) return false
-  const selectable = workorders.value.filter(wo => canSelectWorkorder(wo))
+  if (filteredWorkorders.value.length === 0) return false
+  const selectable = filteredWorkorders.value.filter(wo => canSelectWorkorder(wo))
   return selectable.length > 0 && selectable.every(wo => selectedIds.value.includes(wo.id))
 })
 
+const batchOverdueCount = computed(() => {
+  return selectedIds.value.filter(id => {
+    const wo = workorders.value.find(w => w.id === id)
+    return wo?.warning_level === 'overdue'
+  }).length
+})
+
+function getTabCount(tabValue: string) {
+  if (tabValue === 'pending_correction') return stats.value?.pending_correction_count || 0
+  if (tabValue === 'under_review') return stats.value?.under_review_count || 0
+  if (tabValue === 'completed') return stats.value?.completed_count || 0
+  return 0
+}
+
+function getTabBadgeClass(tabValue: string) {
+  if (tabValue === 'pending_correction' && pendingOverdue.value > 0) return 'badge-overdue'
+  if (tabValue === 'under_review' && reviewOverdue.value > 0) return 'badge-overdue'
+  return 'badge-normal'
+}
+
 function canSelectWorkorder(wo: any) {
   if (wo.status !== activeTab.value) return false
-  if (activeTab.value === 'pending_correction' && currentRole.value === 'planner') {
+  if (activeTab.value === 'pending_correction' && baseRole.value === 'planner') {
     return wo.planner === currentUserName.value
   }
-  if (activeTab.value === 'under_review' && currentRole.value === 'workshop_director') {
+  if (activeTab.value === 'under_review' && baseRole.value === 'workshop_director') {
     return wo.workshop_director === currentUserName.value
   }
-  if (activeTab.value === 'under_review' && currentRole.value === 'factory_manager') {
+  if (activeTab.value === 'under_review' && baseRole.value === 'factory_manager') {
     return wo.factory_manager === currentUserName.value
   }
   return false
@@ -361,10 +463,10 @@ function toggleSelect(id: string) {
 
 function toggleSelectAll() {
   if (isAllSelected.value) {
-    const selectableIds = workorders.value.filter(wo => canSelectWorkorder(wo)).map(wo => wo.id)
+    const selectableIds = filteredWorkorders.value.filter(wo => canSelectWorkorder(wo)).map(wo => wo.id)
     selectedIds.value = selectedIds.value.filter(id => !selectableIds.includes(id))
   } else {
-    for (const wo of workorders.value) {
+    for (const wo of filteredWorkorders.value) {
       if (canSelectWorkorder(wo) && !selectedIds.value.includes(wo.id)) {
         selectedIds.value.push(wo.id)
       }
@@ -402,10 +504,22 @@ function formatDate(dateStr: string) {
   return dateStr.replace('T', ' ').substring(0, 16)
 }
 
+function setWarningFilter(level: string) {
+  warningFilter.value = level
+  loadWorkorders()
+}
+
+function clearWarningFilter() {
+  warningFilter.value = ''
+  loadWorkorders()
+}
+
 function switchTab(tab: string) {
   activeTab.value = tab
   page.value = 1
   selectedIds.value = []
+  warningFilter.value = ''
+  nodeFilter.value = ''
   loadWorkorders()
 }
 
@@ -431,6 +545,13 @@ async function loadWorkorders() {
       workorders.value = res.data.list || []
       total.value = res.data.total || 0
       stats.value = res.data.stats || {}
+
+      pendingOverdue.value = workorders.value.filter(
+        w => w.status === 'pending_correction' && w.warning_level === 'overdue'
+      ).length
+      reviewOverdue.value = workorders.value.filter(
+        w => w.status === 'under_review' && w.warning_level === 'overdue'
+      ).length
     } else {
       error.value = res.error || '加载失败'
     }
@@ -441,10 +562,17 @@ async function loadWorkorders() {
   }
 }
 
-async function loadOverdueCount() {
-  const res = await get<any>('/warnings?level=overdue&pageSize=1')
-  if (res.success && res.data) {
-    overdueCount.value = res.data.total || 0
+async function loadWarningCounts() {
+  const [warningRes, overdueRes] = await Promise.all([
+    get<any>('/warnings?level=warning&pageSize=1'),
+    get<any>('/warnings?level=overdue&pageSize=1')
+  ])
+
+  if (warningRes.success && warningRes.data) {
+    warningCount.value = warningRes.data.total || 0
+  }
+  if (overdueRes.success && overdueRes.data) {
+    overdueCount.value = overdueRes.data.total || 0
   }
 }
 
@@ -469,8 +597,8 @@ async function batchSubmit() {
         showBatchModal.value = false
         selectedIds.value = []
         loadWorkorders()
-        loadOverdueCount()
-      }, 1000)
+        loadWarningCounts()
+      }, 1500)
     }
   }
   batchLoading.value = false
@@ -502,7 +630,7 @@ async function batchReview() {
         showBatchReviewModal.value = false
         selectedIds.value = []
         loadWorkorders()
-      }, 1000)
+      }, 1500)
     }
   }
   batchLoading.value = false
@@ -525,20 +653,28 @@ async function batchConfirm() {
         showBatchConfirmModal.value = false
         selectedIds.value = []
         loadWorkorders()
-      }, 1000)
+      }, 1500)
     }
   }
   batchLoading.value = false
 }
 
-watch(currentRole, () => {
-  selectedIds.value = []
-  loadWorkorders()
-  loadOverdueCount()
+watch([baseRole, isInitialized], () => {
+  if (isInitialized.value) {
+    selectedIds.value = []
+    loadWorkorders()
+    loadWarningCounts()
+  }
 })
 
 onMounted(() => {
   loadWorkorders()
-  loadOverdueCount()
+  loadWarningCounts()
 })
 </script>
+
+<style scoped>
+.row-overdue {
+  background-color: #fef2f2;
+}
+</style>
