@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "@remix-run/react";
 import { ArrowLeft } from "lucide-react";
 import { api } from "../utils/api";
-import { useAuth } from "../root";
+import { useAuth } from "../utils/auth";
 import type { ChargingPileInspection, FaultReport, InspectionCreate } from "../utils/types";
 import InspectionForm from "../components/InspectionForm";
 

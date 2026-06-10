@@ -8,7 +8,7 @@ import {
   useLocation,
 } from "@remix-run/react";
 import type { LinksFunction } from "@remix-run/node";
-import { createContext, useContext, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   ClipboardList,
   Zap,
@@ -20,7 +20,7 @@ import {
   ChevronDown,
   LayoutDashboard,
 } from "lucide-react";
-import { getCurrentUser, logout, setCurrentUser, clearCurrentUser } from "./utils/auth";
+import { getCurrentUser, logout, setCurrentUser, clearCurrentUser, AuthContext } from "./utils/auth";
 import type { User, UserRole } from "./utils/types";
 import { ROLE_LABELS } from "./utils/types";
 import { login as loginApi } from "./utils/auth";
@@ -29,22 +29,6 @@ import stylesheet from "./styles/tailwind.css?url";
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: stylesheet },
 ];
-
-interface AuthContextType {
-  user: User | null;
-  setUser: (user: User | null) => void;
-  switchRole: (role: UserRole) => Promise<void>;
-}
-
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  setUser: () => {},
-  switchRole: async () => {},
-});
-
-export function useAuth() {
-  return useContext(AuthContext);
-}
 
 const DEMO_USERS: Record<UserRole, { username: string; password: string }> = {
   duty_officer: { username: "user_001", password: "user_001" },

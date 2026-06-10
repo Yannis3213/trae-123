@@ -54,7 +54,7 @@ export default function InspectionDetailPage() {
 
   useEffect(() => {
     if (id) loadDetail();
-  }, [id]);
+  }, [id, user?.id]);
 
   async function loadDetail() {
     try {

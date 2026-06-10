@@ -1,8 +1,27 @@
+import { createContext, useContext } from "react";
 import { api } from "./api";
 import type { User, LoginRequest, LoginResponse, UserRole } from "./types";
 
 const USER_KEY = "current_user";
 const TOKEN_KEY = "token";
+
+export interface AuthContextType {
+  user: User | null;
+  setUser: (user: User | null) => void;
+  switchRole: (role: UserRole) => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType>({
+  user: null,
+  setUser: () => {},
+  switchRole: async () => {},
+});
+
+export function useAuth() {
+  return useContext(AuthContext);
+}
+
+export { AuthContext };
 
 export function getCurrentUser(): User | null {
   if (typeof window === "undefined") return null;
