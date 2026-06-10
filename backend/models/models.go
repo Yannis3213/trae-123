@@ -145,7 +145,7 @@ type UpdateApplicationRequest struct {
 
 type ProcessRequest struct {
 	Action          string `json:"action" binding:"required"`
-	Version         int    `json:"version"`
+	Version         int    `json:"version" binding:"required,min=1"`
 	Remark          string `json:"remark"`
 	ExceptionReason string `json:"exception_reason"`
 	SubModule       string `json:"sub_module"`
@@ -154,12 +154,11 @@ type ProcessRequest struct {
 
 type BatchApplicationItem struct {
 	ID      string `json:"id" binding:"required"`
-	Version int    `json:"version"`
+	Version int    `json:"version" binding:"required,min=1"`
 }
 
 type BatchProcessRequest struct {
-	ApplicationIDs   []string               `json:"application_ids"`
-	ApplicationItems []BatchApplicationItem `json:"application_items"`
+	ApplicationItems []BatchApplicationItem `json:"application_items" binding:"required,min=1,dive"`
 	Action           string                 `json:"action" binding:"required"`
 	Remark           string                 `json:"remark"`
 	ExceptionReason  string                 `json:"exception_reason"`

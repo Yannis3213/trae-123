@@ -4,7 +4,7 @@ import { CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined, Ve
 import { batchProcess } from '../api/application';
 import type { BatchProcessResultData } from '../api/application';
 import { getUserInfo, STATUS_LABELS, STATUS_COLORS, ACTION_LABELS, ROLE_LABELS } from '../constants';
-import type { BatchResult, Role, Application, SUB_MODULE_KEYS as _SUB } from '../types';
+import type { BatchResult, Role, Application } from '../types';
 
 interface BatchProcessProps {
   selectedIds: string[];

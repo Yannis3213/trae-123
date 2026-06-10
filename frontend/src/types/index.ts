@@ -97,6 +97,19 @@ export interface BatchResult {
   reason: string;
 }
 
+export interface BatchFailureRecord {
+  id: string;
+  batch_id: string;
+  application_id: string;
+  application_no: string;
+  reason: string;
+  handler_role: Role | '';
+  handler_id: string;
+  handler_name: string;
+  action: string;
+  created_at: string;
+}
+
 export interface Statistics {
   total: number;
   pending_verification: number;

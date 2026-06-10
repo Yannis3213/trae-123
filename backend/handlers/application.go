@@ -384,7 +384,7 @@ func ProcessApplication(c *gin.Context) {
 	}
 	app.Confirmed = confirmed == 1
 
-	if req.Version > 0 && req.Version != app.Version {
+	if req.Version != app.Version {
 		c.JSON(http.StatusConflict, response{Code: 40901, Message: fmt.Sprintf("版本冲突，请求版本v%d，当前版本v%d，请刷新后重试", req.Version, app.Version)})
 		return
 	}

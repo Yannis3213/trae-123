@@ -2,9 +2,11 @@ import client from './client';
 import type {
   Application,
   AuditLog,
+  ProcessingRecord,
   BatchResult,
   BatchApplicationItem,
   BatchProcessResultData,
+  BatchFailureRecord,
   Statistics,
   PaginatedResponse,
   ExpiryStatus,
@@ -21,7 +23,7 @@ interface ApplicationQueryParams {
 
 interface ProcessData {
   action: string;
-  version?: number;
+  version: number;
   remark?: string;
   exception_reason?: string;
   sub_module?: string;
@@ -29,8 +31,7 @@ interface ProcessData {
 }
 
 interface BatchProcessData {
-  application_ids?: string[];
-  application_items?: BatchApplicationItem[];
+  application_items: BatchApplicationItem[];
   action: string;
   remark?: string;
   exception_reason?: string;
@@ -92,6 +93,16 @@ export async function batchProcess(data: BatchProcessData) {
 
 export async function getAuditTrail(id: string) {
   const res = await client.get<{ data: AuditLog[] }>(`/applications/${id}/audit`);
+  return res.data.data;
+}
+
+export async function getProcessingRecords(id: string) {
+  const res = await client.get<{ data: ProcessingRecord[] }>(`/applications/${id}/processing-records`);
+  return res.data.data;
+}
+
+export async function getBatchFailures(batchId: string) {
+  const res = await client.get<{ data: { list: BatchFailureRecord[]; total: number } }>(`/batch-failures/${batchId}`);
   return res.data.data;
 }
 

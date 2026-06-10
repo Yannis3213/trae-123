@@ -15,7 +15,7 @@ import (
 func BatchProcess(c *gin.Context) {
 	var req models.BatchProcessRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, response{Code: 400, Message: "请求参数错误"})
+		c.JSON(http.StatusBadRequest, response{Code: 400, Message: fmt.Sprintf("请求参数错误：%s", err.Error())})
 		return
 	}
 
@@ -23,22 +23,7 @@ func BatchProcess(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	userName := middleware.GetUserName(c)
 
-	versionMap := map[string]int{}
-	var itemsToProcess []models.BatchApplicationItem
-
-	if len(req.ApplicationItems) > 0 {
-		itemsToProcess = req.ApplicationItems
-		for _, item := range req.ApplicationItems {
-			versionMap[item.ID] = item.Version
-		}
-	} else if len(req.ApplicationIDs) > 0 {
-		for _, id := range req.ApplicationIDs {
-			itemsToProcess = append(itemsToProcess, models.BatchApplicationItem{ID: id, Version: 0})
-		}
-	} else {
-		c.JSON(http.StatusBadRequest, response{Code: 400, Message: "请选择要处理的申请"})
-		return
-	}
+	itemsToProcess := req.ApplicationItems
 
 	results := []models.BatchResultItem{}
 	failures := []models.BatchFailureRecord{}
@@ -108,7 +93,7 @@ func BatchProcess(c *gin.Context) {
 			continue
 		}
 
-		if item.Version > 0 && item.Version != app.Version {
+		if item.Version != app.Version {
 			result.Success = false
 			result.Reason = fmt.Sprintf("版本冲突，请求版本v%d，当前版本v%d", item.Version, app.Version)
 			results = append(results, result)

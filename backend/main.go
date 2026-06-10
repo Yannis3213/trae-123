@@ -63,6 +63,8 @@ func main() {
 		api.POST("/applications/:id/process", handlers.ProcessApplication)
 		api.POST("/applications/batch", handlers.BatchProcess)
 		api.GET("/applications/:id/audit", handlers.GetAuditLogs)
+		api.GET("/applications/:id/processing-records", handlers.GetProcessingRecords)
+		api.GET("/batch-failures/:batch_id", handlers.GetBatchFailures)
 		api.POST("/applications/:id/attachments", handlers.UploadAttachment)
 		api.GET("/export", handlers.ExportCSV)
 		api.GET("/expiry-warnings", handlers.GetExpiryWarnings)
