@@ -49,6 +49,21 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   };
 
   useEffect(() => { load(); }, [id]);
+  // ====== 关键修复：监听角色切换 / 订单变更事件刷新详情 ======
+  useEffect(() => {
+    const handler = () => load();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('hotel:user-switched', handler);
+      window.addEventListener('hotel:order-changed', handler);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('hotel:user-switched', handler);
+        window.removeEventListener('hotel:order-changed', handler);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   if (loading) return <div className="empty">加载住客订单详情中…</div>;
   if (!data) return <div className="empty">未找到订单</div>;
@@ -63,6 +78,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       evidence_types: form.evidence_types,
       remark: form.remark,
       note_content: form.note_content,
+      // ====== 关键修复：把页面上展示的状态带给后端（用于角色边界校验，避免静默覆盖
+      page_status: order.status,
     };
     if (action === 'return') {
       payload.exception_label = form.exception_label || '退回补正';
@@ -83,6 +100,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     setActionDialog(null);
     setForm({ evidence_types: [], remark: '', note_content: '', exception_label: '', exception_desc: '', exception_severity: 'medium' });
     setBatchResult(null);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
+    }
     await load();
     setTimeout(() => router.push('/'), 1200);
   };

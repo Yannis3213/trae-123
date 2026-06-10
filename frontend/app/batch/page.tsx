@@ -28,6 +28,19 @@ export default function BatchPage() {
   };
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const handler = () => load();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('hotel:user-switched', handler);
+      window.addEventListener('hotel:order-changed', handler);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('hotel:user-switched', handler);
+        window.removeEventListener('hotel:order-changed', handler);
+      }
+    };
+  }, []);
 
   const filtered = useMemo(() => {
     const nonArchived = orders.filter(o => o.status !== 'archived');

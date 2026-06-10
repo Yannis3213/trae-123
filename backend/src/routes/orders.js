@@ -4,7 +4,7 @@ import {
   authenticate, requireRole, requireHandler, verifyVersion,
   checkStatusTransition, checkEvidence, checkDuplicateAction,
 } from '../utils/auth.js';
-import { EVIDENCE_RULES, STATUS_LABEL, ROLE_LABEL, EVIDENCE_LABEL } from '../config.js';
+import { EVIDENCE_RULES, STATUS_LABEL, ROLE_LABEL, EVIDENCE_LABEL, ACTION_MAP } from '../config.js';
 import {
   nowIso, nextId, logProcessingRecord, bumpOrderVersion, computeUrgency,
   getOrderEvidenceTypes, formatOrderDetail, addAuditNote, addException, resolveException,
@@ -206,6 +206,22 @@ export default async function orderRoutes(fastify) {
         parseFloat(amount), order_type, 'pending', auth.user.id, 'registrar', deadline,
         auth.user.id, now, now);
 
+      // ====== 关键修复：登记时勾选的证据要真实写入 attachments 表（否则后续校验必失败）
+      for (const et of evidence_types.filter(x => EVIDENCE_TYPES.includes(x))) {
+        db.prepare(`
+          INSERT INTO attachments (id, order_id, file_name, file_type, evidence_type, uploaded_by, uploaded_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          nextId('a'),
+          orderId,
+          `登记时上传_${EVIDENCE_LABEL[et] || et}_${order_no}.pdf`,
+          'application/pdf',
+          et,
+          auth.user.id,
+          now,
+        );
+      }
+
       logProcessingRecord(db, {
         order_id: orderId, action: 'create',
         from_status: null, to_status: 'pending',
@@ -213,7 +229,7 @@ export default async function orderRoutes(fastify) {
         handler_before: null, handler_after: auth.user.id,
         deadline_before: null, deadline_after: deadline,
         evidence_required: requiredEvidence.join(','),
-        evidence_provided: evidence_types.join(','),
+        evidence_provided: evidence_types.filter(x => EVIDENCE_TYPES.includes(x)).join(','),
         remark: remark || '住客登记员发起登记',
         version_before: 0, version_after: 1,
       });
@@ -358,6 +374,7 @@ export default async function orderRoutes(fastify) {
       target_handler_id, target_handler_role,
       version, evidence_types = [], remark, note_content,
       exception_code, exception_label, exception_desc, exception_severity = 'medium',
+      page_status,
     } = req.body || {};
 
     const db = getDb();
@@ -368,23 +385,27 @@ export default async function orderRoutes(fastify) {
     }
 
     const roleRule = {
-      transfer: { from: ['registrar', 'supervisor'], targetDefault: { registrar: ['supervisor','u_supervisor'], supervisor: ['reviewer','u_reviewer'] } },
+      transfer: { from: ['registrar', 'supervisor'] },
       review: { from: ['reviewer'] },
       archive: { from: ['reviewer'] },
-      return: { from: ['supervisor','reviewer'] },
+      return: { from: ['supervisor', 'reviewer'] },
       correct: { from: ['registrar'] },
     }[action];
+    if (!roleRule) {
+      db.close();
+      return reply.code(400).send({ ok: false, code: 'BAD_ACTION', message: `未知动作：${action}` });
+    }
 
     const roleCheck = requireRole(auth, roleRule.from);
     if (!roleCheck.ok) { db.close(); return reply.code(403).send(roleCheck); }
 
-    const pageStatus = order.status;
-    const backendStatus = order.status;
-    if (pageStatus !== backendStatus) {
+    // ====== 角色边界校验：比较页面携带状态 vs 后端真实记录 ======
+    if (page_status && page_status !== order.status) {
       db.close();
       return reply.code(409).send({
         ok: false, code: 'STATUS_SYNC_CONFLICT',
-        message: `角色边界校验失败：页面显示状态【${STATUS_LABEL[pageStatus]}】与后端记录【${STATUS_LABEL[backendStatus]}】不一致，请刷新列表再操作，避免静默覆盖`,
+        message: `角色边界校验失败：页面显示状态【${STATUS_LABEL[page_status] || page_status}】与后端记录【${STATUS_LABEL[order.status]}】不一致，请刷新队列或详情后再操作，避免静默覆盖`,
+        page_status, backend_status: order.status,
       });
     }
 
@@ -404,6 +425,8 @@ export default async function orderRoutes(fastify) {
     let toRole = order.current_role;
     let requiredEvidence = [];
     let evidenceCheckResult = { ok: true };
+    // ====== 关键修复：证据必须读 attachments 表实际记录，不可信前端勾选 ======
+    const actualEvidenceTypes = getOrderEvidenceTypes(db, order.id);
 
     switch (action) {
       case 'transfer':
@@ -417,7 +440,7 @@ export default async function orderRoutes(fastify) {
           toHandler = target_handler_id || 'u_supervisor';
           requiredEvidence = EVIDENCE_RULES.registrar;
         }
-        evidenceCheckResult = checkEvidence(order, evidence_types, requiredEvidence);
+        evidenceCheckResult = checkEvidence(order, actualEvidenceTypes, requiredEvidence);
         break;
       case 'review':
         targetStatus = 'reviewed';
@@ -440,7 +463,7 @@ export default async function orderRoutes(fastify) {
         toRole = 'supervisor';
         toHandler = 'u_supervisor';
         requiredEvidence = EVIDENCE_RULES.registrar;
-        evidenceCheckResult = checkEvidence(order, evidence_types, requiredEvidence);
+        evidenceCheckResult = checkEvidence(order, actualEvidenceTypes, requiredEvidence);
         break;
     }
 
@@ -453,8 +476,10 @@ export default async function orderRoutes(fastify) {
       db.close();
       return reply.code(422).send({
         ok: false, code: evidenceCheckResult.code,
-        message: `【${action}】证据校验失败：${evidenceCheckResult.message}`,
+        message: `【${ACTION_MAP[action] || action}】证据校验失败（已校验 attachments 表实际记录，非前端勾选）：${evidenceCheckResult.message}`,
         missing: evidenceCheckResult.missing,
+        actual_evidence: actualEvidenceTypes,
+        required_evidence: requiredEvidence,
       });
     }
 
@@ -481,7 +506,7 @@ export default async function orderRoutes(fastify) {
         handler_before: order.current_handler, handler_after: toHandler,
         deadline_before: order.deadline, deadline_after: order.deadline,
         evidence_required: requiredEvidence.join(','),
-        evidence_provided: evidence_types.join(','),
+        evidence_provided: actualEvidenceTypes.join(','),
         remark: remark || labelMap[action] || `执行${action}`,
         version_before: order.version, version_after: updated.version,
       });

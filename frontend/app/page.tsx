@@ -61,6 +61,21 @@ export default function OrdersListPage() {
 
   useEffect(() => { setPage(1); }, [tab, keyword, urgencyFilter, handlerScope, orderType]);
   useEffect(() => { load(); }, [tab, keyword, urgencyFilter, handlerScope, orderType, page]);
+  // ====== 关键修复：监听角色切换事件主动刷新 ======
+  useEffect(() => {
+    const handler = () => { setPage(1); load(); };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('hotel:user-switched', handler);
+      window.addEventListener('hotel:order-changed', handler);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('hotel:user-switched', handler);
+        window.removeEventListener('hotel:order-changed', handler);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const refreshAll = async () => {
     await load();

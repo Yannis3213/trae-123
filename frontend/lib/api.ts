@@ -92,6 +92,7 @@ export const api = {
       exception_label?: string;
       exception_desc?: string;
       exception_severity?: 'low' | 'medium' | 'high';
+      page_status?: string;
     },
   ) => request<{ order: any; message: string; refresh_queue: boolean }>(
     'POST',

@@ -204,6 +204,14 @@ function seedDemoOrders(db) {
       status: 'transferred', current_handler: 'u_registrar', current_role: 'registrar',
       deadline: fmt(addDays(now, 2)), version: 3, created_by: 'u_registrar'
     },
+    {
+      id: 'o_007', order_no: 'G20250601007', guest_name: '冯冲突', room_no: '3201',
+      check_in_date: fmt(addDays(now, -2)).slice(0,10),
+      check_out_date: fmt(addDays(now, 3)).slice(0,10),
+      amount: 5200, order_type: 'normal',
+      status: 'transferred', current_handler: 'u_supervisor', current_role: 'supervisor',
+      deadline: fmt(addDays(now, 0.5)), version: 2, created_by: 'u_registrar'
+    },
   ];
 
   const insertOrder = db.prepare(`
@@ -284,6 +292,14 @@ function seedDemoOrders(db) {
     fmt(addDays(now,2)), fmt(addDays(now,2)),
     'registration_form', '', '入住登记单客户签名缺失，需补正', 2, 3, fmt(addDays(now,-1)));
 
+  insertRecord.run('r_007_1', 'o_007', 'create', '住客登记员登记', null, 'pending',
+    'u_registrar', '王登记', 'registrar', null, 'u_registrar', null, fmt(addDays(now, 0.5)),
+    'id_card,registration_form', 'id_card,registration_form', '客户冲突样例登记', 0, 1, fmt(addDays(now,-2)));
+  insertRecord.run('r_007_2', 'o_007', 'transfer', '转办至审核主管', 'pending', 'transferred',
+    'u_registrar', '王登记', 'registrar', 'u_registrar', 'u_supervisor',
+    fmt(addDays(now, 0.5)), fmt(addDays(now, 0.5)),
+    'deposit_slip,review_note', 'deposit_slip', '押金单已上传，核验记录待补齐（临期+可能触发状态冲突）', 1, 2, fmt(addDays(now,-1.5)));
+
   const insertAttachment = db.prepare(`
     INSERT INTO attachments (id, order_id, file_name, file_type, evidence_type, uploaded_by, uploaded_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -304,6 +320,9 @@ function seedDemoOrders(db) {
   insertAttachment.run('a_006_1', 'o_006', '身份证.jpg', 'image/jpeg', 'id_card', 'u_registrar', fmt(addDays(now,-4)));
   insertAttachment.run('a_006_2', 'o_006', '登记单(无签名).pdf', 'application/pdf', 'registration_form', 'u_registrar', fmt(addDays(now,-4)));
   insertAttachment.run('a_006_3', 'o_006', '押金单.jpg', 'image/jpeg', 'deposit_slip', 'u_registrar', fmt(addDays(now,-3)));
+  insertAttachment.run('a_007_1', 'o_007', '身份证_冯冲突.jpg', 'image/jpeg', 'id_card', 'u_registrar', fmt(addDays(now,-2)));
+  insertAttachment.run('a_007_2', 'o_007', '入住登记单_冯冲突.pdf', 'application/pdf', 'registration_form', 'u_registrar', fmt(addDays(now,-2)));
+  insertAttachment.run('a_007_3', 'o_007', '押金单_3201.jpg', 'image/jpeg', 'deposit_slip', 'u_registrar', fmt(addDays(now,-1.5)));
 
   const insertException = db.prepare(`
     INSERT INTO exception_reasons (id, order_id, reason_code, reason_label, description, severity,
@@ -318,6 +337,10 @@ function seedDemoOrders(db) {
     'u_reviewer', '张复核', 0, fmt(addDays(now,-2)));
   insertException.run('e_006_1', 'o_006', 'SIGNATURE_MISSING', '签名缺失退回补正', '入住登记单客人签名栏为空', 'medium',
     'u_supervisor', '李审核', 0, fmt(addDays(now,-1)));
+  insertException.run('e_007_1', 'o_007', 'STATUS_CONFLICT_WARN', '状态冲突样例订单', '用于演示 STATUS_SYNC_CONFLICT / VERSION_CONFLICT 拦截：请用 curl 传入错误 page_status、或双浏览器并发提交', 'high',
+    'u_supervisor', '李审核', 0, fmt(addDays(now,-1)));
+  insertException.run('e_007_2', 'o_007', 'DEADLINE_WARN', '临期预警（不足半天）', '距办理截止不足12小时，优先补齐核验记录后转办集团复核', 'medium',
+    'u_supervisor', '李审核', 0, fmt(addDays(now,-0.3)));
 
   const insertNote = db.prepare(`
     INSERT INTO audit_notes (id, order_id, note_type, content, created_by, created_by_name, created_at)
@@ -335,8 +358,14 @@ function seedDemoOrders(db) {
     'u_reviewer', '张复核', fmt(addDays(now,-2)));
   insertNote.run('n_006_1', 'o_006', 'correction', '入住登记单客人签名缺失，已通知前台联系客人补签后重新提交',
     'u_supervisor', '李审核', fmt(addDays(now,-1)));
+  insertNote.run('n_007_1', 'o_007', 'normal',
+    '【状态冲突触发方法】方法A：curl 传错误 page_status → STATUS_SYNC_CONFLICT；方法B：双浏览器同页不刷新并发 submit → VERSION_CONFLICT；方法C：非 u_supervisor 角色操作 → ROLE_MISMATCH / NOT_YOUR_HANDLER；方法D：未补齐 review_note 就转办 → MISSING_EVIDENCE',
+    'u_supervisor', '李审核', fmt(addDays(now,-1)));
+  insertNote.run('n_007_2', 'o_007', 'correction',
+    '缺核验记录 review_note：先点「上传证据」选择类型=核验/回访记录，填写文件名后提交，再执行「转办至酒店集团复核负责人」即可通过 MISSING_EVIDENCE 校验',
+    'u_supervisor', '李审核', fmt(addDays(now,-0.8)));
 
-  console.log('示例数据导入完成：6条订单 + 对应附件、异常、备注、处理记录');
+  console.log('示例数据导入完成：7条订单 + 对应附件、异常、备注、处理记录');
 }
 
 if (process.argv[1] && process.argv[1].includes('init.js')) {

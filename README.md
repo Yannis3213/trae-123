@@ -81,7 +81,7 @@
 cd backend  && npm install && cd ..
 cd frontend && npm install && cd ..
 
-# 2. 初始化 SQLite（建表 + 6 条演示订单 + 角色 + 附件 / 异常 / 审计记录）
+# 2. 初始化 SQLite（建表 + 7 条演示订单 + 角色 + 附件 / 异常 / 审计记录）
 #    数据库文件生成路径：backend/../data/hotel_orders.db
 cd backend
 BACKEND_PORT=4000 FRONTEND_PORT=3000 npm run init-db
@@ -145,9 +145,9 @@ FRONTEND_PORT=3000 BACKEND_PORT=4000 npm run dev
 
 ---
 
-## 七、四类异常样例（初始化数据已预置，可直接操作）
+## 七、五类异常样例（初始化数据已预置，可直接操作）
 
-初始化的 6 条订单正好覆盖你会测试的四种场景：
+初始化的 7 条订单正好覆盖你会测试的五种场景：
 
 ### 🟢 样例 1：正常流转 —— 订单 G20250601001（陈正常）
 - 当前：待分派 → 角色切到 `registrar` → 进入详情 → 转办 → 已转办
@@ -177,6 +177,41 @@ FRONTEND_PORT=3000 BACKEND_PORT=4000 npm run dev
   - 若版本号与后端不一致（例如同时开两个页签提交）→ 被拦截 `VERSION_CONFLICT`
   - 若不是当前处理人角色 → 被拦截 `NOT_YOUR_HANDLER / ROLE_MISMATCH`
 - 正确提交后处理人切回审核主管，未解决异常自动标记为已解决
+
+### ⚫ 样例 5：状态冲突 / 版本冲突 / 越权 / 缺证据 —— 订单 G20250601007（冯冲突）
+> 该订单同时集成 4 种后端真实拦截场景，故意缺 `review_note`，处理人是 `u_supervisor`，版本 v2，临期 0.5 天
+>
+> 进入详情页「审计备注」可看到触发方法说明
+
+- **方法 A：触发 `STATUS_SYNC_CONFLICT`（页面状态 vs 后端记录不一致）**
+  ```bash
+  curl -X POST http://localhost:4000/api/orders/o_007/transfer \
+    -H 'X-User-Id: u_supervisor' -H 'Content-Type: application/json' \
+    -d '{"version": 2, "page_status": "pending",
+         "target_handler_role": "reviewer", "target_handler_id": "u_reviewer"}'
+  ```
+  返回：`角色边界校验失败：页面显示状态【待分派】与后端记录【已转办】不一致`
+
+- **方法 B：触发 `VERSION_CONFLICT`（乐观锁冲突）**
+  - 开两个浏览器页签同时打开同一详情（都不要刷新）
+  - A 先「上传证据 review_note」→ 再「转办至集团复核」→ 成功，版本变为 v3
+  - B 不刷新，直接点「转办至集团复核」→ 被拦截：`您基于 v2 提交，但当前后端记录已是 v3`
+  - 或单步 curl：先传 v2 成功一次，再用同样 body 再发一次，第二次被拦
+
+- **方法 C：触发 `ROLE_MISMATCH / NOT_YOUR_HANDLER`（越权）**
+  - 前端切到 `registrar`（王登记）角色 → 详情页「转办至集团复核」按钮不会渲染
+  - 但 curl 真实拦截：
+    ```bash
+    curl -X POST http://localhost:4000/api/orders/o_007/transfer \
+      -H 'X-User-Id: u_registrar' -H 'Content-Type: application/json' \
+      -d '{"version": 2, "page_status": "transferred"}'
+    ```
+    返回：`订单当前处于【住客审核主管】处理环节，您的角色【住客登记员】不匹配`
+
+- **方法 D：触发 `MISSING_EVIDENCE`（缺核验记录，校验 attachments 表）**
+  - 切到 `supervisor` 角色 → 进入详情 → 直接点「转办至酒店集团复核负责人」
+  - 不先补齐 `review_note` 附件 → 被拦：`【转办】证据校验失败（已校验 attachments 表实际记录，非前端勾选）：缺少必填证据：review_note`
+  - 正确做法：先点「➕ 上传证据」→ 类型选「核验/回访记录」→ 填写文件名后提交 → 再转办即放行
 
 ---
 
