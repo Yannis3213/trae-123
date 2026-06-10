@@ -36,10 +36,7 @@ export default function HeaderBar() {
   const handleSwitch = (id: string) => {
     setCurrentUserId(id);
     setUserId(id);
-    // ====== 关键修复：派发全局事件通知所有页面刷新 ======
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('hotel:user-switched', { detail: { userId: id } }));
-    }
+    dispatchUserSwitched();
     setTimeout(() => {
       loadUser();
       router.refresh();

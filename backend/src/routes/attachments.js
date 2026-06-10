@@ -43,11 +43,11 @@ export default async function attachmentRoutes(fastify) {
     if (!order) { db.close(); return reply.code(404).send({ ok: false, code: 'NOT_FOUND', message: '订单不存在' }); }
 
     const hc = requireHandler(auth, order);
-    if (!hc.ok) { db.close(); return reply.code(403).send(hc); }
+    if (!hc.ok) { db.close(); return reply.code(403).send({ ...hc, order_summary: buildOrderSummary(order) }); }
 
     if (version != null) {
       const vv = verifyVersion(order, version);
-      if (!vv.ok) { db.close(); return reply.code(409).send(vv); }
+      if (!vv.ok) { db.close(); return reply.code(409).send({ ...vv, order_summary: buildOrderSummary(order) }); }
     }
 
     const id = nextId('a');

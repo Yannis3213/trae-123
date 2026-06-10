@@ -167,6 +167,11 @@ export interface BatchResultItem {
   code?: string;
   message: string;
   missing?: string[];
+  actual_evidence?: string[];
+  current_handler?: string;
+  current_role?: string;
+  current_role_label?: string;
+  current_urgency?: string;
   order_summary?: OrderSummary;
 }
 

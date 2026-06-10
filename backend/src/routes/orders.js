@@ -300,16 +300,22 @@ export default async function orderRoutes(fastify) {
             order_id: orderId, order_no: order.order_no,
             success: false, code: 'NOT_OVERDUE',
             message: `订单${order.order_no}状态：${urgency.label}，非逾期，跳过`,
+            current_urgency: urgency.level,
             order_summary: buildOrderSummary(order),
           });
           return;
         }
 
         if (order.current_handler && order.current_handler !== auth.user.id && order.current_role !== auth.user.role) {
+          const evidenceTypes = getOrderEvidenceTypes(db, orderId);
           results.push({
             order_id: orderId, order_no: order.order_no,
             success: false, code: 'PERMISSION_DENIED',
             message: `订单${order.order_no}当前处理人是${order.current_handler}或${order.current_role}环节，您无权推进`,
+            current_handler: order.current_handler,
+            current_role: order.current_role,
+            current_role_label: ROLE_LABEL[order.current_role] || order.current_role,
+            actual_evidence: evidenceTypes,
             order_summary: buildOrderSummary(order),
           });
           return;
@@ -440,9 +446,8 @@ export default async function orderRoutes(fastify) {
     }
 
     const roleCheck = requireRole(auth, roleRule.from);
-    if (!roleCheck.ok) { db.close(); return reply.code(403).send(roleCheck); }
+    if (!roleCheck.ok) { db.close(); return reply.code(403).send({ ...roleCheck, order_summary: buildOrderSummary(order) }); }
 
-    // ====== 角色边界校验：比较页面携带状态 vs 后端真实记录 ======
     if (page_status && page_status !== order.status) {
       db.close();
       return reply.code(409).send({
@@ -452,19 +457,20 @@ export default async function orderRoutes(fastify) {
         page_status_label: STATUS_LABEL[page_status] || page_status,
         backend_status: order.status,
         backend_status_label: STATUS_LABEL[order.status] || order.status,
+        order_summary: buildOrderSummary(order),
       });
     }
 
     if (['transfer', 'review', 'archive', 'return', 'correct'].includes(action)) {
       const hc = requireHandler(auth, order);
-      if (!hc.ok) { db.close(); return reply.code(403).send(hc); }
+      if (!hc.ok) { db.close(); return reply.code(403).send({ ...hc, order_summary: buildOrderSummary(order) }); }
     }
 
     const vv = verifyVersion(order, version);
-    if (!vv.ok) { db.close(); return reply.code(409).send(vv); }
+    if (!vv.ok) { db.close(); return reply.code(409).send({ ...vv, order_summary: buildOrderSummary(order) }); }
 
     const dup = checkDuplicateAction(order, action, auth.user.id);
-    if (!dup.ok) { db.close(); return reply.code(409).send(dup); }
+    if (!dup.ok) { db.close(); return reply.code(409).send({ ...dup, order_summary: buildOrderSummary(order) }); }
 
     let targetStatus = order.status;
     let toHandler = order.current_handler;
@@ -515,7 +521,7 @@ export default async function orderRoutes(fastify) {
 
     if (action !== 'return') {
       const st = checkStatusTransition(order, targetStatus, action);
-      if (!st.ok) { db.close(); return reply.code(409).send(st); }
+      if (!st.ok) { db.close(); return reply.code(409).send({ ...st, order_summary: buildOrderSummary(order) }); }
     }
 
     if (!evidenceCheckResult.ok) {
@@ -526,6 +532,7 @@ export default async function orderRoutes(fastify) {
         missing: evidenceCheckResult.missing,
         actual_evidence: actualEvidenceTypes,
         required_evidence: requiredEvidence,
+        order_summary: buildOrderSummary(order),
       });
     }
 

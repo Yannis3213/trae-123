@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { api } from '../../lib/api';
 import { useRefresh } from '../../lib/useRefresh';
@@ -18,9 +18,6 @@ export default function BatchPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    setMessage(null);
-    setBatchResults(null);
-    setSelectedIds([]);
     const r = await api.listOrders({ handler_scope: 'all', page_size: 200 });
     setLoading(false);
     if (!r.ok) {
@@ -30,9 +27,25 @@ export default function BatchPage() {
     setOrders(r.data!.list);
   }, []);
 
-  // ====== 统一事件监听：角色切换 / 订单变更 ======
+  const handleUserSwitched = useCallback(async () => {
+    setMessage(null);
+    setBatchResults(null);
+    setSelectedIds([]);
+    await load();
+  }, [load]);
+
+  const handleOrderChanged = useCallback(async () => {
+    await load();
+  }, [load]);
+
+  useEffect(() => {
+    setMessage(null);
+    load();
+  }, [load]);
+
   useRefresh({
-    onAny: load,
+    onUserSwitched: handleUserSwitched,
+    onOrderChanged: handleOrderChanged,
   });
 
   const filtered = useMemo(() => {
@@ -78,10 +91,15 @@ export default function BatchPage() {
       text: `批量推进完成：成功 ${ok} 条，失败 ${fail} 条，队列将刷新`,
     });
     setSelectedIds([]);
-    if (typeof window !== 'undefined' && ok > 0) {
-      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
-    }
+  };
+
+  const handleRefresh = async () => {
+    setMessage(null);
+    setBatchResults(null);
+    setSelectedIds([]);
     await load();
+    setMessage({ type: 'ok', text: '队列已刷新，页面状态与后端记录同步完成' });
+    setTimeout(() => setMessage(null), 2500);
   };
 
   return (
@@ -138,7 +156,7 @@ export default function BatchPage() {
             <span style={{ marginLeft: 12, fontSize: 12, color: '#6b7280' }}>共 {filtered.length} 条</span>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn" onClick={load} disabled={loading}>🔄 刷新队列</button>
+            <button className="btn" onClick={handleRefresh} disabled={loading}>🔄 刷新队列</button>
             <button className="btn btn-danger" disabled={busy || selectedIds.length === 0} onClick={pushSelected}>
               🚀 逾期批量推进（逐条返回结果）
             </button>
@@ -206,12 +224,32 @@ export default function BatchPage() {
               <div className="batch-result">
                 {batchResults.map((r, idx) => (
                   <div key={idx} className={`batch-row ${r.success ? 'success' : 'fail'}`}>
-                    <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       {r.success ? '✅' : '❌'}
-                      <strong style={{ margin: '0 6px' }}>{r.order_no || r.order_id}</strong>
+                      <strong>{r.order_no || r.order_id}</strong>
                       {r.code && <span style={{ color: '#6b7280', fontSize: 11 }}>[{r.code}]</span>}
+                      {r.order_summary && (
+                        <span style={{ fontSize: 11, color: '#6b7280' }}>
+                          v{r.order_summary.version} · {r.order_summary.status_label} · {r.order_summary.current_role_label || ''}
+                        </span>
+                      )}
                     </div>
                     <div>{r.message}</div>
+                    {r.missing && r.missing.length > 0 && (
+                      <div style={{ color: '#dc2626', fontSize: 12, marginTop: 2 }}>
+                        缺失证据：{r.missing.join('、')}
+                      </div>
+                    )}
+                    {!r.success && r.actual_evidence && r.actual_evidence.length > 0 && (
+                      <div style={{ color: '#6b7280', fontSize: 12, marginTop: 2 }}>
+                        已有证据：{r.actual_evidence.join('、')}
+                      </div>
+                    )}
+                    {!r.success && r.current_role_label && (
+                      <div style={{ color: '#6b7280', fontSize: 12, marginTop: 2 }}>
+                        当前环节：{r.current_role_label} · 处理人：{r.current_handler || '—'}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

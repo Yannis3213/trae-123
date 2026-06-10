@@ -212,6 +212,14 @@ function seedDemoOrders(db) {
       status: 'transferred', current_handler: 'u_supervisor', current_role: 'supervisor',
       deadline: fmt(addDays(now, 0.5)), version: 2, created_by: 'u_registrar'
     },
+    {
+      id: 'o_008', order_no: 'G20250601008', guest_name: '何批量', room_no: '2104',
+      check_in_date: fmt(addDays(now, -7)).slice(0,10),
+      check_out_date: fmt(addDays(now, -2)).slice(0,10),
+      amount: 6800, order_type: 'normal',
+      status: 'reviewed', current_handler: 'u_reviewer', current_role: 'reviewer',
+      deadline: fmt(addDays(now, -2)), version: 4, created_by: 'u_registrar'
+    },
   ];
 
   const insertOrder = db.prepare(`
@@ -316,6 +324,22 @@ function seedDemoOrders(db) {
     fmt(addDays(now, 0.5)), fmt(addDays(now, 0.5)),
     'id_card,registration_form', 'id_card,registration_form,deposit_slip', '押金单已上传，核验记录待补齐（临期+可能触发状态冲突）', 1, 2, fmt(addDays(now,-1.5)));
 
+  insertRecord.run('r_008_1', 'o_008', 'create', '住客登记员登记', null, 'pending',
+    'u_registrar', '王登记', 'registrar', null, 'u_registrar', null, fmt(addDays(now,-2)),
+    'id_card,registration_form', 'id_card,registration_form,deposit_slip', '批量推进样例订单', 0, 1, fmt(addDays(now,-7)));
+  insertRecord.run('r_008_2', 'o_008', 'transfer', '转办至审核主管', 'pending', 'transferred',
+    'u_registrar', '王登记', 'registrar', 'u_registrar', 'u_supervisor',
+    fmt(addDays(now,-2)), fmt(addDays(now,-2)),
+    'id_card,registration_form', 'id_card,registration_form,deposit_slip', '', 1, 2, fmt(addDays(now,-6)));
+  insertRecord.run('r_008_3', 'o_008', 'transfer', '逾期批量推进：转办至集团复核', 'transferred', 'transferred',
+    'u_supervisor', '李审核', 'supervisor', 'u_supervisor', 'u_reviewer',
+    fmt(addDays(now,-2)), fmt(addDays(now,-2)),
+    'deposit_slip,review_note', 'deposit_slip,review_note', '逾期批量推进：主管审核通过，转办集团复核', 2, 3, fmt(addDays(now,-3)));
+  insertRecord.run('r_008_4', 'o_008', 'review', '集团复核完成', 'transferred', 'reviewed',
+    'u_reviewer', '张复核', 'reviewer', 'u_reviewer', 'u_reviewer',
+    fmt(addDays(now,-2)), fmt(addDays(now,-2)),
+    '', '', '批量推进后复核归档通过', 3, 4, fmt(addDays(now,-2.5)));
+
   const insertAttachment = db.prepare(`
     INSERT INTO attachments (id, order_id, file_name, file_type, evidence_type, uploaded_by, uploaded_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -339,6 +363,10 @@ function seedDemoOrders(db) {
   insertAttachment.run('a_007_1', 'o_007', '身份证_冯冲突.jpg', 'image/jpeg', 'id_card', 'u_registrar', fmt(addDays(now,-2)));
   insertAttachment.run('a_007_2', 'o_007', '入住登记单_冯冲突.pdf', 'application/pdf', 'registration_form', 'u_registrar', fmt(addDays(now,-2)));
   insertAttachment.run('a_007_3', 'o_007', '押金单_3201.jpg', 'image/jpeg', 'deposit_slip', 'u_registrar', fmt(addDays(now,-1.5)));
+  insertAttachment.run('a_008_1', 'o_008', '身份证_何批量.jpg', 'image/jpeg', 'id_card', 'u_registrar', fmt(addDays(now,-7)));
+  insertAttachment.run('a_008_2', 'o_008', '入住登记单_何批量.pdf', 'application/pdf', 'registration_form', 'u_registrar', fmt(addDays(now,-7)));
+  insertAttachment.run('a_008_3', 'o_008', '押金单_2104.jpg', 'image/jpeg', 'deposit_slip', 'u_registrar', fmt(addDays(now,-6)));
+  insertAttachment.run('a_008_4', 'o_008', '核验记录_2104.pdf', 'application/pdf', 'review_note', 'u_supervisor', fmt(addDays(now,-3)));
 
   const insertException = db.prepare(`
     INSERT INTO exception_reasons (id, order_id, reason_code, reason_label, description, severity,
@@ -357,6 +385,8 @@ function seedDemoOrders(db) {
     'u_supervisor', '李审核', 0, fmt(addDays(now,-1)));
   insertException.run('e_007_2', 'o_007', 'DEADLINE_WARN', '临期预警（不足半天）', '距办理截止不足12小时，优先补齐核验记录后转办集团复核', 'medium',
     'u_supervisor', '李审核', 0, fmt(addDays(now,-0.3)));
+  insertException.run('e_008_1', 'o_008', 'OVERDUE', '办理逾期（已批量推进解决）', '该订单曾逾期，主管通过批量推进转办集团复核后已完成复核', 'high',
+    'u_reviewer', '张复核', 1, fmt(addDays(now,-3)));
 
   const insertNote = db.prepare(`
     INSERT INTO audit_notes (id, order_id, note_type, content, created_by, created_by_name, created_at)
@@ -390,8 +420,20 @@ function seedDemoOrders(db) {
   insertNote.run('n_007_4', 'o_007', 'normal',
     '复核负责人视角：可在「已回访」tab 查看已复核订单，该订单当前在主管办理环节，待材料齐全后进入复核队列',
     'u_reviewer', '张复核', fmt(addDays(now,-0.6)));
+  insertNote.run('n_008_1', 'o_008', 'normal',
+    '批量推进完整链路：登记→转办主管→逾期→主管批量推进转集团复核→复核通过。此订单演示批量推进成功后刷新队列、列表、详情数据一致的闭环',
+    'u_reviewer', '张复核', fmt(addDays(now,-2)));
+  insertNote.run('n_008_2', 'o_008', 'normal',
+    '主管视角：2104房逾期订单，材料齐全（押金单+核验记录），批量推进转办集团复核成功，队列已刷新',
+    'u_supervisor', '李审核', fmt(addDays(now,-3)));
+  insertNote.run('n_004_3', 'o_004', 'exception',
+    '批量推进缺证据失败样例：如对 o_002（赵缺材）执行批量推进，因缺少 deposit_slip/review_note 将返回 MISSING_EVIDENCE 拦截，逐条结果中可见缺失证据列表',
+    'u_reviewer', '张复核', fmt(addDays(now,-1.5)));
+  insertNote.run('n_001_2', 'o_001', 'normal',
+    '角色切换刷新验证：切换至登记员→列表按「待分派」tab 拉取；切换至主管→按「已转办」tab 拉取；切换至复核→按「已回访」tab 拉取。每次切换后旧提示和勾选均清理',
+    'u_registrar', '王登记', fmt(addDays(now,-0.2)));
 
-  console.log('示例数据导入完成：7条订单 + 对应附件、异常、备注、处理记录');
+  console.log('示例数据导入完成：8条订单 + 对应附件、异常、备注、处理记录');
 }
 
 if (process.argv[1] && process.argv[1].includes('init.js')) {

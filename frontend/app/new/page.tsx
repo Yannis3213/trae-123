@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { api } from '../../lib/api';
@@ -39,7 +39,7 @@ export default function NewOrderPage() {
     }));
   };
 
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setForm({
       order_no: `G${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}${String(Math.floor(Math.random() * 9000) + 1000)}`,
       guest_name: '',
@@ -55,20 +55,9 @@ export default function NewOrderPage() {
     });
     setMessage(null);
     setBusy(false);
-  };
-
-  // ====== 统一事件监听：角色切换后重置表单（避免跨角色数据污染）======
-  useEffect(() => {
-    const handleRefresh = () => resetForm();
-    if (typeof window !== 'undefined') {
-      window.addEventListener('hotel:user-switched', handleRefresh);
-    }
-    return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('hotel:user-switched', handleRefresh);
-      }
-    };
   }, []);
+
+  useRefresh({ onUserSwitched: resetForm });
 
   const submit = async () => {
     if (!form.guest_name || !form.check_in_date || !form.amount) {
@@ -95,9 +84,6 @@ export default function NewOrderPage() {
       return;
     }
     setMessage({ type: 'ok', text: `住客订单登记成功，状态=待分派，订单号=${form.order_no}，即将跳转列表` });
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
-    }
     setTimeout(() => router.push(`/orders/${r.data!.order.id}`), 1200);
   };
 

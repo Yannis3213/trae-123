@@ -97,9 +97,6 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     setActionDialog(null);
     setForm({ evidence_types: [], remark: '', note_content: '', exception_label: '', exception_desc: '', exception_severity: 'medium' });
     setBatchResult(null);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
-    }
     await load();
     setTimeout(() => router.push('/'), 1200);
   };
@@ -121,9 +118,6 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     }
     setMessage({ type: 'ok', text: '证据已上传并记录到审计轨迹' });
     setAddAttachmentForm({ open: false, file_name: '', evidence_type: 'id_card', remark: '' });
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
-    }
     await load();
   };
 
@@ -137,18 +131,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       return;
     }
     setAddNoteForm({ open: false, note_type: 'normal', content: '' });
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
-    }
     await load();
   };
 
   const resolveEx = async (eid: string) => {
     const r = await api.resolveException(id, eid);
     if (!r.ok) { setMessage({ type: 'err', text: r.message || '解决异常失败' }); return; }
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('hotel:order-changed'));
-    }
     await load();
   };
 
