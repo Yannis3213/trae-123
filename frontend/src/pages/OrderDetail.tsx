@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Card,
   Row,
@@ -22,6 +22,7 @@ import {
   Badge,
   Empty,
   Upload,
+  Collapse,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -37,6 +38,7 @@ import {
   PlusOutlined,
   FileTextOutlined,
   UserOutlined,
+  RollbackOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -48,10 +50,15 @@ import type {
   ProcessingRecord,
   Role,
   WarningLevel,
+  OrderAttachment,
+  AuditNote,
+  ExceptionLog,
 } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 
 const { TextArea } = Input;
+
+const STAGE_ITEMS: OrderStage[] = ['listing', 'inventory', 'fulfillment'];
 
 const STAGE_CONFIG: Record<
   OrderStage,
@@ -123,6 +130,11 @@ function getWarningLevelForStage(dueAt?: string): { level: WarningLevel; text: s
   return { level: 'normal', text: '正常', cls: 'warning-tag-normal' };
 }
 
+function getPrevStage(stage: OrderStage): OrderStage | null {
+  const idx = STAGE_ITEMS.indexOf(stage);
+  return idx > 0 ? STAGE_ITEMS[idx - 1] : null;
+}
+
 function OrderDetail() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -139,6 +151,9 @@ function OrderDetail() {
   const [submitting, setSubmitting] = useState(false);
   const [newNote, setNewNote] = useState('');
   const [noteModalOpen, setNoteModalOpen] = useState(false);
+  const [activeStage, setActiveStage] = useState<OrderStage>('listing');
+  const [attachmentModalOpen, setAttachmentModalOpen] = useState(false);
+  const [attachmentForm, setAttachmentForm] = useState({ file_name: '', file_url: '', file_type: '' });
 
   const loadDetail = async () => {
     setLoading(true);
@@ -146,6 +161,7 @@ function OrderDetail() {
       const d = await orderApi.get(id);
       setDetail(d);
       setDataInput(getStageData(d.order, d.order.current_stage));
+      setActiveStage(d.order.current_stage);
     } finally {
       setLoading(false);
     }
@@ -154,6 +170,12 @@ function OrderDetail() {
   useEffect(() => {
     loadDetail();
   }, [id]);
+
+  useEffect(() => {
+    if (detail) {
+      setDataInput(getStageData(detail.order, activeStage));
+    }
+  }, [activeStage, detail]);
 
   if (loading || !detail) {
     return (
@@ -170,8 +192,28 @@ function OrderDetail() {
   const stageDueAt = getStageDueAt(order, order.current_stage);
   const stageWarning = getWarningLevelForStage(stageDueAt);
 
+  const handleUploadAttachment = async () => {
+    if (!attachmentForm.file_name || !attachmentForm.file_url) {
+      message.warning('请填写文件名和文件URL');
+      return;
+    }
+    try {
+      await orderApi.uploadAttachment(id, {
+        stage: activeStage,
+        ...attachmentForm,
+      });
+      message.success('附件上传成功');
+      setAttachmentForm({ file_name: '', file_url: '', file_type: '' });
+      setAttachmentModalOpen(false);
+      loadDetail();
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || '上传失败');
+    }
+  };
+
   const canDoAction = (action: string) => {
     if (!isMyTurn) return false;
+    if (activeStage !== order.current_stage) return false;
     if (action === 'submit' || action === 'resubmit') {
       return (
         role === 'ops_specialist' &&
@@ -220,7 +262,7 @@ function OrderDetail() {
   const handleAddNote = async () => {
     if (!newNote.trim()) return;
     try {
-      await orderApi.addAuditNote(id, order.current_stage, newNote);
+      await orderApi.addAuditNote(id, activeStage, newNote);
       message.success('备注已添加');
       setNewNote('');
       setNoteModalOpen(false);
@@ -230,11 +272,9 @@ function OrderDetail() {
     }
   };
 
-  const stageItems: OrderStage[] = ['listing', 'inventory', 'fulfillment'];
-
   const getStageStatus = (stage: OrderStage) => {
-    const stageIdx = stageItems.indexOf(stage);
-    const curIdx = stageItems.indexOf(order.current_stage);
+    const stageIdx = STAGE_ITEMS.indexOf(stage);
+    const curIdx = STAGE_ITEMS.indexOf(order.current_stage);
     if (stageIdx < curIdx) return 'finish';
     if (stageIdx === curIdx) return order.current_status === 'completed' ? 'finish' : 'process';
     return 'wait';
@@ -252,7 +292,174 @@ function OrderDetail() {
     );
   };
 
-  const renderActionButtons = () => {
+  const isStagePassed = (stage: OrderStage) => {
+    return STAGE_ITEMS.indexOf(stage) < STAGE_ITEMS.indexOf(order.current_stage);
+  };
+
+  const renderPreviousStageReview = (stage: OrderStage) => {
+    const prevStage = getPrevStage(stage);
+    if (!prevStage) return null;
+    if (!isStagePassed(prevStage) && prevStage !== order.current_stage) return null;
+
+    const prevData = getStageData(order, prevStage);
+    const prevCfg = STAGE_CONFIG[prevStage];
+    const prevAttachments: OrderAttachment[] = attachments.filter((a) => a.stage === prevStage);
+    const prevNotes: AuditNote[] = audit_notes.filter((n) => n.stage === prevStage);
+    const prevRecords: ProcessingRecord[] = records.filter((r) => r.stage === prevStage);
+    const prevExceptions: ExceptionLog[] = exceptions.filter((e) => e.stage === prevStage);
+
+    const items = [];
+
+    if (prevData) {
+      items.push({
+        key: 'data',
+        label: <Space><FileTextOutlined /> {prevCfg.label}数据</Space>,
+        children: (
+          <pre style={{ background: '#fafafa', padding: 12, borderRadius: 4, whiteSpace: 'pre-wrap', margin: 0, fontFamily: 'monospace', fontSize: 13 }}>
+            {prevData}
+          </pre>
+        ),
+      });
+    }
+
+    if (prevAttachments.length > 0) {
+      items.push({
+        key: 'attachments',
+        label: <Space><PaperClipOutlined /> 材料附件（{prevAttachments.length}份）</Space>,
+        children: (
+          <Space wrap>
+            {prevAttachments.map((a) => (
+              <Tag key={a.id} icon={<PaperClipOutlined />} style={{ padding: '4px 10px' }}>
+                {a.file_name} ({a.uploaded_by?.name})
+              </Tag>
+            ))}
+          </Space>
+        ),
+      });
+    }
+
+    if (prevNotes.length > 0) {
+      items.push({
+        key: 'notes',
+        label: <Space><FileTextOutlined /> 审计备注（{prevNotes.length}条）</Space>,
+        children: (
+          <List
+            size="small"
+            dataSource={prevNotes}
+            renderItem={(n) => (
+              <List.Item>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <div style={{ color: '#262626' }}>{n.content}</div>
+                  <div style={{ color: '#8c8c8c', fontSize: 12 }}>
+                    {n.author?.name || '未知'} · {dayjs(n.created_at).format('YYYY-MM-DD HH:mm')}
+                  </div>
+                </Space>
+              </List.Item>
+            )}
+          />
+        ),
+      });
+    }
+
+    if (prevExceptions.length > 0) {
+      items.push({
+        key: 'exceptions',
+        label: <Space><ExclamationCircleOutlined style={{ color: '#ff4d4f' }} /> 异常记录（{prevExceptions.length}条）</Space>,
+        children: (
+          <List
+            size="small"
+            dataSource={prevExceptions}
+            renderItem={(e) => (
+              <List.Item>
+                <Space>
+                  <Tag color={e.is_resolved ? 'green' : 'red'}>
+                    {e.is_resolved ? '已补正' : '待补正'}
+                  </Tag>
+                  <span style={{ color: '#595959' }}>{e.reason}</span>
+                  {e.corrected_action && (
+                    <span style={{ color: '#52c41a' }}>→ {e.corrected_action}</span>
+                  )}
+                  <span style={{ color: '#bfbfbf', fontSize: 12 }}>
+                    {dayjs(e.created_at).format('MM-DD HH:mm')}
+                  </span>
+                </Space>
+              </List.Item>
+            )}
+          />
+        ),
+      });
+    }
+
+    if (prevRecords.length > 0) {
+      items.push({
+        key: 'records',
+        label: <Space><ClockCircleOutlined /> 处理记录（{prevRecords.length}条）</Space>,
+        children: (
+          <Timeline
+            size="small"
+            items={prevRecords.map((r) => ({
+              color: r.is_exception ? 'red' : 'blue',
+              children: (
+                <div>
+                  <div>
+                    <span className={r.is_exception ? 'timeline-exception' : 'timeline-action'}>
+                      {r.operator?.name || '未知'}
+                    </span>
+                    {' '}
+                    {ACTION_LABEL[r.action] || r.action}：
+                    {STATUS_LABELS[r.from_status]} → {STATUS_LABELS[r.to_status]}
+                  </div>
+                  {r.note && <div style={{ color: '#595959', marginTop: 4 }}>{r.note}</div>}
+                  {r.is_exception && r.exception_reason && (
+                    <div style={{ color: '#cf1322', marginTop: 4 }}>
+                      <ExclamationCircleOutlined /> {r.exception_reason}
+                    </div>
+                  )}
+                  <div style={{ color: '#bfbfbf', fontSize: 12, marginTop: 4 }}>
+                    {dayjs(r.created_at).format('YYYY-MM-DD HH:mm:ss')}
+                  </div>
+                </div>
+              ),
+            }))}
+          />
+        ),
+      });
+    }
+
+    if (items.length === 0) return null;
+
+    return (
+      <Alert
+        type="info"
+        showIcon
+        icon={<RollbackOutlined />}
+        style={{ marginBottom: 16 }}
+        message={
+          <Space>
+            <strong>上一环节材料回顾：{prevCfg.label}</strong>
+            <Tag color={prevCfg.color}>第{STAGE_ITEMS.indexOf(prevStage) + 1}阶段</Tag>
+            <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+              请核对以下材料后再进行本环节操作
+            </span>
+          </Space>
+        }
+        description={
+          <Collapse
+            size="small"
+            ghost
+            defaultActiveKey={items.map((i) => i.key)}
+            items={items}
+            style={{ marginTop: 8 }}
+          />
+        }
+      />
+    );
+  };
+
+  const renderActionButtons = (stage: OrderStage) => {
+    if (stage !== order.current_stage) {
+      return null;
+    }
     if (order.current_status === 'completed') {
       return <Tag color="success" icon={<CheckCircleOutlined />}>订单已完成</Tag>;
     }
@@ -302,18 +509,24 @@ function OrderDetail() {
 
   const renderProcessPanel = (stage: OrderStage) => {
     const isCurrent = order.current_stage === stage;
+    const stagePassed = isStagePassed(stage);
     const stageCfg = STAGE_CONFIG[stage];
     const stageData = getStageData(order, stage);
     const stageNotes = audit_notes.filter((n) => n.stage === stage);
     const stageAttachments = attachments.filter((a) => a.stage === stage);
     const stageExceptions = exceptions.filter((e) => e.stage === stage);
     const stageRecords = records.filter((r) => r.stage === stage);
+    const isEditable = isCurrent && isMyTurn && role === 'ops_specialist' && order.current_status !== 'completed';
+
+    const displayData = isCurrent && isEditable ? dataInput : stageData;
 
     return (
       <div style={{ padding: '8px 0' }}>
+        {renderPreviousStageReview(stage)}
+
         {stageExceptions.length > 0 && (
           <Alert
-            message="异常记录"
+            message="本环节异常记录"
             type="error"
             showIcon
             style={{ marginBottom: 16 }}
@@ -366,7 +579,7 @@ function OrderDetail() {
 
         {stageAttachments.length > 0 && (
           <Card
-            title={<span><PaperClipOutlined /> 材料附件</span>}
+            title={<span><PaperClipOutlined /> 材料附件（{stageAttachments.length}份）</span>}
             size="small"
             style={{ marginBottom: 16 }}
           >
@@ -380,62 +593,63 @@ function OrderDetail() {
           </Card>
         )}
 
-        {isCurrent && order.current_status !== 'completed' ? (
-          <>
-            <Card
-              title={<span><FileTextOutlined /> {stageCfg.label}数据</span>}
-              size="small"
-              style={{ marginBottom: 16 }}
-              extra={
-                isMyTurn && (role === 'ops_specialist') && (
-                  <Tooltip title="上传附件">
-                    <Button
-                      size="small"
-                      icon={<UploadOutlined />}
-                      onClick={() => message.info('附件上传功能：将文件保存后填入URL')}
-                    >
-                      上传材料
-                    </Button>
-                  </Tooltip>
-                )
-              }
-            >
-              <Alert
-                message={`必填材料：${stageCfg.fields.join('、')}`}
-                type="info"
-                showIcon
-                style={{ marginBottom: 12 }}
-              />
-              <TextArea
-                value={dataInput}
-                onChange={(e) => setDataInput(e.target.value)}
-                rows={6}
-                disabled={!isMyTurn || role !== 'ops_specialist'}
-                placeholder={stageCfg.placeholder}
-                style={{ fontFamily: 'monospace', fontSize: 13 }}
-              />
-              {stageData && !isCurrent && (
-                <pre style={{ background: '#fafafa', padding: 12, borderRadius: 4, marginTop: 8, whiteSpace: 'pre-wrap' }}>
-                  {stageData}
+        <Card
+          title={
+            <Space>
+              <FileTextOutlined /> {stageCfg.label}数据
+              {stagePassed && <Tag color="green">已完成</Tag>}
+              {isCurrent && !stagePassed && <Tag color="processing">办理中</Tag>}
+              {!isCurrent && !stagePassed && <Tag>未开始</Tag>}
+            </Space>
+          }
+          size="small"
+          style={{ marginBottom: 16 }}
+          extra={
+            isCurrent && isMyTurn && (role === 'ops_specialist') && (
+              <Button
+                size="small"
+                icon={<UploadOutlined />}
+                onClick={() => setAttachmentModalOpen(true)}
+              >
+                上传材料
+              </Button>
+            )
+          }
+        >
+          {(isCurrent || stagePassed) && displayData ? (
+            <>
+              {(isCurrent || stagePassed) && (
+                <Alert
+                  message={`必填材料：${stageCfg.fields.join('、')}`}
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 12 }}
+                />
+              )}
+              {isEditable ? (
+                <TextArea
+                  value={dataInput}
+                  onChange={(e) => setDataInput(e.target.value)}
+                  rows={6}
+                  placeholder={stageCfg.placeholder}
+                  style={{ fontFamily: 'monospace', fontSize: 13 }}
+                />
+              ) : (
+                <pre style={{ background: '#fafafa', padding: 12, borderRadius: 4, whiteSpace: 'pre-wrap', margin: 0, fontFamily: 'monospace', fontSize: 13 }}>
+                  {displayData}
                 </pre>
               )}
-            </Card>
+            </>
+          ) : (
+            <Empty description="本环节尚未开始，暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+        </Card>
 
-            {isMyTurn && renderActionButtons()}
-          </>
-        ) : stageData ? (
-          <Card title={<span><FileTextOutlined /> {stageCfg.label}数据</span>} size="small">
-            <pre style={{ background: '#fafafa', padding: 12, borderRadius: 4, whiteSpace: 'pre-wrap', margin: 0 }}>
-              {stageData}
-            </pre>
-          </Card>
-        ) : (
-          <Empty description="暂无数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-        )}
+        {isCurrent && renderActionButtons(stage)}
 
         {stageRecords.length > 0 && (
           <Card
-            title="处理记录"
+            title={<Space><ClockCircleOutlined /> 本环节处理记录（{stageRecords.length}条）</Space>}
             size="small"
             style={{ marginTop: 16 }}
           >
@@ -537,8 +751,8 @@ function OrderDetail() {
 
       <Card style={{ marginBottom: 16 }}>
         <Steps
-          current={stageItems.indexOf(order.current_stage)}
-          items={stageItems.map((s) => ({
+          current={STAGE_ITEMS.indexOf(order.current_stage)}
+          items={STAGE_ITEMS.map((s) => ({
             title: STAGE_CONFIG[s].label,
             status: getStageStatus(s),
             description: getStageExtra(s),
@@ -548,14 +762,15 @@ function OrderDetail() {
 
       <Card className="stage-tabs">
         <Tabs
-          activeKey={order.current_stage}
-          onChange={() => {}}
-          items={stageItems.map((s) => ({
+          activeKey={activeStage}
+          onChange={(k) => setActiveStage(k as OrderStage)}
+          items={STAGE_ITEMS.map((s) => ({
             key: s,
             label: (
               <Space>
                 {STAGE_CONFIG[s].label}
                 {s === order.current_stage && <Badge color="#1677ff" />}
+                {isStagePassed(s) && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
               </Space>
             ),
             children: renderProcessPanel(s),
@@ -624,18 +839,28 @@ function OrderDetail() {
           </>
         )}
         {(actionModal.action === 'submit' || actionModal.action === 'resubmit') && (
-          <Alert
-            message={`提交后将由${
-              order.current_stage === 'fulfillment' ? '店铺负责人' : '仓配主管'
-            }进行审核，请确认材料完整。提交前版本: v${order.version}`}
-            type="info"
-            showIcon
-          />
+          <>
+            {stageWarning.level === 'overdue' && (
+              <Alert
+                message="注意：本环节已逾期，提交后将自动记录逾期异常日志"
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            <Alert
+              message={`提交后将由${
+                order.current_stage === 'fulfillment' ? '店铺负责人' : '仓配主管'
+              }进行审核，请确认材料完整。提交前版本: v${order.version}`}
+              type="info"
+              showIcon
+            />
+          </>
         )}
       </Modal>
 
       <Modal
-        title="添加审计备注"
+        title={`添加审计备注 - ${STAGE_CONFIG[activeStage].label}`}
         open={noteModalOpen}
         onCancel={() => setNoteModalOpen(false)}
         onOk={handleAddNote}
@@ -646,6 +871,31 @@ function OrderDetail() {
           rows={4}
           placeholder="请输入备注内容"
         />
+      </Modal>
+
+      <Modal
+        title={`上传材料附件 - ${STAGE_CONFIG[activeStage].label}`}
+        open={attachmentModalOpen}
+        onCancel={() => setAttachmentModalOpen(false)}
+        onOk={handleUploadAttachment}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Input
+            placeholder="文件名（如：商品规格参数表.pdf）"
+            value={attachmentForm.file_name}
+            onChange={(e) => setAttachmentForm({ ...attachmentForm, file_name: e.target.value })}
+          />
+          <Input
+            placeholder="文件类型（如：application/pdf）"
+            value={attachmentForm.file_type}
+            onChange={(e) => setAttachmentForm({ ...attachmentForm, file_type: e.target.value })}
+          />
+          <Input
+            placeholder="文件URL或存储路径"
+            value={attachmentForm.file_url}
+            onChange={(e) => setAttachmentForm({ ...attachmentForm, file_url: e.target.value })}
+          />
+        </Space>
       </Modal>
     </div>
   );

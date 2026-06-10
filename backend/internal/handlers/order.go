@@ -19,27 +19,41 @@ func NewOrderHandler() *OrderHandler {
 }
 
 type SubmitOrderRequest struct {
-	Stage       models.OrderStage  `json:"stage"`
-	Data        string             `json:"data"`
-	AuditNote   string             `json:"audit_note,omitempty"`
-	Version     int                `json:"version"`
-	AttachmentIDs []string         `json:"attachment_ids,omitempty"`
+	Stage         models.OrderStage `json:"stage"`
+	Data          string            `json:"data"`
+	AuditNote     string            `json:"audit_note,omitempty"`
+	Version       int               `json:"version"`
+	AttachmentIDs []string          `json:"attachment_ids,omitempty"`
 }
 
 type BatchProcessRequest struct {
-	Action      string               `json:"action"`
-	Stage       models.OrderStage    `json:"stage"`
-	OrderIDs    []string             `json:"order_ids"`
-	Data        map[string]string    `json:"data,omitempty"`
-	AuditNotes  map[string]string    `json:"audit_notes,omitempty"`
-	Versions    map[string]int       `json:"versions"`
+	Action     string                     `json:"action"`
+	Stage      models.OrderStage          `json:"stage"`
+	OrderIDs   []string                   `json:"order_ids"`
+	Data       map[string]string          `json:"data,omitempty"`
+	AuditNotes map[string]string          `json:"audit_notes,omitempty"`
+	Versions   map[string]int             `json:"versions"`
 }
 
 type BatchResultItem struct {
-	OrderID   string `json:"order_id"`
-	OrderNo   string `json:"order_no"`
-	Success   bool   `json:"success"`
-	Message   string `json:"message"`
+	OrderID string `json:"order_id"`
+	OrderNo string `json:"order_no"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+type ValidationContext struct {
+	Order         *models.CrossBorderOrder
+	Action        string
+	Stage         models.OrderStage
+	Data          string
+	AuditNote     string
+	Version       int
+	AttachmentIDs []string
+	UserID        string
+	Role          models.Role
+	Username      string
+	Now           time.Time
 }
 
 func getStageDueAt(order *models.CrossBorderOrder, stage models.OrderStage) *time.Time {
@@ -67,6 +81,456 @@ func getWarningLevel(order *models.CrossBorderOrder) models.WarningLevel {
 		return models.WarningNearDue
 	}
 	return models.WarningNormal
+}
+
+func stageName(stage models.OrderStage) string {
+	switch stage {
+	case models.StageListing:
+		return "商品刊登"
+	case models.StageInventory:
+		return "库存同步"
+	case models.StageFulfillment:
+		return "订单履约"
+	}
+	return string(stage)
+}
+
+func getNextStage(current models.OrderStage) models.OrderStage {
+	switch current {
+	case models.StageListing:
+		return models.StageInventory
+	case models.StageInventory:
+		return models.StageFulfillment
+	}
+	return current
+}
+
+func getHandlerForStage(stage models.OrderStage, status models.OrderStatus, db *gorm.DB) (handlerID string, err error) {
+	var role models.Role
+	if status == models.StatusPending || status == models.StatusReturned {
+		role = models.RoleOpsSpecialist
+	} else if status == models.StatusSubmitted {
+		if stage == models.StageFulfillment {
+			role = models.RoleShopOwner
+		} else {
+			role = models.RoleWarehouseMgr
+		}
+	}
+	var user models.User
+	err = db.Where("role = ?", role).First(&user).Error
+	if err != nil {
+		return "", err
+	}
+	return user.ID, nil
+}
+
+func validateStageMatch(ctx *ValidationContext) error {
+	if ctx.Order.CurrentStage != ctx.Stage {
+		return fmt.Errorf("订单当前环节为 %s，不能在 %s 环节操作",
+			stageName(ctx.Order.CurrentStage), stageName(ctx.Stage))
+	}
+	return nil
+}
+
+func validateVersion(ctx *ValidationContext) error {
+	if ctx.Order.Version != ctx.Version {
+		return fmt.Errorf("版本冲突：当前版本为 %d，您提交的版本为 %d，请刷新后重试",
+			ctx.Order.Version, ctx.Version)
+	}
+	return nil
+}
+
+func validateCurrentHandler(ctx *ValidationContext) error {
+	if ctx.Order.CurrentHandlerID != "" && ctx.Order.CurrentHandlerID != ctx.UserID {
+		return fmt.Errorf("该订单当前处理人为其他用户，您无权操作")
+	}
+	return nil
+}
+
+func validateRole(ctx *ValidationContext) error {
+	switch ctx.Action {
+	case "submit", "resubmit":
+		if ctx.Role != models.RoleOpsSpecialist {
+			return fmt.Errorf("只有运营专员可以提交订单")
+		}
+	case "approve":
+		if ctx.Stage == models.StageFulfillment {
+			if ctx.Role != models.RoleShopOwner {
+				return fmt.Errorf("订单履约环节只能由店铺负责人审核确认")
+			}
+		} else {
+			if ctx.Role != models.RoleWarehouseMgr {
+				return fmt.Errorf("商品刊登和库存同步环节只能由仓配主管审核")
+			}
+		}
+	case "return":
+		if ctx.Stage == models.StageFulfillment {
+			if ctx.Role != models.RoleShopOwner {
+				return fmt.Errorf("订单履约环节只能由店铺负责人退回")
+			}
+		} else {
+			if ctx.Role != models.RoleWarehouseMgr {
+				return fmt.Errorf("商品刊登和库存同步环节只能由仓配主管退回")
+			}
+		}
+	}
+	return nil
+}
+
+func validateStatusTransition(ctx *ValidationContext) (models.OrderStatus, error) {
+	switch ctx.Action {
+	case "submit":
+		if ctx.Order.CurrentStatus != models.StatusPending && ctx.Order.CurrentStatus != models.StatusReturned {
+			return "", fmt.Errorf("当前状态 %s 不允许提交操作", ctx.Order.CurrentStatus)
+		}
+		return models.StatusSubmitted, nil
+	case "resubmit":
+		if ctx.Order.CurrentStatus != models.StatusReturned {
+			return "", fmt.Errorf("只有退回状态的订单可以重新提交")
+		}
+		return models.StatusSubmitted, nil
+	case "approve":
+		if ctx.Order.CurrentStatus != models.StatusSubmitted {
+			return "", fmt.Errorf("当前状态 %s 不允许审核通过操作", ctx.Order.CurrentStatus)
+		}
+		return models.StatusApproved, nil
+	case "return":
+		if ctx.Order.CurrentStatus != models.StatusSubmitted {
+			return "", fmt.Errorf("当前状态 %s 不允许退回操作", ctx.Order.CurrentStatus)
+		}
+		return models.StatusReturned, nil
+	}
+	return "", fmt.Errorf("未知操作: %s", ctx.Action)
+}
+
+func validateEvidence(ctx *ValidationContext, tx *gorm.DB) error {
+	if ctx.Action == "approve" || ctx.Action == "return" {
+		if ctx.Action == "return" && ctx.AuditNote == "" {
+			return fmt.Errorf("退回操作必须填写退回原因")
+		}
+		return nil
+	}
+
+	if ctx.Data == "" || ctx.Data == "{}" || len(ctx.Data) < 10 {
+		return fmt.Errorf("%s环节数据不完整，请填写完整信息", stageName(ctx.Stage))
+	}
+
+	switch ctx.Stage {
+	case models.StageListing:
+		if len(ctx.Data) < 20 {
+			return fmt.Errorf("商品刊登信息过于简略，需要包含标题、描述、图片等完整信息")
+		}
+	case models.StageInventory:
+		if len(ctx.Data) < 15 {
+			return fmt.Errorf("库存同步信息需要包含仓库、数量、库位等信息")
+		}
+	case models.StageFulfillment:
+		if len(ctx.Data) < 20 {
+			return fmt.Errorf("订单履约信息需要包含物流、报关等完整材料")
+		}
+	}
+
+	if len(ctx.AttachmentIDs) > 0 {
+		var count int64
+		tx.Model(&models.OrderAttachment{}).
+			Where("id IN ? AND order_id = ? AND stage = ?", ctx.AttachmentIDs, ctx.Order.ID, ctx.Stage).
+			Count(&count)
+		if int(count) != len(ctx.AttachmentIDs) {
+			return fmt.Errorf("部分附件不存在或不属于本环节，请核对后重试")
+		}
+	}
+
+	return nil
+}
+
+func validateOverdueRules(ctx *ValidationContext) (needsOverdueLog bool, err error) {
+	dueAt := getStageDueAt(ctx.Order, ctx.Stage)
+	if dueAt == nil {
+		return false, nil
+	}
+
+	isOverdue := ctx.Now.After(*dueAt)
+	hoursOverdue := ctx.Now.Sub(*dueAt).Hours()
+
+	if ctx.Action == "submit" || ctx.Action == "resubmit" {
+		if isOverdue && hoursOverdue > 72 {
+			return false, fmt.Errorf(
+				"%s环节已逾期 %.0f 小时（超过3天），请先联系主管特批后再提交",
+				stageName(ctx.Stage), hoursOverdue)
+		}
+		return isOverdue, nil
+	}
+
+	if ctx.Action == "approve" {
+		if isOverdue && hoursOverdue > 168 {
+			return false, fmt.Errorf(
+				"%s环节已逾期超过7天，系统不允许直接审核通过，请先处理逾期异常",
+				stageName(ctx.Stage))
+		}
+		return isOverdue, nil
+	}
+
+	if ctx.Action == "return" {
+		return isOverdue, nil
+	}
+
+	return false, nil
+}
+
+func validateBusinessRules(ctx *ValidationContext, tx *gorm.DB) (toStatus models.OrderStatus, needsOverdueLog bool, err error) {
+	rules := []func() error{
+		func() error { return validateStageMatch(ctx) },
+		func() error { return validateVersion(ctx) },
+		func() error { return validateCurrentHandler(ctx) },
+		func() error { return validateRole(ctx) },
+	}
+
+	for _, rule := range rules {
+		if err := rule(); err != nil {
+			return "", false, err
+		}
+	}
+
+	toStatus, err = validateStatusTransition(ctx)
+	if err != nil {
+		return "", false, err
+	}
+
+	if err := validateEvidence(ctx, tx); err != nil {
+		return "", false, err
+	}
+
+	needsOverdueLog, err = validateOverdueRules(ctx)
+	if err != nil {
+		return "", false, err
+	}
+
+	return toStatus, needsOverdueLog, nil
+}
+
+func createExceptionLog(tx *gorm.DB, orderID string, stage models.OrderStage,
+	exType string, reason string, operatorID string, corrected string) (*models.ExceptionLog, error) {
+	ex := &models.ExceptionLog{
+		OrderID:         orderID,
+		Stage:           stage,
+		ExceptionType:   exType,
+		Reason:          reason,
+		OperatorID:      operatorID,
+		CorrectedAction: corrected,
+		IsResolved:      corrected != "",
+	}
+	if corrected != "" {
+		now := time.Now()
+		ex.ResolvedAt = &now
+	}
+	if err := tx.Create(ex).Error; err != nil {
+		return nil, fmt.Errorf("创建异常记录失败: %v", err)
+	}
+	return ex, nil
+}
+
+func createAuditNote(tx *gorm.DB, orderID string, stage models.OrderStage,
+	content string, authorID string) (*models.AuditNote, error) {
+	note := &models.AuditNote{
+		OrderID:  orderID,
+		Stage:    stage,
+		Content:  content,
+		AuthorID: authorID,
+	}
+	if err := tx.Create(note).Error; err != nil {
+		return nil, fmt.Errorf("创建审计备注失败: %v", err)
+	}
+	return note, nil
+}
+
+func createProcessingRecord(tx *gorm.DB, order *models.CrossBorderOrder, ctx *ValidationContext,
+	fromStatus models.OrderStatus, toStatus models.OrderStatus,
+	isException bool, exceptionReason string, note string, clientIP string) (*models.ProcessingRecord, error) {
+	record := &models.ProcessingRecord{
+		OrderID:         order.ID,
+		Stage:           ctx.Stage,
+		Action:          ctx.Action,
+		FromStatus:      fromStatus,
+		ToStatus:        toStatus,
+		OperatorID:      ctx.UserID,
+		Note:            note,
+		IsException:     isException,
+		ExceptionReason: exceptionReason,
+		ClientIP:        clientIP,
+	}
+	if err := tx.Create(record).Error; err != nil {
+		return nil, fmt.Errorf("创建处理记录失败: %v", err)
+	}
+	return record, nil
+}
+
+func persistStageData(order *models.CrossBorderOrder, stage models.OrderStage, data string) {
+	if data == "" {
+		return
+	}
+	switch stage {
+	case models.StageListing:
+		order.ListingData = data
+	case models.StageInventory:
+		order.InventoryData = data
+	case models.StageFulfillment:
+		order.FulfillmentData = data
+	}
+}
+
+func (h *OrderHandler) applyStatusChange(tx *gorm.DB, order *models.CrossBorderOrder, ctx *ValidationContext,
+	toStatus models.OrderStatus, needsOverdueLog bool, fromStatus models.OrderStatus, clientIP string) error {
+	isResubmit := ctx.Action == "resubmit" || (fromStatus == models.StatusReturned && ctx.Action == "submit")
+	exceptionReason := ""
+	note := ctx.AuditNote
+	isException := false
+
+	persistStageData(order, ctx.Stage, ctx.Data)
+	order.Version++
+
+	switch toStatus {
+	case models.StatusReturned:
+		isException = true
+		if ctx.AuditNote != "" {
+			exceptionReason = ctx.AuditNote
+		} else {
+			exceptionReason = fmt.Sprintf("%s环节审核未通过", stageName(ctx.Stage))
+		}
+		order.CurrentStatus = toStatus
+		if isResubmit {
+			order.IsResubmitted = true
+		}
+		if _, err := createExceptionLog(tx, order.ID, ctx.Stage,
+			"audit_return", exceptionReason, ctx.UserID, ""); err != nil {
+			return err
+		}
+		if needsOverdueLog {
+			dueAt := getStageDueAt(order, ctx.Stage)
+			overdueHours := ctx.Now.Sub(*dueAt).Hours()
+			if _, err := createExceptionLog(tx, order.ID, ctx.Stage,
+				"timeout",
+				fmt.Sprintf("%s环节已逾期 %.0f 小时后被退回", stageName(ctx.Stage), overdueHours),
+				ctx.UserID, ""); err != nil {
+				return err
+			}
+		}
+		if ctx.AuditNote != "" {
+			if _, err := createAuditNote(tx, order.ID, ctx.Stage, ctx.AuditNote, ctx.UserID); err != nil {
+				return err
+			}
+		}
+		handlerID, err := getHandlerForStage(ctx.Stage, toStatus, tx)
+		if err == nil {
+			order.CurrentHandlerID = handlerID
+		}
+
+	case models.StatusSubmitted:
+		order.CurrentStatus = toStatus
+		if isResubmit {
+			order.IsResubmitted = true
+			order.ResubmitCount++
+			if note != "" {
+				note = "重新提交：" + note
+			} else {
+				note = fmt.Sprintf("运营专员%s重新提交了材料", ctx.Username)
+			}
+
+			var unresolvedEx []models.ExceptionLog
+			tx.Where("order_id = ? AND stage = ? AND is_resolved = ?",
+				order.ID, ctx.Stage, false).Find(&unresolvedEx)
+			for _, ex := range unresolvedEx {
+				ex.IsResolved = true
+				ex.ResolvedAt = &ctx.Now
+				ex.CorrectedAction = note
+				tx.Save(&ex)
+			}
+		}
+		if needsOverdueLog {
+			dueAt := getStageDueAt(order, ctx.Stage)
+			overdueHours := ctx.Now.Sub(*dueAt).Hours()
+			if _, err := createExceptionLog(tx, order.ID, ctx.Stage,
+				"timeout",
+				fmt.Sprintf("%s环节已逾期 %.0f 小时后提交", stageName(ctx.Stage), overdueHours),
+				ctx.UserID, note); err != nil {
+				return err
+			}
+		}
+		handlerID, err := getHandlerForStage(ctx.Stage, toStatus, tx)
+		if err == nil {
+			order.CurrentHandlerID = handlerID
+		}
+
+	case models.StatusApproved:
+		if ctx.Stage == models.StageFulfillment {
+			order.CurrentStatus = models.StatusCompleted
+			order.CurrentHandlerID = ""
+			toStatus = models.StatusCompleted
+			note = "店铺负责人确认履约完成"
+			if ctx.AuditNote != "" {
+				note = note + "：" + ctx.AuditNote
+			}
+		} else {
+			nextStage := getNextStage(ctx.Stage)
+			order.CurrentStage = nextStage
+			order.CurrentStatus = models.StatusPending
+			handlerID, err := getHandlerForStage(nextStage, models.StatusPending, tx)
+			if err == nil {
+				order.CurrentHandlerID = handlerID
+			}
+			note = fmt.Sprintf("%s审核通过，进入%s环节", stageName(ctx.Stage), stageName(nextStage))
+			if ctx.AuditNote != "" {
+				note = note + "（" + ctx.AuditNote + "）"
+			}
+		}
+		if needsOverdueLog {
+			dueAt := getStageDueAt(order, ctx.Stage)
+			overdueHours := ctx.Now.Sub(*dueAt).Hours()
+			if _, err := createExceptionLog(tx, order.ID, ctx.Stage,
+				"timeout_approved",
+				fmt.Sprintf("%s环节已逾期 %.0f 小时后审核通过", stageName(ctx.Stage), overdueHours),
+				ctx.UserID, note); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := tx.Save(order).Error; err != nil {
+		return fmt.Errorf("保存订单失败: %v", err)
+	}
+
+	if _, err := createProcessingRecord(tx, order, ctx, fromStatus, toStatus,
+		isException, exceptionReason, note, clientIP); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (h *OrderHandler) processOrderAction(tx *gorm.DB, order *models.CrossBorderOrder,
+	action string, stage models.OrderStage, data string, auditNote string, version int,
+	userID string, role models.Role, username string, clientIP string) error {
+
+	ctx := &ValidationContext{
+		Order:     order,
+		Action:    action,
+		Stage:     stage,
+		Data:      data,
+		AuditNote: auditNote,
+		Version:   version,
+		UserID:    userID,
+		Role:      role,
+		Username:  username,
+		Now:       time.Now(),
+	}
+
+	toStatus, needsOverdueLog, err := validateBusinessRules(ctx, tx)
+	if err != nil {
+		return err
+	}
+
+	fromStatus := order.CurrentStatus
+
+	return h.applyStatusChange(tx, order, ctx, toStatus, needsOverdueLog, fromStatus, clientIP)
 }
 
 func (h *OrderHandler) ListOrders(c *fiber.Ctx) error {
@@ -112,12 +576,12 @@ func (h *OrderHandler) ListOrders(c *fiber.Ctx) error {
 
 	type OrderWithWarning struct {
 		*models.CrossBorderOrder
-		WarningLevel   models.WarningLevel `json:"warning_level"`
-		WarningText    string              `json:"warning_text"`
+		WarningLevel models.WarningLevel `json:"warning_level"`
+		WarningText  string              `json:"warning_text"`
 	}
 
-	result := make([]OrderWithWarning, len(orders))
-	for i, o := range orders {
+	result := make([]OrderWithWarning, 0, len(orders))
+	for _, o := range orders {
 		wl := getWarningLevel(&o)
 		warningText := ""
 		switch wl {
@@ -131,18 +595,12 @@ func (h *OrderHandler) ListOrders(c *fiber.Ctx) error {
 		if warning != "" && string(wl) != warning {
 			continue
 		}
-		result[i] = OrderWithWarning{
-			CrossBorderOrder: &orders[i],
+		oCopy := o
+		result = append(result, OrderWithWarning{
+			CrossBorderOrder: &oCopy,
 			WarningLevel:     wl,
 			WarningText:      warningText,
-		}
-	}
-
-	finalResult := make([]OrderWithWarning, 0)
-	for _, r := range result {
-		if r.CrossBorderOrder != nil {
-			finalResult = append(finalResult, r)
-		}
+		})
 	}
 
 	var totalPending, totalReturned, totalResubmitted int64
@@ -151,7 +609,7 @@ func (h *OrderHandler) ListOrders(c *fiber.Ctx) error {
 	database.DB.Model(&models.CrossBorderOrder{}).Where("(current_status = ? AND is_resubmitted = ?) OR resubmit_count > 0", models.StatusReturned, true).Count(&totalResubmitted)
 
 	return c.JSON(fiber.Map{
-		"orders": finalResult,
+		"orders": result,
 		"stats": fiber.Map{
 			"pending":     totalPending,
 			"returned":    totalReturned,
@@ -168,7 +626,7 @@ func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 	}
 
 	var attachments []models.OrderAttachment
-	database.DB.Where("order_id = ?", id).Preload("UploadedBy").Find(&attachments)
+	database.DB.Where("order_id = ?", id).Preload("UploadedBy").Order("created_at DESC").Find(&attachments)
 
 	var records []models.ProcessingRecord
 	database.DB.Where("order_id = ?", id).Preload("Operator").Order("created_at DESC").Find(&records)
@@ -201,281 +659,6 @@ func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 	})
 }
 
-func validateRoleForAction(role models.Role, action string, stage models.OrderStage) error {
-	switch action {
-	case "submit", "resubmit":
-		if role != models.RoleOpsSpecialist {
-			return fmt.Errorf("只有运营专员可以提交订单")
-		}
-	case "approve":
-		if stage == models.StageFulfillment {
-			if role != models.RoleShopOwner {
-				return fmt.Errorf("订单履约环节只能由店铺负责人审核确认")
-			}
-		} else {
-			if role != models.RoleWarehouseMgr {
-				return fmt.Errorf("商品刊登和库存同步环节只能由仓配主管审核")
-			}
-		}
-	case "return":
-		if stage == models.StageFulfillment {
-			if role != models.RoleShopOwner {
-				return fmt.Errorf("订单履约环节只能由店铺负责人退回")
-			}
-		} else {
-			if role != models.RoleWarehouseMgr {
-				return fmt.Errorf("商品刊登和库存同步环节只能由仓配主管退回")
-			}
-		}
-	}
-	return nil
-}
-
-func validateStatusTransition(currentStatus models.OrderStatus, action string) (models.OrderStatus, error) {
-	switch action {
-	case "submit":
-		if currentStatus != models.StatusPending && currentStatus != models.StatusReturned {
-			return "", fmt.Errorf("当前状态 %s 不允许提交操作", currentStatus)
-		}
-		return models.StatusSubmitted, nil
-	case "resubmit":
-		if currentStatus != models.StatusReturned {
-			return "", fmt.Errorf("只有退回状态的订单可以重新提交")
-		}
-		return models.StatusSubmitted, nil
-	case "approve":
-		if currentStatus != models.StatusSubmitted {
-			return "", fmt.Errorf("当前状态 %s 不允许审核通过操作", currentStatus)
-		}
-		return models.StatusApproved, nil
-	case "return":
-		if currentStatus != models.StatusSubmitted {
-			return "", fmt.Errorf("当前状态 %s 不允许退回操作", currentStatus)
-		}
-		return models.StatusReturned, nil
-	}
-	return "", fmt.Errorf("未知操作: %s", action)
-}
-
-func validateEvidence(order *models.CrossBorderOrder, stage models.OrderStage, data string, attachmentIDs []string) error {
-	if data == "" || data == "{}" || len(data) < 10 {
-		return fmt.Errorf("%s环节数据不完整，请填写完整信息", stageName(stage))
-	}
-
-	// For listing stage, check key fields
-	if stage == models.StageListing {
-		if len(data) < 20 {
-			return fmt.Errorf("商品刊登信息过于简略，需要包含标题、描述、图片等完整信息")
-		}
-	}
-	if stage == models.StageInventory {
-		if len(data) < 15 {
-			return fmt.Errorf("库存同步信息需要包含仓库、数量、库位等信息")
-		}
-	}
-	if stage == models.StageFulfillment {
-		if len(data) < 20 {
-			return fmt.Errorf("订单履约信息需要包含物流、报关等完整材料")
-		}
-	}
-	return nil
-}
-
-func stageName(stage models.OrderStage) string {
-	switch stage {
-	case models.StageListing:
-		return "商品刊登"
-	case models.StageInventory:
-		return "库存同步"
-	case models.StageFulfillment:
-		return "订单履约"
-	}
-	return string(stage)
-}
-
-func getNextStage(current models.OrderStage) models.OrderStage {
-	switch current {
-	case models.StageListing:
-		return models.StageInventory
-	case models.StageInventory:
-		return models.StageFulfillment
-	}
-	return current
-}
-
-func getHandlerForStage(stage models.OrderStage, status models.OrderStatus, db *gorm.DB) (handlerID string, err error) {
-	var role models.Role
-	if status == models.StatusPending || status == models.StatusReturned {
-		role = models.RoleOpsSpecialist
-	} else if status == models.StatusSubmitted {
-		if stage == models.StageFulfillment {
-			role = models.RoleShopOwner
-		} else {
-			role = models.RoleWarehouseMgr
-		}
-	}
-	var user models.User
-	err = db.Where("role = ?", role).First(&user).Error
-	if err != nil {
-		return "", err
-	}
-	return user.ID, nil
-}
-
-func (h *OrderHandler) processOrderAction(tx *gorm.DB, order *models.CrossBorderOrder, action string, stage models.OrderStage, data string, auditNote string, version int, userID string, role models.Role, username string, clientIP string) error {
-	if order.CurrentStage != stage {
-		return fmt.Errorf("订单当前环节为 %s，不能在 %s 环节操作", stageName(order.CurrentStage), stageName(stage))
-	}
-
-	if order.Version != version {
-		return fmt.Errorf("版本冲突：当前版本为 %d，您提交的版本为 %d，请刷新后重试", order.Version, version)
-	}
-
-	if order.CurrentHandlerID != "" && order.CurrentHandlerID != userID {
-		return fmt.Errorf("该订单当前处理人为其他用户，您无权操作")
-	}
-
-	if err := validateRoleForAction(role, action, stage); err != nil {
-		return err
-	}
-
-	fromStatus := order.CurrentStatus
-	toStatus, err := validateStatusTransition(fromStatus, action)
-	if err != nil {
-		return err
-	}
-
-	if (action == "submit" || action == "resubmit") && data != "" {
-		if err := validateEvidence(order, stage, data, nil); err != nil {
-			return err
-		}
-	}
-
-	isResubmit := action == "resubmit" || (fromStatus == models.StatusReturned && action == "submit")
-
-	record := &models.ProcessingRecord{
-		OrderID:    order.ID,
-		Stage:      stage,
-		Action:     action,
-		FromStatus: fromStatus,
-		ToStatus:   toStatus,
-		OperatorID: userID,
-		ClientIP:   clientIP,
-	}
-
-	if auditNote != "" {
-		record.Note = auditNote
-	}
-
-	order.Version++
-
-	switch stage {
-	case models.StageListing:
-		if data != "" {
-			order.ListingData = data
-		}
-	case models.StageInventory:
-		if data != "" {
-			order.InventoryData = data
-		}
-	case models.StageFulfillment:
-		if data != "" {
-			order.FulfillmentData = data
-		}
-	}
-
-	if toStatus == models.StatusReturned {
-		record.IsException = true
-		if auditNote != "" {
-			record.ExceptionReason = auditNote
-		} else {
-			record.ExceptionReason = fmt.Sprintf("%s环节审核未通过", stageName(stage))
-		}
-
-		order.CurrentStatus = toStatus
-		if isResubmit {
-			order.IsResubmitted = true
-		}
-
-		ex := &models.ExceptionLog{
-			OrderID:       order.ID,
-			Stage:         stage,
-			ExceptionType: "audit_return",
-			Reason:        record.ExceptionReason,
-			OperatorID:    userID,
-			IsResolved:    false,
-		}
-		if err := tx.Create(ex).Error; err != nil {
-			return fmt.Errorf("创建异常记录失败: %v", err)
-		}
-
-		if auditNote != "" {
-			an := &models.AuditNote{
-				OrderID:  order.ID,
-				Stage:    stage,
-				Content:  auditNote,
-				AuthorID: userID,
-			}
-			if err := tx.Create(an).Error; err != nil {
-				return fmt.Errorf("创建审计备注失败: %v", err)
-			}
-		}
-
-		handlerID, err := getHandlerForStage(stage, toStatus, tx)
-		if err == nil {
-			order.CurrentHandlerID = handlerID
-		}
-	} else if toStatus == models.StatusSubmitted {
-		order.CurrentStatus = toStatus
-		if isResubmit {
-			order.IsResubmitted = true
-			order.ResubmitCount++
-			record.Note = "重新提交：" + record.Note
-
-			var unresolvedEx []models.ExceptionLog
-			tx.Where("order_id = ? AND stage = ? AND is_resolved = ?", order.ID, stage, false).Find(&unresolvedEx)
-			now := time.Now()
-			for _, ex := range unresolvedEx {
-				ex.IsResolved = true
-				ex.ResolvedAt = &now
-				ex.CorrectedAction = fmt.Sprintf("运营专员%s重新提交了材料", username)
-				tx.Save(&ex)
-			}
-		}
-
-		handlerID, err := getHandlerForStage(stage, toStatus, tx)
-		if err == nil {
-			order.CurrentHandlerID = handlerID
-		}
-	} else if toStatus == models.StatusApproved {
-		if stage == models.StageFulfillment {
-			order.CurrentStatus = models.StatusCompleted
-			order.CurrentHandlerID = ""
-			record.ToStatus = models.StatusCompleted
-		} else {
-			nextStage := getNextStage(stage)
-			order.CurrentStage = nextStage
-			order.CurrentStatus = models.StatusPending
-			handlerID, err := getHandlerForStage(nextStage, models.StatusPending, tx)
-			if err == nil {
-				order.CurrentHandlerID = handlerID
-			}
-			record.ToStatus = models.StatusApproved
-			record.Note = fmt.Sprintf("%s审核通过，进入%s环节", stageName(stage), stageName(nextStage))
-		}
-	}
-
-	if err := tx.Save(order).Error; err != nil {
-		return fmt.Errorf("保存订单失败: %v", err)
-	}
-
-	if err := tx.Create(record).Error; err != nil {
-		return fmt.Errorf("创建处理记录失败: %v", err)
-	}
-
-	return nil
-}
-
 func (h *OrderHandler) SubmitOrder(c *fiber.Ctx) error {
 	id := c.Params("id")
 	action := c.Params("action")
@@ -494,7 +677,8 @@ func (h *OrderHandler) SubmitOrder(c *fiber.Ctx) error {
 
 	tx := database.DB.Begin()
 
-	err := h.processOrderAction(tx, &order, action, req.Stage, req.Data, req.AuditNote, req.Version, userID, role, username, clientIP)
+	err := h.processOrderAction(tx, &order, action, req.Stage, req.Data, req.AuditNote,
+		req.Version, userID, role, username, clientIP)
 	if err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -502,11 +686,12 @@ func (h *OrderHandler) SubmitOrder(c *fiber.Ctx) error {
 
 	tx.Commit()
 	return c.JSON(fiber.Map{
-		"success": true,
-		"message": fmt.Sprintf("%s操作成功", action),
-		"order_id": order.ID,
+		"success":    true,
+		"message":    fmt.Sprintf("%s操作成功", action),
+		"order_id":   order.ID,
 		"new_status": order.CurrentStatus,
-		"new_stage": order.CurrentStage,
+		"new_stage":  order.CurrentStage,
+		"version":    order.Version,
 	})
 }
 
@@ -552,7 +737,8 @@ func (h *OrderHandler) BatchProcess(c *fiber.Ctx) error {
 		}
 
 		tx := database.DB.Begin()
-		err := h.processOrderAction(tx, &order, req.Action, req.Stage, data, auditNote, version, userID, role, username, clientIP)
+		err := h.processOrderAction(tx, &order, req.Action, req.Stage, data, auditNote,
+			version, userID, role, username, clientIP)
 		if err != nil {
 			tx.Rollback()
 			item.Success = false
@@ -560,10 +746,15 @@ func (h *OrderHandler) BatchProcess(c *fiber.Ctx) error {
 			results = append(results, item)
 			continue
 		}
-		tx.Commit()
+		if err := tx.Commit().Error; err != nil {
+			item.Success = false
+			item.Message = fmt.Sprintf("事务提交失败: %v", err)
+			results = append(results, item)
+			continue
+		}
 
 		item.Success = true
-		item.Message = fmt.Sprintf("%s操作成功", req.Action)
+		item.Message = fmt.Sprintf("%s操作成功，状态已更新", req.Action)
 		results = append(results, item)
 	}
 
@@ -598,14 +789,9 @@ func (h *OrderHandler) AddAuditNote(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "备注内容不能为空"})
 	}
 
-	note := &models.AuditNote{
-		OrderID:  id,
-		Stage:    body.Stage,
-		Content:  body.Content,
-		AuthorID: userID,
-	}
-	if err := database.DB.Create(note).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "保存备注失败"})
+	note, err := createAuditNote(database.DB, id, body.Stage, body.Content, userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	database.DB.Preload("Author").First(note)
 	return c.JSON(note)
@@ -622,6 +808,14 @@ func (h *OrderHandler) UploadAttachment(c *fiber.Ctx) error {
 
 	if fileName == "" || fileURL == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "文件名和文件URL不能为空"})
+	}
+	if stage == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "请指定所属环节"})
+	}
+
+	var order models.CrossBorderOrder
+	if err := database.DB.First(&order, "id = ?", id).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "订单不存在"})
 	}
 
 	att := &models.OrderAttachment{
@@ -641,17 +835,17 @@ func (h *OrderHandler) UploadAttachment(c *fiber.Ctx) error {
 
 func (h *OrderHandler) GetStatistics(c *fiber.Ctx) error {
 	var stats struct {
-		Total       int64 `json:"total"`
-		Pending     int64 `json:"pending"`
-		Submitted   int64 `json:"submitted"`
-		Returned    int64 `json:"returned"`
-		Resubmitted int64 `json:"resubmitted"`
-		Completed   int64 `json:"completed"`
-		ListingCnt  int64 `json:"listing_count"`
-		InventoryCnt int64 `json:"inventory_count"`
+		Total          int64 `json:"total"`
+		Pending        int64 `json:"pending"`
+		Submitted      int64 `json:"submitted"`
+		Returned       int64 `json:"returned"`
+		Resubmitted    int64 `json:"resubmitted"`
+		Completed      int64 `json:"completed"`
+		ListingCnt     int64 `json:"listing_count"`
+		InventoryCnt   int64 `json:"inventory_count"`
 		FulfillmentCnt int64 `json:"fulfillment_count"`
-		OverdueCnt  int64 `json:"overdue_count"`
-		NearDueCnt  int64 `json:"near_due_count"`
+		OverdueCnt     int64 `json:"overdue_count"`
+		NearDueCnt     int64 `json:"near_due_count"`
 	}
 
 	database.DB.Model(&models.CrossBorderOrder{}).Count(&stats.Total)
