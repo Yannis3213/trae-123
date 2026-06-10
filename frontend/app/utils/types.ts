@@ -3,9 +3,20 @@ export type UserRole =
   | "maintenance_engineer"
   | "operations_manager";
 
-export interface CurrentUser {
-  user_id: string;
+export interface User {
+  id: string;
   role: UserRole;
+  name: string;
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  user_id: string;
+  role: string;
   name: string;
   token: string;
 }

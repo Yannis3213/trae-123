@@ -1,7 +1,3 @@
-const BACKEND_PORT = typeof window !== "undefined"
-  ? (window as any).__BACKEND_PORT__ || 8000
-  : parseInt(process.env.BACKEND_PORT || "8000", 10);
-
 const API_BASE = `/api`;
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {

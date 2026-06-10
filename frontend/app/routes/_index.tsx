@@ -70,7 +70,7 @@ export default function Index() {
   useEffect(() => {
     if (!user) return;
     loadList();
-  }, [user?.user_id, statusFilter, expiryFilter]);
+  }, [user?.id, statusFilter, expiryFilter]);
 
   async function loadList() {
     try {

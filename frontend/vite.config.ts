@@ -13,6 +13,10 @@ export default defineConfig({
         target: `http://localhost:${process.env.BACKEND_PORT || 8000}`,
         changeOrigin: true,
       },
+      "/data": {
+        target: `http://localhost:${process.env.BACKEND_PORT || 8000}`,
+        changeOrigin: true,
+      },
     },
   },
 });

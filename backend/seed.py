@@ -183,6 +183,9 @@ def seed_demo_data(db: Session) -> None:
     )
     db.add_all([ar2_1, er2_1])
 
+    _create_demo_attachment(db, insp2_id, "user_002", "通信模块检测报告.pdf", now - timedelta(days=1, hours=3))
+    _create_demo_attachment(db, insp2_id, "user_002", "故障现场照片.jpg", now - timedelta(days=1, hours=2))
+
     # Inspection 3: Overdue (pending_process with past deadline)
     insp3_id = str(uuid4())
     cpi3_id = str(uuid4())
@@ -238,6 +241,9 @@ def seed_demo_data(db: Session) -> None:
         description="处理超时：已超过截止日期2天", created_at=now,
     )
     db.add_all([ar3_1, er3_1])
+
+    _create_demo_attachment(db, insp3_id, "user_002", "显示屏闪烁记录.mp4", now - timedelta(days=3))
+    _create_demo_attachment(db, insp3_id, "user_002", "初步排查报告.pdf", now - timedelta(days=2, hours=5))
 
     # Inspection 4: Returned then resubmitted
     insp4_id = str(uuid4())
@@ -332,7 +338,10 @@ def seed_demo_data(db: Session) -> None:
     )
     db.add(cr4_1)
 
-    _create_demo_attachment(db, insp4_id, "user_002", "传感器检查记录表.pdf", now - timedelta(days=4))
+    _create_demo_attachment(db, insp4_id, "user_002", "传感器检查记录表.pdf", now - timedelta(days=4, hours=1))
+    _create_demo_attachment(db, insp4_id, "user_002", "安全装置排查照片.jpg", now - timedelta(days=4))
+    _create_demo_attachment(db, insp4_id, "user_003", "退回意见补充说明.pdf", now - timedelta(days=3))
     _create_demo_attachment(db, insp4_id, "user_001", "补正说明.pdf", now - timedelta(hours=2))
+    _create_demo_attachment(db, insp4_id, "user_001", "补充排查过程记录.pdf", now - timedelta(hours=1, minutes=50))
 
     db.commit()

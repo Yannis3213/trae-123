@@ -226,7 +226,7 @@ export default function InspectionDetailPage() {
   const isDuty = user?.role === "duty_officer";
   const isEngineer = user?.role === "maintenance_engineer";
   const isManager = user?.role === "operations_manager";
-  const isCreator = inspection.creator_id === user?.user_id;
+  const isCreator = inspection.creator_id === user?.id;
 
   const expiryStatus = (() => {
     const now = Date.now();
@@ -284,7 +284,7 @@ export default function InspectionDetailPage() {
           <ExceptionCard reasons={inspection.exception_reasons} />
           <ActionArea
             inspection={inspection}
-            currentUserId={user?.user_id || ""}
+            currentUserId={user?.id || ""}
             isDuty={isDuty}
             isEngineer={isEngineer}
             isManager={isManager}
@@ -524,11 +524,7 @@ function AttachmentsCard({
 }
 
 function AttachmentChip({ att }: { att: Attachment }) {
-  const url = `http://localhost:${
-    (import.meta as any).env?.VITE_BACKEND_PORT ||
-    process.env.BACKEND_PORT ||
-    8000
-  }/${att.file_path}`;
+  const url = `/${att.file_path}`;
   return (
     <a
       href={url}
