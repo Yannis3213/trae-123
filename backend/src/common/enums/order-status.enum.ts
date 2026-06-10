@@ -1,0 +1,5 @@
+export enum OrderStatus {
+  PENDING_ASSIGN = 'PENDING_ASSIGN',
+  PROCESSING = 'PROCESSING',
+  CLOSED = 'CLOSED',
+}

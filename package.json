@@ -1,0 +1,18 @@
+{
+  "name": "trae-123",
+  "version": "1.0.0",
+  "private": true,
+  "description": "社区团购平台月底集中处理团购订单系统",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "dev:backend": "npm --prefix backend run start:dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "build:all": "npm --prefix backend run build && npm --prefix frontend run build",
+    "start:backend": "npm --prefix backend run start:prod",
+    "start:frontend": "npm --prefix frontend run preview"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
