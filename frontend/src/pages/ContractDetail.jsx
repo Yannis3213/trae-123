@@ -67,6 +67,17 @@ export default function ContractDetail() {
 
   onMount(load);
 
+  function applyPatch(custPatch, prcPatch) {
+    if (custPatch && Object.keys(custPatch).length) {
+      setCustomerPatch(prev => prev ? { ...prev, ...custPatch } : custPatch);
+      setC(prev => prev ? { ...prev, customer: { ...prev.customer, ...custPatch } } : prev);
+    }
+    if (prcPatch && Object.keys(prcPatch).length) {
+      setPricingPatch(prev => prev ? { ...prev, ...prcPatch } : prcPatch);
+      setC(prev => prev && prev.pricing ? { ...prev, pricing: { ...prev.pricing, ...prcPatch } } : prev);
+    }
+  }
+
   const myActions = createMemo(() => {
     if (!c()) return [];
     return (ACTIONS_BY_ROLE[user().role] || {})[c().status] || [];
@@ -469,6 +480,18 @@ export default function ContractDetail() {
           </Show>
 
           <div class="flex gap-2 mt-2">
+            <Show when={customerPatch() && Object.keys(customerPatch()).length}>
+              <div class="alert alert-success" style="padding:6px 12px;margin:0">
+                ✅ 已暂存客户补正：{Object.keys(customerPatch()).join('、')}（办理时提交）
+              </div>
+            </Show>
+            <Show when={pricingPatch() && Object.keys(pricingPatch()).length}>
+              <div class="alert alert-success" style="padding:6px 12px;margin:0">
+                ✅ 已暂存报价补正：{Object.keys(pricingPatch()).join('、')}（办理时提交）
+              </div>
+            </Show>
+          </div>
+          <div class="flex gap-2 mt-2">
             <Show when={c().missing_fields?.customer?.length}>
               <button class="btn btn-warning btn-sm" onClick={() => setShowCustomerPatch(true)}>
                 ⚠️ 补正客户缺项：{c().missing_fields.customer.join('、')}
@@ -506,7 +529,7 @@ export default function ContractDetail() {
               { k: 'industry', label: '行业' },
             ]}
             onClose={() => setShowCustomerPatch(false)}
-            onDone={(patch) => { setCustomerPatch(patch); setShowCustomerPatch(false); load(); }}
+            onDone={(patch) => { applyPatch(patch, null); setShowCustomerPatch(false); }}
           />
         </Show>
 
@@ -524,7 +547,7 @@ export default function ContractDetail() {
               { k: 'discount_rate', label: '折扣率(%)' },
             ]}
             onClose={() => setShowPricingPatch(false)}
-            onDone={(patch) => { setPricingPatch(patch); setShowPricingPatch(false); load(); }}
+            onDone={(patch) => { applyPatch(null, patch); setShowPricingPatch(false); }}
           />
         </Show>
       </Show>

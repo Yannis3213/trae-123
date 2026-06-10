@@ -3,8 +3,8 @@ import { api, useAuth, ROLE_NAMES } from '../store/auth.jsx';
 
 const ACTIONS_BY_ROLE = {
   customer_manager: [
-    { key: 'submit', label: '提交审核（待提交→待审核）', needEvidence: ['contract_scan', 'customer_authorization'] },
-    { key: 'resubmit', label: '重新提交（重新提交→待审核）', needEvidence: ['supplementary_material'] },
+    { key: 'submit', label: '提交（待提交→待审核 / 重新提交→待复核）', needEvidence: ['contract_scan', 'customer_authorization'] },
+    { key: 'resubmit', label: '重新提交（已退回→待审核）', needEvidence: ['supplementary_material'] },
     { key: 'return', label: '退回补正', needEvidence: [] },
   ],
   trade_specialist: [
@@ -28,7 +28,7 @@ const EVIDENCE_LABEL = {
 };
 
 export default function BatchModal(props) {
-  const { user } = useAuth();
+  const { user, setBatchResults } = useAuth();
   const [action, setAction] = createSignal('');
   const [opinion, setOpinion] = createSignal('');
   const [evidence, setEvidence] = createSignal({});
@@ -48,6 +48,7 @@ export default function BatchModal(props) {
     setProcessing(false);
     if (r.success) {
       setLastResults(r.data);
+      setBatchResults(r.data);
       const allOk = r.data.every(x => x.success);
       if (allOk) {
         setTimeout(() => props.onDone && props.onDone(r.data), 1200);

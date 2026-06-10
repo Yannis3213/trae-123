@@ -11,7 +11,9 @@ from .workflow import (
     check_customer_complete,
     check_pricing_complete,
     check_deadline,
+    check_deadline_not_overdue,
     next_stage_after,
+    next_stage_and_status,
     WorkflowException,
 )
 from .schemas import (
@@ -24,6 +26,29 @@ from .schemas import (
 
 def row_to_dict(row) -> dict:
     return {k: row[k] for k in row.keys()} if row else {}
+
+
+def get_handler_for_stage(conn, stage: str, prefer_user_id: Optional[int] = None) -> Optional[int]:
+    role_stage_map = {
+        "customer_manager": "customer_manager",
+        "trade_specialist": "trade_specialist",
+        "risk_manager": "risk_manager",
+    }
+    role = role_stage_map.get(stage)
+    if not role:
+        return None
+    if prefer_user_id:
+        row = conn.execute(
+            "SELECT id FROM users WHERE id = ? AND role = ? LIMIT 1",
+            (prefer_user_id, role),
+        ).fetchone()
+        if row:
+            return row["id"]
+    row = conn.execute(
+        "SELECT id FROM users WHERE role = ? ORDER BY id LIMIT 1",
+        (role,),
+    ).fetchone()
+    return row["id"] if row else None
 
 
 def log_exception(conn, contract_id: int, exc: WorkflowException, stage: str, triggered_by: int):
@@ -329,8 +354,24 @@ def process_contract(conn, action: ProcessAction, user: dict) -> dict:
             log_exception(conn, contract["id"], exc, stage_, user["id"])
             raise exc
 
-    new_stage = next_stage_after(action.action, to_status)
+    if action.action in ("submit", "resubmit", "approve", "finalize"):
+        try:
+            check_deadline_not_overdue(contract["deadline"], strict=False)
+        except WorkflowException as e:
+            log_exception(conn, contract["id"], e, stage_, user["id"])
+            raise
+
+    new_stage, to_status = next_stage_and_status(action.action, contract["status"])
     new_version = contract["version"] + 1
+    next_handler_id = get_handler_for_stage(conn, new_stage, prefer_user_id=user["id"])
+
+    if action.action in ("reject", "return") and contract.get("previous_handler_id"):
+        row = conn.execute(
+            "SELECT id, role FROM users WHERE id = ?",
+            (contract["previous_handler_id"],),
+        ).fetchone()
+        if row and row["role"] == new_stage:
+            next_handler_id = row["id"]
 
     conn.execute(
         """
@@ -349,7 +390,7 @@ def process_contract(conn, action: ProcessAction, user: dict) -> dict:
             new_version,
             action.opinion or "",
             action.audit_remark,
-            None if new_stage in ("completed", "closed") else user["id"],
+            None if new_stage in ("completed", "closed") else next_handler_id,
             contract["id"],
         ),
     )

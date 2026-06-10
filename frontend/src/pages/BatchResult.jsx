@@ -2,19 +2,18 @@ import { createSignal, For, Show, onMount, createMemo } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
 import { api, useAuth } from '../store/auth.jsx';
 
-let _last = null;
-
-export function setBatchResults(d) { _last = d; }
-
 export default function BatchResult() {
   const nav = useNavigate();
-  const { user } = useAuth();
+  const { user, batchResults } = useAuth();
   const [results, setResults] = createSignal([]);
   const [filter, setFilter] = createSignal('all');
 
   onMount(() => {
-    if (_last) setResults(_last);
-    else nav('/contracts');
+    if (batchResults && batchResults()) {
+      setResults(batchResults());
+    } else {
+      nav('/contracts');
+    }
   });
 
   const filtered = createMemo(() => {

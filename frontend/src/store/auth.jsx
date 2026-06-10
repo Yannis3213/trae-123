@@ -59,6 +59,7 @@ export function AuthProvider(props) {
   const [user, setUser] = createSignal(null);
   const [users, setUsers] = createSignal([]);
   const [loading, setLoading] = createSignal(true);
+  const [batchResults, setBatchResults] = createSignal(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -111,7 +112,7 @@ export function AuthProvider(props) {
   });
 
   return (
-    <AuthContext.Provider value={{ user, users, login, logout, switchTo, loading }}>
+    <AuthContext.Provider value={{ user, users, login, logout, switchTo, loading, batchResults, setBatchResults }}>
       {props.children}
     </AuthContext.Provider>
   );

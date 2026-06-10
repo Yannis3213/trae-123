@@ -24,9 +24,11 @@ STATUS_FLOW = {
     },
     "已退回": {
         "resubmit": "待审核",
+        "return": "已退回",
     },
     "重新提交": {
         "submit": "待复核",
+        "return": "重新提交",
     },
     "已完成": {},
 }
@@ -153,6 +155,30 @@ def check_deadline(deadline_str: str) -> tuple[str, int]:
     if delta <= 3:
         return "warning", delta
     return "normal", delta
+
+
+def check_deadline_not_overdue(deadline_str: str, strict: bool = False) -> None:
+    level, days = check_deadline(deadline_str)
+    if level == "overdue":
+        raise WorkflowException(
+            f"合同单已逾期 {days} 天，按时限问题拦截，请先处理到期预警",
+            "E_DEADLINE_OVERDUE",
+            "时限问题",
+            {"overdue_days": days},
+        )
+    if strict and level == "warning":
+        raise WorkflowException(
+            f"合同单将在 {days} 天内到期（临期），请确认后再推进",
+            "E_DEADLINE_WARNING",
+            "时限问题",
+            {"remaining_days": days},
+        )
+
+
+def next_stage_and_status(action: str, from_status: str) -> tuple[str, str]:
+    from_status, to_status = check_status_transition(from_status, action)
+    stage = next_stage_after(action, to_status)
+    return stage, to_status
 
 
 def next_stage_after(action: str, to_status: str) -> str:

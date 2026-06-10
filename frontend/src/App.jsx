@@ -1,4 +1,4 @@
-import { A, useLocation, useNavigate } from '@solidjs/router';
+import { A, Outlet, useLocation, useNavigate } from '@solidjs/router';
 import { useAuth, STAGE_NAMES, ROLE_NAMES } from '../store/auth.jsx';
 import { For, Show, createMemo } from 'solid-js';
 
@@ -66,7 +66,7 @@ export default function App(props) {
             </A>
           </aside>
           <main class="layout-main">
-            {props.children}
+            <Outlet />
           </main>
         </div>
       </div>
