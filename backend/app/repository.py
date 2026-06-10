@@ -87,11 +87,20 @@ def _validate_process(conn, contract: dict, action: ProcessAction, user: dict) -
 
     if action.customer_patch and not contract.get("customer_id"):
         raise WorkflowException("合同未关联用电客户，无法补正", "E_NO_CUSTOMER", "材料问题")
-    if action.pricing_patch and not contract.get("pricing_id"):
-        raise WorkflowException("合同未关联报价测算，无法补正", "E_NO_PRICING", "材料问题")
 
-    missing_customer = check_customer_complete(contract.get("customer") or {})
-    missing_pricing = check_pricing_complete(contract.get("pricing"))
+    effective_pricing_id = action.pricing_id if action.pricing_id else contract.get("pricing_id")
+    if action.pricing_patch and not effective_pricing_id:
+        raise WorkflowException("合同未关联报价测算，无法补正报价字段", "E_NO_PRICING", "材料问题")
+
+    merged_customer = {**(contract.get("customer") or {}), **(action.customer_patch or {})}
+    merged_pricing = None
+    if effective_pricing_id:
+        pricing_data = get_pricing(conn, effective_pricing_id)
+        if pricing_data:
+            merged_pricing = {**pricing_data, **(action.pricing_patch or {})}
+
+    missing_customer = check_customer_complete(merged_customer)
+    missing_pricing = check_pricing_complete(merged_pricing)
     if action.action in ("submit", "resubmit") and (missing_customer or missing_pricing):
         all_missing = {}
         if missing_customer:
@@ -362,8 +371,16 @@ def process_contract(conn, action: ProcessAction, user: dict) -> dict:
     if action.customer_patch and contract.get("customer_id"):
         update_customer(conn, contract["customer_id"], action.customer_patch)
 
-    if action.pricing_patch and contract.get("pricing_id"):
-        update_pricing(conn, contract["pricing_id"], action.pricing_patch)
+    effective_pricing_id = action.pricing_id if action.pricing_id else contract.get("pricing_id")
+
+    if effective_pricing_id and action.pricing_patch:
+        update_pricing(conn, effective_pricing_id, action.pricing_patch)
+
+    if action.pricing_id and not contract.get("pricing_id"):
+        conn.execute(
+            "UPDATE sale_contracts SET pricing_id = ? WHERE id = ?",
+            (action.pricing_id, contract["id"]),
+        )
 
     conn.execute(
         """

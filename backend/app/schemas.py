@@ -121,6 +121,7 @@ class ProcessAction(BaseModel):
     evidence: Optional[dict[str, Any]] = None
     customer_patch: Optional[dict[str, Any]] = None
     pricing_patch: Optional[dict[str, Any]] = None
+    pricing_id: Optional[int] = None
     audit_remark: Optional[str] = None
 
 
