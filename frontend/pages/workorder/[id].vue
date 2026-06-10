@@ -735,6 +735,7 @@ const canSubmitForReview = computed(() => {
   if (!workorder.value) return false
   if (workorder.value.status !== 'pending_correction') return false
   if (baseRole.value !== 'planner') return false
+  if (workorder.value.current_handler_role !== 'planner') return false
   if (workorder.value.planner !== currentUserName.value) return false
   return workorder.value.production_schedule
     && workorder.value.material_issue
@@ -745,6 +746,7 @@ const canReview = computed(() => {
   if (!workorder.value) return false
   if (workorder.value.status !== 'under_review') return false
   if (baseRole.value !== 'workshop_director') return false
+  if (workorder.value.current_handler_role !== 'workshop_director') return false
   return workorder.value.workshop_director === currentUserName.value
 })
 
@@ -752,6 +754,7 @@ const canConfirm = computed(() => {
   if (!workorder.value) return false
   if (workorder.value.status !== 'under_review') return false
   if (baseRole.value !== 'factory_manager') return false
+  if (workorder.value.current_handler_role !== 'factory_manager') return false
   return workorder.value.factory_manager === currentUserName.value
 })
 

@@ -212,14 +212,29 @@ function batchReview(req, res) {
         continue;
       }
 
-      if (wo.workshop_director !== username) {
+      const handlerCheck = validateHandler(wo, userRole, username);
+      if (!handlerCheck.valid) {
         failCount++;
         results.push({
           id, code: wo.code, success: false,
-          error: '您不是该工单的车间主任',
-          error_code: 'HANDLER_MISMATCH'
+          error: handlerCheck.error,
+          error_code: handlerCheck.code
         });
         continue;
+      }
+
+      if (action === 'approve') {
+        const evidenceCheck = validateRequiredEvidence(wo, 'submit_for_review');
+        if (!evidenceCheck.valid) {
+          failCount++;
+          results.push({
+            id, code: wo.code, success: false,
+            error: evidenceCheck.error,
+            error_code: evidenceCheck.code,
+            missing: evidenceCheck.missing
+          });
+          continue;
+        }
       }
 
       if (action === 'approve') {
@@ -330,12 +345,25 @@ function batchFactoryConfirm(req, res) {
         continue;
       }
 
-      if (wo.factory_manager !== username) {
+      const handlerCheck = validateHandler(wo, userRole, username);
+      if (!handlerCheck.valid) {
         failCount++;
         results.push({
           id, code: wo.code, success: false,
-          error: '您不是该工单的厂务经理',
-          error_code: 'HANDLER_MISMATCH'
+          error: handlerCheck.error,
+          error_code: handlerCheck.code
+        });
+        continue;
+      }
+
+      const evidenceCheck = validateRequiredEvidence(wo, 'submit_for_review');
+      if (!evidenceCheck.valid) {
+        failCount++;
+        results.push({
+          id, code: wo.code, success: false,
+          error: evidenceCheck.error,
+          error_code: evidenceCheck.code,
+          missing: evidenceCheck.missing
         });
         continue;
       }

@@ -367,6 +367,55 @@ function seedData() {
 
   updateWoCompletion.run(completionData, 'wo_003');
   updateWoCompletion.run(completionData, 'wo_007');
+  updateWoCompletion.run(completionData, 'wo_002');
+  updateWoCompletion.run(completionData, 'wo_005');
+  updateWoCompletion.run(completionData, 'wo_009');
+
+  const insertMoreRecords = db.prepare(`
+    INSERT INTO processing_records (
+      id, workorder_id, action, from_status, to_status,
+      operator_role, operator, remark, evidence, version_before, version_after
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  function addRecord(id, woId, action, fromStatus, toStatus, role, operator, remark, vBefore, vAfter) {
+    insertMoreRecords.run(id, woId, action, fromStatus, toStatus, role, operator, remark, null, vBefore, vAfter);
+  }
+
+  addRecord('rec_wo_002_02', 'wo_002', '生产排程', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.PLANNER, '张伟', '完成生产排程', 1, 2);
+  addRecord('rec_wo_002_03', 'wo_002', '领料确认', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成领料确认', 2, 3);
+  addRecord('rec_wo_002_04', 'wo_002', '完工报工', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成完工报工', 3, 4);
+  addRecord('rec_wo_002_05', 'wo_002', '提交复核', STATUS.PENDING_CORRECTION, STATUS.UNDER_REVIEW, ROLES.PLANNER, '张伟', '提交车间主任复核', 4, 5);
+
+  addRecord('rec_wo_003_02', 'wo_003', '生产排程', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.PLANNER, '张伟', '完成生产排程', 1, 2);
+  addRecord('rec_wo_003_03', 'wo_003', '领料确认', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成领料确认', 2, 3);
+  addRecord('rec_wo_003_04', 'wo_003', '完工报工', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成完工报工', 3, 4);
+  addRecord('rec_wo_003_05', 'wo_003', '提交复核', STATUS.PENDING_CORRECTION, STATUS.UNDER_REVIEW, ROLES.PLANNER, '张伟', '提交车间主任复核', 4, 5);
+  addRecord('rec_wo_003_06', 'wo_003', '车间主任复核通过', STATUS.UNDER_REVIEW, STATUS.UNDER_REVIEW, ROLES.WORKSHOP_DIRECTOR, '李明', '复核通过，提交厂务经理确认', 5, 6);
+  addRecord('rec_wo_003_07', 'wo_003', '厂务经理确认办结', STATUS.UNDER_REVIEW, STATUS.COMPLETED, ROLES.FACTORY_MANAGER, '王强', '确认办结', 6, 7);
+
+  addRecord('rec_wo_005_02', 'wo_005', '生产排程', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.PLANNER, '刘芳', '完成生产排程', 1, 2);
+  addRecord('rec_wo_005_03', 'wo_005', '领料确认', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '陈刚', '完成领料确认', 2, 3);
+  addRecord('rec_wo_005_04', 'wo_005', '完工报工', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '陈刚', '完成完工报工', 3, 4);
+  addRecord('rec_wo_005_05', 'wo_005', '提交复核', STATUS.PENDING_CORRECTION, STATUS.UNDER_REVIEW, ROLES.PLANNER, '刘芳', '提交车间主任复核', 4, 5);
+
+  addRecord('rec_wo_007_02', 'wo_007', '生产排程', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.PLANNER, '刘芳', '完成生产排程', 1, 2);
+  addRecord('rec_wo_007_03', 'wo_007', '领料确认', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成领料确认', 2, 3);
+  addRecord('rec_wo_007_04', 'wo_007', '完工报工', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '李明', '完成完工报工', 3, 4);
+  addRecord('rec_wo_007_05', 'wo_007', '提交复核', STATUS.PENDING_CORRECTION, STATUS.UNDER_REVIEW, ROLES.PLANNER, '刘芳', '提交车间主任复核', 4, 5);
+  addRecord('rec_wo_007_06', 'wo_007', '车间主任复核通过', STATUS.UNDER_REVIEW, STATUS.UNDER_REVIEW, ROLES.WORKSHOP_DIRECTOR, '李明', '复核通过，提交厂务经理确认', 5, 6);
+
+  addRecord('rec_wo_009_02', 'wo_009', '生产排程', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.PLANNER, '刘芳', '完成生产排程', 1, 2);
+  addRecord('rec_wo_009_03', 'wo_009', '领料确认', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '陈刚', '完成领料确认', 2, 3);
+  addRecord('rec_wo_009_04', 'wo_009', '完工报工', STATUS.PENDING_CORRECTION, STATUS.PENDING_CORRECTION, ROLES.WORKSHOP_DIRECTOR, '陈刚', '完成完工报工', 3, 4);
+  addRecord('rec_wo_009_05', 'wo_009', '提交复核', STATUS.PENDING_CORRECTION, STATUS.UNDER_REVIEW, ROLES.PLANNER, '刘芳', '提交车间主任复核', 4, 5);
+
+  const updateWoVersion = db.prepare('UPDATE workorders SET version = ? WHERE id = ?');
+  updateWoVersion.run(5, 'wo_002');
+  updateWoVersion.run(7, 'wo_003');
+  updateWoVersion.run(5, 'wo_005');
+  updateWoVersion.run(6, 'wo_007');
+  updateWoVersion.run(5, 'wo_009');
 
   const insertException = db.prepare(`
     INSERT INTO exceptions (

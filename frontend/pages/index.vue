@@ -236,6 +236,12 @@
                 {{ r.code || r.id }} -
                 <span v-if="r.success">{{ r.message }}</span>
                 <span v-else class="text-danger">{{ r.error }}</span>
+                <span v-if="!r.success && r.missing?.length > 0" class="text-danger" style="margin-left: 8px;">
+                  （缺少：{{ r.missing.join('、') }}）
+                </span>
+                <span v-if="!r.success && r.error_code" class="text-muted" style="margin-left: 8px; font-size: 11px;">
+                  [{{ r.error_code }}]
+                </span>
               </div>
             </div>
           </div>
@@ -323,6 +329,12 @@
                 {{ r.code || r.id }} -
                 <span v-if="r.success">{{ r.message }}</span>
                 <span v-else class="text-danger">{{ r.error }}</span>
+                <span v-if="!r.success && r.missing?.length > 0" class="text-danger" style="margin-left: 8px;">
+                  （缺少：{{ r.missing.join('、') }}）
+                </span>
+                <span v-if="!r.success && r.error_code" class="text-muted" style="margin-left: 8px; font-size: 11px;">
+                  [{{ r.error_code }}]
+                </span>
               </div>
             </div>
           </div>
@@ -441,13 +453,13 @@ function getTabBadgeClass(tabValue: string) {
 function canSelectWorkorder(wo: any) {
   if (wo.status !== activeTab.value) return false
   if (activeTab.value === 'pending_correction' && baseRole.value === 'planner') {
-    return wo.planner === currentUserName.value
+    return wo.current_handler_role === 'planner' && wo.planner === currentUserName.value
   }
   if (activeTab.value === 'under_review' && baseRole.value === 'workshop_director') {
-    return wo.workshop_director === currentUserName.value
+    return wo.current_handler_role === 'workshop_director' && wo.workshop_director === currentUserName.value
   }
   if (activeTab.value === 'under_review' && baseRole.value === 'factory_manager') {
-    return wo.factory_manager === currentUserName.value
+    return wo.current_handler_role === 'factory_manager' && wo.factory_manager === currentUserName.value
   }
   return false
 }

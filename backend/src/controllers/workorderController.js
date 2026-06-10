@@ -44,35 +44,30 @@ function getWorkorders(req, res) {
   const userRole = req.user.role;
   const username = req.user.username;
 
-  let query = `SELECT w.* FROM workorders w WHERE 1=1`;
+  let whereClause = `WHERE 1=1`;
   const params = [];
 
   if (status) {
-    query += ` AND w.status = ?`;
+    whereClause += ` AND w.status = ?`;
     params.push(status);
   }
 
   if (keyword) {
-    query += ` AND (w.code LIKE ? OR w.title LIKE ? OR w.product_name LIKE ?)`;
+    whereClause += ` AND (w.code LIKE ? OR w.title LIKE ? OR w.product_name LIKE ?)`;
     params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
   }
 
   if (handler === 'mine') {
-    query += ` AND (w.current_handler = ? OR w.planner = ? OR w.workshop_director = ?)`;
+    whereClause += ` AND (w.current_handler = ? OR w.planner = ? OR w.workshop_director = ?)`;
     params.push(username, username, username);
   }
 
-  query += ` ORDER BY w.created_at DESC`;
+  const listQuery = `SELECT w.* FROM workorders w ${whereClause} ORDER BY w.created_at DESC LIMIT ? OFFSET ?`;
+  const listParams = [...params, parseInt(pageSize), parseInt((page - 1) * pageSize)];
+  const workorders = db.prepare(listQuery).all(...listParams).map(formatWorkorder);
 
-  const offset = (page - 1) * pageSize;
-  query += ` LIMIT ? OFFSET ?`;
-  params.push(parseInt(pageSize), parseInt(offset));
-
-  const workorders = db.prepare(query).all(...params).map(formatWorkorder);
-
-  let countQuery = `SELECT COUNT(*) as total FROM workorders w WHERE 1=1`;
-  const countParams = params.slice(0, -2);
-  const { total } = db.prepare(countQuery).get(...countParams);
+  const countQuery = `SELECT COUNT(*) as total FROM workorders w ${whereClause}`;
+  const { total } = db.prepare(countQuery).get(...params);
 
   const statsQuery = `
     SELECT
@@ -475,8 +470,14 @@ function reviewApprove(req, res) {
     return res.status(403).json({ success: false, error: '只有车间主任可以复核', code: 'PERMISSION_DENIED' });
   }
 
-  if (wo.workshop_director !== username) {
-    return res.status(403).json({ success: false, error: '您不是该工单的车间主任', code: 'HANDLER_MISMATCH' });
+  const handlerCheck = validateHandler(wo, userRole, username);
+  if (!handlerCheck.valid) {
+    return res.status(403).json({ success: false, error: handlerCheck.error, code: handlerCheck.code });
+  }
+
+  const evidenceCheck = validateRequiredEvidence(wo, 'submit_for_review');
+  if (!evidenceCheck.valid) {
+    return res.status(400).json({ success: false, error: evidenceCheck.error, code: evidenceCheck.code, missing: evidenceCheck.missing });
   }
 
   const overdueCheck = validateNotOverdue(wo, 'review_approve');
@@ -527,8 +528,9 @@ function reviewReject(req, res) {
     return res.status(403).json({ success: false, error: '只有车间主任可以退回工单', code: 'PERMISSION_DENIED' });
   }
 
-  if (wo.workshop_director !== username) {
-    return res.status(403).json({ success: false, error: '您不是该工单的车间主任', code: 'HANDLER_MISMATCH' });
+  const handlerCheck = validateHandler(wo, userRole, username);
+  if (!handlerCheck.valid) {
+    return res.status(403).json({ success: false, error: handlerCheck.error, code: handlerCheck.code });
   }
 
   if (!reject_reason) {
@@ -578,8 +580,14 @@ function factoryConfirm(req, res) {
     return res.status(403).json({ success: false, error: '只有厂务经理可以确认办结', code: 'PERMISSION_DENIED' });
   }
 
-  if (wo.factory_manager !== username) {
-    return res.status(403).json({ success: false, error: '您不是该工单的厂务经理', code: 'HANDLER_MISMATCH' });
+  const handlerCheck = validateHandler(wo, userRole, username);
+  if (!handlerCheck.valid) {
+    return res.status(403).json({ success: false, error: handlerCheck.error, code: handlerCheck.code });
+  }
+
+  const evidenceCheck = validateRequiredEvidence(wo, 'submit_for_review');
+  if (!evidenceCheck.valid) {
+    return res.status(400).json({ success: false, error: evidenceCheck.error, code: evidenceCheck.code, missing: evidenceCheck.missing });
   }
 
   const overdueCheck = validateNotOverdue(wo, 'factory_confirm');
