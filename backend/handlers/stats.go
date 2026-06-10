@@ -71,12 +71,7 @@ func GetExpiryWarnings(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	type AppWithResponsible struct {
-		models.Application
-		ResponsibleName string `json:"responsible_name,omitempty"`
-	}
-
-	groups := map[string][]AppWithResponsible{
+	groups := map[string][]models.Application{
 		"normal":      {},
 		"near_expiry": {},
 		"overdue":     {},
@@ -95,28 +90,7 @@ func GetExpiryWarnings(c *gin.Context) {
 		app.ExpiryGroup = group
 		fillNames(&app)
 
-		item := AppWithResponsible{Application: app}
-
-		if group == "overdue" {
-			switch app.CurrentStep {
-			case "appointment":
-				DB.QueryRow("SELECT display_name FROM users WHERE id = ?", app.CreatorID).Scan(&item.ResponsibleName)
-			case "allocation":
-				if app.HandlerID > 0 {
-					DB.QueryRow("SELECT display_name FROM users WHERE id = ?", app.HandlerID).Scan(&item.ResponsibleName)
-				} else {
-					DB.QueryRow("SELECT display_name FROM users WHERE id = ?", app.CreatorID).Scan(&item.ResponsibleName)
-				}
-			case "confirmation":
-				if app.HandlerID > 0 {
-					DB.QueryRow("SELECT display_name FROM users WHERE id = ?", app.HandlerID).Scan(&item.ResponsibleName)
-				} else {
-					DB.QueryRow("SELECT display_name FROM users WHERE id = ?", app.CreatorID).Scan(&item.ResponsibleName)
-				}
-			}
-		}
-
-		groups[group] = append(groups[group], item)
+		groups[group] = append(groups[group], app)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

@@ -192,5 +192,11 @@ export async function getStatsSummary() {
 }
 
 export async function getExpiryWarnings() {
-	return apiCall<Record<string, any>>('/api/stats/expiry-warnings');
+	const res = await apiCall<{
+		normal: import('./types').Application[];
+		near_expiry: import('./types').Application[];
+		overdue: import('./types').Application[];
+		generated_at: string;
+	}>('/api/stats/expiry-warnings');
+	return res;
 }

@@ -58,6 +58,10 @@
 				expected_date: app.expected_date,
 				appointment_time: app.appointment_time
 			};
+			exceptions = await getExceptions(app.id);
+			exceptionsLoaded = true;
+			recordsLoaded = false;
+			notesLoaded = false;
 		} catch (err: any) {
 			actionError = err.code ? `${err.code}: ${err.message}` : '加载失败';
 		}

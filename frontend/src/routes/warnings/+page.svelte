@@ -71,6 +71,9 @@
 			const res = await batchAdvanceOverdue(selectedOverdueIds);
 			advanceResults = res.results || [];
 			showAdvanceResults = true;
+			exceptionMap = {};
+			showingExceptions = null;
+			selectedOverdueIds = [];
 			loadData();
 		} catch (err: any) {
 			error = err.code ? `${err.code}: ${err.message}` : '批量推进失败';
@@ -448,15 +451,6 @@
 		cursor: pointer;
 	}
 	.empty { text-align: center; padding: 40px; color: var(--text-light); }
-	.badge {
-		display: inline-block;
-		padding: 3px 10px;
-		border-radius: 12px;
-		color: white;
-		font-size: 12px;
-		font-weight: 500;
-	}
-	.badge.small { padding: 2px 8px; font-size: 11px; }
 	.responsible {
 		display: flex;
 		flex-direction: column;

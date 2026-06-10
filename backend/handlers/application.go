@@ -178,9 +178,9 @@ func doSubmit(ctx ActionContext) ActionResponse {
 func doAllocate(ctx ActionContext) ActionResponse {
 	var app models.Application
 	err := DB.QueryRow(
-		"SELECT id, order_no, status, version, creator_id, handler_id FROM applications WHERE id = ?",
+		"SELECT id, order_no, status, version, creator_id, handler_id, expected_date FROM applications WHERE id = ?",
 		ctx.AppID,
-	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version, &app.CreatorID, &app.HandlerID)
+	).Scan(&app.ID, &app.OrderNo, &app.Status, &app.Version, &app.CreatorID, &app.HandlerID, &app.ExpectedDate)
 	if err != nil {
 		return ActionResponse{Success: false, Code: "NOT_FOUND", Message: "单据不存在", OrderNo: ""}
 	}
