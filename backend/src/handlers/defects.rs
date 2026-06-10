@@ -23,11 +23,76 @@ impl DefectsApi {
         let ctx = UserContext::new(x_user_id.0, x_user_role.0);
         let conn = state.db.lock().map_err(|_| AppError::internal("锁错误"))?;
 
-        let patrol_start: String = conn.query_row(
-            "SELECT patrol_date FROM patrol_orders WHERE id = ?1",
-            [req.patrol_order_id],
-            |r| r.get(0),
-        ).map_err(|_| AppError::not_found("巡检单不存在"))?;
+        let order_sql = "
+            SELECT po.status, po.current_handler, po.patrol_date, po.inspector_id
+            FROM patrol_orders po
+            WHERE po.id = ?1
+        ";
+        let (order_status, current_handler, patrol_start, inspector_id): (String, String, String, Option<i64>) = conn
+            .query_row(order_sql, [req.patrol_order_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3).ok()))
+            })
+            .map_err(|_| AppError::not_found("巡检单不存在"))?;
+
+        if ctx.user_role != "admin" {
+            ctx.require_inspector().map_err(|e| {
+                let _ = conn.execute(
+                    "
+                        INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, anomaly_reason)
+                        VALUES (?1, '缺陷上报失败', ?2, ?2, ?3, ?4, ?5)
+                    ",
+                    rusqlite::params![req.patrol_order_id, order_status, x_user_id.0, ctx.user_role, e.to_string()],
+                );
+                e
+            })?;
+            if !ctx.is_handler(inspector_id) {
+                let reason = "只有该巡检单的巡检员可以上报缺陷";
+                let _ = conn.execute(
+                    "
+                        INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, anomaly_reason)
+                        VALUES (?1, '缺陷上报失败', ?2, ?2, ?3, ?4, ?5)
+                    ",
+                    rusqlite::params![req.patrol_order_id, order_status, x_user_id.0, ctx.user_role, reason],
+                );
+                let _ = conn.execute(
+                    "UPDATE patrol_orders SET anomaly_reason = ?1 WHERE id = ?2",
+                    rusqlite::params![reason, req.patrol_order_id],
+                );
+                return Err(AppError::forbidden(reason));
+            }
+        }
+
+        if !state_machine::can_defect_report(&order_status, &current_handler) {
+            let reason = format!("状态冲突：当前状态「{}」不允许上报缺陷", state_machine::status_label(&order_status));
+            let _ = conn.execute(
+                "
+                    INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, anomaly_reason)
+                    VALUES (?1, '缺陷上报失败', ?2, ?2, ?3, ?4, ?5)
+                ",
+                rusqlite::params![req.patrol_order_id, order_status, x_user_id.0, ctx.user_role, reason],
+            );
+            let _ = conn.execute(
+                "UPDATE patrol_orders SET anomaly_reason = ?1 WHERE id = ?2",
+                rusqlite::params![reason, req.patrol_order_id],
+            );
+            return Err(AppError::bad_request(reason));
+        }
+
+        if ctx.user_role != "admin" && current_handler != "inspector" {
+            let reason = format!("当前处理人是「{}」，不是巡检员", current_handler);
+            let _ = conn.execute(
+                "
+                    INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, anomaly_reason)
+                    VALUES (?1, '缺陷上报失败', ?2, ?2, ?3, ?4, ?5)
+                ",
+                rusqlite::params![req.patrol_order_id, order_status, x_user_id.0, ctx.user_role, reason],
+            );
+            let _ = conn.execute(
+                "UPDATE patrol_orders SET anomaly_reason = ?1 WHERE id = ?2",
+                rusqlite::params![reason, req.patrol_order_id],
+            );
+            return Err(AppError::forbidden(reason));
+        }
 
         let patrol_start_dt = NaiveDateTime::parse_from_str(
             &format!("{} 00:00:00", patrol_start), "%Y-%m-%d %H:%M:%S"
@@ -38,10 +103,6 @@ impl DefectsApi {
         let mut anomaly: Option<String> = None;
         if diff > Duration::hours(24) {
             anomaly = Some(format!("上报超时：距巡检开始已超过24小时（{}小时）", diff.num_hours()));
-        }
-
-        if ctx.user_role != "admin" {
-            ctx.require_inspector()?;
         }
 
         let defect_no = generate_defect_no();
@@ -66,11 +127,20 @@ impl DefectsApi {
 
         if let Some(reason) = &anomaly {
             let audit_sql = "
-                INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, anomaly_reason)
-                SELECT ?1, '缺陷上报超时', status, status, ?2, ?3, ?4
-                FROM patrol_orders WHERE id = ?1
+                INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, anomaly_reason, evidence)
+                VALUES (?1, '缺陷上报超时', ?2, ?2, ?3, ?4, ?5, ?6)
             ";
-            conn.execute(audit_sql, rusqlite::params![req.patrol_order_id, x_user_id.0, ctx.user_role, reason]).ok();
+            conn.execute(audit_sql, rusqlite::params![
+                req.patrol_order_id, order_status, x_user_id.0, ctx.user_role, reason, evidence_json
+            ]).ok();
+        } else {
+            let audit_sql = "
+                INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, evidence)
+                VALUES (?1, '缺陷上报', ?2, ?2, ?3, ?4, ?5)
+            ";
+            conn.execute(audit_sql, rusqlite::params![
+                req.patrol_order_id, order_status, x_user_id.0, ctx.user_role, evidence_json
+            ]).ok();
         }
 
         let result = conn.query_row(

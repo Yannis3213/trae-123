@@ -10,6 +10,8 @@ import {
   type AuditTrail,
   type ProcessRecord,
   type User,
+  type DefectSeverity,
+  type AcceptanceResult,
   STATUS_LABELS,
   STATUS_COLORS,
   OVERDUE_LABELS,
@@ -136,6 +138,11 @@ const MOCK_AUDIT: AuditTrail[] = [
   { id: 5, patrol_order_id: 2, action: '派发工程师', from_status: 'pending_dispatch', to_status: 'in_progress', actor_id: 6, actor_role: 'manager', actor_name: '陈刚-区域负责人', remark: '派发王强工程师处理消缺', created_at: '2026-06-09 11:00:00' },
 ];
 
+const DEFECT_CATEGORIES = [
+  '组件损伤', '逆变器异常', '热斑', '隐裂', '接线盒故障',
+  '电气故障', '排水系统', '箱变密封', '脏污', '其他',
+];
+
 type TabKey = 'patrol' | 'defect' | 'acceptance';
 
 export default component$(() => {
@@ -154,13 +161,51 @@ export default component$(() => {
   const currentUser = useSignal<User | null>(null);
   const handleOpinion = useSignal('');
   const showHandleDialog = useSignal(false);
-  const handleResult = useSignal<'submit' | 'dispatch' | 'return' | 'review' | ''>('');
+  const handleResult = useSignal<'submit' | 'dispatch' | 'return' | 'review_pass' | 'review_reject' | ''>('');
+  const toastMessage = useSignal('');
+  const toastType = useSignal<'success' | 'error'>('success');
+
+  const isEditing = useSignal(false);
+  const editPatrolContent = useSignal('');
+  const editWeather = useSignal('');
+  const editTemperature = useSignal('');
+  const editEvidence = useSignal<string[]>([]);
+  const editEvidenceInput = useSignal('');
+  const editSaving = useSignal(false);
+
+  const showDefectDialog = useSignal(false);
+  const defectLocation = useSignal('');
+  const defectDescription = useSignal('');
+  const defectSeverity = useSignal<DefectSeverity>('minor');
+  const defectCategory = useSignal('组件损伤');
+  const defectDeadline = useSignal('');
+  const defectEvidence = useSignal<string[]>([]);
+  const defectEvidenceInput = useSignal('');
+  const defectSubmitting = useSignal(false);
+  const defectFormErrors = useSignal<Record<string, string>>({});
+
+  const showAcceptanceDialog = useSignal(false);
+  const acceptanceDefectId = useSignal<number | ''>('');
+  const acceptanceResult = useSignal<AcceptanceResult>('pass');
+  const acceptanceEvidence = useSignal<string[]>([]);
+  const acceptanceEvidenceInput = useSignal('');
+  const acceptanceRemark = useSignal('');
+  const acceptanceSubmitting = useSignal(false);
+  const acceptanceFormErrors = useSignal<Record<string, string>>({});
 
   useVisibleTask$(() => {
     currentUser.value = getCurrentUser();
   });
 
-  useTask$(async () => {
+  const showToast = $((message: string, type: 'success' | 'error' = 'success') => {
+    toastMessage.value = message;
+    toastType.value = type;
+    setTimeout(() => {
+      toastMessage.value = '';
+    }, 3000);
+  });
+
+  const loadData = $(async () => {
     loading.value = true;
     try {
       const id = Number(orderId.value);
@@ -200,6 +245,10 @@ export default component$(() => {
     }
   });
 
+  useTask$(async () => {
+    await loadData();
+  });
+
   const getCurrentStep = () => {
     if (!order.value) return 1;
     const handler = order.value.current_handler;
@@ -210,22 +259,101 @@ export default component$(() => {
   };
 
   const showActionButtons = () => {
-    if (!order.value || !currentUser.value) return { submit: false, dispatch: false, handle: false, return: false, review: false };
+    if (!order.value || !currentUser.value) return {
+      submit: false, editCorrection: false, dispatch: false,
+      handle: false, return: false, reviewPass: false, reviewReject: false,
+    };
     const o = order.value;
     const role = currentUser.value.role;
-    const canSubmit = (role === 'inspector' || role === 'admin') && o.current_handler === 'inspector' && o.status !== 'closed';
-    const canDispatch = (role === 'manager' || role === 'admin') && o.status === 'pending_dispatch';
+    const isCurrentHandler = o.current_handler === role || role === 'admin';
+
+    const canSubmit = (role === 'inspector' || role === 'admin') &&
+      isCurrentHandler &&
+      (o.status === 'pending_dispatch' || o.status === 'returned');
+
+    const canEditCorrection = (role === 'inspector' || role === 'admin') &&
+      isCurrentHandler &&
+      (o.status === 'pending_dispatch' || o.status === 'returned');
+
+    const canDispatch = (role === 'manager' || role === 'admin') &&
+      o.status === 'pending_dispatch';
+
     const canHandle = ((role === 'engineer' && o.current_handler === 'engineer') ||
-                      (role === 'manager' && o.current_handler === 'manager') ||
-                      role === 'admin') && o.status !== 'closed' && o.status !== 'pending_dispatch';
-    const canReturn = (role === 'engineer' || role === 'manager' || role === 'admin') &&
-                      o.status === 'in_progress' && o.current_handler !== 'inspector';
-    const canReview = (role === 'manager' || role === 'admin') && o.status === 'reviewing';
-    return { submit: canSubmit, dispatch: canDispatch, handle: canHandle, return: canReturn, review: canReview };
+                       role === 'admin') && o.status === 'in_progress';
+
+    const canReturn = ((role === 'engineer' && o.current_handler === 'engineer') ||
+                       role === 'admin') && o.status === 'in_progress';
+
+    const canReviewPass = (role === 'manager' || role === 'admin') && o.status === 'reviewing';
+    const canReviewReject = (role === 'manager' || role === 'admin') && o.status === 'reviewing';
+
+    return {
+      submit: canSubmit,
+      editCorrection: canEditCorrection,
+      dispatch: canDispatch,
+      handle: canHandle,
+      return: canReturn,
+      reviewPass: canReviewPass,
+      reviewReject: canReviewReject,
+    };
   };
 
-  const handleAction$ = $((action: 'submit' | 'dispatch' | 'handle' | 'return' | 'review') => {
+  const startEdit$ = $(() => {
+    if (!order.value) return;
+    editPatrolContent.value = order.value.patrol_content || '';
+    editWeather.value = order.value.weather || '';
+    editTemperature.value = order.value.temperature || '';
+    editEvidence.value = [...(order.value.patrol_evidence || [])];
+    isEditing.value = true;
+  });
+
+  const cancelEdit$ = $(() => {
+    isEditing.value = false;
+    editEvidenceInput.value = '';
+  });
+
+  const addEditEvidence$ = $(() => {
+    const val = editEvidenceInput.value.trim();
+    if (val && !editEvidence.value.includes(val)) {
+      editEvidence.value = [...editEvidence.value, val];
+    }
+    editEvidenceInput.value = '';
+  });
+
+  const removeEditEvidence$ = $((idx: number) => {
+    editEvidence.value = editEvidence.value.filter((_, i) => i !== idx);
+  });
+
+  const saveEdit$ = $(async () => {
+    if (!order.value) return;
+    editSaving.value = true;
+    try {
+      const id = order.value.id;
+      const version = order.value.version || 1;
+      const res = await api.put(`/api/patrol-orders/${id}`, {
+        patrol_content: editPatrolContent.value,
+        weather: editWeather.value,
+        temperature: editTemperature.value,
+        patrol_evidence: editEvidence.value,
+        version,
+      });
+      if (res.success) {
+        showToast('保存成功', 'success');
+        isEditing.value = false;
+        await loadData();
+      } else {
+        showToast(res.message || '保存失败', 'error');
+      }
+    } catch (e: any) {
+      showToast(e?.message || '网络错误', 'error');
+    } finally {
+      editSaving.value = false;
+    }
+  });
+
+  const handleAction$ = $((action: 'submit' | 'dispatch' | 'handle' | 'return' | 'review_pass' | 'review_reject') => {
     handleResult.value = action;
+    handleOpinion.value = '';
     showHandleDialog.value = true;
   });
 
@@ -235,51 +363,206 @@ export default component$(() => {
     const version = order.value.version || 1;
     try {
       const action = handleResult.value;
+      let success = false;
+      let message = '';
+
       if (action === 'submit') {
-        await api.put(`/api/patrol-orders/${id}/submit`, {
+        const res = await api.put(`/api/patrol-orders/${id}/submit`, {
           patrol_content: order.value.patrol_content,
           weather: order.value.weather,
           temperature: order.value.temperature,
           patrol_evidence: order.value.patrol_evidence || [],
           version,
+          remark: handleOpinion.value,
         });
+        success = res.success;
+        message = res.message || '';
       } else if (action === 'dispatch') {
-        await api.put(`/api/patrol-orders/${id}/dispatch`, {
+        const res = await api.put(`/api/patrol-orders/${id}/dispatch`, {
           engineer_id: order.value.engineer_id || 4,
           version,
           remark: handleOpinion.value,
         });
+        success = res.success;
+        message = res.message || '';
       } else if (action === 'handle' || action === 'process') {
         const evidences: Record<string, string[]> = {};
         defects.value.forEach(d => {
           evidences[d.defect_no] = d.evidence || [`消缺证据_${d.defect_no}.pdf`];
         });
-        await api.put(`/api/patrol-orders/${id}/process`, {
+        const res = await api.put(`/api/patrol-orders/${id}/process`, {
           defect_evidences: evidences,
           opinion: handleOpinion.value || '消缺完成',
           version,
         });
+        success = res.success;
+        message = res.message || '';
       } else if (action === 'return') {
-        await api.put(`/api/patrol-orders/${id}/return`, {
+        const res = await api.put(`/api/patrol-orders/${id}/return`, {
           opinion: handleOpinion.value || '材料不完整，请补充',
           attachment: undefined,
           version,
         });
-      } else if (action === 'review') {
-        await api.put(`/api/patrol-orders/${id}/review`, {
+        success = res.success;
+        message = res.message || '';
+      } else if (action === 'review_pass') {
+        const res = await api.put(`/api/patrol-orders/${id}/review`, {
           result: 'pass',
           remark: handleOpinion.value || '复核通过',
           version,
         });
+        success = res.success;
+        message = res.message || '';
+      } else if (action === 'review_reject') {
+        const res = await api.put(`/api/patrol-orders/${id}/review`, {
+          result: 'reject',
+          remark: handleOpinion.value || '复核退回',
+          version,
+        });
+        success = res.success;
+        message = res.message || '';
       }
-    } catch {
-      // ignore
+
+      if (success) {
+        showToast('操作成功', 'success');
+        showHandleDialog.value = false;
+        handleOpinion.value = '';
+        handleResult.value = '';
+        await loadData();
+      } else {
+        showToast(message || '操作失败', 'error');
+      }
+    } catch (e: any) {
+      showToast(e?.message || '网络错误', 'error');
     }
-    showHandleDialog.value = false;
-    handleOpinion.value = '';
-    handleResult.value = '';
-    nav('/');
   });
+
+  const openDefectDialog$ = $(() => {
+    defectLocation.value = '';
+    defectDescription.value = '';
+    defectSeverity.value = 'minor';
+    defectCategory.value = '组件损伤';
+    defectDeadline.value = '';
+    defectEvidence.value = [];
+    defectEvidenceInput.value = '';
+    defectFormErrors.value = {};
+    showDefectDialog.value = true;
+  });
+
+  const addDefectEvidence$ = $(() => {
+    const val = defectEvidenceInput.value.trim();
+    if (val && !defectEvidence.value.includes(val)) {
+      defectEvidence.value = [...defectEvidence.value, val];
+    }
+    defectEvidenceInput.value = '';
+  });
+
+  const removeDefectEvidence$ = $((idx: number) => {
+    defectEvidence.value = defectEvidence.value.filter((_, i) => i !== idx);
+  });
+
+  const validateDefectForm = $(() => {
+    const errors: Record<string, string> = {};
+    if (!defectLocation.value.trim()) {
+      errors.location = '请输入缺陷位置';
+    }
+    if (!defectDescription.value.trim()) {
+      errors.description = '请输入缺陷描述';
+    }
+    if (!defectDeadline.value) {
+      errors.deadline = '请选择截止日期';
+    }
+    defectFormErrors.value = errors;
+    return Object.keys(errors).length === 0;
+  });
+
+  const submitDefect$ = $(async () => {
+    if (!validateDefectForm() || !order.value) return;
+    defectSubmitting.value = true;
+    try {
+      const res = await api.post<DefectReport>('/api/defects', {
+        patrol_order_id: order.value.id,
+        location: defectLocation.value,
+        description: defectDescription.value,
+        severity: defectSeverity.value,
+        category: defectCategory.value,
+        deadline: defectDeadline.value,
+        evidence: defectEvidence.value,
+      });
+      if (res.success) {
+        showToast('缺陷上报成功', 'success');
+        showDefectDialog.value = false;
+        await loadData();
+      } else {
+        showToast(res.message || '上报失败', 'error');
+      }
+    } catch (e: any) {
+      showToast(e?.message || '网络错误', 'error');
+    } finally {
+      defectSubmitting.value = false;
+    }
+  });
+
+  const openAcceptanceDialog$ = $(() => {
+    acceptanceDefectId.value = '';
+    acceptanceResult.value = 'pass';
+    acceptanceEvidence.value = [];
+    acceptanceEvidenceInput.value = '';
+    acceptanceRemark.value = '';
+    acceptanceFormErrors.value = {};
+    showAcceptanceDialog.value = true;
+  });
+
+  const addAcceptanceEvidence$ = $(() => {
+    const val = acceptanceEvidenceInput.value.trim();
+    if (val && !acceptanceEvidence.value.includes(val)) {
+      acceptanceEvidence.value = [...acceptanceEvidence.value, val];
+    }
+    acceptanceEvidenceInput.value = '';
+  });
+
+  const removeAcceptanceEvidence$ = $((idx: number) => {
+    acceptanceEvidence.value = acceptanceEvidence.value.filter((_, i) => i !== idx);
+  });
+
+  const validateAcceptanceForm = $(() => {
+    const errors: Record<string, string> = {};
+    if (!acceptanceDefectId.value) {
+      errors.defectId = '请选择缺陷';
+    }
+    if (acceptanceEvidence.value.length === 0) {
+      errors.evidence = '请添加证据文件';
+    }
+    acceptanceFormErrors.value = errors;
+    return Object.keys(errors).length === 0;
+  });
+
+  const submitAcceptance$ = $(async () => {
+    if (!validateAcceptanceForm() || !order.value) return;
+    acceptanceSubmitting.value = true;
+    try {
+      const res = await api.post<AcceptanceRecord>('/api/acceptance', {
+        patrol_order_id: order.value.id,
+        defect_id: acceptanceDefectId.value,
+        result: acceptanceResult.value,
+        evidence: acceptanceEvidence.value,
+        remark: acceptanceRemark.value,
+      });
+      if (res.success) {
+        showToast('验收记录已添加', 'success');
+        showAcceptanceDialog.value = false;
+        await loadData();
+      } else {
+        showToast(res.message || '提交失败', 'error');
+      }
+    } catch (e: any) {
+      showToast(e?.message || '网络错误', 'error');
+    } finally {
+      acceptanceSubmitting.value = false;
+    }
+  });
+
+  const resolvedDefects = defects.value.filter(d => d.status === 'resolved' || d.status === 'verified');
 
   if (loading.value) {
     return <div class="text-center py-12 text-gray-500">加载中...</div>;
@@ -295,6 +578,15 @@ export default component$(() => {
 
   return (
     <div class="space-y-6">
+      {toastMessage.value && (
+        <div class={[
+          'fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg transition-all',
+          toastType.value === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white',
+        ].join(' ')}>
+          {toastMessage.value}
+        </div>
+      )}
+
       <div class="flex items-center justify-between">
         <div class="flex items-center space-x-4">
           <Link href="/" class="text-gray-500 hover:text-gray-700">
@@ -318,8 +610,11 @@ export default component$(() => {
           {actions.return && (
             <button onClick$={() => handleAction$('return')} class="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium">退回</button>
           )}
-          {actions.review && (
-            <button onClick$={() => handleAction$('review')} class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium">复核</button>
+          {actions.reviewPass && (
+            <button onClick$={() => handleAction$('review_pass')} class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium">复核通过</button>
+          )}
+          {actions.reviewReject && (
+            <button onClick$={() => handleAction$('review_reject')} class="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium">复核退回</button>
           )}
         </div>
       </div>
@@ -542,39 +837,144 @@ export default component$(() => {
                 <div class="space-y-4">
                   <div class="flex justify-between items-start">
                     <h3 class="text-md font-semibold text-gray-900">巡检内容</h3>
-                    {hasPermission('handle_inspector') && o.current_handler === 'inspector' && (
-                      <button class="text-sm text-blue-600 hover:text-blue-800">编辑补正</button>
+                    {actions.editCorrection && !isEditing.value && (
+                      <button onClick$={startEdit$} class="text-sm text-blue-600 hover:text-blue-800">编辑补正</button>
                     )}
-                  </div>
-                  <div class="bg-gray-50 rounded p-4 text-sm text-gray-700">
-                    {o.patrol_content || '暂无巡检内容'}
-                  </div>
-
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label class="block text-sm font-medium text-gray-500 mb-1">天气</label>
-                      <div class="text-sm text-gray-900">{o.weather || '-'}</div>
-                    </div>
-                    <div>
-                      <label class="block text-sm font-medium text-gray-500 mb-1">温度</label>
-                      <div class="text-sm text-gray-900">{o.temperature || '-'}</div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label class="block text-sm font-medium text-gray-500 mb-2">证据文件</label>
-                    {o.patrol_evidence && o.patrol_evidence.length > 0 ? (
-                      <div class="flex flex-wrap gap-2">
-                        {o.patrol_evidence.map((e, i) => (
-                          <span key={i} class="inline-flex items-center px-3 py-1 bg-blue-50 text-blue-700 rounded text-sm">
-                            📎 {e}
-                          </span>
-                        ))}
+                    {isEditing.value && (
+                      <div class="flex space-x-2">
+                        <button onClick$={cancelEdit$} class="text-sm text-gray-500 hover:text-gray-700">取消</button>
+                        <button
+                          onClick$={saveEdit$}
+                          disabled={editSaving.value}
+                          class={[
+                            'text-sm font-medium',
+                            editSaving.value ? 'text-blue-400' : 'text-blue-600 hover:text-blue-800',
+                          ].join(' ')}
+                        >
+                          {editSaving.value ? '保存中...' : '保存'}
+                        </button>
                       </div>
-                    ) : (
-                      <div class="text-sm text-gray-500">暂无证据文件</div>
                     )}
                   </div>
+
+                  {isEditing.value ? (
+                    <div class="space-y-4">
+                      <div>
+                        <label class="block text-sm font-medium text-gray-500 mb-1">巡检内容</label>
+                        <textarea
+                          value={editPatrolContent.value}
+                          onInput$={(e) => editPatrolContent.value = (e.target as HTMLTextAreaElement).value}
+                          rows={4}
+                          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label class="block text-sm font-medium text-gray-500 mb-1">天气</label>
+                          <input
+                            type="text"
+                            value={editWeather.value}
+                            onInput$={(e) => editWeather.value = (e.target as HTMLInputElement).value}
+                            placeholder="如：晴、多云、雨"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label class="block text-sm font-medium text-gray-500 mb-1">温度</label>
+                          <input
+                            type="text"
+                            value={editTemperature.value}
+                            onInput$={(e) => editTemperature.value = (e.target as HTMLInputElement).value}
+                            placeholder="如：25℃"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label class="block text-sm font-medium text-gray-500 mb-2">证据文件</label>
+                        <div class="flex items-center space-x-2 mb-2">
+                          <input
+                            type="text"
+                            value={editEvidenceInput.value}
+                            onInput$={(e) => editEvidenceInput.value = (e.target as HTMLInputElement).value}
+                            onKeyDown$={(e) => {
+                              if ((e as KeyboardEvent).key === 'Enter') {
+                                (e as KeyboardEvent).preventDefault();
+                                addEditEvidence$();
+                              }
+                            }}
+                            placeholder="输入文件名后按回车添加"
+                            class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                          />
+                          <button
+                            onClick$={addEditEvidence$}
+                            class="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm"
+                          >
+                            添加
+                          </button>
+                        </div>
+                        {editEvidence.value.length > 0 && (
+                          <div class="flex flex-wrap gap-2">
+                            {editEvidence.value.map((e, i) => (
+                              <span key={i} class="inline-flex items-center px-3 py-1 bg-blue-50 text-blue-700 rounded text-sm">
+                                📎 {e}
+                                <button
+                                  onClick$={() => removeEditEvidence$(i)}
+                                  class="ml-2 text-blue-500 hover:text-blue-700"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div class="bg-gray-50 rounded p-4 text-sm text-gray-700">
+                        {o.patrol_content || '暂无巡检内容'}
+                      </div>
+
+                      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label class="block text-sm font-medium text-gray-500 mb-1">天气</label>
+                          <div class="text-sm text-gray-900">{o.weather || '-'}</div>
+                        </div>
+                        <div>
+                          <label class="block text-sm font-medium text-gray-500 mb-1">温度</label>
+                          <div class="text-sm text-gray-900">{o.temperature || '-'}</div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label class="block text-sm font-medium text-gray-500 mb-2">证据文件</label>
+                        {o.patrol_evidence && o.patrol_evidence.length > 0 ? (
+                          <div class="flex flex-wrap gap-2">
+                            {o.patrol_evidence.map((e, i) => (
+                              <span key={i} class="inline-flex items-center px-3 py-1 bg-blue-50 text-blue-700 rounded text-sm">
+                                📎 {e}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div class="text-sm text-gray-500">暂无证据文件</div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {o.status === 'returned' && o.previous_opinion && (
+                    <div class="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                      <div class="text-sm font-medium text-orange-800 mb-1">退回意见</div>
+                      <div class="text-sm text-orange-700">{o.previous_opinion}</div>
+                      {o.previous_attachment && (
+                        <div class="mt-2 text-sm text-orange-600">
+                          📎 请查看附件：{o.previous_attachment.split('/').pop()}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -583,7 +983,12 @@ export default component$(() => {
                   <div class="flex justify-between items-center">
                     <h3 class="text-md font-semibold text-gray-900">缺陷列表</h3>
                     {hasPermission('handle_inspector') && o.current_handler === 'inspector' && (
-                      <button class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">+ 新增缺陷</button>
+                      <button
+                        onClick$={openDefectDialog$}
+                        class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                      >
+                        + 新增缺陷
+                      </button>
                     )}
                   </div>
 
@@ -635,7 +1040,12 @@ export default component$(() => {
                   <div class="flex justify-between items-center">
                     <h3 class="text-md font-semibold text-gray-900">验收记录</h3>
                     {hasPermission('handle_manager') && (
-                      <button class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700">+ 新增验收</button>
+                      <button
+                        onClick$={openAcceptanceDialog$}
+                        class="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                      >
+                        + 新增验收
+                      </button>
                     )}
                   </div>
 
@@ -727,7 +1137,8 @@ export default component$(() => {
                 {handleResult.value === 'dispatch' && '派发巡检单'}
                 {handleResult.value === 'handle' && '办理巡检单'}
                 {handleResult.value === 'return' && '退回巡检单'}
-                {handleResult.value === 'review' && '复核巡检单'}
+                {handleResult.value === 'review_pass' && '复核通过'}
+                {handleResult.value === 'review_reject' && '复核退回'}
               </h3>
             </div>
             <div class="p-6">
@@ -742,7 +1153,7 @@ export default component$(() => {
             </div>
             <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
               <button
-                onClick$={() => { showHandleDialog.value = false; handleOpinion.value = ''; }}
+                onClick$={() => { showHandleDialog.value = false; handleOpinion.value = ''; handleResult.value = ''; }}
                 class="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
               >
                 取消
@@ -751,11 +1162,320 @@ export default component$(() => {
                 onClick$={confirmHandle$}
                 class={[
                   'px-4 py-2 text-white rounded-md font-medium',
-                  handleResult.value === 'return' ? 'bg-orange-600 hover:bg-orange-700' :
-                  'bg-blue-600 hover:bg-blue-700',
+                  handleResult.value === 'return' || handleResult.value === 'review_reject'
+                    ? 'bg-orange-600 hover:bg-orange-700'
+                    : 'bg-blue-600 hover:bg-blue-700',
                 ].join(' ')}
               >
                 确认
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDefectDialog.value && (
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div class="bg-white rounded-lg shadow-xl max-w-xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+              <h3 class="text-lg font-semibold text-gray-900">新增缺陷</h3>
+              <button
+                onClick$={() => { showDefectDialog.value = false; }}
+                class="text-gray-400 hover:text-gray-600"
+              >
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div class="p-6 space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  位置 <span class="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={defectLocation.value}
+                  onInput$={(e) => {
+                    defectLocation.value = (e.target as HTMLInputElement).value;
+                    if (defectFormErrors.value.location) {
+                      defectFormErrors.value = { ...defectFormErrors.value, location: '' };
+                    }
+                  }}
+                  placeholder="如：3号方阵电缆沟"
+                  class={[
+                    'w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500',
+                    defectFormErrors.value.location ? 'border-red-500' : 'border-gray-300',
+                  ].join(' ')}
+                />
+                {defectFormErrors.value.location && (
+                  <p class="mt-1 text-sm text-red-600">{defectFormErrors.value.location}</p>
+                )}
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  描述 <span class="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={defectDescription.value}
+                  onInput$={(e) => {
+                    defectDescription.value = (e.target as HTMLTextAreaElement).value;
+                    if (defectFormErrors.value.description) {
+                      defectFormErrors.value = { ...defectFormErrors.value, description: '' };
+                    }
+                  }}
+                  rows={3}
+                  placeholder="请详细描述缺陷情况..."
+                  class={[
+                    'w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500',
+                    defectFormErrors.value.description ? 'border-red-500' : 'border-gray-300',
+                  ].join(' ')}
+                />
+                {defectFormErrors.value.description && (
+                  <p class="mt-1 text-sm text-red-600">{defectFormErrors.value.description}</p>
+                )}
+              </div>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">严重度</label>
+                  <select
+                    value={defectSeverity.value}
+                    onInput$={(e) => defectSeverity.value = (e.target as HTMLSelectElement).value as DefectSeverity}
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="minor">轻微</option>
+                    <option value="major">重要</option>
+                    <option value="critical">严重</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">类别</label>
+                  <select
+                    value={defectCategory.value}
+                    onInput$={(e) => defectCategory.value = (e.target as HTMLSelectElement).value}
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {DEFECT_CATEGORIES.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  截止日期 <span class="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={defectDeadline.value}
+                  onInput$={(e) => {
+                    defectDeadline.value = (e.target as HTMLInputElement).value;
+                    if (defectFormErrors.value.deadline) {
+                      defectFormErrors.value = { ...defectFormErrors.value, deadline: '' };
+                    }
+                  }}
+                  class={[
+                    'w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500',
+                    defectFormErrors.value.deadline ? 'border-red-500' : 'border-gray-300',
+                  ].join(' ')}
+                />
+                {defectFormErrors.value.deadline && (
+                  <p class="mt-1 text-sm text-red-600">{defectFormErrors.value.deadline}</p>
+                )}
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">证据文件</label>
+                <div class="flex items-center space-x-2 mb-2">
+                  <input
+                    type="text"
+                    value={defectEvidenceInput.value}
+                    onInput$={(e) => defectEvidenceInput.value = (e.target as HTMLInputElement).value}
+                    onKeyDown$={(e) => {
+                      if ((e as KeyboardEvent).key === 'Enter') {
+                        (e as KeyboardEvent).preventDefault();
+                        addDefectEvidence$();
+                      }
+                    }}
+                    placeholder="输入文件名后按回车添加"
+                    class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                  <button
+                    onClick$={addDefectEvidence$}
+                    class="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm"
+                  >
+                    添加
+                  </button>
+                </div>
+                {defectEvidence.value.length > 0 && (
+                  <div class="flex flex-wrap gap-2">
+                    {defectEvidence.value.map((e, i) => (
+                      <span key={i} class="inline-flex items-center px-3 py-1 bg-blue-50 text-blue-700 rounded text-sm">
+                        📎 {e}
+                        <button
+                          onClick$={() => removeDefectEvidence$(i)}
+                          class="ml-2 text-blue-500 hover:text-blue-700"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                onClick$={() => { showDefectDialog.value = false; }}
+                class="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+              >
+                取消
+              </button>
+              <button
+                onClick$={submitDefect$}
+                disabled={defectSubmitting.value}
+                class={[
+                  'px-4 py-2 text-white rounded-md font-medium',
+                  defectSubmitting.value ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700',
+                ].join(' ')}
+              >
+                {defectSubmitting.value ? '提交中...' : '提交'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAcceptanceDialog.value && (
+        <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div class="bg-white rounded-lg shadow-xl max-w-xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+              <h3 class="text-lg font-semibold text-gray-900">新增验收</h3>
+              <button
+                onClick$={() => { showAcceptanceDialog.value = false; }}
+                class="text-gray-400 hover:text-gray-600"
+              >
+                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div class="p-6 space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  选择缺陷 <span class="text-red-500">*</span>
+                </label>
+                <select
+                  value={acceptanceDefectId.value as any}
+                  onInput$={(e) => {
+                    const v = (e.target as HTMLSelectElement).value;
+                    acceptanceDefectId.value = v === '' ? '' : Number(v);
+                    if (acceptanceFormErrors.value.defectId) {
+                      acceptanceFormErrors.value = { ...acceptanceFormErrors.value, defectId: '' };
+                    }
+                  }}
+                  class={[
+                    'w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500',
+                    acceptanceFormErrors.value.defectId ? 'border-red-500' : 'border-gray-300',
+                  ].join(' ')}
+                >
+                  <option value="">请选择已消缺的缺陷</option>
+                  {resolvedDefects.map(d => (
+                    <option key={d.id} value={d.id}>{d.defect_no} - {d.location}</option>
+                  ))}
+                </select>
+                {acceptanceFormErrors.value.defectId && (
+                  <p class="mt-1 text-sm text-red-600">{acceptanceFormErrors.value.defectId}</p>
+                )}
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">验收结果</label>
+                <select
+                  value={acceptanceResult.value}
+                  onInput$={(e) => acceptanceResult.value = (e.target as HTMLSelectElement).value as AcceptanceResult}
+                  class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="pass">通过</option>
+                  <option value="fail">不通过</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">
+                  证据文件 <span class="text-red-500">*</span>
+                </label>
+                <div class="flex items-center space-x-2 mb-2">
+                  <input
+                    type="text"
+                    value={acceptanceEvidenceInput.value}
+                    onInput$={(e) => acceptanceEvidenceInput.value = (e.target as HTMLInputElement).value}
+                    onKeyDown$={(e) => {
+                      if ((e as KeyboardEvent).key === 'Enter') {
+                        (e as KeyboardEvent).preventDefault();
+                        addAcceptanceEvidence$();
+                      }
+                    }}
+                    placeholder="输入文件名后按回车添加"
+                    class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                  <button
+                    onClick$={addAcceptanceEvidence$}
+                    class="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm"
+                  >
+                    添加
+                  </button>
+                </div>
+                {acceptanceEvidence.value.length > 0 && (
+                  <div class="flex flex-wrap gap-2">
+                    {acceptanceEvidence.value.map((e, i) => (
+                      <span key={i} class="inline-flex items-center px-3 py-1 bg-green-50 text-green-700 rounded text-sm">
+                        📎 {e}
+                        <button
+                          onClick$={() => removeAcceptanceEvidence$(i)}
+                          class="ml-2 text-green-500 hover:text-green-700"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {acceptanceFormErrors.value.evidence && (
+                  <p class="mt-1 text-sm text-red-600">{acceptanceFormErrors.value.evidence}</p>
+                )}
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">备注</label>
+                <textarea
+                  value={acceptanceRemark.value}
+                  onInput$={(e) => acceptanceRemark.value = (e.target as HTMLTextAreaElement).value}
+                  rows={3}
+                  placeholder="请输入验收备注..."
+                  class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                onClick$={() => { showAcceptanceDialog.value = false; }}
+                class="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+              >
+                取消
+              </button>
+              <button
+                onClick$={submitAcceptance$}
+                disabled={acceptanceSubmitting.value}
+                class={[
+                  'px-4 py-2 text-white rounded-md font-medium',
+                  acceptanceSubmitting.value ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700',
+                ].join(' ')}
+              >
+                {acceptanceSubmitting.value ? '提交中...' : '提交'}
               </button>
             </div>
           </div>

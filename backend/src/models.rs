@@ -342,3 +342,179 @@ fn rand_suffix() -> u32 {
         .unwrap_or(0))
         % 1000000
 }
+
+pub mod state_machine {
+    use super::super::error::AppError;
+
+    pub const PENDING_DISPATCH: &str = "pending_dispatch";
+    pub const IN_PROGRESS: &str = "in_progress";
+    pub const RETURNED: &str = "returned";
+    pub const REVIEWING: &str = "reviewing";
+    pub const CLOSED: &str = "closed";
+    pub const CANCELLED: &str = "cancelled";
+
+    pub const STEP_INSPECTOR: i64 = 1;
+    pub const STEP_ENGINEER: i64 = 2;
+    pub const STEP_MANAGER: i64 = 3;
+
+    pub const STATUS_PENDING: &str = "pending";
+    pub const STATUS_IN_PROGRESS: &str = "in_progress";
+    pub const STATUS_COMPLETED: &str = "completed";
+
+    pub fn can_submit(current_status: &str) -> bool {
+        matches!(current_status, PENDING_DISPATCH | RETURNED)
+    }
+
+    pub fn can_dispatch(current_status: &str) -> bool {
+        matches!(current_status, PENDING_DISPATCH | RETURNED | IN_PROGRESS)
+    }
+
+    pub fn can_process(current_status: &str) -> bool {
+        matches!(current_status, IN_PROGRESS)
+    }
+
+    pub fn can_return(current_status: &str) -> bool {
+        matches!(current_status, IN_PROGRESS | REVIEWING)
+    }
+
+    pub fn can_review(current_status: &str) -> bool {
+        matches!(current_status, REVIEWING)
+    }
+
+    pub fn can_close(current_status: &str) -> bool {
+        matches!(current_status, REVIEWING)
+    }
+
+    pub fn can_update(current_status: &str, current_handler: &str, user_role: &str) -> bool {
+        if user_role == "admin" {
+            return true;
+        }
+        matches!(current_status, PENDING_DISPATCH | RETURNED)
+            && current_handler == "inspector"
+            && user_role == "inspector"
+    }
+
+    pub fn can_defect_report(current_status: &str, current_handler: &str) -> bool {
+        matches!(current_status, PENDING_DISPATCH | IN_PROGRESS | RETURNED)
+            && current_handler == "inspector"
+    }
+
+    pub fn can_acceptance(current_status: &str) -> bool {
+        matches!(current_status, IN_PROGRESS | REVIEWING)
+    }
+
+    pub fn check_transition(current_status: &str, action: &str) -> Result<(), AppError> {
+        let allowed = match action {
+            "submit" => can_submit(current_status),
+            "dispatch" => can_dispatch(current_status),
+            "process" => can_process(current_status),
+            "return" => can_return(current_status),
+            "review" => can_review(current_status),
+            "close" => can_close(current_status),
+            "update" => true,
+            _ => false,
+        };
+        if !allowed {
+            return Err(AppError::bad_request(format!(
+                "状态冲突：当前状态「{}」不允许执行「{}」操作",
+                status_label(current_status), action_label(action)
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn status_label(status: &str) -> &str {
+        match status {
+            PENDING_DISPATCH => "待派发",
+            IN_PROGRESS => "处理中",
+            RETURNED => "已退回",
+            REVIEWING => "复核中",
+            CLOSED => "已关闭",
+            CANCELLED => "已取消",
+            _ => status,
+        }
+    }
+
+    pub fn action_label(action: &str) -> &str {
+        match action {
+            "submit" => "提交",
+            "dispatch" => "派发",
+            "process" => "办理",
+            "return" => "退回",
+            "review" => "复核",
+            "close" => "关闭",
+            "update" => "更新",
+            "batch_process" => "批量办理",
+            "batch_close" => "批量关闭",
+            _ => action,
+        }
+    }
+
+    pub fn next_status_after_submit() -> &'static str {
+        IN_PROGRESS
+    }
+
+    pub fn next_status_after_dispatch() -> &'static str {
+        IN_PROGRESS
+    }
+
+    pub fn next_status_after_process() -> &'static str {
+        REVIEWING
+    }
+
+    pub fn next_status_after_return() -> &'static str {
+        RETURNED
+    }
+
+    pub fn next_status_after_review_pass() -> &'static str {
+        CLOSED
+    }
+
+    pub fn next_status_after_review_fail() -> &'static str {
+        RETURNED
+    }
+
+    pub fn next_handler_after_submit() -> &'static str {
+        "manager"
+    }
+
+    pub fn next_handler_after_dispatch() -> &'static str {
+        "engineer"
+    }
+
+    pub fn next_handler_after_process() -> &'static str {
+        "manager"
+    }
+
+    pub fn next_handler_after_return(current_handler: &str) -> &'static str {
+        match current_handler {
+            "engineer" => "inspector",
+            "manager" => "engineer",
+            _ => "inspector",
+        }
+    }
+
+    pub fn next_handler_after_review_pass() -> &'static str {
+        "inspector"
+    }
+
+    pub fn next_handler_after_review_fail() -> &'static str {
+        "engineer"
+    }
+
+    pub fn return_target_handler(returner_role: &str) -> &'static str {
+        match returner_role {
+            "engineer" => "inspector",
+            "manager" => "engineer",
+            _ => "inspector",
+        }
+    }
+
+    pub fn return_step(returner_role: &str) -> i64 {
+        match returner_role {
+            "engineer" => STEP_INSPECTOR,
+            "manager" => STEP_ENGINEER,
+            _ => STEP_INSPECTOR,
+        }
+    }
+}

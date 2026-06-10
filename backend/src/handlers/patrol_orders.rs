@@ -100,6 +100,97 @@ fn write_audit_trail(
     Ok(())
 }
 
+fn record_anomaly(
+    conn: &rusqlite::Connection,
+    order: &PatrolOrder,
+    action: &str,
+    actor_id: i64,
+    actor_role: &str,
+    reason: &str,
+    remark: Option<&str>,
+) -> Result<(), AppError> {
+    write_audit_trail(
+        conn,
+        order.id,
+        action,
+        Some(&order.status),
+        Some(&order.status),
+        actor_id,
+        actor_role,
+        remark,
+        Some(reason),
+        None,
+        order.previous_opinion.as_deref(),
+        order.previous_attachment.as_deref(),
+    )?;
+    let anomaly_sql = "UPDATE patrol_orders SET anomaly_reason = ?1 WHERE id = ?2";
+    conn.execute(anomaly_sql, rusqlite::params![reason, order.id])?;
+    Ok(())
+}
+
+fn update_process_record_step(
+    conn: &rusqlite::Connection,
+    patrol_order_id: i64,
+    step_order: i64,
+    status: Option<&str>,
+    handler_id: Option<i64>,
+    handler_role: Option<&str>,
+    opinion: Option<&str>,
+    evidence: Option<&Vec<String>>,
+    started_at: bool,
+    finished_at: bool,
+    correction_note: Option<&str>,
+) -> Result<(), AppError> {
+    let mut sets: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(s) = status {
+        sets.push("status = ?".to_string());
+        params.push(Box::new(s.to_string()));
+    }
+    if let Some(hid) = handler_id {
+        sets.push("handler_id = ?".to_string());
+        params.push(Box::new(hid));
+    }
+    if let Some(hr) = handler_role {
+        sets.push("handler_role = ?".to_string());
+        params.push(Box::new(hr.to_string()));
+    }
+    if let Some(o) = opinion {
+        sets.push("opinion = ?".to_string());
+        params.push(Box::new(o.to_string()));
+    }
+    if let Some(e) = evidence {
+        sets.push("evidence = ?".to_string());
+        let evidence_json = serde_json::to_string(e).unwrap_or_default();
+        params.push(Box::new(evidence_json));
+    }
+    if started_at {
+        sets.push("started_at = datetime('now')".to_string());
+    }
+    if finished_at {
+        sets.push("finished_at = datetime('now')".to_string());
+    }
+    if let Some(cn) = correction_note {
+        sets.push("correction_note = COALESCE(correction_note, '') || ?".to_string());
+        params.push(Box::new(format!("\n{}", cn)));
+    }
+
+    if sets.is_empty() {
+        return Ok(());
+    }
+
+    params.push(Box::new(patrol_order_id));
+    params.push(Box::new(step_order));
+
+    let sql = format!(
+        "UPDATE process_records SET {} WHERE patrol_order_id = ? AND step_order = ?",
+        sets.join(", ")
+    );
+    conn.execute(&sql, rusqlite::params_from_iter(params))?;
+    Ok(())
+}
+
 pub struct PatrolOrdersApi;
 
 #[OpenApi]
@@ -363,19 +454,25 @@ impl PatrolOrdersApi {
         let ctx = UserContext::new(x_user_id.0, x_user_role.0);
         let conn = state.db.lock().map_err(|_| AppError::internal("锁错误"))?;
 
+        if ctx.user_role != "admin" {
+            ctx.require_inspector()?;
+        }
+
         let order_no = generate_order_no();
         let priority = req.priority.clone().unwrap_or_else(|| "medium".to_string());
         let (overdue_level, is_overdue) = calculate_overdue_level(&req.due_date);
+        let initial_status = state_machine::PENDING_DISPATCH;
+        let initial_handler = "inspector";
 
         let sql = "
             INSERT INTO patrol_orders (order_no, station_id, status, priority, inspector_id, manager_id,
                                         current_handler, patrol_date, due_date, patrol_content,
                                         is_overdue, overdue_level)
-            VALUES (?1, ?2, 'pending_dispatch', ?3, ?4, ?5, 'inspector', ?6, ?7, ?8, ?9, ?10)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         ";
         conn.execute(sql, rusqlite::params![
-            order_no, req.station_id, priority, req.inspector_id, req.manager_id,
-            req.patrol_date, req.due_date, req.patrol_content,
+            order_no, req.station_id, initial_status, priority, req.inspector_id, req.manager_id,
+            initial_handler, req.patrol_date, req.due_date, req.patrol_content,
             if is_overdue { 1 } else { 0 }, overdue_level
         ])?;
 
@@ -383,22 +480,26 @@ impl PatrolOrdersApi {
 
         let process_sql = "
             INSERT INTO process_records (patrol_order_id, step_order, step_name, handler_id, handler_role, status, started_at)
-            VALUES (?1, 1, '站点巡检员补齐材料', ?2, ?3, 'in_progress', datetime('now'))
+            VALUES (?1, ?2, '站点巡检员补齐材料', ?3, ?4, ?5, datetime('now'))
         ";
-        conn.execute(process_sql, rusqlite::params![id, x_user_id.0, ctx.user_role])?;
+        conn.execute(process_sql, rusqlite::params![
+            id, state_machine::STEP_INSPECTOR,
+            req.inspector_id.unwrap_or(x_user_id.0), "inspector",
+            state_machine::STATUS_IN_PROGRESS
+        ])?;
         let process_sql2 = "
             INSERT INTO process_records (patrol_order_id, step_order, step_name, status)
-            VALUES (?1, 2, '运维工程师办理', 'pending')
+            VALUES (?1, ?2, '运维工程师办理', ?3)
         ";
-        conn.execute(process_sql2, [id])?;
+        conn.execute(process_sql2, rusqlite::params![id, state_machine::STEP_ENGINEER, state_machine::STATUS_PENDING])?;
         let process_sql3 = "
             INSERT INTO process_records (patrol_order_id, step_order, step_name, status)
-            VALUES (?1, 3, '区域负责人收口', 'pending')
+            VALUES (?1, ?2, '区域负责人收口', ?3)
         ";
-        conn.execute(process_sql3, [id])?;
+        conn.execute(process_sql3, rusqlite::params![id, state_machine::STEP_MANAGER, state_machine::STATUS_PENDING])?;
 
         write_audit_trail(
-            &conn, id, "创建巡检单", None, Some("pending_dispatch"),
+            &conn, id, "创建巡检单", None, Some(initial_status),
             x_user_id.0, &ctx.user_role, None, None, None, None, None
         )?;
 
@@ -419,7 +520,34 @@ impl PatrolOrdersApi {
         let conn = state.db.lock().map_err(|_| AppError::internal("锁错误"))?;
 
         let order = get_patrol_order(&conn, id)?;
-        check_version(order.version, req.version)?;
+
+        if ctx.user_role != "admin" {
+            ctx.require_inspector().map_err(|e| {
+                let _ = record_anomaly(&conn, &order, "更新失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                e
+            })?;
+            if !ctx.is_handler(order.inspector_id) {
+                let reason = "只有该巡检单的巡检员可以更新";
+                record_anomaly(&conn, &order, "更新失败", x_user_id.0, &ctx.user_role, reason, None)?;
+                return Err(AppError::forbidden(reason));
+            }
+        }
+
+        state_machine::check_transition(&order.status, "update").map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "更新失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
+
+        if ctx.user_role != "admin" && order.current_handler != "inspector" {
+            let reason = format!("当前处理人是「{}」，不是巡检员", order.current_handler);
+            record_anomaly(&conn, &order, "更新失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+            return Err(AppError::forbidden(reason));
+        }
+
+        check_version(order.version, req.version).map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "更新失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
 
         let evidence_json = req.patrol_evidence.as_ref().map(|e| serde_json::to_string(e).unwrap_or_default());
 
@@ -438,18 +566,21 @@ impl PatrolOrdersApi {
         ])?;
 
         if let Some(note) = &req.correction_note {
-            let proc_sql = "
-                UPDATE process_records
-                SET correction_note = COALESCE(correction_note, '') || ?1
-                WHERE patrol_order_id = ?2 AND step_order = 1
-            ";
-            conn.execute(proc_sql, rusqlite::params![format!("\n{}", note), id])?;
+            update_process_record_step(
+                &conn, id, state_machine::STEP_INSPECTOR,
+                None, None, None,
+                None, None,
+                false, false,
+                Some(note),
+            )?;
         }
 
         write_audit_trail(
             &conn, id, "更新巡检单", Some(&order.status), Some(&order.status),
             x_user_id.0, &ctx.user_role, None, None,
-            req.patrol_evidence.as_ref(), None, None
+            req.patrol_evidence.as_ref(),
+            order.previous_opinion.as_deref(),
+            order.previous_attachment.as_deref(),
         )?;
 
         let updated = get_patrol_order(&conn, id)?;
@@ -471,13 +602,32 @@ impl PatrolOrdersApi {
         let order = get_patrol_order(&conn, id)?;
 
         if ctx.user_role != "admin" {
-            ctx.require_inspector()?;
+            ctx.require_inspector().map_err(|e| {
+                let _ = record_anomaly(&conn, &order, "提交失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                e
+            })?;
             if !ctx.is_handler(order.inspector_id) {
-                return Err(AppError::forbidden("只有该巡检单的巡检员可以提交"));
+                let reason = "只有该巡检单的巡检员可以提交";
+                record_anomaly(&conn, &order, "提交失败", x_user_id.0, &ctx.user_role, reason, None)?;
+                return Err(AppError::forbidden(reason));
             }
         }
 
-        check_version(order.version, req.version)?;
+        state_machine::check_transition(&order.status, "submit").map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "提交失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
+
+        if ctx.user_role != "admin" && order.current_handler != "inspector" {
+            let reason = format!("当前处理人是「{}」，不是巡检员", order.current_handler);
+            record_anomaly(&conn, &order, "提交失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+            return Err(AppError::forbidden(reason));
+        }
+
+        check_version(order.version, req.version).map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "提交失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
 
         let has_content = req.patrol_content.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false)
             || order.patrol_content.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
@@ -489,20 +639,16 @@ impl PatrolOrdersApi {
             || order.patrol_evidence.as_ref().map(|e| !e.is_empty()).unwrap_or(false);
 
         if !(has_content && has_weather && has_temp && has_evidence) {
-            let reason = "巡检材料不完整: patrol_content, weather, temperature, patrol_evidence 至少需要一项";
-            write_audit_trail(
-                &conn, id, "提交失败", Some(&order.status), Some(&order.status),
-                x_user_id.0, &ctx.user_role, None, Some(reason),
-                req.patrol_evidence.as_ref(), None, None
-            )?;
-            let anomaly_sql = "UPDATE patrol_orders SET anomaly_reason = ?1 WHERE id = ?2";
-            conn.execute(anomaly_sql, rusqlite::params![reason, id])?;
+            let reason = "巡检材料不完整: patrol_content、weather、temperature、patrol_evidence 均不能为空";
+            record_anomaly(&conn, &order, "提交失败", x_user_id.0, &ctx.user_role, reason, None)?;
             return Err(AppError::bad_request(reason));
         }
 
         let evidence_json = req.patrol_evidence.as_ref().map(|e| serde_json::to_string(e).unwrap_or_default());
-        let new_status = if order.status == "returned" { "in_progress" } else { &order.status };
         let from_status = order.status.clone();
+        let to_status = state_machine::next_status_after_submit();
+        let next_handler = state_machine::next_handler_after_submit();
+        let action = if from_status == state_machine::RETURNED { "补正提交" } else { "提交巡检材料" };
 
         let sql = "
             UPDATE patrol_orders
@@ -511,26 +657,34 @@ impl PatrolOrdersApi {
                 temperature = COALESCE(?3, temperature),
                 patrol_evidence = COALESCE(?4, patrol_evidence),
                 status = ?5,
+                current_handler = ?6,
+                previous_handler_id = ?7,
                 version = version + 1,
                 updated_at = datetime('now')
-            WHERE id = ?6
+            WHERE id = ?8
         ";
         conn.execute(sql, rusqlite::params![
-            req.patrol_content, req.weather, req.temperature, evidence_json, new_status, id
+            req.patrol_content, req.weather, req.temperature, evidence_json,
+            to_status, next_handler, x_user_id.0, id
         ])?;
 
-        let proc_sql = "
-            UPDATE process_records
-            SET status = 'completed', finished_at = datetime('now'), opinion = '巡检材料已提交'
-            WHERE patrol_order_id = ?1 AND step_order = 1
-        ";
-        conn.execute(proc_sql, [id])?;
+        update_process_record_step(
+            &conn, id, state_machine::STEP_INSPECTOR,
+            Some(state_machine::STATUS_COMPLETED),
+            None, None,
+            Some("巡检材料已提交"),
+            req.patrol_evidence.as_ref(),
+            false, true,
+            None,
+        )?;
 
-        let action = if from_status == "returned" { "补正提交" } else { "提交巡检材料" };
+        let submitted_evidence = req.patrol_evidence.as_ref().or(order.patrol_evidence.as_ref());
         write_audit_trail(
-            &conn, id, action, Some(&from_status), Some(new_status),
+            &conn, id, action, Some(&from_status), Some(to_status),
             x_user_id.0, &ctx.user_role, Some("巡检材料已提交"), None,
-            req.patrol_evidence.as_ref(), None, None
+            submitted_evidence,
+            order.previous_opinion.as_deref(),
+            order.previous_attachment.as_deref(),
         )?;
 
         let updated = get_patrol_order(&conn, id)?;
@@ -549,37 +703,69 @@ impl PatrolOrdersApi {
         let ctx = UserContext::new(x_user_id.0, x_user_role.0);
         let conn = state.db.lock().map_err(|_| AppError::internal("锁错误"))?;
 
+        let order = get_patrol_order(&conn, id)?;
+
         if ctx.user_role != "admin" {
-            ctx.require_manager()?;
+            ctx.require_manager().map_err(|e| {
+                let _ = record_anomaly(&conn, &order, "派发失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                e
+            })?;
+            if !ctx.is_handler(order.manager_id) {
+                let reason = "只有该巡检单的区域负责人可以派发";
+                record_anomaly(&conn, &order, "派发失败", x_user_id.0, &ctx.user_role, reason, None)?;
+                return Err(AppError::forbidden(reason));
+            }
         }
 
-        let order = get_patrol_order(&conn, id)?;
-        check_version(order.version, req.version)?;
+        state_machine::check_transition(&order.status, "dispatch").map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "派发失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
+
+        if ctx.user_role != "admin" && order.current_handler != "manager" {
+            let reason = format!("当前处理人是「{}」，不是区域负责人", order.current_handler);
+            record_anomaly(&conn, &order, "派发失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+            return Err(AppError::forbidden(reason));
+        }
+
+        check_version(order.version, req.version).map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "派发失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
 
         let from_status = order.status.clone();
+        let to_status = state_machine::next_status_after_dispatch();
+        let next_handler = state_machine::next_handler_after_dispatch();
+
         let sql = "
             UPDATE patrol_orders
             SET engineer_id = ?1,
-                current_handler = 'engineer',
-                status = 'in_progress',
-                previous_handler_id = ?2,
+                current_handler = ?2,
+                status = ?3,
+                previous_handler_id = ?4,
                 version = version + 1,
                 updated_at = datetime('now')
-            WHERE id = ?3
+            WHERE id = ?5
         ";
-        conn.execute(sql, rusqlite::params![req.engineer_id, x_user_id.0, id])?;
+        conn.execute(sql, rusqlite::params![
+            req.engineer_id, next_handler, to_status, x_user_id.0, id
+        ])?;
 
-        let proc_sql = "
-            UPDATE process_records
-            SET handler_id = ?1, handler_role = 'engineer', status = 'in_progress', started_at = datetime('now')
-            WHERE patrol_order_id = ?2 AND step_order = 2
-        ";
-        conn.execute(proc_sql, rusqlite::params![req.engineer_id, id])?;
+        update_process_record_step(
+            &conn, id, state_machine::STEP_ENGINEER,
+            Some(state_machine::STATUS_IN_PROGRESS),
+            Some(req.engineer_id), Some("engineer"),
+            None, None,
+            true, false,
+            None,
+        )?;
 
         write_audit_trail(
-            &conn, id, "派发工程师", Some(&from_status), Some("in_progress"),
+            &conn, id, "派发工程师", Some(&from_status), Some(to_status),
             x_user_id.0, &ctx.user_role, req.remark.as_deref(), None,
-            None, None, None
+            None,
+            order.previous_opinion.as_deref(),
+            order.previous_attachment.as_deref(),
         )?;
 
         let updated = get_patrol_order(&conn, id)?;
@@ -601,38 +787,48 @@ impl PatrolOrdersApi {
         let order = get_patrol_order(&conn, id)?;
 
         if ctx.user_role != "admin" {
-            ctx.require_engineer()?;
+            ctx.require_engineer().map_err(|e| {
+                let _ = record_anomaly(&conn, &order, "办理失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                e
+            })?;
             if !ctx.is_handler(order.engineer_id) {
-                return Err(AppError::forbidden("只有该巡检单的工程师可以办理"));
+                let reason = "只有该巡检单的工程师可以办理";
+                record_anomaly(&conn, &order, "办理失败", x_user_id.0, &ctx.user_role, reason, None)?;
+                return Err(AppError::forbidden(reason));
             }
         }
 
-        check_version(order.version, req.version)?;
+        state_machine::check_transition(&order.status, "process").map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "办理失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
+
+        if ctx.user_role != "admin" && order.current_handler != "engineer" {
+            let reason = format!("当前处理人是「{}」，不是工程师", order.current_handler);
+            record_anomaly(&conn, &order, "办理失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+            return Err(AppError::forbidden(reason));
+        }
+
+        check_version(order.version, req.version).map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "办理失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
 
         if req.defect_evidences.is_empty() {
             let reason = "办理失败: 缺少缺陷消缺证据";
-            write_audit_trail(
-                &conn, id, "办理失败", Some(&order.status), Some(&order.status),
-                x_user_id.0, &ctx.user_role, None, Some(reason),
-                None, None, None
-            )?;
-            let anomaly_sql = "UPDATE patrol_orders SET anomaly_reason = ?1 WHERE id = ?2";
-            conn.execute(anomaly_sql, rusqlite::params![reason, id])?;
+            record_anomaly(&conn, &order, "办理失败", x_user_id.0, &ctx.user_role, reason, None)?;
             return Err(AppError::bad_request(reason));
         }
 
         for (defect_no, evidence) in &req.defect_evidences {
             if evidence.is_empty() {
                 let reason = format!("缺陷 {} 缺少消缺证据", defect_no);
-                write_audit_trail(
-                    &conn, id, "办理失败", Some(&order.status), Some(&order.status),
-                    x_user_id.0, &ctx.user_role, None, Some(&reason),
-                    None, None, None
-                )?;
-                let anomaly_sql = "UPDATE patrol_orders SET anomaly_reason = ?1 WHERE id = ?2";
-                conn.execute(anomaly_sql, rusqlite::params![reason, id])?;
-                return Err(AppError::bad_request(format!("缺陷 {} 缺少消缺证据", defect_no)));
+                record_anomaly(&conn, &order, "办理失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+                return Err(AppError::bad_request(reason));
             }
+        }
+
+        for (defect_no, evidence) in &req.defect_evidences {
             let evidence_json = serde_json::to_string(evidence).unwrap_or_default();
             let defect_sql = "
                 UPDATE defect_reports
@@ -643,39 +839,49 @@ impl PatrolOrdersApi {
         }
 
         let from_status = order.status.clone();
+        let to_status = state_machine::next_status_after_process();
+        let next_handler = state_machine::next_handler_after_process();
         let all_evidence: Vec<String> = req.defect_evidences.values().flatten().cloned().collect();
 
         let sql = "
             UPDATE patrol_orders
-            SET status = 'reviewing',
-                current_handler = 'manager',
-                previous_handler_id = ?1,
-                previous_opinion = ?2,
+            SET status = ?1,
+                current_handler = ?2,
+                previous_handler_id = ?3,
+                previous_opinion = ?4,
                 version = version + 1,
                 updated_at = datetime('now')
-            WHERE id = ?3
+            WHERE id = ?5
         ";
-        conn.execute(sql, rusqlite::params![x_user_id.0, req.opinion, id])?;
+        conn.execute(sql, rusqlite::params![
+            to_status, next_handler, x_user_id.0, req.opinion, id
+        ])?;
 
-        let proc_sql = "
-            UPDATE process_records
-            SET status = 'completed', finished_at = datetime('now'), opinion = ?1, evidence = ?2
-            WHERE patrol_order_id = ?3 AND step_order = 2
-        ";
-        let evidence_json = serde_json::to_string(&all_evidence).unwrap_or_default();
-        conn.execute(proc_sql, rusqlite::params![req.opinion, evidence_json, id])?;
+        update_process_record_step(
+            &conn, id, state_machine::STEP_ENGINEER,
+            Some(state_machine::STATUS_COMPLETED),
+            None, None,
+            req.opinion.as_deref(),
+            Some(&all_evidence),
+            false, true,
+            None,
+        )?;
 
-        let proc_sql2 = "
-            UPDATE process_records
-            SET handler_id = ?1, handler_role = 'manager', status = 'in_progress', started_at = datetime('now')
-            WHERE patrol_order_id = ?2 AND step_order = 3
-        ";
-        conn.execute(proc_sql2, rusqlite::params![order.manager_id, id])?;
+        update_process_record_step(
+            &conn, id, state_machine::STEP_MANAGER,
+            Some(state_machine::STATUS_IN_PROGRESS),
+            order.manager_id, Some("manager"),
+            None, None,
+            true, false,
+            None,
+        )?;
 
         write_audit_trail(
-            &conn, id, "消缺完成", Some(&from_status), Some("reviewing"),
+            &conn, id, "消缺完成", Some(&from_status), Some(to_status),
             x_user_id.0, &ctx.user_role, req.opinion.as_deref(), None,
-            Some(&all_evidence), None, None
+            Some(&all_evidence),
+            order.previous_opinion.as_deref(),
+            order.previous_attachment.as_deref(),
         )?;
 
         let updated = get_patrol_order(&conn, id)?;
@@ -694,32 +900,85 @@ impl PatrolOrdersApi {
         let ctx = UserContext::new(x_user_id.0, x_user_role.0);
         let conn = state.db.lock().map_err(|_| AppError::internal("锁错误"))?;
 
+        let order = get_patrol_order(&conn, id)?;
+
         if ctx.user_role != "admin" {
-            ctx.require_role(&["engineer", "manager"])?;
+            ctx.require_role(&["engineer", "manager"]).map_err(|e| {
+                let _ = record_anomaly(&conn, &order, "退回失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                e
+            })?;
+            if ctx.user_role == "engineer" && !ctx.is_handler(order.engineer_id) {
+                let reason = "只有该巡检单的工程师可以退回";
+                record_anomaly(&conn, &order, "退回失败", x_user_id.0, &ctx.user_role, reason, None)?;
+                return Err(AppError::forbidden(reason));
+            }
+            if ctx.user_role == "manager" && !ctx.is_handler(order.manager_id) {
+                let reason = "只有该巡检单的区域负责人可以退回";
+                record_anomaly(&conn, &order, "退回失败", x_user_id.0, &ctx.user_role, reason, None)?;
+                return Err(AppError::forbidden(reason));
+            }
         }
 
-        let order = get_patrol_order(&conn, id)?;
-        check_version(order.version, req.version)?;
+        state_machine::check_transition(&order.status, "return").map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "退回失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
+
+        let expected_handler = if ctx.user_role == "manager" || (ctx.user_role == "admin" && order.current_handler == "manager") {
+            "manager"
+        } else {
+            "engineer"
+        };
+        if ctx.user_role != "admin" && order.current_handler != expected_handler {
+            let reason = format!("当前处理人是「{}」，不是{}", order.current_handler, expected_handler);
+            record_anomaly(&conn, &order, "退回失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+            return Err(AppError::forbidden(reason));
+        }
+
+        check_version(order.version, req.version).map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "退回失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
 
         let from_status = order.status.clone();
+        let to_status = state_machine::next_status_after_return();
+        let returner_role = if ctx.user_role == "admin" {
+            &order.current_handler
+        } else {
+            &ctx.user_role
+        };
+        let next_handler = state_machine::return_target_handler(returner_role);
+        let return_step = state_machine::return_step(returner_role);
 
         let sql = "
             UPDATE patrol_orders
-            SET status = 'returned',
-                current_handler = 'inspector',
-                previous_handler_id = ?1,
-                previous_opinion = ?2,
-                previous_attachment = ?3,
+            SET status = ?1,
+                current_handler = ?2,
+                previous_handler_id = ?3,
+                previous_opinion = ?4,
+                previous_attachment = ?5,
                 version = version + 1,
                 updated_at = datetime('now')
-            WHERE id = ?4
+            WHERE id = ?6
         ";
-        conn.execute(sql, rusqlite::params![x_user_id.0, req.opinion, req.attachment, id])?;
+        conn.execute(sql, rusqlite::params![
+            to_status, next_handler, x_user_id.0, req.opinion, req.attachment, id
+        ])?;
+
+        update_process_record_step(
+            &conn, id, return_step,
+            None, None, None,
+            None, None,
+            false, false,
+            Some(&req.opinion),
+        )?;
 
         write_audit_trail(
-            &conn, id, "退回补正", Some(&from_status), Some("returned"),
+            &conn, id, "退回补正", Some(&from_status), Some(to_status),
             x_user_id.0, &ctx.user_role, Some(&req.opinion), None,
-            None, Some(&req.opinion), req.attachment.as_deref()
+            None,
+            order.previous_opinion.as_deref(),
+            order.previous_attachment.as_deref(),
         )?;
 
         let updated = get_patrol_order(&conn, id)?;
@@ -738,16 +997,49 @@ impl PatrolOrdersApi {
         let ctx = UserContext::new(x_user_id.0, x_user_role.0);
         let conn = state.db.lock().map_err(|_| AppError::internal("锁错误"))?;
 
+        let order = get_patrol_order(&conn, id)?;
+
         if ctx.user_role != "admin" {
-            ctx.require_manager()?;
+            ctx.require_manager().map_err(|e| {
+                let _ = record_anomaly(&conn, &order, "复核失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                e
+            })?;
+            if !ctx.is_handler(order.manager_id) {
+                let reason = "只有该巡检单的区域负责人可以复核";
+                record_anomaly(&conn, &order, "复核失败", x_user_id.0, &ctx.user_role, reason, None)?;
+                return Err(AppError::forbidden(reason));
+            }
         }
 
-        let order = get_patrol_order(&conn, id)?;
-        check_version(order.version, req.version)?;
+        state_machine::check_transition(&order.status, "review").map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "复核失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
 
+        if ctx.user_role != "admin" && order.current_handler != "manager" {
+            let reason = format!("当前处理人是「{}」，不是区域负责人", order.current_handler);
+            record_anomaly(&conn, &order, "复核失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+            return Err(AppError::forbidden(reason));
+        }
+
+        check_version(order.version, req.version).map_err(|e| {
+            let _ = record_anomaly(&conn, &order, "复核失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+            e
+        })?;
+
+        let is_pass = req.result == "pass";
         let from_status = order.status.clone();
-        let to_status = if req.result == "pass" { "closed" } else { "returned" };
-        let current_handler = if req.result == "pass" { "inspector" } else { "engineer" };
+        let to_status = if is_pass {
+            state_machine::next_status_after_review_pass()
+        } else {
+            state_machine::next_status_after_review_fail()
+        };
+        let next_handler = if is_pass {
+            state_machine::next_handler_after_review_pass()
+        } else {
+            state_machine::next_handler_after_review_fail()
+        };
+        let action = if is_pass { "复核通过" } else { "复核退回" };
 
         let sql = "
             UPDATE patrol_orders
@@ -761,23 +1053,35 @@ impl PatrolOrdersApi {
             WHERE id = ?6
         ";
         conn.execute(sql, rusqlite::params![
-            to_status, current_handler, x_user_id.0, req.remark, req.remark, id
+            to_status, next_handler, x_user_id.0, req.remark, req.remark, id
         ])?;
 
-        if to_status == "closed" {
-            let proc_sql = "
-                UPDATE process_records
-                SET status = 'completed', finished_at = datetime('now'), opinion = ?1
-                WHERE patrol_order_id = ?2 AND step_order = 3
-            ";
-            conn.execute(proc_sql, rusqlite::params![req.remark, id])?;
+        if is_pass {
+            update_process_record_step(
+                &conn, id, state_machine::STEP_MANAGER,
+                Some(state_machine::STATUS_COMPLETED),
+                None, None,
+                req.remark.as_deref(),
+                None,
+                false, true,
+                None,
+            )?;
+        } else {
+            update_process_record_step(
+                &conn, id, state_machine::STEP_ENGINEER,
+                None, None, None,
+                None, None,
+                false, false,
+                Some(&format!("复核退回: {}", req.remark.as_deref().unwrap_or(""))),
+            )?;
         }
 
-        let action = if to_status == "closed" { "复核通过" } else { "复核退回" };
         write_audit_trail(
             &conn, id, action, Some(&from_status), Some(to_status),
             x_user_id.0, &ctx.user_role, req.remark.as_deref(), None,
-            None, order.previous_opinion.as_deref(), order.previous_attachment.as_deref()
+            None,
+            order.previous_opinion.as_deref(),
+            order.previous_attachment.as_deref(),
         )?;
 
         let updated = get_patrol_order(&conn, id)?;
@@ -799,72 +1103,149 @@ impl PatrolOrdersApi {
 
         for item in &req.items {
             let id = item.id;
-            match (|| -> Result<(), AppError> {
-                if ctx.user_role != "admin" {
-                    ctx.require_engineer()?;
-                }
-                let order = get_patrol_order(&conn, id)?;
-                if ctx.user_role != "admin" && !ctx.is_handler(order.engineer_id) {
-                    return Err(AppError::forbidden("不是当前处理人"));
-                }
-                check_version(order.version, item.version)?;
-                Ok(())
-            })() {
-                Ok(_) => {
-                    if let Some(evidences) = &item.defect_evidences {
-                        for (defect_no, evidence) in evidences {
-                            if evidence.is_empty() {
-                                results.push(BatchResultItem {
-                                    id,
-                                    success: false,
-                                    message: format!("缺陷 {} 缺少消缺证据", defect_no),
-                                });
-                                continue;
-                            }
-                            let evidence_json = serde_json::to_string(evidence).unwrap_or_default();
-                            let defect_sql = "
-                                UPDATE defect_reports
-                                SET status = 'resolved', evidence = ?1, version = version + 1, updated_at = datetime('now')
-                                WHERE defect_no = ?2 AND patrol_order_id = ?3
-                            ";
-                            conn.execute(defect_sql, rusqlite::params![evidence_json, defect_no, id]).ok();
-                        }
-                    }
-
-                    let from_status = conn.query_row("SELECT status FROM patrol_orders WHERE id = ?1", [id], |r| r.get::<_, String>(0)).unwrap_or_default();
-                    let sql = "
-                        UPDATE patrol_orders
-                        SET status = 'reviewing', current_handler = 'manager',
-                            previous_handler_id = ?1, previous_opinion = ?2,
-                            version = version + 1, updated_at = datetime('now')
-                        WHERE id = ?3
-                    ";
-                    conn.execute(sql, rusqlite::params![x_user_id.0, item.opinion, id]).ok();
-
-                    write_audit_trail(
-                        &conn, id, "批量消缺", Some(&from_status), Some("reviewing"),
-                        x_user_id.0, &ctx.user_role, item.opinion.as_deref(), None,
-                        None, None, None
-                    ).ok();
-
-                    results.push(BatchResultItem {
-                        id,
-                        success: true,
-                        message: "处理成功".to_string(),
-                    });
-                }
+            let order = match get_patrol_order(&conn, id) {
+                Ok(o) => o,
                 Err(e) => {
                     results.push(BatchResultItem {
                         id,
                         success: false,
-                        message: match e {
-                            AppError::Conflict(msg) => msg.message,
-                            AppError::Forbidden(msg) => msg.message,
-                            AppError::NotFound(msg) => msg.message,
-                            _ => "处理失败".to_string(),
-                        },
+                        message: e.to_string(),
                     });
+                    continue;
                 }
+            };
+
+            let mut error_msg: Option<String> = None;
+
+            if ctx.user_role != "admin" {
+                if let Err(e) = ctx.require_engineer() {
+                    let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                    error_msg = Some(e.to_string());
+                }
+                if error_msg.is_none() && !ctx.is_handler(order.engineer_id) {
+                    let reason = "只有该巡检单的工程师可以办理";
+                    let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, reason, None);
+                    error_msg = Some(reason.to_string());
+                }
+            }
+
+            if error_msg.is_none() {
+                if let Err(e) = state_machine::check_transition(&order.status, "process") {
+                    let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                    error_msg = Some(e.to_string());
+                }
+            }
+
+            if error_msg.is_none() && ctx.user_role != "admin" && order.current_handler != "engineer" {
+                let reason = format!("当前处理人是「{}」，不是工程师", order.current_handler);
+                let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, &reason, None);
+                error_msg = Some(reason);
+            }
+
+            if error_msg.is_none() {
+                if let Err(e) = check_version(order.version, item.version) {
+                    let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                    error_msg = Some(e.to_string());
+                }
+            }
+
+            if let Some(msg) = error_msg {
+                results.push(BatchResultItem {
+                    id,
+                    success: false,
+                    message: msg,
+                });
+                continue;
+            }
+
+            let mut has_evidence_error = false;
+            if let Some(evidences) = &item.defect_evidences {
+                for (defect_no, evidence) in evidences {
+                    if evidence.is_empty() {
+                        let reason = format!("缺陷 {} 缺少消缺证据", defect_no);
+                        let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, &reason, None);
+                        results.push(BatchResultItem {
+                            id,
+                            success: false,
+                            message: reason,
+                        });
+                        has_evidence_error = true;
+                        break;
+                    }
+                }
+            }
+            if has_evidence_error {
+                continue;
+            }
+
+            if let Some(evidences) = &item.defect_evidences {
+                for (defect_no, evidence) in evidences {
+                    let evidence_json = serde_json::to_string(evidence).unwrap_or_default();
+                    let defect_sql = "
+                        UPDATE defect_reports
+                        SET status = 'resolved', evidence = ?1, version = version + 1, updated_at = datetime('now')
+                        WHERE defect_no = ?2 AND patrol_order_id = ?3
+                    ";
+                    let _ = conn.execute(defect_sql, rusqlite::params![evidence_json, defect_no, id]);
+                }
+            }
+
+            let from_status = order.status.clone();
+            let to_status = state_machine::next_status_after_process();
+            let next_handler = state_machine::next_handler_after_process();
+            let all_evidence: Vec<String> = item.defect_evidences
+                .as_ref()
+                .map(|m| m.values().flatten().cloned().collect())
+                .unwrap_or_default();
+
+            let sql = "
+                UPDATE patrol_orders
+                SET status = ?1, current_handler = ?2,
+                    previous_handler_id = ?3, previous_opinion = ?4,
+                    version = version + 1, updated_at = datetime('now')
+                WHERE id = ?5
+            ";
+            if conn.execute(sql, rusqlite::params![
+                to_status, next_handler, x_user_id.0, item.opinion, id
+            ]).is_ok() {
+                let _ = update_process_record_step(
+                    &conn, id, state_machine::STEP_ENGINEER,
+                    Some(state_machine::STATUS_COMPLETED),
+                    None, None,
+                    item.opinion.as_deref(),
+                    if all_evidence.is_empty() { None } else { Some(&all_evidence) },
+                    false, true,
+                    None,
+                );
+
+                let _ = update_process_record_step(
+                    &conn, id, state_machine::STEP_MANAGER,
+                    Some(state_machine::STATUS_IN_PROGRESS),
+                    order.manager_id, Some("manager"),
+                    None, None,
+                    true, false,
+                    None,
+                );
+
+                let _ = write_audit_trail(
+                    &conn, id, "批量消缺", Some(&from_status), Some(to_status),
+                    x_user_id.0, &ctx.user_role, item.opinion.as_deref(), None,
+                    if all_evidence.is_empty() { None } else { Some(&all_evidence) },
+                    order.previous_opinion.as_deref(),
+                    order.previous_attachment.as_deref(),
+                );
+
+                results.push(BatchResultItem {
+                    id,
+                    success: true,
+                    message: "处理成功".to_string(),
+                });
+            } else {
+                results.push(BatchResultItem {
+                    id,
+                    success: false,
+                    message: "处理失败".to_string(),
+                });
             }
         }
 
@@ -886,53 +1267,109 @@ impl PatrolOrdersApi {
 
         for item in &req.items {
             let id = item.id;
-            match (|| -> Result<(), AppError> {
-                if ctx.user_role != "admin" {
-                    ctx.require_manager()?;
-                }
-                let order = get_patrol_order(&conn, id)?;
-                let (_, is_overdue) = calculate_overdue_level(&order.due_date);
-                if !is_overdue && order.is_overdue == 0 {
-                    return Err(AppError::bad_request("该巡检单未逾期，不能通过批量关闭处理"));
-                }
-                check_version(order.version, item.version)?;
-                Ok(())
-            })() {
-                Ok(_) => {
-                    let from_status = conn.query_row("SELECT status FROM patrol_orders WHERE id = ?1", [id], |r| r.get::<_, String>(0)).unwrap_or_default();
-                    let sql = "
-                        UPDATE patrol_orders
-                        SET status = 'closed', audit_remark = ?1,
-                            version = version + 1, updated_at = datetime('now')
-                        WHERE id = ?2
-                    ";
-                    conn.execute(sql, rusqlite::params![item.remark, id]).ok();
-
-                    write_audit_trail(
-                        &conn, id, "批量关闭逾期单", Some(&from_status), Some("closed"),
-                        x_user_id.0, &ctx.user_role, item.remark.as_deref(), None,
-                        None, None, None
-                    ).ok();
-
-                    results.push(BatchResultItem {
-                        id,
-                        success: true,
-                        message: "关闭成功".to_string(),
-                    });
-                }
+            let order = match get_patrol_order(&conn, id) {
+                Ok(o) => o,
                 Err(e) => {
                     results.push(BatchResultItem {
                         id,
                         success: false,
-                        message: match e {
-                            AppError::Conflict(msg) => msg.message,
-                            AppError::BadRequest(msg) => msg.message,
-                            AppError::Forbidden(msg) => msg.message,
-                            AppError::NotFound(msg) => msg.message,
-                            _ => "处理失败".to_string(),
-                        },
+                        message: e.to_string(),
                     });
+                    continue;
                 }
+            };
+
+            let mut error_msg: Option<String> = None;
+
+            if ctx.user_role != "admin" {
+                if let Err(e) = ctx.require_manager() {
+                    let _ = record_anomaly(&conn, &order, "批量关闭失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                    error_msg = Some(e.to_string());
+                }
+                if error_msg.is_none() && !ctx.is_handler(order.manager_id) {
+                    let reason = "只有该巡检单的区域负责人可以关闭";
+                    let _ = record_anomaly(&conn, &order, "批量关闭失败", x_user_id.0, &ctx.user_role, reason, None);
+                    error_msg = Some(reason.to_string());
+                }
+            }
+
+            if error_msg.is_none() {
+                if let Err(e) = state_machine::check_transition(&order.status, "close") {
+                    let _ = record_anomaly(&conn, &order, "批量关闭失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                    error_msg = Some(e.to_string());
+                }
+            }
+
+            if error_msg.is_none() && ctx.user_role != "admin" && order.current_handler != "manager" {
+                let reason = format!("当前处理人是「{}」，不是区域负责人", order.current_handler);
+                let _ = record_anomaly(&conn, &order, "批量关闭失败", x_user_id.0, &ctx.user_role, &reason, None);
+                error_msg = Some(reason);
+            }
+
+            if error_msg.is_none() {
+                let (_, is_overdue) = calculate_overdue_level(&order.due_date);
+                if !is_overdue && order.is_overdue == 0 {
+                    let reason = "该巡检单未逾期，不能通过批量关闭处理";
+                    let _ = record_anomaly(&conn, &order, "批量关闭失败", x_user_id.0, &ctx.user_role, reason, None);
+                    error_msg = Some(reason.to_string());
+                }
+            }
+
+            if error_msg.is_none() {
+                if let Err(e) = check_version(order.version, item.version) {
+                    let _ = record_anomaly(&conn, &order, "批量关闭失败", x_user_id.0, &ctx.user_role, &e.to_string(), None);
+                    error_msg = Some(e.to_string());
+                }
+            }
+
+            if let Some(msg) = error_msg {
+                results.push(BatchResultItem {
+                    id,
+                    success: false,
+                    message: msg,
+                });
+                continue;
+            }
+
+            let from_status = order.status.clone();
+            let to_status = state_machine::CLOSED;
+
+            let sql = "
+                UPDATE patrol_orders
+                SET status = ?1, audit_remark = ?2,
+                    version = version + 1, updated_at = datetime('now')
+                WHERE id = ?3
+            ";
+            if conn.execute(sql, rusqlite::params![to_status, item.remark, id]).is_ok() {
+                let _ = update_process_record_step(
+                    &conn, id, state_machine::STEP_MANAGER,
+                    Some(state_machine::STATUS_COMPLETED),
+                    None, None,
+                    item.remark.as_deref(),
+                    None,
+                    false, true,
+                    None,
+                );
+
+                let _ = write_audit_trail(
+                    &conn, id, "批量关闭逾期单", Some(&from_status), Some(to_status),
+                    x_user_id.0, &ctx.user_role, item.remark.as_deref(), None,
+                    None,
+                    order.previous_opinion.as_deref(),
+                    order.previous_attachment.as_deref(),
+                );
+
+                results.push(BatchResultItem {
+                    id,
+                    success: true,
+                    message: "关闭成功".to_string(),
+                });
+            } else {
+                results.push(BatchResultItem {
+                    id,
+                    success: false,
+                    message: "关闭失败".to_string(),
+                });
             }
         }
 

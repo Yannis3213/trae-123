@@ -50,6 +50,7 @@ export interface PatrolOrder {
   overdue_level: OverdueLevel;
   created_at: string;
   updated_at: string;
+  version?: number;
 }
 
 export type DefectSeverity = 'minor' | 'major' | 'critical';

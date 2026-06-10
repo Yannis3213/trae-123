@@ -22,20 +22,67 @@ impl AcceptanceApi {
         let ctx = UserContext::new(x_user_id.0, x_user_role.0);
         let conn = state.db.lock().map_err(|_| AppError::internal("锁错误"))?;
 
+        let order_sql = "
+            SELECT po.status, po.current_handler, po.manager_id
+            FROM patrol_orders po
+            WHERE po.id = ?1
+        ";
+        let (order_status, current_handler, manager_id): (String, String, Option<i64>) = conn
+            .query_row(order_sql, [req.patrol_order_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2).ok()))
+            })
+            .map_err(|_| AppError::not_found("巡检单不存在"))?;
+
+        fn record_acceptance_anomaly(
+            conn: &rusqlite::Connection,
+            patrol_order_id: i64,
+            order_status: &str,
+            actor_id: i64,
+            actor_role: &str,
+            reason: &str,
+            evidence: Option<&Vec<String>>,
+        ) {
+            let evidence_json = evidence.map(|e| serde_json::to_string(e).unwrap_or_default());
+            let _ = conn.execute(
+                "
+                    INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, anomaly_reason, evidence)
+                    VALUES (?1, '验收失败', ?2, ?2, ?3, ?4, ?5, ?6)
+                ",
+                rusqlite::params![patrol_order_id, order_status, actor_id, actor_role, reason, evidence_json],
+            );
+            let _ = conn.execute(
+                "UPDATE patrol_orders SET anomaly_reason = ?1 WHERE id = ?2",
+                rusqlite::params![reason, patrol_order_id],
+            );
+        }
+
         if ctx.user_role != "admin" {
-            ctx.require_manager()?;
+            if let Err(e) = ctx.require_manager() {
+                record_acceptance_anomaly(&conn, req.patrol_order_id, &order_status, x_user_id.0, &ctx.user_role, &e.to_string(), Some(&req.evidence));
+                return Err(e);
+            }
+            if !ctx.is_handler(manager_id) {
+                let reason = "只有该巡检单的区域负责人可以验收";
+                record_acceptance_anomaly(&conn, req.patrol_order_id, &order_status, x_user_id.0, &ctx.user_role, reason, Some(&req.evidence));
+                return Err(AppError::forbidden(reason));
+            }
+        }
+
+        if !state_machine::can_acceptance(&order_status) {
+            let reason = format!("状态冲突：当前状态「{}」不允许验收", state_machine::status_label(&order_status));
+            record_acceptance_anomaly(&conn, req.patrol_order_id, &order_status, x_user_id.0, &ctx.user_role, &reason, Some(&req.evidence));
+            return Err(AppError::bad_request(reason));
+        }
+
+        if ctx.user_role != "admin" && current_handler != "manager" {
+            let reason = format!("当前处理人是「{}」，不是区域负责人", current_handler);
+            record_acceptance_anomaly(&conn, req.patrol_order_id, &order_status, x_user_id.0, &ctx.user_role, &reason, Some(&req.evidence));
+            return Err(AppError::forbidden(reason));
         }
 
         if req.evidence.is_empty() {
             let reason = "验收失败: 缺少验收证据";
-            let audit_sql = "
-                INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, anomaly_reason)
-                SELECT ?1, '验收失败', status, status, ?2, ?3, ?4
-                FROM patrol_orders WHERE id = ?1
-            ";
-            conn.execute(audit_sql, rusqlite::params![req.patrol_order_id, x_user_id.0, ctx.user_role, reason]).ok();
-            let anomaly_sql = "UPDATE patrol_orders SET anomaly_reason = ?1 WHERE id = ?2";
-            conn.execute(anomaly_sql, rusqlite::params![reason, req.patrol_order_id]).ok();
+            record_acceptance_anomaly(&conn, req.patrol_order_id, &order_status, x_user_id.0, &ctx.user_role, reason, None);
             return Err(AppError::bad_request(reason));
         }
 
@@ -58,6 +105,17 @@ impl AcceptanceApi {
         }
 
         let id = conn.last_insert_rowid();
+
+        let action = if req.result == "pass" { "验收通过" } else { "验收不通过" };
+        let _ = conn.execute(
+            "
+                INSERT INTO audit_trails (patrol_order_id, action, from_status, to_status, actor_id, actor_role, remark, evidence)
+                VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6, ?7)
+            ",
+            rusqlite::params![
+                req.patrol_order_id, action, order_status, x_user_id.0, ctx.user_role, req.remark, evidence_json
+            ],
+        );
 
         let result = conn.query_row(
             "SELECT a.id, a.defect_id, a.patrol_order_id, a.result, a.evidence, a.remark,
