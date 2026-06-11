@@ -234,9 +234,10 @@ async def seed_data():
 
         await db.commit()
 
-        await db.execute("SELECT id, application_no FROM account_applications")
-        rows = await db.fetchall()
+        cursor = await db.execute("SELECT id, application_no FROM account_applications")
+        rows = await cursor.fetchall()
         app_map = {row["application_no"]: row["id"] for row in rows}
+        print(f"  Loaded {len(app_map)} applications into app_map")
 
         records = [
             {

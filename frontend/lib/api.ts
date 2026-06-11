@@ -85,7 +85,11 @@ export interface BatchResultItem {
   application_no: string;
   success: boolean;
   message: string;
+  error_code: number | null;
+  version: number;
+  new_version: number | null;
   new_status: string | null;
+  new_role: string | null;
 }
 
 export interface BatchProcessResponse {

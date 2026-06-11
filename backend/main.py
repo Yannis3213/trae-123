@@ -501,7 +501,10 @@ async def batch_process(request: Request):
                     "success": False,
                     "message": error,
                     "error_code": status,
+                    "version": item.version,
+                    "new_version": None,
                     "new_status": None,
+                    "new_role": None,
                 })
             else:
                 results.append({
@@ -510,7 +513,10 @@ async def batch_process(request: Request):
                     "success": True,
                     "message": f"操作成功：{data.action}",
                     "error_code": None,
+                    "version": item.version,
+                    "new_version": result["version"] if result else None,
                     "new_status": result["status"] if result else None,
+                    "new_role": result["current_role"] if result else None,
                 })
         except Exception as e:
             results.append({
@@ -519,7 +525,10 @@ async def batch_process(request: Request):
                 "success": False,
                 "message": f"E999: 系统异常 - {str(e)}",
                 "error_code": 500,
+                "version": item.version,
+                "new_version": None,
                 "new_status": None,
+                "new_role": None,
             })
 
     success_count = sum(1 for r in results if r["success"])

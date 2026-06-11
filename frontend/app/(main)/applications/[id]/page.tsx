@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import {
   fetchApplicationDetail,
   processApplication,
@@ -10,13 +10,11 @@ import {
   getUser,
   User,
   parseErrorMessage,
-  formatDateTime,
 } from '@/lib/api';
 import Link from 'next/link';
 
 export default function ApplicationDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const id = Number(params.id);
   const [data, setData] = useState<ApplicationDetailResponse | null>(null);
   const [user, setUser] = useState<User | null>(null);

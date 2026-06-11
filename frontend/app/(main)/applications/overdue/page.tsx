@@ -11,9 +11,9 @@ import {
   formatDateTime,
   getDaysLeft as apiGetDaysLeft,
   getResponsiblePerson as apiGetResponsiblePerson,
+  Stats,
 } from '@/lib/api';
 import Link from 'next/link';
-import { Stats } from '@/lib/api';
 
 type TabKey = 'normal' | 'approaching' | 'overdue';
 
@@ -69,9 +69,9 @@ export default function OverduePage() {
   };
 
   const tabs: { key: TabKey; label: string; color: string; icon: string; count?: number }[] = [
-    { key: 'overdue', label: '已逾期', color: 'red', icon: '🔴', count: stats?.overdue_count },
-    { key: 'approaching', label: '临期（3天内）', color: 'yellow', icon: '🟡', count: stats?.approaching_count },
-    { key: 'normal', label: '正常', color: 'green', icon: '🟢', count: stats?.normal_count },
+    { key: 'overdue', label: '已逾期', color: 'red', icon: '🔴', count: stats?.overdue },
+    { key: 'approaching', label: '临期（3天内）', color: 'yellow', icon: '🟡', count: stats?.approaching },
+    { key: 'normal', label: '正常', color: 'green', icon: '🟢', count: stats?.normal },
   ];
 
   const sortedApps = [...apps].sort((a, b) => {
