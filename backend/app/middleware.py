@@ -26,7 +26,7 @@ def auth_middleware(app: ASGIApp) -> ASGIApp:
             await app(scope, receive, send)
             return
 
-        headers = Headers(scope=scope)
+        headers = Headers.from_scope(scope)
         auth_header = headers.get("Authorization", "")
 
         if not auth_header.startswith("Bearer "):
@@ -59,7 +59,21 @@ def auth_middleware(app: ASGIApp) -> ASGIApp:
                 await response(scope, receive, send)
                 return
 
-            scope["user"] = user
+            _ = user.id
+            _ = user.username
+            _ = user.full_name
+            _ = user.role
+            _ = user.is_active
+            _ = user.created_at
+
+            scope["user"] = {
+                "id": user.id,
+                "username": user.username,
+                "full_name": user.full_name,
+                "role": user.role,
+                "is_active": user.is_active,
+                "created_at": user.created_at,
+            }
             await app(scope, receive, send)
         finally:
             db.close()

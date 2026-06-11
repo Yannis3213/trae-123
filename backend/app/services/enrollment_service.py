@@ -1,6 +1,7 @@
 import datetime
-from typing import Optional
+from typing import Any, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.exceptions import (
@@ -99,8 +100,8 @@ def get_responsible_user_id(enrollment: Enrollment) -> Optional[int]:
     return None
 
 
-def create_enrollment(db: Session, data: EnrollmentCreate, user: User) -> Enrollment:
-    if user.role != RoleEnum.REGISTRATION_CLERK:
+def create_enrollment(db: Session, data: EnrollmentCreate, user: Any) -> Enrollment:
+    if user['role'] != RoleEnum.REGISTRATION_CLERK:
         raise UnauthorizedAdvanceError("越权推进：只有登记员可以创建入会单")
 
     due_at = datetime.datetime.utcnow() + datetime.timedelta(days=data.due_days)
@@ -119,7 +120,7 @@ def create_enrollment(db: Session, data: EnrollmentCreate, user: User) -> Enroll
         remark=data.remark,
         status=EnrollmentStatusEnum.PENDING,
         version=1,
-        created_by_id=user.id,
+        created_by_id=user['id'],
         current_handler_id=None,
         created_at=datetime.datetime.utcnow(),
         submitted_at=datetime.datetime.utcnow(),
@@ -131,7 +132,7 @@ def create_enrollment(db: Session, data: EnrollmentCreate, user: User) -> Enroll
             evidence_type=att_data.evidence_type,
             file_name=att_data.file_name,
             file_url=att_data.file_url,
-            uploaded_by_id=user.id,
+            uploaded_by_id=user['id'],
             is_valid=True,
         )
         enrollment.attachments.append(attachment)
@@ -141,7 +142,7 @@ def create_enrollment(db: Session, data: EnrollmentCreate, user: User) -> Enroll
 
     audit_log = AuditLog(
         enrollment_id=enrollment.id,
-        user_id=user.id,
+        user_id=user['id'],
         action_type=ActionTypeEnum.CREATE,
         old_status=None,
         new_status=enrollment.status,
@@ -165,7 +166,7 @@ def create_enrollment(db: Session, data: EnrollmentCreate, user: User) -> Enroll
     return enrollment
 
 
-def get_enrollment(db: Session, enrollment_id: int, user: User) -> Optional[Enrollment]:
+def get_enrollment(db: Session, enrollment_id: int, user: Any) -> Optional[Enrollment]:
     enrollment = db.query(Enrollment).filter(Enrollment.id == enrollment_id).first()
     if not enrollment:
         return None
@@ -174,7 +175,7 @@ def get_enrollment(db: Session, enrollment_id: int, user: User) -> Optional[Enro
 
 def list_enrollments(
     db: Session,
-    user: User,
+    user: Any,
     status: Optional[EnrollmentStatusEnum] = None,
     expiry_status: Optional[ExpiryStatusEnum] = None,
     store: Optional[str] = None,
@@ -186,17 +187,17 @@ def list_enrollments(
     query = db.query(Enrollment)
 
     if my_todo:
-        if user.role == RoleEnum.REGISTRATION_CLERK:
+        if user['role'] == RoleEnum.REGISTRATION_CLERK:
             query = query.filter(
                 Enrollment.status == EnrollmentStatusEnum.FAILED,
-                Enrollment.created_by_id == user.id,
+                Enrollment.created_by_id == user['id'],
             )
-        elif user.role == RoleEnum.AUDIT_SUPERVISOR:
+        elif user['role'] == RoleEnum.AUDIT_SUPERVISOR:
             query = query.filter(
                 Enrollment.status == EnrollmentStatusEnum.PENDING,
                 Enrollment.audit_by_id.is_(None),
             )
-        elif user.role == RoleEnum.REVIEW_LEAD:
+        elif user['role'] == RoleEnum.REVIEW_LEAD:
             query = query.filter(
                 Enrollment.status == EnrollmentStatusEnum.PENDING,
                 Enrollment.audit_by_id.isnot(None),
@@ -212,7 +213,7 @@ def list_enrollments(
     if keyword:
         like = f"%{keyword}%"
         query = query.filter(
-            db.or_(
+            or_(
                 Enrollment.member_name.like(like),
                 Enrollment.member_phone.like(like),
                 Enrollment.contract_no.like(like),
@@ -279,10 +280,10 @@ def _validate_evidence_complete(enrollment: Enrollment) -> None:
 def audit_enrollment(
     db: Session,
     data: AuditRequest,
-    user: User,
+    user: Any,
     block_overdue: bool = True,
 ) -> Enrollment:
-    if user.role != RoleEnum.AUDIT_SUPERVISOR:
+    if user['role'] != RoleEnum.AUDIT_SUPERVISOR:
         raise UnauthorizedAdvanceError("越权推进：只有审核主管可以进行审核")
 
     enrollment = db.query(Enrollment).filter(Enrollment.id == data.enrollment_id).first()
@@ -309,7 +310,7 @@ def audit_enrollment(
 
     if data.passed:
         enrollment.status = EnrollmentStatusEnum.PENDING
-        enrollment.audit_by_id = user.id
+        enrollment.audit_by_id = user['id']
         enrollment.audited_at = datetime.datetime.utcnow()
         enrollment.current_handler_id = None
         action_type = ActionTypeEnum.AUDIT_PASS
@@ -322,7 +323,7 @@ def audit_enrollment(
                 exc.resolution_note = f"审核通过时确认资料齐全，异常解决"
     else:
         enrollment.status = EnrollmentStatusEnum.FAILED
-        enrollment.audit_by_id = user.id
+        enrollment.audit_by_id = user['id']
         enrollment.audited_at = datetime.datetime.utcnow()
         enrollment.current_handler_id = enrollment.created_by_id
         action_type = ActionTypeEnum.AUDIT_FAIL
@@ -337,7 +338,7 @@ def audit_enrollment(
                 enrollment_id=enrollment.id,
                 exception_type=ExceptionTypeEnum.STATUS_CONFLICT,
                 description=f"审核退回：{comment}",
-                detected_by=user.full_name,
+                detected_by=user['full_name'],
             )
             db.add(exc)
 
@@ -345,7 +346,7 @@ def audit_enrollment(
 
     audit_log = AuditLog(
         enrollment_id=enrollment.id,
-        user_id=user.id,
+        user_id=user['id'],
         action_type=action_type,
         old_status=old_status,
         new_status=enrollment.status,
@@ -361,10 +362,10 @@ def audit_enrollment(
 def review_enrollment(
     db: Session,
     data: ReviewRequest,
-    user: User,
+    user: Any,
     block_overdue: bool = True,
 ) -> Enrollment:
-    if user.role != RoleEnum.REVIEW_LEAD:
+    if user['role'] != RoleEnum.REVIEW_LEAD:
         raise UnauthorizedAdvanceError("越权推进：只有复核负责人可以进行复核")
 
     enrollment = db.query(Enrollment).filter(Enrollment.id == data.enrollment_id).first()
@@ -394,7 +395,7 @@ def review_enrollment(
 
     if data.passed:
         enrollment.status = EnrollmentStatusEnum.COMPLETED
-        enrollment.review_by_id = user.id
+        enrollment.review_by_id = user['id']
         enrollment.reviewed_at = datetime.datetime.utcnow()
         enrollment.current_handler_id = None
         action_type = ActionTypeEnum.REVIEW_PASS
@@ -407,7 +408,7 @@ def review_enrollment(
                 exc.resolution_note = f"复核完成，归档时关闭所有异常"
     else:
         enrollment.status = EnrollmentStatusEnum.FAILED
-        enrollment.review_by_id = user.id
+        enrollment.review_by_id = user['id']
         enrollment.reviewed_at = datetime.datetime.utcnow()
         enrollment.current_handler_id = enrollment.created_by_id
         action_type = ActionTypeEnum.REVIEW_FAIL
@@ -422,7 +423,7 @@ def review_enrollment(
                 enrollment_id=enrollment.id,
                 exception_type=ExceptionTypeEnum.STATUS_CONFLICT,
                 description=f"复核退回：{comment}",
-                detected_by=user.full_name,
+                detected_by=user['full_name'],
             )
             db.add(exc)
 
@@ -430,7 +431,7 @@ def review_enrollment(
 
     audit_log = AuditLog(
         enrollment_id=enrollment.id,
-        user_id=user.id,
+        user_id=user['id'],
         action_type=action_type,
         old_status=old_status,
         new_status=enrollment.status,
@@ -446,9 +447,9 @@ def review_enrollment(
 def correct_enrollment(
     db: Session,
     data: CorrectRequest,
-    user: User,
+    user: Any,
 ) -> Enrollment:
-    if user.role != RoleEnum.REGISTRATION_CLERK:
+    if user['role'] != RoleEnum.REGISTRATION_CLERK:
         raise UnauthorizedAdvanceError("越权推进：只有登记员可以补正")
 
     enrollment = db.query(Enrollment).filter(Enrollment.id == data.enrollment_id).first()
@@ -462,7 +463,7 @@ def correct_enrollment(
             f"状态冲突：当前状态为「{enrollment.status.value}」，只有核验失败的单据可以补正"
         )
 
-    if enrollment.created_by_id != user.id:
+    if enrollment.created_by_id != user['id']:
         raise UnauthorizedAdvanceError("越权推进：只能补正自己创建的单据")
 
     old_status = enrollment.status
@@ -481,7 +482,7 @@ def correct_enrollment(
                     evidence_type=att_data.evidence_type,
                     file_name=att_data.file_name,
                     file_url=att_data.file_url,
-                    uploaded_by_id=user.id,
+                    uploaded_by_id=user['id'],
                     is_valid=True,
                 )
                 enrollment.attachments.append(attachment)
@@ -524,7 +525,7 @@ def correct_enrollment(
 
     audit_log = AuditLog(
         enrollment_id=enrollment.id,
-        user_id=user.id,
+        user_id=user['id'],
         action_type=ActionTypeEnum.CORRECT,
         old_status=old_status,
         new_status=enrollment.status,
@@ -545,7 +546,7 @@ def _get_error_code(exc: Exception) -> Optional[str]:
     return None
 
 
-def batch_audit(db: Session, data: BatchAuditRequest, user: User) -> BatchResultResponse:
+def batch_audit(db: Session, data: BatchAuditRequest, user: Any) -> BatchResultResponse:
     results: list[BatchItemResult] = []
     success_count = 0
 
@@ -599,7 +600,7 @@ def batch_audit(db: Session, data: BatchAuditRequest, user: User) -> BatchResult
     )
 
 
-def batch_review(db: Session, data: BatchReviewRequest, user: User) -> BatchResultResponse:
+def batch_review(db: Session, data: BatchReviewRequest, user: Any) -> BatchResultResponse:
     results: list[BatchItemResult] = []
     success_count = 0
 
@@ -653,7 +654,7 @@ def batch_review(db: Session, data: BatchReviewRequest, user: User) -> BatchResu
     )
 
 
-def get_stats(db: Session, user: User) -> dict:
+def get_stats(db: Session, user: Any) -> dict:
     total = db.query(Enrollment).count()
     pending = db.query(Enrollment).filter(Enrollment.status == EnrollmentStatusEnum.PENDING).count()
     failed = db.query(Enrollment).filter(Enrollment.status == EnrollmentStatusEnum.FAILED).count()
@@ -679,16 +680,16 @@ def get_stats(db: Session, user: User) -> dict:
     )
     overdue = db.query(Enrollment).filter(Enrollment.due_at < now).count()
 
-    if user.role == RoleEnum.REGISTRATION_CLERK:
+    if user['role'] == RoleEnum.REGISTRATION_CLERK:
         my_todo = (
             db.query(Enrollment)
             .filter(
                 Enrollment.status == EnrollmentStatusEnum.FAILED,
-                Enrollment.created_by_id == user.id,
+                Enrollment.created_by_id == user['id'],
             )
             .count()
         )
-    elif user.role == RoleEnum.AUDIT_SUPERVISOR:
+    elif user['role'] == RoleEnum.AUDIT_SUPERVISOR:
         my_todo = (
             db.query(Enrollment)
             .filter(
@@ -697,7 +698,7 @@ def get_stats(db: Session, user: User) -> dict:
             )
             .count()
         )
-    elif user.role == RoleEnum.REVIEW_LEAD:
+    elif user['role'] == RoleEnum.REVIEW_LEAD:
         my_todo = (
             db.query(Enrollment)
             .filter(
@@ -722,7 +723,7 @@ def get_stats(db: Session, user: User) -> dict:
     }
 
 
-def check_queue_exceptions(db: Session, user: User) -> list[dict]:
+def check_queue_exceptions(db: Session, user: Any) -> list[dict]:
     exceptions = []
     now = datetime.datetime.utcnow()
 
