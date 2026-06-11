@@ -345,6 +345,110 @@ class Command(BaseCommand):
                 self.stdout.write(f'Application {app_no} already exists')
 
         self.create_additional_test_cases(users, community_worker, street_clerk, leader)
+        self.create_batch_scenario_records(community_worker, street_clerk, leader)
+
+    def create_batch_scenario_records(self, community_worker, street_clerk, leader):
+        now = timezone.now()
+
+        batch_id_empty_reason = 'BATCHEMPTY01'
+        batch_id_mixed = 'BATCHMIXED01'
+
+        app4 = AssistanceApplication.objects.filter(application_no='BZDEMO0004').first()
+        app5 = AssistanceApplication.objects.filter(application_no='BZDEMO0005').first()
+        app6 = AssistanceApplication.objects.filter(application_no='BZDEMO0006').first()
+        app3 = AssistanceApplication.objects.filter(application_no='BZDEMO0003').first()
+
+        if app4:
+            ExceptionLog.objects.create(
+                application=app4,
+                batch_id=batch_id_empty_reason,
+                exception_type='validation_error',
+                error_code='MISSING_COMMENT',
+                error_message='退回补正必须填写原因',
+                operator=street_clerk,
+                request_data="{'application_id': 4, 'action': 'return', 'comment': ''}",
+                resolved=False,
+                created_at=now + timedelta(minutes=-140),
+            )
+
+        if app6:
+            ExceptionLog.objects.create(
+                application=app6,
+                batch_id=batch_id_empty_reason,
+                exception_type='validation_error',
+                error_code='MISSING_COMMENT',
+                error_message='退回补正必须填写原因',
+                operator=street_clerk,
+                request_data="{'application_id': 6, 'action': 'return', 'comment': ''}",
+                resolved=False,
+                created_at=now + timedelta(minutes=-139),
+            )
+            ExceptionLog.objects.create(
+                application=app6,
+                batch_id=batch_id_mixed,
+                exception_type='version_conflict',
+                error_code='VERSION_CONFLICT',
+                error_message='版本冲突：当前版本为3，您提交的版本为1',
+                operator=street_clerk,
+                request_data="{'application_id': 6, 'action': 'return', 'version': 1}",
+                resolved=False,
+                created_at=now + timedelta(minutes=-135),
+            )
+
+        if app3:
+            ExceptionLog.objects.create(
+                application=app3,
+                batch_id=batch_id_mixed,
+                exception_type='overdue',
+                error_code='OVERDUE_BLOCKED',
+                error_message='该申请已逾期，不可直接审批，请先退回补正或联系负责人处理',
+                operator=leader,
+                request_data="{'application_id': 3, 'action': 'approve'}",
+                resolved=False,
+                created_at=now + timedelta(minutes=-134),
+            )
+
+        if app5:
+            ExceptionLog.objects.create(
+                application=app5,
+                batch_id=batch_id_mixed,
+                exception_type='status_conflict',
+                error_code='STATUS_CONFLICT',
+                error_message='状态冲突：当前状态为待接单，不允许此操作',
+                operator=street_clerk,
+                request_data="{'application_id': 5, 'action': 'process'}",
+                resolved=False,
+                created_at=now + timedelta(minutes=-133),
+            )
+
+        if app6:
+            ProcessingRecord.objects.create(
+                application=app6,
+                node='difficulty_support',
+                action='return',
+                operator=street_clerk,
+                previous_status='accepted',
+                new_status='returned',
+                previous_handler=street_clerk,
+                new_handler=community_worker,
+                comment='批量退回：材料不完整，请社区专干补正后重新提交',
+                version=4,
+                processing_time=now + timedelta(minutes=-130),
+            )
+            AuditNote.objects.create(
+                application=app6,
+                node='difficulty_support',
+                note_type='return_reason',
+                content='退回补正原因（批量）：批量退回：材料不完整，请社区专干补正后重新提交',
+                operator=street_clerk,
+                created_at=now + timedelta(minutes=-130),
+            )
+            app6.status = 'returned'
+            app6.current_handler = community_worker
+            app6.version = 4
+            app6.save()
+
+        self.stdout.write('Batch scenario records created')
 
     def create_additional_test_cases(self, users, community_worker, street_clerk, leader):
         now = timezone.now()

@@ -107,7 +107,7 @@ def check_permission(user: User, application: AssistanceApplication, action: str
 
     if application.current_handler and application.current_handler_id != user.id:
         if action in ['accept']:
-            if application.status != 'pending':
+            if application.status not in ['pending', 'returned']:
                 raise BusinessException('STATUS_CONFLICT', '该申请已被接单，状态冲突')
         else:
             raise BusinessException(
@@ -560,6 +560,17 @@ def process_batch_item(
     action = item['action']
     comment = item.get('comment', '')
 
+    exc_type_map = {
+        'PERMISSION_DENIED': 'permission_violation',
+        'NOT_HANDLER': 'permission_violation',
+        'VERSION_CONFLICT': 'version_conflict',
+        'STATUS_CONFLICT': 'status_conflict',
+        'MISSING_EVIDENCE': 'missing_evidence',
+        'OVERDUE_BLOCKED': 'overdue',
+        'DUPLICATE_SUBMISSION': 'duplicate_submission',
+        'MISSING_COMMENT': 'validation_error',
+    }
+
     result = {
         'application_id': app_id,
         'application_no': '',
@@ -572,6 +583,9 @@ def process_batch_item(
         application = AssistanceApplication.objects.select_for_update().get(id=app_id)
         result['application_no'] = application.application_no
 
+        if action == 'return' and not comment:
+            raise BusinessException('MISSING_COMMENT', '退回补正必须填写原因')
+
         process_application_action(
             user=user,
             application=application,
@@ -579,6 +593,15 @@ def process_batch_item(
             version=version,
             comment=comment
         )
+
+        if action == 'return' and comment:
+            create_audit_note(
+                application=application,
+                note_type='return_reason',
+                content=f'退回补正原因（批量）：{comment}',
+                operator=user
+            )
+
         result['success'] = True
 
     except AssistanceApplication.DoesNotExist:
@@ -591,7 +614,7 @@ def process_batch_item(
             app = AssistanceApplication.objects.get(id=app_id)
             create_exception_log(
                 operator=user,
-                exception_type='batch_process',
+                exception_type=exc_type_map.get(e.error_code, 'batch_process'),
                 error_code=e.error_code,
                 error_message=e.error_message,
                 application=app,

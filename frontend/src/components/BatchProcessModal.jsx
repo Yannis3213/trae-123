@@ -80,29 +80,47 @@ export default function BatchProcessModal({ applications, action, onClose, onSuc
           </div>
 
           <div class="form-group">
-            <label>处理意见（可选）</label>
+            <label>
+              {action === 'return' ? (
+                <>退回补正原因 <span style={{color:'red'}}>*</span></>
+              ) : (
+                '处理意见（可选）'
+              )}
+            </label>
             <textarea
               value={comment()}
               onInput={(e) => setComment(e.target.value)}
-              placeholder="请输入统一处理意见"
+              placeholder={action === 'return' ? '请填写批量退回补正的原因，所有选中的申请将使用同一退回原因' : '请输入统一处理意见'}
             />
           </div>
 
           {results() && (
             <div class="batch-results">
               <h4 style={{ marginBottom: '12px' }}>
-                处理结果：成功 {results().success_count} 条，失败 {results().failure_count} 条
+                <span>处理结果：</span>
+                <span style={{ color: '#52c41a' }}>成功 {results().success_count} 条</span>
+                <span style={{ margin: '0 8px' }}>/</span>
+                <span style={{ color: results().failure_count > 0 ? '#ff4d4f' : '#595959' }}>失败 {results().failure_count} 条</span>
+                <span style={{ marginLeft: '12px', fontSize: '12px', color: '#8c8c8c' }}>批次号：{results().batch_id}</span>
               </h4>
               <For each={results().results}>
                 {(result) => (
                   <div class={`batch-result-item ${result.success ? 'success' : 'failure'}`}>
-                    <span>
-                      <strong>{result.application_no}</strong>
-                      {result.success ? ' - 处理成功' : ` - ${result.error_code}: ${result.error_message}`}
-                    </span>
-                    <span class={`badge badge-${result.success ? 'passed' : 'returned'}`}>
-                      {result.success ? '成功' : '失败'}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                      <div>
+                        <strong>{result.application_no}</strong>
+                        {result.success ? (
+                          <span style={{ color: '#52c41a', marginLeft: '8px' }}>处理成功</span>
+                        ) : (
+                          <span style={{ color: '#ff4d4f', marginLeft: '8px' }}>
+                            [{result.error_code}] {result.error_message}
+                          </span>
+                        )}
+                      </div>
+                      <span class={`badge badge-${result.success ? 'passed' : 'returned'}`}>
+                        {result.success ? '成功' : '失败'}
+                      </span>
+                    </div>
                   </div>
                 )}
               </For>
