@@ -494,7 +494,13 @@ class SideRecordService {
             id,
             recordNo: id,
             success: false,
-            message: '旁站记录单不存在'
+            message: '旁站记录单不存在',
+            newStatus: null,
+            newHandler: null,
+            version: null,
+            abnormalReason: null,
+            processRecord: null,
+            statusSnapshot: null
           });
           continue;
         }
@@ -509,7 +515,11 @@ class SideRecordService {
             success: false,
             message: '参数缺失：必须提交当前版本号 version',
             newStatus: record.status,
-            newHandler: record.currentHandlerName
+            newHandler: record.currentHandlerName,
+            version: record.version,
+            abnormalReason: null,
+            processRecord: null,
+            statusSnapshot: null
           });
           continue;
         }
@@ -521,7 +531,11 @@ class SideRecordService {
             success: false,
             message: '参数错误：版本号必须为数字',
             newStatus: record.status,
-            newHandler: record.currentHandlerName
+            newHandler: record.currentHandlerName,
+            version: record.version,
+            abnormalReason: null,
+            processRecord: null,
+            statusSnapshot: null
           });
           continue;
         }
@@ -532,7 +546,11 @@ class SideRecordService {
             success: false,
             message: `版本冲突：当前版本v${record.version}，您提交的版本v${clientVer}，请刷新后重试`,
             newStatus: record.status,
-            newHandler: record.currentHandlerName
+            newHandler: record.currentHandlerName,
+            version: record.version,
+            abnormalReason: null,
+            processRecord: null,
+            statusSnapshot: null
           });
           continue;
         }
@@ -545,7 +563,13 @@ class SideRecordService {
             results.push({
               id, recordNo,
               success: false,
-              message: '越权：登记员只能执行批量提交操作'
+              message: '越权：登记员只能执行批量提交操作',
+              newStatus: record.status,
+              newHandler: record.currentHandlerName,
+              version: record.version,
+              abnormalReason: null,
+              processRecord: null,
+              statusSnapshot: null
             });
             continue;
           }
@@ -557,7 +581,13 @@ class SideRecordService {
             results.push({
               id, recordNo,
               success: false,
-              message: `越权：审核主管只能执行 ${allowedActions.join('/')} 操作`
+              message: `越权：审核主管只能执行 ${allowedActions.join('/')} 操作`,
+              newStatus: record.status,
+              newHandler: record.currentHandlerName,
+              version: record.version,
+              abnormalReason: null,
+              processRecord: null,
+              statusSnapshot: null
             });
             continue;
           }
@@ -569,7 +599,13 @@ class SideRecordService {
             results.push({
               id, recordNo,
               success: false,
-              message: `越权：复核负责人只能执行 ${allowedActions.join('/')} 操作`
+              message: `越权：复核负责人只能执行 ${allowedActions.join('/')} 操作`,
+              newStatus: record.status,
+              newHandler: record.currentHandlerName,
+              version: record.version,
+              abnormalReason: null,
+              processRecord: null,
+              statusSnapshot: null
             });
             continue;
           }
@@ -579,21 +615,43 @@ class SideRecordService {
           result = { success: false, message: `未知角色：${userRole}，无权执行批量操作` };
         }
 
+        const latestProcess = result.data?.processRecords?.[0] || null;
+        const latestAbnormal = result.data?.abnormalReasons?.[0] || null;
         results.push({
           id,
           recordNo,
           success: result.success,
           message: result.message,
-          newStatus: result.data?.status,
-          newHandler: result.data?.currentHandlerName
+          newStatus: result.data?.status || record.status,
+          newHandler: result.data?.currentHandlerName || record.currentHandlerName,
+          version: result.data?.version || record.version,
+          abnormalReason: latestAbnormal?.reason || latestProcess?.abnormalReason || null,
+          processRecord: latestProcess ? {
+            action: latestProcess.action,
+            actionName: latestProcess.actionName,
+            fromStatus: latestProcess.fromStatus,
+            toStatus: latestProcess.toStatus,
+            operatorName: latestProcess.operatorName,
+            handlerName: latestProcess.handlerName,
+            processedAt: latestProcess.processedAt,
+            remark: latestProcess.remark
+          } : null,
+          statusSnapshot: latestProcess?.statusSnapshot || null
         });
       } catch (err) {
         console.error('[Batch Error]', err);
+        const rec = SideRecordModel.findById(id);
         results.push({
           id,
-          recordNo: SideRecordModel.findById(id)?.recordNo || id,
+          recordNo: rec?.recordNo || id,
           success: false,
-          message: `处理异常：${err.message}`
+          message: `处理异常：${err.message}`,
+          newStatus: rec?.status,
+          newHandler: rec?.currentHandlerName,
+          version: rec?.version,
+          abnormalReason: null,
+          processRecord: null,
+          statusSnapshot: null
         });
       }
     }

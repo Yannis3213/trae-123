@@ -29,23 +29,25 @@ export default function RegistrationPage() {
   useEffect(() => {
     const u = getCurrentUser();
     if (!u) { navigate('/login'); return; }
-    setUser(u);
     if (u.role !== ROLES.REGISTRAR) {
       navigate('/ledger');
       return;
     }
-    loadData();
+    setUser(u);
+    loadData(u);
     loadStats();
   }, [navigate, refreshKey]);
 
-  const loadData = async (extraFilters = {}) => {
+  const loadData = async (extraFilters = {}, currentUser = user) => {
+    const u = currentUser || getCurrentUser();
+    if (!u) return;
     setLoading(true);
     setSelected([]);
     const statusFilter = { statuses: VISIBLE_STATUSES.join(',') };
     const res = await api.sideRecords.list({ ...filters, ...extraFilters, ...statusFilter });
     if (res.success) {
       const filtered = res.data.filter(r =>
-        VISIBLE_STATUSES.includes(r.status) && roleConfig.filterFn(r, user)
+        VISIBLE_STATUSES.includes(r.status) && roleConfig.filterFn(r, u)
       );
       setRecords(filtered);
     }

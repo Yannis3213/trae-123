@@ -310,6 +310,7 @@ class ProcessRecordModel {
       result.abnormalReason = r.abnormal_reason;
       result.abnormalType = r.abnormal_type;
       result.processedAt = r.processed_at;
+      result.statusSnapshot = r.status_snapshot ? JSON.parse(r.status_snapshot) : null;
       return result;
     });
   }

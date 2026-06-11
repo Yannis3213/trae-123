@@ -118,13 +118,16 @@ export default function BatchModal({ selectedIds, records = [], onClose, onRefre
                           <th className="text-left p-2 font-medium whitespace-nowrap">结果</th>
                           <th className="text-left p-2 font-medium whitespace-nowrap">新状态</th>
                           <th className="text-left p-2 font-medium whitespace-nowrap">新处理人</th>
+                          <th className="text-left p-2 font-medium whitespace-nowrap">异常原因</th>
+                          <th className="text-left p-2 font-medium whitespace-nowrap">版本</th>
+                          <th className="text-left p-2 font-medium whitespace-nowrap">处理记录</th>
                           <th className="text-left p-2 font-medium">说明</th>
                         </tr>
                       </thead>
                       <tbody>
                         {result.details && result.details.map((d, i) => (
                           <tr key={i} className="border-t border-gray-100">
-                            <td className="p-2 font-mono text-xs">{d.recordNo}</td>
+                            <td className="p-2 font-mono text-xs whitespace-nowrap">{d.recordNo}</td>
                             <td className="p-2 whitespace-nowrap">
                               <span className={d.success ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
                                 {d.success ? '✓ 成功' : '✗ 失败'}
@@ -134,10 +137,28 @@ export default function BatchModal({ selectedIds, records = [], onClose, onRefre
                               {d.newStatus && <StatusBadge status={d.newStatus} />}
                               {!d.newStatus && <span className="text-gray-400">—</span>}
                             </td>
-                            <td className="p-2 whitespace-nowrap text-sm">
+                            <td className="p-2 whitespace-nowrap text-xs">
                               {d.newHandler || '—'}
                             </td>
-                            <td className="p-2 text-gray-600 text-xs max-w-[200px]">{d.message}</td>
+                            <td className="p-2 whitespace-nowrap text-xs text-red-600 max-w-[160px] truncate" title={d.abnormalReason}>
+                              {d.abnormalReason || '—'}
+                            </td>
+                            <td className="p-2 whitespace-nowrap text-xs font-mono">
+                              {d.version ? `v${d.version}` : '—'}
+                            </td>
+                            <td className="p-2 whitespace-nowrap text-xs max-w-[180px]">
+                              {d.processRecord ? (
+                                <div title={`${d.processRecord.operatorName} 于 ${d.processRecord.processedAt} 执行${d.processRecord.actionName}${d.processRecord.remark ? '，备注：' + d.processRecord.remark : ''}`}>
+                                  <div className="text-gray-700">{d.processRecord.actionName}</div>
+                                  <div className="text-gray-400 text-[11px]">{d.processRecord.operatorName}</div>
+                                </div>
+                              ) : (
+                                <span className="text-gray-400">—</span>
+                              )}
+                            </td>
+                            <td className="p-2 text-gray-600 text-xs max-w-[200px]" title={d.message}>
+                              {d.message}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
