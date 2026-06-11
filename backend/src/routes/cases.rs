@@ -58,6 +58,13 @@ fn list_cases(
         _ => {}
     }
 
+    if let Some(queue_str) = params.queue {
+        if CaseQueue::from_str(&queue_str).is_some() {
+            where_clauses.push("lc.queue = ?".to_string());
+            params_vec.push(queue_str);
+        }
+    }
+
     if let Some(handler_id) = params.handler_id {
         where_clauses.push("lc.current_handler_id = ?".to_string());
         params_vec.push(handler_id.to_string());
@@ -106,7 +113,9 @@ fn list_cases(
     );
     let total: i64 = conn.query_row(&count_sql, rusqlite::params_from_iter(&params_vec), |row| row.get(0))?;
 
-    let offset = (params.page - 1) * params.page_size;
+    let page = params.get_page();
+    let page_size = params.get_page_size();
+    let offset = (page - 1) * page_size;
     let query_sql = format!(
         "SELECT lc.id, lc.case_no, lc.title, lc.priority, lc.status, lc.queue, 
                 lc.current_handler_id, lc.deadline, lc.version, lc.created_by, 
@@ -123,7 +132,7 @@ fn list_cases(
 
     let mut stmt = conn.prepare(&query_sql)?;
     let mut params_with_limit = params_vec.clone();
-    params_with_limit.push(params.page_size.to_string());
+    params_with_limit.push(page_size.to_string());
     params_with_limit.push(offset.to_string());
 
     let cases = stmt.query_map(rusqlite::params_from_iter(&params_with_limit), |row| {
@@ -159,8 +168,8 @@ fn list_cases(
     let response = CaseListResponse {
         list,
         total,
-        page: params.page,
-        page_size: params.page_size,
+        page,
+        page_size,
     };
 
     Ok((
@@ -505,11 +514,11 @@ fn case_action(
     case_id: i64,
     req: Json<CaseActionPathRequest>,
 ) -> Result<(Status, Json<ApiResponse<LegalCase>>)> {
-    if let Some(v) = req.version {
-        let case = get_case(db, case?
-    }
+    let case = get_case(db, case_id)?;
 
-    check_version(case.version, req.version)?;
+    if let Some(v) = req.version {
+        check_version(case.version, v)?;
+    }
 
     if !can_access_case(&auth.user, case.created_by, case.current_handler_id, &case.status) {
         return Err(AppError::PermissionError(
@@ -536,13 +545,35 @@ fn case_action(
                 });
             }
         }
+        "resubmit" => {
+            check_permission(
+                &auth.user,
+                &[UserRole::Registrar, UserRole::Supervisor, UserRole::Director],
+                "重新提交案件",
+            )?;
+            if matches!(case.status, CaseStatus::Returned) {
+                Some(CaseStatus::Resubmitted)
+            } else {
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "resubmitted".to_string(),
+                });
+            }
+        }
         "review" => {
             check_permission(
                 &auth.user,
                 &[UserRole::Reviewer, UserRole::Supervisor, UserRole::Director],
                 "审核案件",
             )?;
-            Some(CaseStatus::Reviewing)
+            if matches!(case.status, CaseStatus::Submitted) {
+                Some(CaseStatus::Reviewing)
+            } else {
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "reviewing".to_string(),
+                });
+            }
         }
         "assign" => {
             check_permission(
@@ -550,7 +581,14 @@ fn case_action(
                 &[UserRole::Supervisor, UserRole::Director],
                 "分派案件",
             )?;
-            Some(CaseStatus::Assigned)
+            if matches!(case.status, CaseStatus::Reviewing) {
+                Some(CaseStatus::Assigned)
+            } else {
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "assigned".to_string(),
+                });
+            }
         }
         "start_followup" => {
             check_permission(
@@ -558,7 +596,14 @@ fn case_action(
                 &[UserRole::Assistant, UserRole::Lawyer, UserRole::Supervisor, UserRole::Director],
                 "开始回访",
             )?;
-            Some(CaseStatus::Followup)
+            if matches!(case.status, CaseStatus::Assigned) {
+                Some(CaseStatus::Followup)
+            } else {
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "followup".to_string(),
+                });
+            }
         }
         "complete" => {
             check_permission(
@@ -566,7 +611,14 @@ fn case_action(
                 &[UserRole::Assistant, UserRole::Lawyer, UserRole::Supervisor, UserRole::Director],
                 "完成案件",
             )?;
-            Some(CaseStatus::Completed)
+            if matches!(case.status, CaseStatus::Followup) {
+                Some(CaseStatus::Completed)
+            } else {
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "completed".to_string(),
+                });
+            }
         }
         "archive" => {
             check_permission(
@@ -574,7 +626,14 @@ fn case_action(
                 &[UserRole::Supervisor, UserRole::Director],
                 "归档案件",
             )?;
-            Some(CaseStatus::Archived)
+            if matches!(case.status, CaseStatus::Completed) {
+                Some(CaseStatus::Archived)
+            } else {
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "archived".to_string(),
+                });
+            }
         }
         "return" => {
             check_permission(
@@ -582,7 +641,14 @@ fn case_action(
                 &[UserRole::Reviewer, UserRole::Supervisor, UserRole::Director],
                 "退回案件",
             )?;
-            Some(CaseStatus::Returned)
+            if matches!(case.status, CaseStatus::Submitted | CaseStatus::Reviewing) {
+                Some(CaseStatus::Returned)
+            } else {
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "returned".to_string(),
+                });
+            }
         }
         _ => {
             return Err(AppError::BadRequest(format!(

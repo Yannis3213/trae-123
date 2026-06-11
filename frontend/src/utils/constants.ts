@@ -82,10 +82,23 @@ export const ACTION_MAP: Record<string, string> = {
   resubmit: '重新提交',
 };
 
-export const STATUS_BUTTONS = [
-  { status: 'pending_submit' as const, label: '提交', action: 'submit', type: 'primary' as const },
-  { status: 'returned' as const, label: '重新提交', action: 'resubmit', type: 'primary' as const },
-  { status: 'draft' as const, label: '提交', action: 'submit', type: 'primary' as const },
+export const STATUS_BUTTONS: Array<{
+  status: CaseStatus;
+  label: string;
+  action: string;
+  type: 'primary' | 'default' | 'dashed' | 'danger';
+  roles?: UserRole[];
+}> = [
+  { status: 'draft', label: '提交', action: 'submit', type: 'primary', roles: ['registrar', 'supervisor', 'director'] },
+  { status: 'pending_submit', label: '提交', action: 'submit', type: 'primary', roles: ['registrar', 'supervisor', 'director'] },
+  { status: 'returned', label: '重新提交', action: 'resubmit', type: 'primary', roles: ['registrar', 'supervisor', 'director'] },
+  { status: 'submitted', label: '审核', action: 'review', type: 'primary', roles: ['reviewer', 'supervisor', 'director'] },
+  { status: 'submitted', label: '退回', action: 'return', type: 'default', roles: ['reviewer', 'supervisor', 'director'] },
+  { status: 'reviewing', label: '分派', action: 'assign', type: 'primary', roles: ['supervisor', 'director'] },
+  { status: 'reviewing', label: '退回', action: 'return', type: 'default', roles: ['reviewer', 'supervisor', 'director'] },
+  { status: 'assigned', label: '开始回访', action: 'start_followup', type: 'primary', roles: ['assistant', 'lawyer', 'supervisor', 'director'] },
+  { status: 'followup', label: '完成', action: 'complete', type: 'primary', roles: ['assistant', 'lawyer', 'supervisor', 'director'] },
+  { status: 'completed', label: '归档', action: 'archive', type: 'primary', roles: ['supervisor', 'director'] },
 ];
 
 export const QUEUE_ROLE_MAPPING: Record<string, string[]> = {

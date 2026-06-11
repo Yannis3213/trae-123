@@ -575,24 +575,8 @@ impl FromRow for ExceptionReason {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaseDetail {
-    pub id: i64,
-    pub case_no: String,
-    pub title: String,
-    pub priority: CasePriority,
-    pub status: CaseStatus,
-    pub queue: CaseQueue,
-    pub current_handler_id: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_handler_name: Option<String>,
-    pub deadline: Option<DateTime<Utc>>,
-    pub version: i32,
-    pub created_by: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_by_name: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub warning_status: Option<WarningStatus>,
+    #[serde(flatten)]
+    pub case: LegalCase,
     pub registration: Option<CaseRegistration>,
     pub assignment: Option<CaseAssignment>,
     pub followup: Option<CaseFollowup>,
@@ -608,6 +592,16 @@ pub struct CaseListRequest {
     pub deadline_from: Option<String>,
     pub deadline_to: Option<String>,
     pub keyword: Option<String>,
+    pub queue: Option<String>,
+}
+
+impl CaseListRequest {
+    pub fn get_page(&self) -> i64 {
+        self.page.unwrap_or(1)
+    }
+    pub fn get_page_size(&self) -> i64 {
+        self.page_size.unwrap_or(10)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -22,7 +22,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { caseApi } from '../utils/api';
-import { STATUS_MAP, PRIORITY_MAP } from '../utils/constants';
+import { STATUS_MAP, STATUS_COLOR_MAP, PRIORITY_MAP, PRIORITY_COLOR_MAP } from '../utils/constants';
 import CaseFilter from './CaseFilter';
 import WarningBadge from './WarningBadge';
 import BatchProcessModal from './BatchProcessModal';
@@ -75,7 +75,7 @@ export default function CaseList({
         ...filters,
       };
       if (queue) {
-        (params as any).queue = queue;
+        params.queue = queue;
       }
       const result: CaseListResponse = await caseApi.getList(params);
       setData(result.list);

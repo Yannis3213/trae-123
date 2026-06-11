@@ -61,7 +61,12 @@ export default function BatchProcessModal({
 
   const availableActions = STATUS_BUTTONS.filter(btn => 
     selectedCases.some(c => c.status === btn.status)
-  );
+  ).reduce((acc: typeof STATUS_BUTTONS, btn) => {
+    if (!acc.some(b => b.action === btn.action)) {
+      acc.push(btn);
+    }
+    return acc;
+  }, []);
 
   const resultColumns = [
     {

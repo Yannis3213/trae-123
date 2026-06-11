@@ -6,11 +6,16 @@ import {
   SaveOutlined,
   RollbackOutlined,
   CheckCircleOutlined,
-  ExclamationCircleOutlined
+  ExclamationCircleOutlined,
+  AuditOutlined,
+  TeamOutlined,
+  PhoneOutlined,
+  FolderOutlined
 } from '@ant-design/icons';
 import { caseApi } from '../utils/api';
 import { STATUS_BUTTONS } from '../utils/constants';
-import type { LegalCase } from '../../types';
+import { useAuth } from '../contexts/AuthContext';
+import type { LegalCase, UserRole } from '../../types';
 
 interface StatusActionButtonsProps {
   caseItem: LegalCase;
@@ -22,6 +27,17 @@ interface StatusActionButtonsProps {
   onCancel?: () => void;
 }
 
+const ACTION_ICON_MAP: Record<string, React.ReactNode> = {
+  submit: <SendOutlined />,
+  resubmit: <SendOutlined />,
+  review: <AuditOutlined />,
+  assign: <TeamOutlined />,
+  start_followup: <PhoneOutlined />,
+  complete: <CheckCircleOutlined />,
+  archive: <FolderOutlined />,
+  return: <RollbackOutlined />,
+};
+
 export default function StatusActionButtons({
   caseItem,
   mode = 'view',
@@ -32,6 +48,7 @@ export default function StatusActionButtons({
   onCancel,
 }: StatusActionButtonsProps) {
   const [loading, setLoading] = useState<string | null>(null);
+  const { user } = useAuth();
 
   const handleAction = async (action: string, buttonLabel: string) => {
     setLoading(action);
@@ -40,10 +57,7 @@ export default function StatusActionButtons({
         await onSave();
         message.success('保存成功');
       } else {
-        await caseApi.action(caseItem.id, { 
-          action, 
-          version: caseItem.version 
-        });
+        await caseApi.action(caseItem.id, { action });
         message.success(`${buttonLabel}成功`);
       }
       onActionSuccess?.();
@@ -53,6 +67,13 @@ export default function StatusActionButtons({
       setLoading(null);
     }
   };
+
+  const currentRole = user?.role as UserRole | undefined;
+  const availableButtons = STATUS_BUTTONS.filter(btn => {
+    if (btn.status !== caseItem.status) return false;
+    if (btn.roles && currentRole && !btn.roles.includes(currentRole)) return false;
+    return true;
+  });
 
   const isEditable = ['draft', 'pending_submit', 'returned'].includes(caseItem.status);
 
@@ -128,7 +149,7 @@ export default function StatusActionButtons({
           编辑
         </Button>
       )}
-      {STATUS_BUTTONS.filter(btn => btn.status === caseItem.status).map(btn => (
+      {availableButtons.map(btn => (
         <Popconfirm
           key={btn.action}
           title={`确定${btn.label}该案件吗？`}
@@ -140,13 +161,14 @@ export default function StatusActionButtons({
           <Button
             type={btn.type}
             loading={loading === btn.action}
-            icon={btn.action === 'submit' || btn.action === 'resubmit' ? <SendOutlined /> : undefined}
+            icon={ACTION_ICON_MAP[btn.action]}
+            danger={btn.action === 'return'}
           >
             {btn.label}
           </Button>
         </Popconfirm>
       ))}
-      {!isEditable && !STATUS_BUTTONS.some(btn => btn.status === caseItem.status) && (
+      {availableButtons.length === 0 && !isEditable && (
         <Tooltip title="当前状态下无可操作按钮">
           <Button icon={<CheckCircleOutlined />} type="text" disabled>
             已处理

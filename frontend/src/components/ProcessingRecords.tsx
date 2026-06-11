@@ -10,7 +10,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { caseApi } from '../utils/api';
-import { STATUS_MAP } from '../utils/constants';
+import { STATUS_MAP, STATUS_COLOR_MAP } from '../utils/constants';
 import type { ProcessingRecord } from '../../types';
 
 interface ProcessingRecordsProps {

@@ -143,6 +143,7 @@ export interface CaseListRequest {
   deadline_from?: string;
   deadline_to?: string;
   keyword?: string;
+  queue?: CaseQueue;
 }
 
 export interface CaseListResponse {
@@ -153,10 +154,9 @@ export interface CaseListResponse {
 }
 
 export interface CaseActionRequest {
-  case_id: number;
   action: string;
   remark?: string;
-  version: number;
+  version?: number;
 }
 
 export interface BatchResult {

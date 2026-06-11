@@ -55,7 +55,7 @@ export default function CaseFilter({ queue, initialFilters, onFilter }: CaseFilt
       filters.deadline_to = values.deadline[1].format('YYYY-MM-DD');
     }
     if (queue) {
-      (filters as any).queue = queue;
+      filters.queue = queue as any;
     }
     onFilter(filters);
   };
@@ -64,7 +64,7 @@ export default function CaseFilter({ queue, initialFilters, onFilter }: CaseFilt
     form.resetFields();
     const filters: Partial<CaseListRequest> = {};
     if (queue) {
-      (filters as any).queue = queue;
+      filters.queue = queue as any;
     }
     onFilter(filters);
   };

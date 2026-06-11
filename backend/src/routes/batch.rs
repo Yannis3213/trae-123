@@ -78,6 +78,10 @@ fn get_action_config(action: &str) -> Result<(Vec<UserRole>, Option<CaseStatus>)
             vec![UserRole::Registrar, UserRole::Supervisor, UserRole::Director],
             None,
         )),
+        "resubmit" => Ok((
+            vec![UserRole::Registrar, UserRole::Supervisor, UserRole::Director],
+            Some(CaseStatus::Resubmitted),
+        )),
         "review" => Ok((
             vec![UserRole::Reviewer, UserRole::Supervisor, UserRole::Director],
             Some(CaseStatus::Reviewing),
@@ -109,6 +113,7 @@ fn get_action_config(action: &str) -> Result<(Vec<UserRole>, Option<CaseStatus>)
 fn get_action_name(action: &str) -> &str {
     match action {
         "submit" => "提交",
+        "resubmit" => "重新提交",
         "review" => "审核",
         "assign" => "分派",
         "start_followup" => "开始回访",
