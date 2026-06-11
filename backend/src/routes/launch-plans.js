@@ -5,6 +5,7 @@ import path from 'path';
 import db from '../db.js';
 import {
   ROLES, ROLE_NAMES, STATUSES, STATUS_NAMES, PRIORITY_NAMES,
+  ACCEPT_STATUS, ACCEPT_STATUS_NAMES,
   getDeadlineWarning, logException, checkRolePermission
 } from '../middleware.js';
 
@@ -34,6 +35,7 @@ export default async function (fastify, opts) {
       current_handler_role: handlerRole,
       current_handler_role_name: ROLE_NAMES[handlerRole] || handlerRole,
       assignee_role: plan.assignee ? (getUserRole(plan.assignee) || '') : '',
+      accept_status_name: ACCEPT_STATUS_NAMES[plan.accept_status] || plan.accept_status,
     };
   };
 
@@ -128,16 +130,19 @@ export default async function (fastify, opts) {
       const ts = now();
       const initialHandler = body.owner || user.name;
       const assignee = body.assignee || '';
+      const initialAcceptStatus = (assignee && assignee !== body.owner) ? ACCEPT_STATUS.ASSIGNED : ACCEPT_STATUS.UNASSIGNED;
 
       db.prepare(`
         INSERT INTO launch_plans (
           id, plan_no, customer_name, project_name, priority, deadline, status,
-          owner, current_handler, assignee, launch_target, config_checklist, acceptance_notes,
+          owner, current_handler, assignee, accept_status, launch_target, config_checklist, acceptance_notes,
           last_submitter, version, created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, planNo, body.customer_name, body.project_name, body.priority, body.deadline,
-        STATUSES.DRAFT, body.owner, initialHandler, assignee,
+        STATUSES.DRAFT, body.owner,
+        initialAcceptStatus === ACCEPT_STATUS.ASSIGNED ? assignee : initialHandler,
+        assignee, initialAcceptStatus,
         body.launch_target || '', body.config_checklist || '', body.acceptance_notes || '',
         '', 1, user.name, ts, ts
       );
@@ -148,14 +153,14 @@ export default async function (fastify, opts) {
       `).run(uuidv4(), id, 'create', '', STATUSES.DRAFT, user.name, user.role,
         `${ROLE_NAMES[user.role] || user.role}创建上线计划单`, '', ts);
 
-      if (assignee && assignee !== body.owner) {
-        db.prepare(`UPDATE launch_plans SET current_handler = ?, version = ?, updated_at = ? WHERE id = ?`)
-          .run(assignee, 2, ts, id);
+      if (initialAcceptStatus === ACCEPT_STATUS.ASSIGNED) {
         db.prepare(`
           INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(uuidv4(), id, 'assign', STATUSES.DRAFT, STATUSES.DRAFT, user.name, user.role,
           `建单时直接指派交付顾问${assignee}办理`, assignee, ts);
+        db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+          .run(uuidv4(), id, `建单时由${ROLE_NAMES[user.role] || user.role}${user.name}直接指派交付顾问${assignee}办理，当前状态：已指派待接办`, user.name, user.role, ts);
       }
 
       reply.status(201);
@@ -179,8 +184,8 @@ export default async function (fastify, opts) {
       const user = req.user;
       const { version, assignee, comment } = req.body;
 
-      if (!checkRolePermission(user, [ROLES.CS_MANAGER])) {
-        reply.status(403); return { error: '仅客户成功经理有权指派交付顾问' };
+      if (!checkRolePermission(user, [ROLES.CS_MANAGER, ROLES.CS_LEAD])) {
+        reply.status(403); return { error: '仅客户成功经理或客户成功负责人有权指派交付顾问' };
       }
 
       const assigneeRole = getUserRole(assignee);
@@ -200,13 +205,16 @@ export default async function (fastify, opts) {
       if (existing.owner !== user.name && user.role !== ROLES.CS_LEAD) {
         reply.status(403); return { error: '仅本单责任人（客户成功经理）或客户成功负责人可指派' };
       }
-      if (existing.current_handler === assignee && existing.assignee === assignee) {
+      if (existing.accept_status === ACCEPT_STATUS.ACCEPTED) {
+        reply.status(400); return { error: `该单据已由${existing.assignee}接办，如需换人请先退回处理` };
+      }
+      if (existing.accept_status === ACCEPT_STATUS.ASSIGNED && existing.current_handler === assignee && existing.assignee === assignee) {
         reply.status(400); return { error: `交付顾问${assignee}已被指派，无需重复操作` };
       }
 
       const ts = now();
-      db.prepare(`UPDATE launch_plans SET current_handler = ?, assignee = ?, version = ?, updated_at = ? WHERE id = ?`)
-        .run(assignee, assignee, existing.version + 1, ts, req.params.id);
+      db.prepare(`UPDATE launch_plans SET current_handler = ?, assignee = ?, accept_status = ?, version = ?, updated_at = ? WHERE id = ?`)
+        .run(assignee, assignee, ACCEPT_STATUS.ASSIGNED, existing.version + 1, ts, req.params.id);
 
       db.prepare(`
         INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at)
@@ -215,7 +223,7 @@ export default async function (fastify, opts) {
         user.name, user.role, comment || `指派交付顾问${assignee}办理`, assignee, ts);
 
       db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-        .run(uuidv4(), req.params.id, `客户成功经理${user.name}指派交付顾问${assignee}办理`, user.name, user.role, ts);
+        .run(uuidv4(), req.params.id, `${ROLE_NAMES[user.role] || user.role}${user.name}指派交付顾问${assignee}办理${comment ? '（' + comment + '）' : ''}`, user.name, user.role, ts);
 
       return { message: `已指派交付顾问${assignee}办理`, new_version: existing.version + 1 };
     },
@@ -249,19 +257,31 @@ export default async function (fastify, opts) {
       if (existing.status !== STATUSES.DRAFT) {
         reply.status(400); return { error: `当前状态为${STATUS_NAMES[existing.status]}，只能在草稿状态接办` };
       }
+      if (existing.accept_status !== ACCEPT_STATUS.ASSIGNED) {
+        if (existing.accept_status === ACCEPT_STATUS.ACCEPTED) {
+          reply.status(400); return { error: '该单据已接办，请勿重复操作' };
+        }
+        reply.status(400); return { error: '该单据尚未指派交付顾问，无法接办' };
+      }
       if (existing.current_handler !== user.name) {
         reply.status(403); return { error: `当前处理人为${existing.current_handler}，非本人无法接办` };
       }
+      if (existing.assignee !== user.name) {
+        reply.status(403); return { error: `该单据指派给${existing.assignee}，非本人无法接办` };
+      }
 
       const ts = now();
-      db.prepare(`UPDATE launch_plans SET version = ?, updated_at = ? WHERE id = ?`)
-        .run(existing.version + 1, ts, req.params.id);
+      db.prepare(`UPDATE launch_plans SET accept_status = ?, version = ?, updated_at = ? WHERE id = ?`)
+        .run(ACCEPT_STATUS.ACCEPTED, existing.version + 1, ts, req.params.id);
 
       db.prepare(`
         INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(uuidv4(), req.params.id, 'accept', STATUSES.DRAFT, STATUSES.DRAFT,
         user.name, user.role, comment || '交付顾问接办，开始处理', '', ts);
+
+      db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(uuidv4(), req.params.id, `交付顾问${user.name}已接办，开始处理${comment ? '（备注：' + comment + '）' : ''}`, user.name, user.role, ts);
 
       return { message: '已接办，开始处理', new_version: existing.version + 1 };
     },
@@ -317,8 +337,20 @@ export default async function (fastify, opts) {
       if (existing.status !== STATUSES.DRAFT) {
         reply.status(400); return { error: `当前状态为${STATUS_NAMES[existing.status]}，不能提交审核` };
       }
-      if (existing.current_handler !== user.name && existing.owner !== user.name) {
-        reply.status(403); return { error: `当前处理人应为${existing.current_handler}或责任人${existing.owner}` };
+      // 指派了交付顾问但未接办，拒绝提交
+      if (existing.accept_status === ACCEPT_STATUS.ASSIGNED) {
+        reply.status(400); return { error: `该单据已指派给交付顾问${existing.assignee}但尚未接办，请先接办后再提交` };
+      }
+      // 如果指派并已接办，只有被指派的交付顾问或负责人可以提交；如果未指派，owner/current_handler 都可提交
+      if (existing.accept_status === ACCEPT_STATUS.ACCEPTED) {
+        if (existing.assignee !== user.name && user.role !== ROLES.CS_LEAD) {
+          reply.status(403); return { error: `该单据已指派给交付顾问${existing.assignee}并已接办，仅本人或负责人可提交复核` };
+        }
+      } else {
+        // 未指派情形
+        if (existing.current_handler !== user.name && existing.owner !== user.name && user.role !== ROLES.CS_LEAD) {
+          reply.status(403); return { error: `当前处理人应为${existing.current_handler}或责任人${existing.owner}` };
+        }
       }
       const missing = [];
       if (!existing.launch_target || existing.launch_target.trim().length < 10) missing.push('上线目标');
@@ -339,6 +371,8 @@ export default async function (fastify, opts) {
       db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(uuidv4(), req.params.id, 'submit', STATUSES.DRAFT, STATUSES.PENDING_REVIEW,
           user.name, user.role, comment || '提交复核', evidence || '已按要求上传附件', ts);
+      db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(uuidv4(), req.params.id, `${ROLE_NAMES[user.role] || user.role}${user.name}提交复核，流转给客户成功负责人${csLead}审查${comment ? '（备注：' + comment + '）' : ''}${evidence ? '证据：' + evidence : ''}`, user.name, user.role, ts);
       return { message: '已提交复核', new_version: existing.version + 1 };
     },
   });
@@ -424,38 +458,65 @@ export default async function (fastify, opts) {
       const tx = db.transaction(() => {
         for (const id of ids) {
           const plan = db.prepare('SELECT * FROM launch_plans WHERE id = ?').get(id);
+          const ts = now();
           if (!plan) {
-            results.push({ id, success: false, result_type: 'error', reason: '单据不存在' });
+            results.push({ id, success: false, result_type: 'error', reason: '单据不存在', correction_hint: '' });
             continue;
           }
           const warning = getDeadlineWarning(plan.deadline, plan.status);
           if (plan.status === STATUSES.ARCHIVED) {
-            results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: false, result_type: 'error', reason: '已归档单据无需推进' });
+            results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: false, result_type: 'error', reason: '已归档单据无需推进', correction_hint: '' });
             continue;
           }
+          // ============ 拦截 1：已指派但未接办 ============
+          if (plan.accept_status === ACCEPT_STATUS.ASSIGNED) {
+            logException(id, 'not_accepted', `批量推进拦截：交付顾问${plan.assignee}尚未接办`, user.name);
+            db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              .run(uuidv4(), id, 'blocked', plan.status, plan.status, user.name, user.role,
+                `批量推进拦截：已指派交付顾问${plan.assignee}但尚未接办，请先接办后推进`, '未接办拦截', ts);
+            db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+              .run(uuidv4(), id, `批量推进被拦截：该单据已指派给交付顾问${plan.assignee}但尚未接办。请由${plan.assignee}先执行「接办」后再推进。`, user.name, user.role, ts);
+            results.push({
+              id, plan_no: plan.plan_no, customer_name: plan.customer_name,
+              success: false, result_type: 'not_accepted',
+              reason: `未接办拦截：已指派交付顾问${plan.assignee}，但尚未执行「接办」`,
+              correction_hint: `补正建议：请${plan.assignee}登录后在详情页点击「✋ 接办」按钮`,
+            });
+            continue;
+          }
+          // ============ 拦截 2：逾期 ============
           if (warning === 'overdue') {
             logException(id, 'overdue_blocked', `批量推进拦截：单据已逾期，责任人${plan.owner}，当前处理人${plan.current_handler}`, user.name);
             db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
               .run(uuidv4(), id, 'overdue_blocked', plan.status, plan.status, user.name, user.role,
-                `批量推进拦截：单据已逾期，请在详情页处理补正。责任人：${plan.owner}，当前处理人：${plan.current_handler}，截止日期：${plan.deadline}`, '逾期拦截', now());
+                `批量推进拦截：单据已逾期，请在详情页处理补正。责任人：${plan.owner}，当前处理人：${plan.current_handler}，截止日期：${plan.deadline}`, '逾期拦截', ts);
+            db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+              .run(uuidv4(), id, `批量推进被拦截：单据已逾期（截止${plan.deadline}）。责任人：${plan.owner}，处理人：${plan.current_handler}。建议更新截止日期或补充材料后手动推进。`, user.name, user.role, ts);
             results.push({
               id, plan_no: plan.plan_no, customer_name: plan.customer_name,
               success: false, result_type: 'overdue_blocked',
-              reason: `已逾期拦截：截止${plan.deadline}，责任人${plan.owner}，处理人${plan.current_handler}，请在详情页补正`,
-              correction_hint: `补正建议：更新截止日期或补充材料后手动提交`,
+              reason: `已逾期拦截：截止${plan.deadline}，责任人${plan.owner}，处理人${plan.current_handler}`,
+              correction_hint: `补正建议：在详情页更新截止日期或补充材料后手动提交`,
             });
             continue;
           }
+          // ============ 批量推进到待复核 ============
           if (target_status === STATUSES.PENDING_REVIEW) {
             if (plan.status !== STATUSES.DRAFT) {
-              results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: false, result_type: 'error', reason: `当前状态为${STATUS_NAMES[plan.status]}，无法推进到待复核` });
+              results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: false, result_type: 'error', reason: `当前状态为${STATUS_NAMES[plan.status]}，无法推进到待复核`, correction_hint: '' });
               continue;
             }
+            // ============ 拦截 3：缺材料 ============
             const missing = [];
             if (!plan.launch_target || plan.launch_target.trim().length < 10) missing.push('上线目标');
             if (!plan.config_checklist || plan.config_checklist.trim().length < 10) missing.push('配置检查');
             if (missing.length > 0) {
               logException(id, 'missing_evidence', `批量推进拦截：缺少${missing.join('、')}`, user.name);
+              db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                .run(uuidv4(), id, 'missing_evidence', plan.status, plan.status, user.name, user.role,
+                  `批量推进拦截：材料不完整，缺少${missing.join('、')}`, missing.join('、'), ts);
+              db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+                .run(uuidv4(), id, `批量推进被拦截：材料不完整，缺少${missing.join('、')}。请由${plan.current_handler}在详情页补正后重新提交。`, user.name, user.role, ts);
               results.push({
                 id, plan_no: plan.plan_no, customer_name: plan.customer_name,
                 success: false, result_type: 'missing_evidence',
@@ -464,22 +525,31 @@ export default async function (fastify, opts) {
               });
               continue;
             }
+            // ============ 成功：推进到待复核 ============
             const csLead = Object.entries(SIMULATED_USERS).find(([, r]) => r === ROLES.CS_LEAD)?.[0] || '王总';
             db.prepare(`UPDATE launch_plans SET status = ?, current_handler = ?, last_submitter = ?, version = ?, updated_at = ? WHERE id = ?`)
-              .run(STATUSES.PENDING_REVIEW, csLead, plan.current_handler, plan.version + 1, now(), id);
+              .run(STATUSES.PENDING_REVIEW, csLead, plan.current_handler, plan.version + 1, ts, id);
             db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-              .run(uuidv4(), id, 'submit', STATUSES.DRAFT, STATUSES.PENDING_REVIEW, user.name, user.role, comment || '批量推进到待复核', '批量操作', now());
-            results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: true, result_type: 'success', reason: '已提交复核' });
+              .run(uuidv4(), id, 'submit', STATUSES.DRAFT, STATUSES.PENDING_REVIEW, user.name, user.role, comment || '批量推进到待复核', '批量操作', ts);
+            db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+              .run(uuidv4(), id, `批量推进成功：由${ROLE_NAMES[user.role] || user.role}${user.name}推进到「待复核」状态，处理人流转给客户成功负责人${csLead}审查。${comment ? '备注：' + comment : ''}`, user.name, user.role, ts);
+            results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: true, result_type: 'success', reason: '已提交复核，流转给客户成功负责人审查', correction_hint: '' });
           } else if (target_status === STATUSES.ARCHIVED) {
             if (!checkRolePermission(user, [ROLES.CS_LEAD])) {
-              results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: false, result_type: 'error', reason: '仅客户成功负责人可批量归档' });
+              results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: false, result_type: 'error', reason: '仅客户成功负责人可批量归档', correction_hint: '' });
               continue;
             }
             if (plan.status !== STATUSES.PENDING_REVIEW) {
-              results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: false, result_type: 'error', reason: `当前状态为${STATUS_NAMES[plan.status]}，无法归档` });
+              results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: false, result_type: 'error', reason: `当前状态为${STATUS_NAMES[plan.status]}，无法归档`, correction_hint: '' });
               continue;
             }
             if (!plan.acceptance_notes || plan.acceptance_notes.trim().length < 10) {
+              logException(id, 'missing_evidence', `批量归档拦截：验收确认不完整`, user.name);
+              db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                .run(uuidv4(), id, 'missing_evidence', plan.status, plan.status, user.name, user.role,
+                  `批量归档拦截：验收确认不完整，无法归档`, '验收确认', ts);
+              db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+                .run(uuidv4(), id, `批量归档被拦截：验收确认内容不完整。请先完善验收确认后由负责人手动归档。`, user.name, user.role, ts);
               results.push({
                 id, plan_no: plan.plan_no, customer_name: plan.customer_name,
                 success: false, result_type: 'missing_evidence',
@@ -488,11 +558,15 @@ export default async function (fastify, opts) {
               });
               continue;
             }
+            // ============ 成功：归档 ============
+            const resultText = comment || '批量归档完成，系统验收通过';
             db.prepare(`UPDATE launch_plans SET status = ?, result = ?, version = ?, updated_at = ? WHERE id = ?`)
-              .run(STATUSES.ARCHIVED, comment || '批量归档完成', plan.version + 1, now(), id);
+              .run(STATUSES.ARCHIVED, resultText, plan.version + 1, ts, id);
             db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-              .run(uuidv4(), id, 'archive', STATUSES.PENDING_REVIEW, STATUSES.ARCHIVED, user.name, user.role, comment || '批量归档', '批量操作', now());
-            results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: true, result_type: 'success', reason: '已归档' });
+              .run(uuidv4(), id, 'archive', STATUSES.PENDING_REVIEW, STATUSES.ARCHIVED, user.name, user.role, resultText, '批量操作', ts);
+            db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+              .run(uuidv4(), id, `批量归档成功：由客户成功负责人${user.name}完成归档，结果：${resultText}`, user.name, user.role, ts);
+            results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: true, result_type: 'success', reason: '已归档完成', correction_hint: '' });
           }
         }
       });
@@ -503,6 +577,7 @@ export default async function (fastify, opts) {
         failed: results.filter(r => !r.success).length,
         overdue_blocked: results.filter(r => r.result_type === 'overdue_blocked').length,
         missing_evidence: results.filter(r => r.result_type === 'missing_evidence').length,
+        not_accepted: results.filter(r => r.result_type === 'not_accepted').length,
         items: results,
       };
     },

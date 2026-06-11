@@ -14,6 +14,8 @@ export interface LaunchPlan {
   current_handler_role_name: string;
   assignee: string;
   assignee_role: string;
+  accept_status: 'unassigned' | 'assigned' | 'accepted';
+  accept_status_name: string;
   last_submitter: string;
   launch_target: string;
   config_checklist: string;
@@ -94,6 +96,7 @@ export interface BatchResult {
   failed: number;
   overdue_blocked: number;
   missing_evidence: number;
+  not_accepted: number;
   items: BatchResultItem[];
 }
 
@@ -103,7 +106,7 @@ export interface BatchResultItem {
   customer_name?: string;
   success: boolean;
   reason: string;
-  result_type: 'success' | 'overdue_blocked' | 'missing_evidence' | 'error';
+  result_type: 'success' | 'overdue_blocked' | 'missing_evidence' | 'not_accepted' | 'blocked' | 'error';
   correction_hint: string;
 }
 

@@ -50,23 +50,24 @@ import {
             <div class="action-buttons flex gap-sm wrap">
               <ng-container *ngIf="canEdit">
                 <ng-container *ngIf="plan.status === 'draft'">
-                  <button *ngIf="canAssign && !plan.assignee"
+                  <button *ngIf="canAssign"
                     class="btn btn-primary"
-                    [disabled]="loading"
+                    [disabled]="loading || plan.accept_status === 'accepted'"
                     (click)="showAssignSelect = !showAssignSelect">
-                    🔄 指派交付顾问
+                    🔄 {{plan.accept_status === 'accepted' ? '已接办（不可重新指派）' : '指派交付顾问'}}
                   </button>
-                  <button *ngIf="plan.assignee && plan.current_handler === currentUser.name && currentUser.role === 'delivery_consultant'"
+                  <button *ngIf="showAcceptButton"
                     class="btn btn-primary"
                     [disabled]="loading"
                     (click)="doAccept()">
-                    ✋ 接办
+                    ✋ 接办（{{plan.accept_status_name}}）
                   </button>
                   <button *ngIf="canSubmit"
                     class="btn btn-warning"
-                    [disabled]="loading"
+                    [disabled]="loading || submitDisabled"
+                    [title]="submitDisabled ? submitDisabledReason : ''"
                     (click)="doSubmit()">
-                    📤 提交复核
+                    📤 提交复核{{submitDisabled ? '（未接办）' : ''}}
                   </button>
                 </ng-container>
                 <button *ngIf="plan.status === 'pending_review' && currentUser.role === 'cs_lead'"
@@ -128,6 +129,12 @@ import {
               </span>
             </div>
             <div class="meta-item">
+              <span class="meta-label">接办状态</span>
+              <span class="tag" [ngClass]="acceptStatusTagClass(plan.accept_status)">
+                {{plan.accept_status_name}}
+              </span>
+            </div>
+            <div class="meta-item">
               <span class="meta-label">创建人</span>
               <span>{{plan.created_by}}</span>
             </div>
@@ -139,16 +146,18 @@ import {
             </div>
           </div>
 
-          <div *ngIf="showAssignSelect && canAssign && !plan.assignee && plan.status === 'draft'"
+          <div *ngIf="showAssignSelect && canAssign && plan.accept_status !== 'accepted' && plan.status === 'draft'"
             class="assign-bar flex gap-sm mt-md" style="padding:12px;background:#f0f9ff;border:1px solid #93c5fd;border-radius:8px">
-            <span style="font-size:14px;line-height:36px;color:#1d4ed8">🔄 选择交付顾问：</span>
+            <span style="font-size:14px;line-height:36px;color:#1d4ed8">
+              🔄 {{plan.accept_status === 'assigned' ? '更换交付顾问：' : '选择交付顾问：'}}
+            </span>
             <select class="select" [(ngModel)]="assigneeName" style="flex:0 0 180px">
               <option value="">-- 请选择 --</option>
               <option *ngFor="let u of deliveryConsultants" [value]="u.name">{{u.name}}（{{u.role_name}}）</option>
             </select>
             <input class="input" [(ngModel)]="assignComment" placeholder="指派说明（可选）" style="flex:1">
             <button class="btn btn-primary btn-sm" [disabled]="!assigneeName || assigning" (click)="doAssign()">
-              {{assigning ? '指派中...' : '确认指派'}}
+              {{assigning ? '指派中...' : (plan.accept_status === 'assigned' ? '确认更换' : '确认指派')}}
             </button>
             <button class="btn btn-sm" (click)="showAssignSelect = false">取消</button>
           </div>
@@ -159,6 +168,16 @@ import {
           <span class="ml-sm" style="font-size:12px;opacity:.8">
             请按原因补正后重新提交复核
           </span>
+        </div>
+
+        <div *ngIf="plan.accept_status === 'assigned'" class="alert mb-md"
+             [ngClass]="showAcceptButton ? 'alert-success' : 'alert-info'">
+          <ng-container *ngIf="showAcceptButton">
+            <strong>✋ 等待您接办：</strong>该单据已由客户成功经理{{plan.owner}}指派给您，请先点击上方「接办」按钮，然后再办理材料并提交复核。
+          </ng-container>
+          <ng-container *ngIf="!showAcceptButton">
+            <strong>⏳ 等待交付顾问接办：</strong>该单据已指派给交付顾问{{plan.assignee}}（{{plan.accept_status_name}}），暂不能提交待复核，请先完成接办。
+          </ng-container>
         </div>
 
         <div *ngIf="plan.deadline_warning === 'overdue'" class="alert alert-error mb-md">
@@ -477,6 +496,37 @@ export class LaunchPlanDetailComponent implements OnInit, OnDestroy {
 
   get deliveryConsultants(): User[] {
     return this.auth.getAllUsers().filter(u => u.role === 'delivery_consultant');
+  }
+
+  get showAcceptButton(): boolean {
+    if (!this.plan) return false;
+    const u = this.currentUser;
+    return this.plan.status === 'draft'
+      && this.plan.accept_status === 'assigned'
+      && this.plan.assignee === u.name
+      && u.role === 'delivery_consultant';
+  }
+
+  get submitDisabled(): boolean {
+    if (!this.plan) return false;
+    return this.plan.accept_status === 'assigned';
+  }
+
+  get submitDisabledReason(): string {
+    if (!this.plan) return '';
+    if (this.plan.accept_status === 'assigned') {
+      return `该单据已指派给${this.plan.assignee}但尚未接办，请先点击「接办」按钮后再提交`;
+    }
+    return '';
+  }
+
+  acceptStatusTagClass(s: string): string {
+    switch (s) {
+      case 'unassigned': return 'tag-gray';
+      case 'assigned': return 'tag-warning';
+      case 'accepted': return 'tag-success';
+      default: return 'tag-gray';
+    }
   }
 
   ngOnInit() {

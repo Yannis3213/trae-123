@@ -33,6 +33,18 @@ export const PRIORITY_NAMES = {
   low: '低',
 };
 
+export const ACCEPT_STATUS = {
+  UNASSIGNED: 'unassigned',
+  ASSIGNED: 'assigned',
+  ACCEPTED: 'accepted',
+};
+
+export const ACCEPT_STATUS_NAMES = {
+  unassigned: '未指派',
+  assigned: '已指派待接办',
+  accepted: '已接办',
+};
+
 const SIMULATED_USERS = {
   '张三': { id: 'u-zhangsan', role: ROLES.CS_MANAGER },
   '李四': { id: 'u-lisi', role: ROLES.DELIVERY_CONSULTANT },

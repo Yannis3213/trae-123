@@ -29,6 +29,7 @@ export function initDatabase() {
       owner TEXT NOT NULL,
       current_handler TEXT NOT NULL,
       assignee TEXT DEFAULT '',
+      accept_status TEXT DEFAULT 'unassigned',
       launch_target TEXT DEFAULT '',
       config_checklist TEXT DEFAULT '',
       acceptance_notes TEXT DEFAULT '',
@@ -100,6 +101,9 @@ export function initDatabase() {
   try {
     db.exec(`ALTER TABLE launch_plans ADD COLUMN last_submitter TEXT DEFAULT ''`);
   } catch {}
+  try {
+    db.exec(`ALTER TABLE launch_plans ADD COLUMN accept_status TEXT DEFAULT 'unassigned'`);
+  } catch {}
 
   seedInitialData();
 }
@@ -121,6 +125,7 @@ function seedInitialData() {
       owner: '张三',
       current_handler: '张三',
       assignee: '',
+      accept_status: 'unassigned',
       launch_target: '完成CRM系统部署，用户数据迁移完成',
       config_checklist: '1. 数据库配置\n2. 用户权限配置\n3. 集成配置',
       acceptance_notes: '',
@@ -138,6 +143,7 @@ function seedInitialData() {
       owner: '张三',
       current_handler: '王总',
       assignee: '李四',
+      accept_status: 'accepted',
       launch_target: '财务模块上线，发票、凭证流程打通',
       config_checklist: '1. 财务科目配置\n2. 审批流配置\n3. 报表配置',
       acceptance_notes: '客户已完成UAT测试，签字确认',
@@ -155,6 +161,7 @@ function seedInitialData() {
       owner: '王五',
       current_handler: '王五',
       assignee: '',
+      accept_status: 'unassigned',
       launch_target: '生产管理模块上线，工单流程跑通',
       config_checklist: '',
       acceptance_notes: '',
@@ -172,6 +179,7 @@ function seedInitialData() {
       owner: '赵六',
       current_handler: '赵六',
       assignee: '',
+      accept_status: 'accepted',
       launch_target: '会员营销系统上线，积分、优惠券功能可用',
       config_checklist: '1. 会员等级配置\n2. 积分规则配置\n3. 优惠券模板',
       acceptance_notes: '客户方负责人签字确认上线完成',
@@ -190,6 +198,7 @@ function seedInitialData() {
       owner: '张三',
       current_handler: '李四',
       assignee: '李四',
+      accept_status: 'assigned',
       launch_target: 'BI平台上线，报表和仪表盘功能交付',
       config_checklist: '1. 数据源配置\n2. 报表模板配置\n3. 权限配置',
       acceptance_notes: '',
@@ -201,15 +210,16 @@ function seedInitialData() {
   const insertPlan = db.prepare(`
     INSERT INTO launch_plans (
       id, plan_no, customer_name, project_name, priority, deadline, status,
-      owner, current_handler, assignee, launch_target, config_checklist, acceptance_notes,
+      owner, current_handler, assignee, accept_status, launch_target, config_checklist, acceptance_notes,
       result, last_submitter, version, created_by, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const p of plans) {
     insertPlan.run(
       p.id, p.plan_no, p.customer_name, p.project_name, p.priority,
       p.deadline, p.status, p.owner, p.current_handler, p.assignee || '',
+      p.accept_status || 'unassigned',
       p.launch_target, p.config_checklist, p.acceptance_notes,
       p.result || '', p.last_submitter || '', 1, p.created_by, now, now
     );

@@ -165,6 +165,8 @@ export class AuditTimelineComponent {
       overdue_blocked: '🚫 逾期拦截',
       assign: '🔄 指派交付顾问',
       accept: '✋ 接办',
+      blocked: '⛔ 批量拦截',
+      missing_evidence: '📋 材料缺失',
     };
     return map[a] || a;
   }
