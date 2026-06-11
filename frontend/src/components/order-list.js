@@ -123,13 +123,21 @@ class OrderList extends LitElement {
                     详情
                   </button>
                   ${this.canOperate(order) ? html`
-                    <button
-                      class="action-btn approve"
-                      @click=${() => this._quickApprove(order)}
-                    >
-                      通过
-                    </button>
+                    ${order.status === 'exception_return' && this.currentUser?.role === 'register' ? html`
+                      <button
+                        class="action-btn approve"
+                        @click=${() => this._quickResubmit(order)}
+                      >
+                        补正
+                      </button>
+                    ` : ''}
                     ${order.status === 'pending_sign' ? html`
+                      <button
+                        class="action-btn approve"
+                        @click=${() => this._quickApprove(order)}
+                      >
+                        通过
+                      </button>
                       <button
                         class="action-btn return"
                         @click=${() => this._quickReturn(order)}
@@ -158,13 +166,173 @@ class OrderList extends LitElement {
     const reason = prompt('请输入退回原因：')
     if (!reason) return
     this.dispatchEvent(new CustomEvent('quick-action', {
-      detail: { order, action: 'return', reason }
+      detail: { order, action: 'exception', reason }
     }))
+  }
+
+  _quickResubmit(order) {
+    this.dispatchEvent(new CustomEvent('view-detail', { detail: order.id }))
   }
 
   static styles = css`
     :host {
       display: block;
+    }
+
+    .order-table {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      overflow: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead {
+      background: #f8f9fa;
+    }
+
+    th {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 600;
+      color: #6b7280;
+      border-bottom: 1px solid #e5e7eb;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #374151;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    tbody tr:hover {
+      background: #f9fafb;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .checkbox-cell {
+      width: 40px;
+      text-align: center;
+    }
+
+    .checkbox-cell input[type="checkbox"] {
+      cursor: pointer;
+      width: 16px;
+      height: 16px;
+    }
+
+    .overdue-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 500;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+
+    .overdue-normal {
+      background: #dcfce7;
+      color: #16a34a;
+    }
+
+    .overdue-urgent {
+      background: #fef3c7;
+      color: #d97706;
+    }
+
+    .overdue-overdue {
+      background: #fee2e2;
+      color: #dc2626;
+    }
+
+    .status-tag {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .status-pending_sign {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+
+    .status-exception_return {
+      background: #fee2e2;
+      color: #dc2626;
+    }
+
+    .status-sign_complete {
+      background: #dcfce7;
+      color: #16a34a;
+    }
+
+    .action-btn {
+      padding: 5px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      margin-right: 6px;
+      transition: all 0.2s;
+    }
+
+    .action-btn:last-child {
+      margin-right: 0;
+    }
+
+    .action-btn.view {
+      background: #e0e7ff;
+      color: #4338ca;
+    }
+
+    .action-btn.view:hover {
+      background: #c7d2fe;
+    }
+
+    .action-btn.approve {
+      background: #d1fae5;
+      color: #047857;
+    }
+
+    .action-btn.approve:hover {
+      background: #a7f3d0;
+    }
+
+    .action-btn.return {
+      background: #fee2e2;
+      color: #dc2626;
+    }
+
+    .action-btn.return:hover {
+      background: #fecaca;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #9ca3af;
+    }
+
+    .empty-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+
+    .empty-state div {
+      font-size: 14px;
     }
   `
 }

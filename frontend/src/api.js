@@ -27,7 +27,10 @@ async function request(url, options = {}) {
     const data = await response.json()
 
     if (!response.ok) {
-      throw new Error(data.error || data.message || `请求失败: ${response.status}`)
+      const error = new Error(data.error || data.message || `请求失败: ${response.status}`)
+      error.code = data.code
+      error.data = data
+      throw error
     }
 
     return data
@@ -57,6 +60,13 @@ export const api = {
     return request('/orders', {
       method: 'POST',
       body: JSON.stringify(orderData)
+    })
+  },
+
+  resubmitOrder(orderId, data) {
+    return request(`/orders/${orderId}/resubmit`, {
+      method: 'POST',
+      body: JSON.stringify(data)
     })
   },
 

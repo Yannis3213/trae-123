@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
@@ -7,7 +6,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from database import (
     get_conn, init_db, ROLES, STAGES, STATUS_FLOW
@@ -28,16 +27,22 @@ STAGE_REQUIRED_EVIDENCE = {
     'usage_confirm': 'usage_evidence'
 }
 
+STAGE_LABEL_MAP = {
+    'room_booking_evidence': '会议室预约证据',
+    'equipment_evidence': '设备准备证据',
+    'usage_evidence': '使用确认证据'
+}
+
 STAGE_TRANSITION = {
     'room_booking': 'equipment_prep',
     'equipment_prep': 'usage_confirm',
     'usage_confirm': None
 }
 
-ROLE_TRANSITION = {
-    'register': 'audit',
-    'audit': 'review',
-    'review': 'review'
+ROLE_BY_STAGE = {
+    'room_booking': 'audit',
+    'equipment_prep': 'audit',
+    'usage_confirm': 'audit'
 }
 
 class ProcessRequest(BaseModel):
@@ -89,24 +94,16 @@ def validate_order_access(order: Dict[str, Any], user: Dict[str, Any], action: s
     if order['current_role'] != user['role']:
         return {
             'error': f"越权操作：当前处理角色应为 {ROLES.get(order['current_role'])}，您是 {ROLES.get(user['role'])}",
-            'code': 'WRONG_ROLE'
+            'code': 'WRONG_ROLE',
+            'expected_role': order['current_role']
         }
     
     if order['handler'] and order['handler'] != user['id']:
         return {
             'error': f"越权操作：该单据处理人为 {order['handler']}，您不是指定处理人",
-            'code': 'WRONG_HANDLER'
+            'code': 'WRONG_HANDLER',
+            'expected_handler': order['handler']
         }
-    
-    if action in ['approve', 'complete']:
-        stage = order['current_stage']
-        evidence_field = STAGE_REQUIRED_EVIDENCE[stage]
-        if not order.get(evidence_field):
-            return {
-                'error': f"缺证据：{STAGES[stage]} 环节必须上传证据材料",
-                'code': 'MISSING_EVIDENCE',
-                'stage': stage
-            }
     
     return None
 
@@ -125,17 +122,72 @@ def validate_status_transition(order: Dict[str, Any], action: str) -> Optional[D
     
     valid_transitions = {
         'pending_sign': ['approve', 'return', 'exception'],
-        'exception_return': ['approve', 'return'],
+        'exception_return': ['resubmit', 'return'],
         'sign_complete': []
     }
     
     if action not in valid_transitions.get(current_status, []):
         return {
-            'error': f"状态冲突：当前状态为 [{STATUS_FLOW[current_status]}]，不允许执行 [{action}] 操作",
+            'error': f"状态冲突：当前状态为 [{STATUS_FLOW[current_status]}]，不允许执行 [{_action_label(action)}] 操作",
             'code': 'STATUS_CONFLICT',
             'current_status': current_status,
-            'action': action
+            'action': action,
+            'allowed_actions': valid_transitions.get(current_status, [])
         }
+    return None
+
+def _action_label(action: str) -> str:
+    labels = {
+        'approve': '审核通过',
+        'return': '退回补正',
+        'exception': '异常回传',
+        'resubmit': '补正提交',
+        'create': '创建',
+        'update_evidence': '更新证据'
+    }
+    return labels.get(action, action)
+
+def validate_evidence(order: Dict[str, Any], action: str, evidence: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
+    if action == 'approve':
+        stage = order['current_stage']
+        evidence_field = STAGE_REQUIRED_EVIDENCE[stage]
+        existing_evidence = order.get(evidence_field, '')
+        new_evidence = (evidence or {}).get(evidence_field, '')
+        final_evidence = new_evidence or existing_evidence
+        
+        if not final_evidence:
+            return {
+                'error': f"缺证据：{STAGES[stage]} 环节必须上传{STAGE_LABEL_MAP[evidence_field]}",
+                'code': 'MISSING_EVIDENCE',
+                'stage': stage,
+                'evidence_field': evidence_field,
+                'evidence_label': STAGE_LABEL_MAP[evidence_field]
+            }
+    
+    if action == 'resubmit':
+        if not evidence or len(evidence) == 0:
+            return {
+                'error': '补正提交必须提供补正材料',
+                'code': 'MISSING_CORRECTION',
+                'expected': '至少补充一项证据材料'
+            }
+    
+    return None
+
+def validate_overdue(order: Dict[str, Any], action: str, audit_remark: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    if action not in ['approve', 'resubmit']:
+        return None
+    
+    deadline = datetime.strptime(order['deadline'], '%Y-%m-%d %H:%M:%S')
+    if deadline < datetime.now():
+        if not audit_remark:
+            return {
+                'error': '该单据已逾期，必须填写审计备注才能继续处理',
+                'code': 'OVERDUE_REQUIRES_REMARK',
+                'deadline': order['deadline'],
+                'overdue_hours': abs((datetime.now() - deadline).total_seconds() / 3600)
+            }
+    
     return None
 
 def validate_batch_request(data: Dict[str, Any], user: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -143,14 +195,62 @@ def validate_batch_request(data: Dict[str, Any], user: Dict[str, Any]) -> Option
         return {'error': '请选择要处理的单据', 'code': 'NO_ORDER_SELECTED'}
     if not data.get('action'):
         return {'error': '请指定操作类型', 'code': 'NO_ACTION'}
-    if data.get('action') in ['return', 'exception'] and not data.get('exception_reason'):
+    
+    action = data['action']
+    
+    if action in ['return', 'exception'] and not data.get('exception_reason'):
         return {'error': '退回/异常回传必须填写异常原因', 'code': 'MISSING_EXCEPTION_REASON'}
-    if data.get('action') in ['approve', 'complete'] and not data.get('opinion'):
+    
+    if action in ['approve'] and not data.get('opinion'):
         return {'error': '请填写处理意见', 'code': 'MISSING_OPINION'}
+    
+    return None
+
+def validate_single_order_full(order: Dict[str, Any], user: Dict[str, Any], action: str,
+                               version: Optional[int] = None,
+                               evidence: Optional[Dict[str, str]] = None,
+                               audit_remark: Optional[str] = None,
+                               exception_reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    check_order = dict(order)
+    
+    access_error = validate_order_access(check_order, user, action)
+    if access_error:
+        return access_error
+    
+    if version is not None:
+        version_error = validate_version(check_order, version)
+        if version_error:
+            return version_error
+    
+    status_error = validate_status_transition(check_order, action)
+    if status_error:
+        return status_error
+    
+    overdue_error = validate_overdue(check_order, action, audit_remark)
+    if overdue_error:
+        return overdue_error
+    
+    if action in ['return', 'exception'] and not exception_reason:
+        return {
+            'error': '退回/异常回传必须填写异常原因',
+            'code': 'MISSING_EXCEPTION_REASON'
+        }
+    
+    if action in ['approve'] and not evidence and not check_order.get(STAGE_REQUIRED_EVIDENCE[check_order['current_stage']]):
+        evidence_error = validate_evidence(check_order, action, evidence)
+        if evidence_error:
+            return evidence_error
+    
+    if action in ['approve', 'resubmit'] and evidence:
+        evidence_error = validate_evidence(check_order, action, evidence)
+        if evidence_error:
+            return evidence_error
+    
     return None
 
 def record_process(conn, order_id: int, order_version: int, action: str, 
                    from_status: str, to_status: str, from_stage: str, to_stage: str,
+                   from_role: str, to_role: str,
                    user: Dict[str, Any], opinion: Optional[str], 
                    audit_remark: Optional[str], exception_reason: Optional[str],
                    is_exception: bool = False):
@@ -158,10 +258,10 @@ def record_process(conn, order_id: int, order_version: int, action: str,
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     c.execute('''INSERT INTO process_records 
         (order_id, order_version, action, from_status, to_status, from_stage, to_stage,
-         handler, handler_role, opinion, audit_remark, exception_reason, is_exception, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+         from_role, to_role, handler, handler_role, opinion, audit_remark, exception_reason, is_exception, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
         (order_id, order_version, action, from_status, to_status, from_stage, to_stage,
-         user['id'], user['role'], opinion, audit_remark, exception_reason, is_exception, now))
+         from_role, to_role, user['id'], user['role'], opinion, audit_remark, exception_reason, is_exception, now))
     
     if audit_remark:
         c.execute('''INSERT INTO audit_remarks (order_id, remark, created_by, created_at)
@@ -171,30 +271,37 @@ def record_process(conn, order_id: int, order_version: int, action: str,
         c.execute('''INSERT INTO exception_reasons (order_id, stage, reason, reported_by, created_at)
             VALUES (?, ?, ?, ?, ?)''', (order_id, from_stage, exception_reason, user['id'], now))
 
+def apply_evidence_to_order(order: Dict[str, Any], evidence: Optional[Dict[str, str]]) -> Dict[str, Any]:
+    result = dict(order)
+    if evidence:
+        for field, value in evidence.items():
+            if field in STAGE_REQUIRED_EVIDENCE.values():
+                result[field] = value
+    return result
+
 def update_order_status(conn, order_id: int, action: str, user: Dict[str, Any], 
                         evidence: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     c = conn.cursor()
     c.execute('SELECT * FROM meeting_orders WHERE id = ?', (order_id,))
     order = dict(c.fetchone())
     
+    order_with_evidence = apply_evidence_to_order(order, evidence)
+    
     old_status = order['status']
     old_stage = order['current_stage']
+    old_role = order['current_role']
     new_status = old_status
     new_stage = old_stage
-    new_role = order['current_role']
+    new_role = old_role
     new_handler = order['handler']
     
     if action == 'approve':
-        if evidence:
-            for stage_field, evidence_value in evidence.items():
-                if stage_field in STAGE_REQUIRED_EVIDENCE.values():
-                    order[stage_field] = evidence_value
-        
         next_stage = STAGE_TRANSITION[order['current_stage']]
         if next_stage:
             new_stage = next_stage
-            new_role = ROLE_TRANSITION[order['current_role']]
+            new_role = ROLE_BY_STAGE.get(next_stage, 'audit')
             new_handler = _get_next_handler(new_role, user['id'])
+            new_status = 'pending_sign'
         else:
             new_status = 'sign_complete'
             new_role = 'review'
@@ -209,6 +316,11 @@ def update_order_status(conn, order_id: int, action: str, user: Dict[str, Any],
         new_status = 'exception_return'
         new_role = 'register'
         new_handler = order['created_by']
+    
+    elif action == 'resubmit':
+        new_status = 'pending_sign'
+        new_role = 'audit'
+        new_handler = _get_next_handler('audit', user['id'])
     
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     new_version = order['version'] + 1
@@ -235,9 +347,10 @@ def update_order_status(conn, order_id: int, action: str, user: Dict[str, Any],
         'new_status': new_status,
         'old_stage': old_stage,
         'new_stage': new_stage,
-        'old_role': order['current_role'],
+        'old_role': old_role,
         'new_role': new_role,
-        'new_version': new_version
+        'new_version': new_version,
+        'new_handler': new_handler
     }
 
 def _get_next_handler(role: str, current_user: str) -> str:
@@ -273,6 +386,7 @@ async def list_orders(request: Request, user: Dict[str, Any]):
     stage = params.get('stage')
     keyword = params.get('keyword')
     overdue_level = params.get('overdue_level')
+    mine_only = params.get('mine_only', '1')
     
     with get_conn() as conn:
         c = conn.cursor()
@@ -280,8 +394,11 @@ async def list_orders(request: Request, user: Dict[str, Any]):
         where_clauses = []
         where_values = []
         
-        where_clauses.append('current_role = ?')
-        where_values.append(user['role'])
+        if mine_only == '1':
+            where_clauses.append('current_role = ?')
+            where_values.append(user['role'])
+            where_clauses.append('(handler IS NULL OR handler = ?)')
+            where_values.append(user['id'])
         
         if status:
             where_clauses.append('status = ?')
@@ -293,16 +410,27 @@ async def list_orders(request: Request, user: Dict[str, Any]):
             where_clauses.append('(title LIKE ? OR order_no LIKE ?)')
             where_values.extend([f'%{keyword}%', f'%{keyword}%'])
         
-        sql = f'''SELECT * FROM meeting_orders WHERE {' AND '.join(where_clauses)} 
-                  ORDER BY created_at DESC'''
+        sql = f'''SELECT * FROM meeting_orders 
+                  {('WHERE ' + ' AND '.join(where_clauses)) if where_clauses else ''}
+                  ORDER BY 
+                    CASE status 
+                      WHEN 'exception_return' THEN 0 
+                      WHEN 'pending_sign' THEN 1 
+                      WHEN 'sign_complete' THEN 2 
+                      ELSE 3 
+                    END,
+                    deadline ASC,
+                    created_at DESC'''
         c.execute(sql, where_values)
         orders = [row_to_dict(row) for row in c.fetchall()]
         
         if overdue_level:
             orders = [o for o in orders if o.get('overdue_info', {}).get('level') == overdue_level]
         
-        c.execute('''SELECT status, COUNT(*) as cnt FROM meeting_orders 
-                     WHERE current_role = ? GROUP BY status''', (user['role'],))
+        role_where = ['current_role = ?']
+        role_values = [user['role']]
+        c.execute(f'''SELECT status, COUNT(*) as cnt FROM meeting_orders 
+                     WHERE {' AND '.join(role_where)} GROUP BY status''', role_values)
         status_stats = {row['status']: row['cnt'] for row in c.fetchall()}
         
         total = len(orders)
@@ -333,21 +461,25 @@ async def get_order_detail(request: Request, user: Dict[str, Any]):
         if not order:
             return JSONResponse({'error': '单据不存在', 'code': 'NOT_FOUND'}, status_code=404)
         
-        c.execute('''SELECT pr.*, u.name as handler_name 
+        c.execute('''SELECT pr.* 
                      FROM process_records pr
-                     LEFT JOIN meeting_orders mo ON pr.order_id = mo.id
                      WHERE pr.order_id = ? ORDER BY pr.created_at DESC''', (order_id,))
         records = [dict(row) for row in c.fetchall()]
         for r in records:
             if r['handler_role'] in ROLES:
                 r['role_label'] = ROLES[r['handler_role']]
+            if r.get('from_role') and r['from_role'] in ROLES:
+                r['from_role_label'] = ROLES[r['from_role']]
+            if r.get('to_role') and r['to_role'] in ROLES:
+                r['to_role_label'] = ROLES[r['to_role']]
             if r['handler'] in USER_MAP:
                 r['handler_name'] = USER_MAP[r['handler']]['name']
+            r['action_label'] = _action_label(r['action'])
         
         c.execute('''SELECT * FROM attachments WHERE order_id = ? ORDER BY uploaded_at DESC''', (order_id,))
         attachments = [dict(row) for row in c.fetchall()]
         
-        c.execute('''SELECT ar.*, u.name as creator_name 
+        c.execute('''SELECT ar.* 
                      FROM audit_remarks ar
                      WHERE ar.order_id = ? ORDER BY ar.created_at DESC''', (order_id,))
         remarks = [dict(row) for row in c.fetchall()]
@@ -355,7 +487,7 @@ async def get_order_detail(request: Request, user: Dict[str, Any]):
             if r['created_by'] in USER_MAP:
                 r['creator_name'] = USER_MAP[r['created_by']]['name']
         
-        c.execute('''SELECT er.*, u.name as reporter_name 
+        c.execute('''SELECT er.* 
                      FROM exception_reasons er
                      WHERE er.order_id = ? ORDER BY er.created_at DESC''', (order_id,))
         exceptions = [dict(row) for row in c.fetchall()]
@@ -368,6 +500,17 @@ async def get_order_detail(request: Request, user: Dict[str, Any]):
         can_operate = (order['current_role'] == user['role'] and 
                        (not order['handler'] or order['handler'] == user['id']))
         
+        can_edit_evidence = can_operate and order['status'] != 'sign_complete'
+        
+        allowed_actions = []
+        if can_operate:
+            if order['status'] == 'pending_sign':
+                allowed_actions = ['approve', 'exception']
+            elif order['status'] == 'exception_return' and user['role'] == 'register':
+                allowed_actions = ['resubmit', 'return']
+            elif order['status'] == 'exception_return' and user['role'] in ['audit', 'review']:
+                allowed_actions = ['return']
+        
         return JSONResponse({
             'order': order,
             'records': records,
@@ -375,7 +518,11 @@ async def get_order_detail(request: Request, user: Dict[str, Any]):
             'remarks': remarks,
             'exceptions': exceptions,
             'can_operate': can_operate,
-            'required_evidence': STAGE_REQUIRED_EVIDENCE.get(order['current_stage'])
+            'can_edit_evidence': can_edit_evidence,
+            'required_evidence': STAGE_REQUIRED_EVIDENCE.get(order['current_stage']),
+            'allowed_actions': allowed_actions,
+            'evidence_fields': STAGE_REQUIRED_EVIDENCE,
+            'evidence_labels': STAGE_LABEL_MAP
         })
 
 async def batch_process(request: Request, user: Dict[str, Any]):
@@ -412,49 +559,17 @@ async def batch_process(request: Request, user: Dict[str, Any]):
             
             order = dict(row)
             
-            access_error = validate_order_access(order, user, action)
-            if access_error:
+            check_result = validate_single_order_full(
+                order, user, action, version, evidence, audit_remark, exception_reason
+            )
+            if check_result:
                 results.append({
                     'order_id': order_id,
                     'order_no': order['order_no'],
                     'success': False,
-                    **access_error
+                    **check_result
                 })
                 continue
-            
-            if version is not None:
-                version_error = validate_version(order, version)
-                if version_error:
-                    results.append({
-                        'order_id': order_id,
-                        'order_no': order['order_no'],
-                        'success': False,
-                        **version_error
-                    })
-                    continue
-            
-            status_error = validate_status_transition(order, action)
-            if status_error:
-                results.append({
-                    'order_id': order_id,
-                    'order_no': order['order_no'],
-                    'success': False,
-                    **status_error
-                })
-                continue
-            
-            deadline = datetime.strptime(order['deadline'], '%Y-%m-%d %H:%M:%S')
-            if action == 'approve' and deadline < datetime.now():
-                if not audit_remark:
-                    results.append({
-                        'order_id': order_id,
-                        'order_no': order['order_no'],
-                        'success': False,
-                        'error': '该单据已逾期，必须填写审计备注才能继续处理',
-                        'code': 'OVERDUE_REQUIRES_REMARK',
-                        'deadline': order['deadline']
-                    })
-                    continue
             
             is_exception = action in ['return', 'exception']
             
@@ -465,6 +580,7 @@ async def batch_process(request: Request, user: Dict[str, Any]):
                     conn, order_id, order['version'], action,
                     order['status'], update_result['new_status'],
                     order['current_stage'], update_result['new_stage'],
+                    order['current_role'], update_result['new_role'],
                     user, opinion, audit_remark, exception_reason,
                     is_exception
                 )
@@ -517,16 +633,22 @@ async def create_order(request: Request, user: Dict[str, Any]):
         order_no = f'MEET-{now.strftime("%Y%m")}-{now.strftime("%d%H%M%S")}'
         created_at = now.strftime('%Y-%m-%d %H:%M:%S')
         
+        evidence = body.get('evidence') or {}
+        
         c.execute('''INSERT INTO meeting_orders 
             (order_no, title, meeting_date, start_time, end_time, room_name, 
              attendees, content, status, current_stage, current_role, handler,
-             deadline, version, created_at, updated_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+             deadline, version, created_at, updated_at, created_by,
+             room_booking_evidence, equipment_evidence, usage_evidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (order_no, body['title'], body['meeting_date'], body['start_time'],
              body['end_time'], body.get('room_name'), body.get('attendees'),
              body.get('content'), 'pending_sign', 'room_booking', 'audit',
              _get_next_handler('audit', user['id']), body['deadline'], 1,
-             created_at, created_at, user['id']))
+             created_at, created_at, user['id'],
+             evidence.get('room_booking_evidence', ''),
+             evidence.get('equipment_evidence', ''),
+             evidence.get('usage_evidence', '')))
         
         conn.commit()
         
@@ -534,7 +656,8 @@ async def create_order(request: Request, user: Dict[str, Any]):
         
         record_process(
             conn, order_id, 1, 'create', None, 'pending_sign',
-            None, 'room_booking', user, '创建会议预约单', None, None, False
+            None, 'room_booking', None, 'audit',
+            user, '创建会议预约单', None, None, False
         )
         
         conn.commit()
@@ -543,8 +666,62 @@ async def create_order(request: Request, user: Dict[str, Any]):
             'success': True,
             'order_id': order_id,
             'order_no': order_no,
-            'message': '创建成功'
+            'message': '创建成功，已流转至审核主管待签收'
         })
+
+async def resubmit_order(request: Request, user: Dict[str, Any]):
+    order_id = int(request.path_params['id'])
+    body = await request.json()
+    
+    with get_conn() as conn:
+        c = conn.cursor()
+        c.execute('SELECT * FROM meeting_orders WHERE id = ?', (order_id,))
+        row = c.fetchone()
+        
+        if not row:
+            return JSONResponse({'error': '单据不存在', 'code': 'NOT_FOUND'}, status_code=404)
+        
+        order = dict(row)
+        
+        check_result = validate_single_order_full(
+            order, user, 'resubmit',
+            body.get('version'),
+            body.get('evidence'),
+            body.get('audit_remark'),
+            None
+        )
+        if check_result:
+            return JSONResponse(check_result, status_code=400)
+        
+        try:
+            evidence = body.get('evidence') or {}
+            opinion = body.get('opinion') or '补正后重新提交'
+            audit_remark = body.get('audit_remark')
+            
+            update_result = update_order_status(conn, order_id, 'resubmit', user, evidence)
+            
+            record_process(
+                conn, order_id, order['version'], 'resubmit',
+                order['status'], update_result['new_status'],
+                order['current_stage'], update_result['new_stage'],
+                order['current_role'], update_result['new_role'],
+                user, opinion, audit_remark, None, False
+            )
+            
+            conn.commit()
+            
+            return JSONResponse({
+                'success': True,
+                'order_id': order_id,
+                'message': '补正提交成功，已流转至审核主管待签收',
+                **update_result
+            })
+        except Exception as e:
+            conn.rollback()
+            return JSONResponse({
+                'error': f'系统错误：{str(e)}',
+                'code': 'SYSTEM_ERROR'
+            }, status_code=500)
 
 async def get_current_user_info(request: Request):
     user = get_current_user(request)
@@ -554,14 +731,18 @@ async def get_current_user_info(request: Request):
             'users': [{'id': k, **v} for k, v in USER_MAP.items()],
             'roles': ROLES,
             'stages': STAGES,
-            'statuses': STATUS_FLOW
+            'statuses': STATUS_FLOW,
+            'evidence_fields': STAGE_REQUIRED_EVIDENCE,
+            'evidence_labels': STAGE_LABEL_MAP
         })
     return JSONResponse({
         'user': user,
         'users': [{'id': k, **v} for k, v in USER_MAP.items()],
         'roles': ROLES,
         'stages': STAGES,
-        'statuses': STATUS_FLOW
+        'statuses': STATUS_FLOW,
+        'evidence_fields': STAGE_REQUIRED_EVIDENCE,
+        'evidence_labels': STAGE_LABEL_MAP
     })
 
 async def statistics(request: Request, user: Dict[str, Any]):
@@ -583,7 +764,7 @@ async def statistics(request: Request, user: Dict[str, Any]):
                 if r['status'] in role_stats[r['current_role']]:
                     role_stats[r['current_role']][r['status']] = r['cnt']
         
-        c.execute('''SELECT * FROM meeting_orders WHERE is_overdue = 1 OR deadline < ?''',
+        c.execute('''SELECT * FROM meeting_orders WHERE deadline < ? ORDER BY deadline ASC''',
                   (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
         overdue_orders = [row_to_dict(row) for row in c.fetchall()]
         
@@ -598,6 +779,7 @@ routes = [
     Route('/api/orders', require_permission(['register', 'audit', 'review'])(list_orders), methods=['GET']),
     Route('/api/orders/{id:int}', require_permission(['register', 'audit', 'review'])(get_order_detail), methods=['GET']),
     Route('/api/orders', require_permission(['register'])(create_order), methods=['POST']),
+    Route('/api/orders/{id:int}/resubmit', require_permission(['register'])(resubmit_order), methods=['POST']),
     Route('/api/orders/batch', require_permission(['register', 'audit', 'review'])(batch_process), methods=['POST']),
     Route('/api/statistics', require_permission(['register', 'audit', 'review'])(statistics), methods=['GET']),
 ]
