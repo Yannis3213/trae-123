@@ -1,0 +1,20 @@
+{
+  "name": "restaurant-order-system-backend",
+  "version": "1.0.0",
+  "description": "餐饮连锁总部-月底集中处理门店订货单系统 - 后端",
+  "main": "server.js",
+  "scripts": {
+    "init-db": "node scripts/init-db.js",
+    "seed": "node scripts/seed.js",
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "better-sqlite3": "^9.4.3",
+    "multer": "^1.4.5-lts.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
