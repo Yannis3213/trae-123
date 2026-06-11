@@ -131,7 +131,7 @@ const NODE_NAMES: { [key: string]: string } = {
                 <tr *ngFor="let app of applications"
                     [class.due-overdue]="app.dueStatus === 'overdue'"
                     [class.due-approaching]="app.dueStatus === 'approaching'"
-                    [class.row-archived]="app.is_archived === 1"
+                    [class.row-archived]="app.is_archived === 1 || app.is_archived === true"
                     (click)="goToDetail(app.id)">
                   <td (click)="$event.stopPropagation()">
                     <input type="checkbox" [checked]="selectedIds.includes(app.id)"
@@ -153,10 +153,10 @@ const NODE_NAMES: { [key: string]: string } = {
                     </span>
                   </td>
                   <td>
-                    <span *ngIf="app.is_archived === 1" class="status-badge small status-ARCHIVED">
+                    <span *ngIf="app.is_archived === 1 || app.is_archived === true" class="status-badge small status-ARCHIVED">
                       📁 已归档
                     </span>
-                    <span *ngIf="app.is_archived !== 1" class="text-muted">未归档</span>
+                    <span *ngIf="app.is_archived !== 1 && app.is_archived !== true" class="text-muted">未归档</span>
                   </td>
                   <td>{{ app.verification_due_date | slice:0:10 }}</td>
                   <td>{{ app.created_by }}</td>

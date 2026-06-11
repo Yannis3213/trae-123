@@ -819,14 +819,14 @@ export class ApplicationDetailComponent implements OnInit {
   }
 
   get isArchived(): boolean {
-    return this.application?.is_archived === 1;
+    const v = this.application?.is_archived;
+    return v === 1 || v === true;
   }
 
   get canArchive(): boolean {
     if (!this.application || !this.isSupervisor || this.isArchived) return false;
     const s = this.status;
-    return ['COMPLETED', 'VERIFICATION_FAILED', 'REJECTED', 'CORRECTION_REQUIRED',
-            'VERIFICATION_PASSED', 'APPROVED', 'PENDING_VERIFICATION', 'DRAFT'].includes(s);
+    return ['COMPLETED', 'VERIFICATION_FAILED', 'REJECTED'].includes(s);
   }
 
   get canUnarchive(): boolean {
@@ -834,7 +834,9 @@ export class ApplicationDetailComponent implements OnInit {
   }
 
   get canReview(): boolean {
-    return this.isSupervisor && !this.isArchived;
+    if (!this.isSupervisor || this.isArchived) return false;
+    const s = this.status;
+    return ['COMPLETED', 'VERIFICATION_FAILED', 'REJECTED'].includes(s);
   }
 
   get isVerificationOverdue(): boolean {

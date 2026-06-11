@@ -27,7 +27,7 @@ export interface LoanApplication {
   due_date: string;
   remark: string;
   dueStatus: string;
-  is_archived: number;
+  is_archived: number | boolean;
   archived_at?: string | null;
   archived_by?: string | null;
   review_note?: string | null;
@@ -97,6 +97,14 @@ export interface BatchItem {
   id: number;
   success: boolean;
   status?: string;
+  statusName?: string;
+  is_archived?: boolean;
+  archived_at?: string | null;
+  archived_by?: string | null;
+  review_note?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+  version?: number;
   reason?: string;
 }
 
