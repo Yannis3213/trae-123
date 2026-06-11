@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+	font-family: 'Noto Sans SC', sans-serif;
+}
+
+body {
+	margin: 0;
+	background: #f0f4f8;
+}
+
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: #cbd5e1;
+	border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: #94a3b8;
+}
+
+@layer components {
+	.status-pending {
+		@apply bg-status-pending/15 text-status-pending;
+	}
+	.status-approved {
+		@apply bg-status-approved/15 text-status-approved;
+	}
+	.status-synced {
+		@apply bg-status-synced/15 text-status-synced;
+	}
+	.status-overdue {
+		@apply bg-status-overdue/15 text-status-overdue;
+	}
+	.status-approaching {
+		@apply bg-status-approaching/15 text-status-approaching;
+	}
+	.status-pending_correction {
+		@apply bg-purple-500/15 text-purple-600;
+	}
+	.status-under_review {
+		@apply bg-indigo-500/15 text-indigo-600;
+	}
+}
+
+@keyframes pulse-ring {
+	0% {
+		transform: scale(0.8);
+		opacity: 1;
+	}
+	100% {
+		transform: scale(2);
+		opacity: 0;
+	}
+}
+
+.animate-pulse-ring {
+	animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+@keyframes fade-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.animate-fade-in {
+	animation: fade-in 0.3s ease-out;
+}
+
+@keyframes slide-up {
+	from {
+		opacity: 0;
+		transform: translateY(100%);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.animate-slide-up {
+	animation: slide-up 0.3s ease-out;
+}
