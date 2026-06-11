@@ -1,5 +1,5 @@
 import { createSignal, Show, For, createMemo } from 'solid-js'
-import { batchUpdate } from '../api'
+import { batchUpdate, updateStatus } from '../api'
 import { loadStatistics } from '../store'
 import type { BatchResult, RepairOrder } from '../types'
 
@@ -21,11 +21,23 @@ const statusColorMap: Record<string, string> = {
   '已归档': 'badge-archived'
 }
 
+interface DisplayRow extends RepairOrder {
+  _result: BatchResult | null
+  _displayStatus: string
+  _displayVersion: number
+  _displayTechId: number
+  _displayManId: number
+  _success?: boolean
+  _failMsg?: string
+  _retryLoading?: boolean
+}
+
 function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
   const [action, setAction] = createSignal('已接单')
   const [remark, setRemark] = createSignal('')
   const [results, setResults] = createSignal<BatchResult[] | null>(null)
   const [loading, setLoading] = createSignal(false)
+  const [retryLoading, setRetryLoading] = createSignal<Set<number>>(new Set())
   const [error, setError] = createSignal('')
 
   const successResults = createMemo(() => results()?.filter(r => r.success) || [])
@@ -56,6 +68,87 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
     }
   }
 
+  const handleRetry = async (r: BatchResult) => {
+    setRetryLoading(prev => {
+      const next = new Set(prev)
+      next.add(r.order_id)
+      return next
+    })
+    try {
+      const res = await updateStatus(r.order_id, {
+        status: r.to_status,
+        version: r.current_version
+      })
+      if (res.code === 0) {
+        setResults(prev => {
+          if (!prev) return prev
+          return prev.map((x): BatchResult => {
+            if (x.order_id !== r.order_id) return x
+            const order = res.data
+            return {
+              ...x,
+              success: true,
+              message: '重试成功',
+              to_status: order.status,
+              version: order.version,
+              current_version: order.version,
+              technician_id: order.technician_id || 0,
+              manager_id: order.manager_id || 0
+            }
+          })
+        })
+        loadStatistics()
+      } else {
+        setResults(prev => {
+          if (!prev) return prev
+          return prev.map(x => x.order_id === r.order_id ? { ...x, message: res.message || '重试失败' } : x)
+        })
+      }
+    } catch (err: any) {
+      setResults(prev => {
+        if (!prev) return prev
+        return prev.map(x => x.order_id === r.order_id ? { ...x, message: err.message || '重试失败' } : x)
+      })
+    } finally {
+      setRetryLoading(prev => {
+        const next = new Set(prev)
+        next.delete(r.order_id)
+        return next
+      })
+    }
+  }
+
+  const handleRetryAllFailed = async () => {
+    const failed = failResults()
+    if (failed.length === 0) return
+    setLoading(true)
+    setError('')
+    try {
+      const orders = failed.map(r => ({ order_id: r.order_id, version: r.current_version }))
+      const data: any = { orders, status: failed[0].to_status }
+      if (remark()) data.remark = remark()
+      const res = await batchUpdate(data)
+      if (res.code === 0) {
+        setResults(prev => {
+          if (!prev) return res.data
+          const merged = [...prev]
+          res.data.forEach(newR => {
+            const idx = merged.findIndex(m => m.order_id === newR.order_id)
+            if (idx >= 0) merged[idx] = newR
+          })
+          return merged
+        })
+        loadStatistics()
+      } else {
+        setError(res.message || '重试批量操作失败')
+      }
+    } catch (err: any) {
+      setError(err.message || '重试批量操作失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const formatDate = (d: string) => {
     if (!d) return '-'
     return new Date(d).toLocaleString('zh-CN')
@@ -78,16 +171,6 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
   }
 
   const selectedCount = props.selectedOrders.length
-
-  interface DisplayRow extends RepairOrder {
-    _result: BatchResult | null
-    _displayStatus: string
-    _displayVersion: number
-    _displayTechId: number
-    _displayManId: number
-    _success?: boolean
-    _failMsg?: string
-  }
 
   const getMergedDisplayList = createMemo<DisplayRow[]>(() => {
     if (!results()) {
@@ -118,7 +201,7 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
           ...o,
           _result: r,
           _displayStatus: r.from_status,
-          _displayVersion: r.submitted_version,
+          _displayVersion: r.current_version,
           _displayTechId: o.technician_id || 0,
           _displayManId: o.manager_id || 0,
           _success: false,
@@ -170,6 +253,7 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
                   <th>截止日期</th>
                   <th>到期状态</th>
                   <Show when={results()}>
+                    <th>目标动作</th>
                     <th>结果</th>
                   </Show>
                 </tr>
@@ -178,6 +262,8 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
                 <For each={getMergedDisplayList()}>
                   {(item) => {
                     const expiry = calcExpiry(item.deadline, item._displayStatus)
+                    const submittedVer = item._result ? item._result.submitted_version : item.version
+                    const hasVerDiff = item._result && !item._success && submittedVer !== item._displayVersion
                     return (
                       <tr class={item._result ? (item._success ? 'row-success' : 'row-fail') : ''}>
                         <td>{item.order_no}</td>
@@ -201,10 +287,10 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
                           {getHandlerFromIds(item._displayTechId, item._displayManId)}
                         </td>
                         <td style={{ 'font-family': 'monospace' }}>
-                          v{item._displayVersion}
-                          <Show when={item._result && !item._success}>
-                            <span style={{ "margin-left": '4px', "font-size": '11px', color: 'var(--status-returned)' }}>
-                              (提交)
+                          <span title="数据库当前版本">v{item._displayVersion}</span>
+                          <Show when={hasVerDiff}>
+                            <span style={{ "margin-left": '6px', "font-size": '11px', color: 'var(--status-returned)' }}>
+                              (提交 v{submittedVer} 不匹配)
                             </span>
                           </Show>
                         </td>
@@ -215,6 +301,17 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
                           </span>
                         </td>
                         <Show when={results()}>
+                          <td>
+                            <Show when={item._result}>
+                              <span style={{ color: 'var(--text-secondary)' }}>
+                                {item._result!.from_status}
+                              </span>
+                              {' → '}
+                              <span class={`badge ${statusColorMap[item._result!.to_status] || ''}`}>
+                                {item._result!.to_status}
+                              </span>
+                            </Show>
+                          </td>
                           <td>
                             <Show when={item._success}>
                               <span class="badge badge-approved">成功</span>
@@ -252,7 +349,7 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', 'align-items': 'center' }}>
+            <div style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
               <button class="btn btn-primary" onClick={handleSubmit} disabled={loading()}>
                 {loading() ? '处理中...' : '提交批量操作'}
               </button>
@@ -263,11 +360,21 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
           </Show>
 
           <Show when={results()}>
-            <div style={{ display: 'flex', gap: '8px', 'margin-top': '20px', 'align-items': 'center' }}>
+            <div style={{ display: 'flex', gap: '8px', 'margin-top': '20px', 'align-items': 'center', 'flex-wrap': 'wrap' }}>
               <span style={{ color: 'var(--text-secondary)', 'font-size': '12px' }}>
                 ✅ 成功 {successResults().length} 条 / ❌ 失败 {failResults().length} 条
               </span>
-              <button class="btn btn-ghost" onClick={() => { setResults(null); }}>
+              <Show when={failResults().length > 0}>
+                <button
+                  class="btn btn-secondary"
+                  onClick={handleRetryAllFailed}
+                  disabled={loading()}
+                  title="使用当前版本批量重试所有失败项"
+                >
+                  {loading() ? '重试中...' : `批量重试失败项(${failResults().length})`}
+                </button>
+              </Show>
+              <button class="btn btn-ghost" onClick={() => { setResults(null); setError('') }}>
                 重新选择操作
               </button>
             </div>
@@ -285,7 +392,7 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
             ❌ 失败详情 ({failResults().length} 条)
           </h4>
           <p style={{ "font-size": '13px', color: 'var(--text-secondary)', "margin-top": '-8px' }}>
-            失败工单状态保持不变，请根据原因调整后再试
+            失败工单状态保持不变，请根据原因调整后再试。单条重试将使用数据库当前版本。
           </p>
           <div class="table-wrapper">
             <table>
@@ -295,30 +402,57 @@ function BatchProcess(props: { selectedOrders: RepairOrder[] }) {
                   <th>原状态</th>
                   <th>目标状态</th>
                   <th>提交版本</th>
+                  <th>当前版本</th>
                   <th>失败原因</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 <For each={failResults()}>
-                  {(r) => (
-                    <tr>
-                      <td>{r.order_no || `#${r.order_id}`}</td>
-                      <td>
-                        <span class={`badge ${statusColorMap[r.from_status] || ''}`}>
-                          {r.from_status || '-'}
-                        </span>
-                      </td>
-                      <td>
-                        <span style={{ color: 'var(--text-secondary)' }}>
-                          {r.to_status}
-                        </span>
-                      </td>
-                      <td style={{ 'font-family': 'monospace' }}>v{r.submitted_version}</td>
-                      <td style={{ color: 'var(--status-returned)' }}>
-                        {r.message}
-                      </td>
-                    </tr>
-                  )}
+                  {(r) => {
+                    const verMismatch = r.submitted_version !== r.current_version
+                    const isRetryLoading = retryLoading().has(r.order_id)
+                    return (
+                      <tr>
+                        <td>{r.order_no || `#${r.order_id}`}</td>
+                        <td>
+                          <span class={`badge ${statusColorMap[r.from_status] || ''}`}>
+                            {r.from_status || '-'}
+                          </span>
+                        </td>
+                        <td>
+                          <span class={`badge ${statusColorMap[r.to_status] || ''}`}>
+                            {r.to_status}
+                          </span>
+                        </td>
+                        <td style={{ 'font-family': 'monospace' }}>
+                          v{r.submitted_version}
+                        </td>
+                        <td style={{ 'font-family': 'monospace' }}>
+                          <span class={verMismatch ? 'ver-mismatch' : ''}>
+                            v{r.current_version}
+                          </span>
+                          <Show when={verMismatch}>
+                            <span style={{ "margin-left": '4px', "font-size": '11px', color: 'var(--status-returned)' }}>
+                              (版本冲突)
+                            </span>
+                          </Show>
+                        </td>
+                        <td style={{ color: 'var(--status-returned)' }}>
+                          {r.message}
+                        </td>
+                        <td>
+                          <button
+                            class="btn btn-sm btn-secondary"
+                            onClick={() => handleRetry(r)}
+                            disabled={isRetryLoading}
+                          >
+                            {isRetryLoading ? '重试中...' : '单条重试'}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  }}
                 </For>
               </tbody>
             </table>

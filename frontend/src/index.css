@@ -179,6 +179,23 @@ body {
   color: var(--text-primary);
 }
 
+.btn-secondary {
+  background: var(--bg-body);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+
+.ver-mismatch {
+  color: var(--status-returned);
+  font-weight: 600;
+}
+
 .card {
   background: var(--bg-card);
   border-radius: var(--radius-md);

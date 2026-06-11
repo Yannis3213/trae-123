@@ -99,6 +99,7 @@ export interface BatchResult {
   to_status: string
   version: number
   submitted_version: number
+  current_version: number
   technician_id: number
   manager_id: number
 }

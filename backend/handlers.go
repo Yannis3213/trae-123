@@ -651,12 +651,10 @@ func BatchUpdateStatus(c *fiber.Ctx) error {
 
 		ok, msg, postSnap := executeStatusTransition(input)
 
-		finalStatus := preSnap.Status
 		finalVersion := preSnap.Version
 		finalTech := preSnap.TechnicianID
 		finalManager := preSnap.ManagerID
 		if ok {
-			finalStatus = postSnap.Status
 			finalVersion = postSnap.Version
 			finalTech = postSnap.TechnicianID
 			finalManager = postSnap.ManagerID
@@ -668,9 +666,10 @@ func BatchUpdateStatus(c *fiber.Ctx) error {
 			Success:      ok,
 			Message:      msg,
 			FromStatus:   preSnap.Status,
-			ToStatus:     finalStatus,
+			ToStatus:     req.Status,
 			Version:      finalVersion,
 			SubmittedVer: item.Version,
+			CurrentVer:   finalVersion,
 			TechnicianID: finalTech,
 			ManagerID:    finalManager,
 		})

@@ -113,6 +113,7 @@ type BatchResultItem struct {
 	ToStatus     string `json:"to_status"`
 	Version      int    `json:"version"`
 	SubmittedVer int    `json:"submitted_version"`
+	CurrentVer   int    `json:"current_version"`
 	TechnicianID int    `json:"technician_id"`
 	ManagerID    int    `json:"manager_id"`
 }
