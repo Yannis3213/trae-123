@@ -201,7 +201,7 @@ const ApplicationDetail: Component = () => {
                     <>
                       {' · '}当前处理人：
                       <span style={{ color: '#1890ff' }}>
-                        {application()!.current_handler}
+                        {application()!.handler_name || application()!.current_handler}
                       </span>
                       {application()?.current_handler_role &&
                         `（${getRoleLabel(application()!.current_handler_role)}）`}

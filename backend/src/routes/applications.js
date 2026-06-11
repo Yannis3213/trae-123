@@ -25,6 +25,26 @@ router.get('/',
   }
 );
 
+router.get('/allowed-actions',
+  authMiddleware(),
+  roleMiddleware(['reimbursement_clerk', 'expense_accountant', 'finance_manager']),
+  async (ctx) => {
+    const idsStr = ctx.query.ids;
+    if (!idsStr) {
+      error(ctx, '请提供ids参数', 400);
+      return;
+    }
+    const ids = String(idsStr).split(',').map(Number).filter(n => !isNaN(n) && n > 0);
+    if (ids.length === 0) {
+      error(ctx, 'ids参数无效', 400);
+      return;
+    }
+    const user = ctx.state.user;
+    const actions = applicationService.getAllowedActionsBatch(ids, user.role);
+    success(ctx, { ids, allowed_actions: actions });
+  }
+);
+
 router.get('/:id',
   authMiddleware(),
   roleMiddleware(['reimbursement_clerk', 'expense_accountant', 'finance_manager']),
@@ -77,12 +97,7 @@ router.post('/:id/process',
       error(ctx, result.message, 2001);
       return;
     }
-    success(ctx, {
-      id,
-      to_status: result.to_status,
-      new_version: result.new_version,
-      record_id: result.record_id
-    }, result.message);
+    success(ctx, result.detail, result.message);
   }
 );
 

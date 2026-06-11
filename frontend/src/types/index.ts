@@ -51,7 +51,7 @@ export interface ProcessRecord {
   to_status?: ApplicationStatus;
   action: ProcessAction;
   comment?: string;
-  evidence_snapshot?: string;
+  evidence_snapshot?: any;
   version: number;
   created_at: string;
 }
@@ -87,14 +87,19 @@ export interface Application {
   amount: number;
   type: string;
   status: ApplicationStatus;
-  current_handler?: string;
+  current_handler?: number;
   current_handler_role?: UserRole;
+  handler_name?: string;
   due_date: string;
   version: number;
   created_at: string;
   updated_at: string;
   is_overdue: boolean;
   payment_evidence?: string;
+  attachment_count?: number;
+  unresolved_exception_count?: number;
+  exception_summary?: string;
+  allowed_actions?: ProcessAction[];
   attachments: Attachment[];
   process_records: ProcessRecord[];
   exceptions: ExceptionReason[];
@@ -110,6 +115,7 @@ export interface ApplicationListParams {
 }
 
 export interface StatisticsData {
+  total: number;
   pending_review: number;
   verifying: number;
   confirming: number;
@@ -117,14 +123,16 @@ export interface StatisticsData {
   completed: number;
   rejected: number;
   returned: number;
+  overdue: number;
+  has_exception: number;
+  pending_count: number;
+  exception_count: number;
+  completed_count: number;
 }
 
 export interface ApplicationListResponse {
   list: Application[];
   statistics: StatisticsData;
-  total?: number;
-  page?: number;
-  page_size?: number;
 }
 
 export interface ProcessPayload {
@@ -136,7 +144,7 @@ export interface ProcessPayload {
   handler_id?: number;
   payment_evidence?: string;
   overdue_note?: string;
-  evidence_snapshot?: string;
+  evidence_snapshot?: any;
 }
 
 export interface BatchProcessItem {
@@ -156,17 +164,21 @@ export interface BatchProcessPayload {
 
 export interface BatchResultItem {
   id: number;
+  application_no: string;
   success: boolean;
   message: string;
   action: ProcessAction;
   to_status?: ApplicationStatus;
   new_version?: number;
+  exception_summary?: string;
+  rectify_note?: string;
 }
 
 export interface BatchProcessResponse {
-  results: BatchResultItem[];
+  total: number;
   success_count: number;
   fail_count: number;
+  results: BatchResultItem[];
 }
 
 export interface LoginPayload {
@@ -177,6 +189,11 @@ export interface LoginPayload {
 export interface LoginResponse {
   token: string;
   user: User;
+}
+
+export interface AllowedActionsResponse {
+  ids: number[];
+  allowed_actions: ProcessAction[];
 }
 
 export type ReasonCode =

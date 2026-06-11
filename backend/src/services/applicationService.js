@@ -52,18 +52,30 @@ const STATUS_FLOW = {
   }
 };
 
-const ROLE_HANDLER_MAP = {
-  expense_accountant: ['pending_review', 'confirming', 'exception'],
-  finance_manager: ['verifying'],
-  reimbursement_clerk: ['returned']
-};
+function _getAllowedActions(status, role) {
+  const actions = [];
+  for (const [action, flow] of Object.entries(STATUS_FLOW)) {
+    if (!flow.from.includes(status) && !(flow.from.includes(null) && action === 'submit')) {
+      continue;
+    }
+    if (flow.role !== '*' && flow.role !== role) {
+      continue;
+    }
+    actions.push(action);
+  }
+  return actions;
+}
 
 function getApplicationsByRole(userId, role, status = null) {
   let sql = `
     SELECT ra.*,
+      u.real_name as handler_name,
       (SELECT COUNT(*) FROM attachments a WHERE a.application_id = ra.id) as attachment_count,
-      (SELECT COUNT(*) FROM exception_reasons er WHERE er.application_id = ra.id AND er.resolved = 0) as unresolved_exception_count
+      (SELECT COUNT(*) FROM exception_reasons er WHERE er.application_id = ra.id AND er.resolved = 0) as unresolved_exception_count,
+      (SELECT GROUP_CONCAT(er.reason_code || ': ' || SUBSTR(er.reason_detail, 1, 40), ' | ')
+       FROM exception_reasons er WHERE er.application_id = ra.id AND er.resolved = 0) as exception_summary
     FROM reimbursement_applications ra
+    LEFT JOIN users u ON ra.current_handler = u.id
     WHERE 1=1
   `;
   const params = [];
@@ -128,7 +140,6 @@ function getApplicationsByRole(userId, role, status = null) {
   const statistics = {
     total: list.length,
     pending_review: 0,
-    reviewing: 0,
     verifying: 0,
     confirming: 0,
     exception: 0,
@@ -136,7 +147,10 @@ function getApplicationsByRole(userId, role, status = null) {
     rejected: 0,
     returned: 0,
     overdue: 0,
-    has_exception: 0
+    has_exception: 0,
+    pending_count: 0,
+    exception_count: 0,
+    completed_count: 0
   };
 
   allWithoutFilter.forEach(item => {
@@ -145,9 +159,14 @@ function getApplicationsByRole(userId, role, status = null) {
     }
   });
 
+  statistics.pending_count = statistics.pending_review + statistics.verifying + statistics.confirming;
+  statistics.exception_count = statistics.exception;
+  statistics.completed_count = statistics.completed + statistics.rejected + statistics.returned;
+
   list.forEach(item => {
     if (item.is_overdue) statistics.overdue++;
     if (item.unresolved_exception_count > 0) statistics.has_exception++;
+    item.allowed_actions = _getAllowedActions(item.status, role);
   });
 
   return { list, statistics };
@@ -155,7 +174,10 @@ function getApplicationsByRole(userId, role, status = null) {
 
 function getApplicationDetail(id) {
   const application = db.prepare(`
-    SELECT * FROM reimbursement_applications WHERE id = ?
+    SELECT ra.*, u.real_name as handler_name
+    FROM reimbursement_applications ra
+    LEFT JOIN users u ON ra.current_handler = u.id
+    WHERE ra.id = ?
   `).get(id);
 
   if (!application) return null;
@@ -192,6 +214,13 @@ function getApplicationDetail(id) {
     }
   });
 
+  application.attachment_count = attachments.length;
+  application.unresolved_exception_count = exceptions.filter(e => !e.resolved).length;
+  application.exception_summary = exceptions
+    .filter(e => !e.resolved)
+    .map(e => `${e.reason_code}: ${e.reason_detail ? e.reason_detail.substring(0, 40) : ''}`)
+    .join(' | ') || null;
+
   return {
     ...application,
     attachments,
@@ -226,14 +255,38 @@ function processApplication(applicationId, user, payload) {
     return { success: false, message: `当前状态(${app.status})不允许${action}操作` };
   }
 
-  if (app.current_handler_role && app.current_handler_role !== user.role && flow.role !== '*') {
-    if (action === 'return' || action === 'reject' || action === 'exception') {
-    } else if (app.current_handler && app.current_handler !== user.id) {
-      return { success: false, message: `越权操作：当前处理人不是您，当前处理人角色为${app.current_handler_role}` };
+  if (action === 'return' || action === 'reject' || action === 'exception') {
+    if (app.current_handler_role && app.current_handler !== user.id && flow.role === '*') {
+      if (action === 'return' && app.status === 'exception') {
+        if (app.current_handler_role !== user.role) {
+          return { success: false, message: `当前异常处理人为${app.current_handler_role}角色，您(${user.role})无权操作` };
+        }
+      } else if (app.current_handler_role !== user.role) {
+        return { success: false, message: `越权操作：当前处理人角色为${app.current_handler_role}，您(${user.role})无权执行${action}` };
+      }
+    }
+    if (!comment || comment.trim().length < 3) {
+      const actionLabel = action === 'return' ? '退回' : action === 'reject' ? '拒绝' : '标记异常';
+      return { success: false, message: `${actionLabel}操作必须填写意见（comment不少于3字）` };
+    }
+    if (action === 'exception' && !payload.reason_code) {
+      return { success: false, message: '标记异常必须选择异常原因类型（reason_code）' };
+    }
+    if (action === 'return' && app.status === 'exception') {
+      const unresolvedOthers = db.prepare(`
+        SELECT COUNT(*) as cnt FROM exception_reasons
+        WHERE application_id = ? AND resolved = 0 AND reason_code != 'returned_rectify'
+      `).get(applicationId).cnt;
+      if (unresolvedOthers > 0) {
+        return { success: false, message: `异常状态下退回，仍有${unresolvedOthers}条非退回类异常未解决，请先处理或一并说明` };
+      }
     }
   }
 
   if (action === 'review') {
+    if (app.current_handler_role !== user.role || (app.current_handler && app.current_handler !== user.id)) {
+      return { success: false, message: `越权操作：当前待审核处理人不是您（当前处理人角色为${app.current_handler_role}）` };
+    }
     if (app.version > 1) {
       const unresolved = db.prepare(`
         SELECT COUNT(*) as cnt FROM exception_reasons
@@ -266,6 +319,9 @@ function processApplication(applicationId, user, payload) {
   }
 
   if (action === 'verify') {
+    if (app.current_handler_role !== user.role || (app.current_handler && app.current_handler !== user.id)) {
+      return { success: false, message: `越权操作：当前待复核处理人不是您（当前处理人角色为${app.current_handler_role}）` };
+    }
     if (app.is_overdue) {
       return { success: false, message: '该申请已逾期，请先标记异常并说明逾期原因，不可直接推进复核' };
     }
@@ -290,6 +346,9 @@ function processApplication(applicationId, user, payload) {
   }
 
   if (action === 'confirm') {
+    if (app.current_handler_role !== user.role || (app.current_handler && app.current_handler !== user.id)) {
+      return { success: false, message: `越权操作：当前待确认处理人不是您（当前处理人角色为${app.current_handler_role}）` };
+    }
     if (!payload.payment_evidence || payload.payment_evidence.trim().length < 5) {
       return { success: false, message: '付款确认必须填写付款凭证/流水号，缺付款记录时报销申请不得放行' };
     }
@@ -413,6 +472,20 @@ function processApplication(applicationId, user, payload) {
       );
     }
 
+    if (action === 'rectify' && app.status === 'exception') {
+      db.prepare(`
+        UPDATE exception_reasons
+        SET resolved = 1,
+            resolved_at = ?,
+            rectify_note = ?
+        WHERE application_id = ? AND resolved = 0
+      `).run(
+        dayjs().format('YYYY-MM-DD HH:mm:ss'),
+        comment || '异常已解除并重新提交',
+        applicationId
+      );
+    }
+
     if (action === 'confirm' && app.is_overdue) {
       const timeoutExceptions = db.prepare(`
         SELECT id FROM exception_reasons
@@ -436,7 +509,8 @@ function processApplication(applicationId, user, payload) {
 
   try {
     const result = tx();
-    return { ...result, message: '操作成功' };
+    const detail = getApplicationDetail(applicationId);
+    return { ...result, message: '操作成功', detail };
   } catch (err) {
     console.error('[processApplication] 事务失败:', err);
     return { success: false, message: '处理失败：' + err.message };
@@ -444,19 +518,32 @@ function processApplication(applicationId, user, payload) {
 }
 
 function batchProcess(items, user) {
+  const appNos = {};
+  try {
+    const rows = db.prepare(`SELECT id, application_no FROM reimbursement_applications WHERE id IN (${items.map(() => '?').join(',')})`).all(...items.map(i => i.id));
+    rows.forEach(r => { appNos[r.id] = r.application_no; });
+  } catch (e) {}
+
   const results = items.map(item => {
     try {
       const result = processApplication(item.id, user, item);
       return {
         id: item.id,
+        application_no: appNos[item.id] || '',
         success: result.success,
         message: result.message,
         action: item.action,
-        ...(result.success ? { to_status: result.to_status, new_version: result.new_version } : {})
+        ...(result.success ? {
+          to_status: result.to_status,
+          new_version: result.new_version,
+          exception_summary: result.detail?.exception_summary || null,
+          rectify_note: result.detail?.exceptions?.filter(e => e.resolved && e.rectify_note).map(e => e.rectify_note).join('; ') || null
+        } : {})
       };
     } catch (err) {
       return {
         id: item.id,
+        application_no: appNos[item.id] || '',
         success: false,
         action: item.action,
         message: '系统异常: ' + err.message
@@ -475,9 +562,33 @@ function batchProcess(items, user) {
   };
 }
 
+function getAllowedActionsBatch(ids, role) {
+  const apps = db.prepare(`SELECT id, status, current_handler_role, current_handler FROM reimbursement_applications WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+
+  if (apps.length === 0) return [];
+
+  let commonActions = null;
+  for (const app of apps) {
+    const actions = _getAllowedActions(app.status, role);
+    if (commonActions === null) {
+      commonActions = new Set(actions);
+    } else {
+      const next = new Set();
+      for (const a of actions) {
+        if (commonActions.has(a)) next.add(a);
+      }
+      commonActions = next;
+    }
+  }
+
+  return Array.from(commonActions || []);
+}
+
 module.exports = {
   getApplicationsByRole,
   getApplicationDetail,
   processApplication,
-  batchProcess
+  batchProcess,
+  getAllowedActionsBatch,
+  _getAllowedActions
 };

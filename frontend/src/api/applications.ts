@@ -1,15 +1,15 @@
 import client from './client';
 import type {
-  Application,
-  ApplicationListParams,
   ApplicationListResponse,
+  Application,
   ProcessPayload,
   BatchProcessPayload,
   BatchProcessResponse,
+  AllowedActionsResponse,
 } from '../types';
 
 export const getApplications = async (
-  params?: ApplicationListParams
+  params?: Record<string, any>
 ): Promise<ApplicationListResponse> => {
   return client.get('/applications', { params });
 };
@@ -29,4 +29,10 @@ export const batchProcess = async (
   payload: BatchProcessPayload
 ): Promise<BatchProcessResponse> => {
   return client.post('/applications/batch-process', payload);
+};
+
+export const getAllowedActionsBatch = async (
+  ids: number[]
+): Promise<AllowedActionsResponse> => {
+  return client.get('/applications/allowed-actions', { params: { ids: ids.join(',') } });
 };

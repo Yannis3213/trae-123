@@ -5,7 +5,8 @@ import StatusBadge from '~/components/StatusBadge';
 import WarningTag from '~/components/WarningTag';
 import { getApplications } from '~/api/applications';
 import { user, fetchMe } from '~/store/auth';
-import { STATUS_GROUPS, GROUP_LABELS, STATUS_LABELS } from '~/utils/status';
+import { STATUS_GROUPS, GROUP_LABELS, STATUS_LABELS, REASON_CODE_LABELS } from '~/utils/status';
+import { getRoleLabel } from '~/utils/role';
 import type { Application, ApplicationStatus, StatusGroup, StatisticsData } from '~/types';
 import dayjs from 'dayjs';
 
@@ -15,6 +16,7 @@ const ApplicationsList: Component = () => {
   const navigate = useNavigate();
   const [applications, setApplications] = createSignal<Application[]>([]);
   const [statistics, setStatistics] = createSignal<StatisticsData>({
+    total: 0,
     pending_review: 0,
     verifying: 0,
     confirming: 0,
@@ -22,6 +24,11 @@ const ApplicationsList: Component = () => {
     completed: 0,
     rejected: 0,
     returned: 0,
+    overdue: 0,
+    has_exception: 0,
+    pending_count: 0,
+    exception_count: 0,
+    completed_count: 0,
   });
   const [loading, setLoading] = createSignal(false);
   const [activeTab, setActiveTab] = createSignal<TabKey>('all');
@@ -50,12 +57,6 @@ const ApplicationsList: Component = () => {
   onMount(() => {
     loadData();
   });
-
-  const pendingCount = () =>
-    statistics().pending_review + statistics().verifying + statistics().confirming;
-  const exceptionCount = () => statistics().exception;
-  const completedCount = () =>
-    statistics().completed + statistics().rejected + statistics().returned;
 
   const filteredApplications = () => {
     let list = applications();
@@ -98,14 +99,23 @@ const ApplicationsList: Component = () => {
 
   const tabBadgeCount = (tab: TabKey): number => {
     if (tab === 'all') return applications().length;
-    if (tab === 'pending') return pendingCount();
-    if (tab === 'exception') return exceptionCount();
-    if (tab === 'completed') return completedCount();
+    if (tab === 'pending') return statistics().pending_count;
+    if (tab === 'exception') return statistics().exception_count;
+    if (tab === 'completed') return statistics().completed_count;
     return 0;
   };
 
   const hasRectify = (app: Application): boolean => {
-    return app.status === 'returned' || app.exceptions.some((e) => !e.resolved);
+    return app.status === 'returned' || (app.unresolved_exception_count ?? 0) > 0;
+  };
+
+  const formatExceptionSummary = (summary: string | null | undefined): string => {
+    if (!summary) return '';
+    return summary.split(' | ').map(s => {
+      const [code, ...rest] = s.split(': ');
+      const label = REASON_CODE_LABELS[code] || code;
+      return `${label}${rest.length ? ': ' + rest.join(': ') : ''}`;
+    }).join('；');
   };
 
   return (
@@ -121,7 +131,7 @@ const ApplicationsList: Component = () => {
         >
           <div class="stat-card stat-card-pending" onClick={() => setActiveTab('pending')} style={{ cursor: 'pointer' }}>
             <div class="stat-card-title">待确认</div>
-            <div class="stat-card-value">{pendingCount()}</div>
+            <div class="stat-card-value">{statistics().pending_count}</div>
             <div style={{ color: '#999', 'font-size': '12px', marginTop: '4px' }}>
               待审核 {statistics().pending_review} · 待复核 {statistics().verifying} · 待确认{' '}
               {statistics().confirming}
@@ -129,14 +139,14 @@ const ApplicationsList: Component = () => {
           </div>
           <div class="stat-card stat-card-exception" onClick={() => setActiveTab('exception')} style={{ cursor: 'pointer' }}>
             <div class="stat-card-title">异常</div>
-            <div class="stat-card-value">{exceptionCount()}</div>
+            <div class="stat-card-value">{statistics().exception_count}</div>
             <div style={{ color: '#999', 'font-size': '12px', marginTop: '4px' }}>
-              需尽快处理
+              逾期 {statistics().overdue} · 有异常 {statistics().has_exception}
             </div>
           </div>
           <div class="stat-card stat-card-completed" onClick={() => setActiveTab('completed')} style={{ cursor: 'pointer' }}>
             <div class="stat-card-title">已复查</div>
-            <div class="stat-card-value">{completedCount()}</div>
+            <div class="stat-card-value">{statistics().completed_count}</div>
             <div style={{ color: '#999', 'font-size': '12px', marginTop: '4px' }}>
               完成 {statistics().completed} · 拒绝 {statistics().rejected} · 退回{' '}
               {statistics().returned}
@@ -204,11 +214,13 @@ const ApplicationsList: Component = () => {
                   <th>标题</th>
                   <th>金额</th>
                   <th>类型</th>
-                  <th>创建时间</th>
+                  <th>当前处理人</th>
+                  <th>附件数</th>
                   <th>到期日</th>
                   <th>状态</th>
-                  <th>到期预警</th>
+                  <th>预警</th>
                   <th>补正状态</th>
+                  <th>异常摘要</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -216,7 +228,7 @@ const ApplicationsList: Component = () => {
                 <Show when={loading()}>
                   <tr>
                     <td
-                      colspan="11"
+                      colspan="13"
                       style={{ 'text-align': 'center', padding: '48px', color: '#999' }}
                     >
                       加载中...
@@ -226,7 +238,7 @@ const ApplicationsList: Component = () => {
                 <Show when={!loading() && filteredApplications().length === 0}>
                   <tr>
                     <td
-                      colspan="11"
+                      colspan="13"
                       style={{ 'text-align': 'center', padding: '48px', color: '#999' }}
                     >
                       暂无数据
@@ -243,15 +255,29 @@ const ApplicationsList: Component = () => {
                         {app.application_no}
                       </td>
                       <td>{app.applicant_name}</td>
-                      <td style={{ maxWidth: '240px', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }} title={app.title}>
+                      <td style={{ maxWidth: '200px', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }} title={app.title}>
                         {app.title}
                       </td>
                       <td style={{ color: '#f5222d', 'font-weight': '500' }}>
                         ¥{app.amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
                       </td>
                       <td>{app.type}</td>
-                      <td style={{ color: '#666', 'font-size': '13px' }}>
-                        {dayjs(app.created_at).format('YYYY-MM-DD HH:mm')}
+                      <td style={{ 'font-size': '13px' }}>
+                        {app.handler_name ? (
+                          <span>
+                            {app.handler_name}
+                            {app.current_handler_role && (
+                              <span style={{ color: '#999', 'margin-left': '4px' }}>
+                                ({getRoleLabel(app.current_handler_role)})
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#ccc' }}>-</span>
+                        )}
+                      </td>
+                      <td style={{ 'text-align': 'center' }}>
+                        {app.attachment_count ?? app.attachments?.length ?? 0}
                       </td>
                       <td style={{ color: '#666', 'font-size': '13px' }}>
                         {dayjs(app.due_date).format('YYYY-MM-DD')}
@@ -285,6 +311,11 @@ const ApplicationsList: Component = () => {
                           >
                             正常
                           </span>
+                        )}
+                      </td>
+                      <td style={{ maxWidth: '160px', 'font-size': '12px', color: '#ff4d4f', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }} title={formatExceptionSummary(app.exception_summary)}>
+                        {app.exception_summary ? formatExceptionSummary(app.exception_summary) : (
+                          <span style={{ color: '#ccc' }}>-</span>
                         )}
                       </td>
                       <td>

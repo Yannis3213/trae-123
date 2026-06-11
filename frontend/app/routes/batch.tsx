@@ -1,10 +1,10 @@
-import { Component, createSignal, For, Show, onMount } from 'solid-js';
+import { Component, createSignal, For, Show, onMount, createEffect } from 'solid-js';
 import Layout from '~/components/Layout';
 import StatusBadge from '~/components/StatusBadge';
 import WarningTag from '~/components/WarningTag';
 import BatchResultComponent from '~/components/BatchResult';
 import FormModal from '~/components/FormModal';
-import { getApplications, batchProcess } from '~/api/applications';
+import { getApplications, batchProcess, getAllowedActionsBatch } from '~/api/applications';
 import { user, fetchMe } from '~/store/auth';
 import {
   getAllowedActions,
@@ -12,6 +12,7 @@ import {
   STATUS_GROUPS,
   GROUP_LABELS,
   getActionButtonClass,
+  REASON_CODE_LABELS,
 } from '~/utils/status';
 import type {
   Application,
@@ -34,6 +35,7 @@ const BatchCenter: Component = () => {
   const [batchResults, setBatchResults] = createSignal<BatchResultItem[]>([]);
   const [modalOpen, setModalOpen] = createSignal(false);
   const [error, setError] = createSignal('');
+  const [allowedBatchActions, setAllowedBatchActions] = createSignal<ProcessAction[]>([]);
 
   const loadData = async () => {
     if (!user()) {
@@ -56,6 +58,27 @@ const BatchCenter: Component = () => {
     loadData();
   });
 
+  createEffect(() => {
+    const ids = Array.from(selectedIds());
+    if (ids.length === 0 || !user()) {
+      setAllowedBatchActions([]);
+      return;
+    }
+    getAllowedActionsBatch(ids).then(res => {
+      setAllowedBatchActions(res.allowed_actions);
+    }).catch(() => {
+      const u = user()!;
+      const selApps = filteredApplications().filter(a => ids.includes(a.id));
+      const actions = new Set<ProcessAction>();
+      for (const app of selApps) {
+        for (const a of getAllowedActions(app.status, u.role)) {
+          actions.add(a);
+        }
+      }
+      setAllowedBatchActions(Array.from(actions));
+    });
+  });
+
   const filteredApplications = () => {
     let list = applications();
 
@@ -76,19 +99,6 @@ const BatchCenter: Component = () => {
     }
 
     return list;
-  };
-
-  const availableActions = (): ProcessAction[] => {
-    if (!user()) return [];
-    const actions = new Set<ProcessAction>();
-    const selectedApps = filteredApplications().filter((a) => selectedIds().has(a.id));
-    for (const app of selectedApps) {
-      const allowed = getAllowedActions(app.status, user()!.role);
-      for (const action of allowed) {
-        actions.add(action);
-      }
-    }
-    return Array.from(actions);
   };
 
   const toggleSelect = (id: number) => {
@@ -256,10 +266,10 @@ const BatchCenter: Component = () => {
                 }}
               >
                 <div style={{ color: '#1890ff', 'font-weight': '500' }}>
-                  已选择 {selectedIds().size} 条申请，请选择操作：
+                  已选择 {selectedIds().size} 条申请，共同可执行操作：
                 </div>
                 <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
-                  <Show when={availableActions().length === 0}>
+                  <Show when={allowedBatchActions().length === 0}>
                     <span
                       style={{
                         color: '#999',
@@ -270,7 +280,7 @@ const BatchCenter: Component = () => {
                       所选申请无共同可用操作，请调整选择
                     </span>
                   </Show>
-                  <For each={availableActions()}>
+                  <For each={allowedBatchActions()}>
                     {(action) => (
                       <button
                         class={getActionButtonClass(action)}
@@ -310,12 +320,12 @@ const BatchCenter: Component = () => {
                   <th>申请编号</th>
                   <th>申请人</th>
                   <th>标题</th>
-                  <th>类型</th>
                   <th>金额</th>
-                  <th>创建时间</th>
-                  <th>到期日</th>
                   <th>状态</th>
                   <th>预警</th>
+                  <th>处理人</th>
+                  <th>附件</th>
+                  <th>异常摘要</th>
                 </tr>
               </thead>
               <tbody>
@@ -372,7 +382,7 @@ const BatchCenter: Component = () => {
                       <td>{app.applicant_name}</td>
                       <td
                         style={{
-                          maxWidth: '200px',
+                          maxWidth: '160px',
                           overflow: 'hidden',
                           'text-overflow': 'ellipsis',
                           'white-space': 'nowrap',
@@ -381,27 +391,23 @@ const BatchCenter: Component = () => {
                       >
                         {app.title}
                       </td>
-                      <td>{app.type}</td>
                       <td style={{ color: '#f5222d', 'font-weight': '500' }}>
-                        ¥
-                        {app.amount.toLocaleString('zh-CN', {
-                          minimumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td style={{ color: '#666', 'font-size': '13px' }}>
-                        {dayjs(app.created_at).format('YYYY-MM-DD HH:mm')}
-                      </td>
-                      <td style={{ color: '#666', 'font-size': '13px' }}>
-                        {dayjs(app.due_date).format('YYYY-MM-DD')}
+                        ¥{app.amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
                       </td>
                       <td>
                         <StatusBadge status={app.status} />
                       </td>
                       <td>
-                        <WarningTag
-                          dueDate={app.due_date}
-                          isOverdue={app.is_overdue}
-                        />
+                        <WarningTag dueDate={app.due_date} isOverdue={app.is_overdue} />
+                      </td>
+                      <td style={{ 'font-size': '13px' }}>
+                        {app.handler_name || '-'}
+                      </td>
+                      <td style={{ 'text-align': 'center' }}>
+                        {app.attachment_count ?? 0}
+                      </td>
+                      <td style={{ maxWidth: '140px', 'font-size': '12px', color: '#ff4d4f', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }} title={app.exception_summary || ''}>
+                        {app.exception_summary || <span style={{ color: '#ccc' }}>-</span>}
                       </td>
                     </tr>
                   )}
