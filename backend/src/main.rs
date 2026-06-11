@@ -127,6 +127,9 @@ fn list_orders(
             "key": urg_key
         });
         v["status_display"] = serde_json::json!(o.status.display_name());
+        let excs = db.list_exceptions(&o.id);
+        v["exception_count"] = serde_json::json!(excs.len());
+        v["exception_latest"] = serde_json::json!(excs.first().map(|e| e.reason.clone()));
         v
     }).collect();
 
@@ -305,9 +308,15 @@ fn batch_process_orders(
             None => {
                 results.push(BatchProcessResultItem {
                     order_id: sub.order_id.clone(),
-                    order_no,
+                    order_no: order_no.clone(),
                     success: false,
                     message: "单据不存在".to_string(),
+                    new_status: None,
+                    new_status_display: None,
+                    new_version: None,
+                    current_handler_role: None,
+                    current_handler_name: None,
+                    last_opinion: None,
                 });
                 continue;
             }
@@ -315,24 +324,42 @@ fn batch_process_orders(
         if let Err(msg) = validate_process(db, &order, sub, &user) {
             results.push(BatchProcessResultItem {
                 order_id: sub.order_id.clone(),
-                order_no,
+                order_no: order_no.clone(),
                 success: false,
                 message: msg,
+                new_status: None,
+                new_status_display: None,
+                new_version: None,
+                current_handler_role: None,
+                current_handler_name: None,
+                last_opinion: None,
             });
             continue;
         }
         match apply_process(db, &mut order, sub, &user) {
             Ok(()) => results.push(BatchProcessResultItem {
                 order_id: sub.order_id.clone(),
-                order_no,
+                order_no: order_no.clone(),
                 success: true,
                 message: format!("成功执行「{}」，状态更新为「{}」", sub.action, order.status.display_name()),
+                new_status: Some(order.status.to_str().to_string()),
+                new_status_display: Some(order.status.display_name().to_string()),
+                new_version: Some(order.version),
+                current_handler_role: Some(order.current_handler_role.clone()),
+                current_handler_name: order.current_handler_name.clone(),
+                last_opinion: order.last_opinion.clone(),
             }),
             Err(msg) => results.push(BatchProcessResultItem {
                 order_id: sub.order_id.clone(),
-                order_no,
+                order_no: order_no.clone(),
                 success: false,
                 message: msg,
+                new_status: None,
+                new_status_display: None,
+                new_version: None,
+                current_handler_role: None,
+                current_handler_name: None,
+                last_opinion: None,
             }),
         }
     }

@@ -195,6 +195,12 @@ pub struct BatchProcessResultItem {
     pub order_no: String,
     pub success: bool,
     pub message: String,
+    pub new_status: Option<String>,
+    pub new_status_display: Option<String>,
+    pub new_version: Option<i64>,
+    pub current_handler_role: Option<String>,
+    pub current_handler_name: Option<String>,
+    pub last_opinion: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

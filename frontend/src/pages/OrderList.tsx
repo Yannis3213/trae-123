@@ -88,8 +88,17 @@ export default function OrderList() {
     { title: '物料名称', dataIndex: 'material_name', width: 180 },
     { title: '数量', dataIndex: 'quantity', width: 80 },
     {
-      title: '状态', dataIndex: 'status', width: 100,
-      render: (_: any, r: InboundOrder) => <Tag color={statusColor(r.status)}><FileTextOutlined /> {STATUS_LABEL[r.status] || r.status}</Tag>
+      title: '状态', dataIndex: 'status', width: 140,
+      render: (_: any, r: any) => (
+        <div>
+          <Tag color={statusColor(r.status)}><FileTextOutlined /> {STATUS_LABEL[r.status] || r.status}</Tag>
+          {r.exception_count > 0 && (
+            <Tooltip title={r.exception_latest || ''}>
+              <Tag color="volcano" style={{ marginLeft: 4, fontSize: 12 }}>异常{r.exception_count}条</Tag>
+            </Tooltip>
+          )}
+        </div>
+      )
     },
     {
       title: '到期预警', width: 100,
@@ -117,7 +126,21 @@ export default function OrderList() {
         </Space>
       )
     },
-    { title: '版本', dataIndex: 'version', width: 70 },
+    {
+      title: '版本', width: 60,
+      render: (_: any, r: InboundOrder) => <Tag color="blue" style={{ fontSize: 12 }}>v{r.version}</Tag>
+    },
+    {
+      title: '上一处理意见', width: 180,
+      ellipsis: true,
+      render: (_: any, r: InboundOrder) => (
+        <Tooltip title={r.last_opinion || '暂无'}>
+          <span style={{ color: r.last_opinion ? '#1f1f1f' : '#bfbfbf' }}>
+            {r.last_opinion || '暂无'}
+          </span>
+        </Tooltip>
+      )
+    },
     {
       title: '操作', width: 120, fixed: 'right' as const,
       render: (_: any, r: any) => (

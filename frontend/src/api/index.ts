@@ -65,6 +65,8 @@ export interface InboundOrder {
   last_attachment_id?: string;
   last_audit_note?: string;
   urgency?: { label: string; key: string };
+  exception_count?: number;
+  exception_latest?: string;
 }
 
 export interface Attachment {
@@ -128,6 +130,12 @@ export interface BatchResultItem {
   order_no: string;
   success: boolean;
   message: string;
+  new_status?: string;
+  new_status_display?: string;
+  new_version?: number;
+  current_handler_role?: string;
+  current_handler_name?: string;
+  last_opinion?: string;
 }
 
 export const api = {

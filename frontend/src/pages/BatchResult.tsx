@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, List, Tag, Button, Space, Empty, Result, Alert, Statistic, Row, Col } from 'antd';
+import { Card, List, Tag, Button, Space, Empty, Result, Alert, Statistic, Row, Col, Descriptions, Divider } from 'antd';
 import {
   CheckCircleOutlined, CloseCircleOutlined, ArrowLeftOutlined,
-  FileTextOutlined, EyeOutlined
+  FileTextOutlined, EyeOutlined, UserOutlined, ClockCircleOutlined
 } from '@ant-design/icons';
-import { BatchResultItem } from '../api';
+import { BatchResultItem, ROLE_LABEL, STATUS_LABEL } from '../api';
+import dayjs from 'dayjs';
 
 export default function BatchResult() {
   const navigate = useNavigate();
@@ -79,52 +80,81 @@ export default function BatchResult() {
           itemLayout="horizontal"
           dataSource={results}
           renderItem={(item) => (
-            <List.Item
-              className={item.success ? 'batch-result-success' : 'batch-result-fail'}
-              style={{
-                border: `1px solid ${item.success ? '#b7eb8f' : '#ffccc7'}`,
-                borderRadius: 8,
-                marginBottom: 8,
-                padding: '12px 16px',
-                background: item.success ? '#f6ffed' : '#fff2f0',
-              }}
-              actions={[
-                <Button type="link" icon={<EyeOutlined />} onClick={() => navigate(`/orders/${item.order_id}`)}>
-                  查看详情
-                </Button>,
-              ]}
-            >
-              <List.Item.Meta
-                avatar={
-                  item.success
-                    ? <CheckCircleOutlined style={{ fontSize: 28, color: '#52c41a' }} />
-                    : <CloseCircleOutlined style={{ fontSize: 28, color: '#ff4d4f' }} />
-                }
-                title={
-                  <Space>
-                    <span style={{ fontSize: 15, fontWeight: 600 }}>
-                      <FileTextOutlined /> {item.order_no}
-                    </span>
-                    <Tag color={item.success ? 'green' : 'red'}>
-                      {item.success ? '处理成功' : '处理失败'}
-                    </Tag>
-                  </Space>
-                }
-                description={
-                  <div>
-                    <Alert
-                      type={item.success ? 'success' : 'error'}
-                      showIcon
-                      message={item.message}
-                    />
-                    <div style={{ color: '#8c8c8c', fontSize: 12, marginTop: 6 }}>
-                      单据ID: {item.order_id}
-                    </div>
-                  </div>
-                }
-              />
-            </List.Item>
-          )}
+                <List.Item
+                  className={item.success ? 'batch-result-success' : 'batch-result-fail'}
+                  style={{
+                    border: `1px solid ${item.success ? '#b7eb8f' : '#ffccc7'}`,
+                    borderRadius: 8,
+                    marginBottom: 8,
+                    padding: '12px 16px',
+                    background: item.success ? '#f6ffed' : '#fff2f0',
+                  }}
+                  actions={[
+                    <Button type="link" icon={<EyeOutlined />} onClick={() => navigate(`/orders/${item.order_id}`)}>
+                      查看详情
+                    </Button>,
+                  ]}
+                >
+                  <List.Item.Meta
+                    avatar={
+                      item.success
+                        ? <CheckCircleOutlined style={{ fontSize: 28, color: '#52c41a' }} />
+                        : <CloseCircleOutlined style={{ fontSize: 28, color: '#ff4d4f' }} />
+                    }
+                    title={
+                      <Space>
+                        <span style={{ fontSize: 15, fontWeight: 600 }}>
+                          <FileTextOutlined /> {item.order_no}
+                        </span>
+                        <Tag color={item.success ? 'green' : 'red'}>
+                          {item.success ? '处理成功' : '处理失败'}
+                        </Tag>
+                        {item.success && item.new_status && (
+                          <Tag color={item.new_status === 'rechecked' ? 'success' : item.new_status === 'exception' ? 'warning' : 'processing'}>
+                            {item.new_status_display || STATUS_LABEL[item.new_status] || item.new_status}
+                          </Tag>
+                        )}
+                        {item.success && item.new_version !== undefined && (
+                          <Tag color="blue" style={{ fontSize: 12 }}>v{item.new_version}</Tag>
+                        )}
+                      </Space>
+                    }
+                    description={
+                      <div>
+                        <Alert
+                          type={item.success ? 'success' : 'error'}
+                          showIcon
+                          message={item.message}
+                          style={{ marginBottom: 8 }}
+                        />
+                        {item.success && (
+                          <Descriptions column={2} size="small" style={{ marginTop: 8 }}>
+                            <Descriptions.Item label="当前处理人">
+                              <UserOutlined /> {item.current_handler_name || '-'}
+                              <span style={{ color: '#8c8c8c', marginLeft: 6 }}>
+                                ({item.current_handler_role ? ROLE_LABEL[item.current_handler_role] : '-'})
+                              </span>
+                            </Descriptions.Item>
+                            <Descriptions.Item label="版本">
+                              <Tag color="blue" style={{ fontSize: 12 }}>v{item.new_version}</Tag>
+                            </Descriptions.Item>
+                            {item.last_opinion && (
+                              <Descriptions.Item label="上一处理意见" span={2}>
+                                <div style={{ background: '#f5f5f5', padding: '6px 10px', borderRadius: 4, fontSize: 12 }}>
+                                  {item.last_opinion}
+                                </div>
+                              </Descriptions.Item>
+                            )}
+                          </Descriptions>
+                        )}
+                        <div style={{ color: '#8c8c8c', fontSize: 12, marginTop: 6 }}>
+                          单据ID: {item.order_id}
+                        </div>
+                      </div>
+                    }
+                  />
+                </List.Item>
+              )}
         />
       </Card>
     </div>

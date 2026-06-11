@@ -10,7 +10,7 @@ import {
   FileTextOutlined, UploadOutlined,
   ArrowLeftOutlined, ExclamationCircleOutlined, UserOutlined, ClockCircleOutlined,
   DownOutlined, PaperClipOutlined, InboxOutlined, CheckCircleOutlined,
-  WarningOutlined, SafetyCertificateOutlined
+  WarningOutlined, SafetyCertificateOutlined, EditOutlined
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import dayjs from 'dayjs';
@@ -100,6 +100,30 @@ export default function OrderDetail() {
     form.resetFields();
     setActionModalOpen(true);
   };
+
+  const primaryActions = ['提交', '确认通过', '最终确认'];
+  const primaryAction = available_actions.find((a) => primaryActions.includes(a)) || '';
+  const otherActions = available_actions.filter((a) => !primaryActions.includes(a));
+
+  const getActionIcon = (a: string) => {
+    if (a === '最终确认') return <SafetyCertificateOutlined />;
+    if (a === '确认通过') return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
+    if (a === '退回补正') return <WarningOutlined style={{ color: '#fa8c16' }} />;
+    if (a === '提交') return <InboxOutlined style={{ color: '#1677ff' }} />;
+    return <EditOutlined />;
+  };
+
+  const primaryActionIcon = primaryAction ? getActionIcon(primaryAction) : null;
+
+  const otherMenuItems: MenuProps['items'] = otherActions.map((a) => ({
+    key: a,
+    label: (
+      <span onClick={() => openAction(a)}>
+        {getActionIcon(a)}
+        <span style={{ marginLeft: 6 }}>{a}</span>
+      </span>
+    ),
+  }));
 
   const actionMenuItems: MenuProps['items'] = available_actions.map((a) => ({
     key: a,
@@ -246,14 +270,23 @@ export default function OrderDetail() {
           </Tag>
           <Button onClick={loadData} loading={loading}>刷新</Button>
           {available_actions.length > 0 && (
-            <Dropdown menu={{ items: actionMenuItems }} placement="bottomRight">
-              <Button type="primary">
-                <Space>
-                  {available_actions[0]}
-                  <DownOutlined />
-                </Space>
-              </Button>
-            </Dropdown>
+            <>
+              {primaryAction && (
+                <Button type="primary" icon={primaryActionIcon} onClick={() => openAction(primaryAction)}>
+                  {primaryAction}
+                </Button>
+              )}
+              {otherActions.length > 0 && (
+                <Dropdown menu={{ items: otherMenuItems }} placement="bottomRight">
+                  <Button>
+                    <Space>
+                      更多操作
+                      <DownOutlined />
+                    </Space>
+                  </Button>
+                </Dropdown>
+              )}
+            </>
           )}
         </Space>
       </div>
