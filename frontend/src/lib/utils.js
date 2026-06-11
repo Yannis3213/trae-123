@@ -95,53 +95,100 @@ export const getEvidenceTypeLabel = (type) => {
   return typeMap[type] || type;
 };
 
-export const getAvailableOperations = (form, userRole) => {
+const OPERATION_MATRIX = {
+  sign: {
+    allowedNodes: ['entry_registration'],
+    allowedStatuses: ['pending_sign', 'abnormal_return', 'supplement_required'],
+    allowedRoles: ['merchant_registrar'],
+    requireHandler: false,
+    label: '签收', type: 'primary',
+  },
+  submit_audit: {
+    allowedNodes: ['entry_registration'],
+    allowedStatuses: ['sign_completed'],
+    allowedRoles: ['merchant_registrar'],
+    requireHandler: false,
+    label: '提交审核', type: 'primary',
+  },
+  audit_pass: {
+    allowedNodes: ['qualification_audit'],
+    allowedStatuses: ['pending_audit'],
+    allowedRoles: ['audit_supervisor'],
+    requireHandler: true,
+    label: '审核通过', type: 'primary',
+  },
+  audit_reject: {
+    allowedNodes: ['qualification_audit'],
+    allowedStatuses: ['pending_audit'],
+    allowedRoles: ['audit_supervisor'],
+    requireHandler: true,
+    label: '审核拒绝', type: 'danger',
+  },
+  return_supplement: {
+    allowedNodes: ['qualification_audit', 'final_review'],
+    allowedStatuses: ['pending_audit', 'pending_final_review'],
+    allowedRoles: ['audit_supervisor', 'platform_leader'],
+    requireHandler: true,
+    label: '退回补正', type: 'warning',
+  },
+  register: {
+    allowedNodes: ['entry_form_registration'],
+    allowedStatuses: ['pending_registration'],
+    allowedRoles: ['merchant_registrar'],
+    requireHandler: true,
+    label: '完成登记', type: 'primary',
+  },
+  submit_final_review: {
+    allowedNodes: ['entry_form_registration'],
+    allowedStatuses: ['registration_completed'],
+    allowedRoles: ['merchant_registrar'],
+    requireHandler: false,
+    label: '提交复核', type: 'primary',
+  },
+  final_review_pass: {
+    allowedNodes: ['final_review'],
+    allowedStatuses: ['pending_final_review'],
+    allowedRoles: ['platform_leader'],
+    requireHandler: true,
+    label: '复核通过', type: 'primary',
+  },
+  final_review_reject: {
+    allowedNodes: ['final_review'],
+    allowedStatuses: ['pending_final_review'],
+    allowedRoles: ['platform_leader'],
+    requireHandler: true,
+    label: '复核拒绝', type: 'danger',
+  },
+  supplement: {
+    allowedNodes: ['entry_registration', 'qualification_audit', 'entry_form_registration', 'final_review'],
+    allowedStatuses: ['abnormal_return', 'supplement_required'],
+    allowedRoles: ['merchant_registrar', 'audit_supervisor'],
+    requireHandler: false,
+    label: '补正材料', type: 'warning',
+  },
+  archive: {
+    allowedNodes: ['final_review'],
+    allowedStatuses: ['final_review_passed'],
+    allowedRoles: ['platform_leader'],
+    requireHandler: false,
+    label: '归档', type: 'primary',
+  },
+};
+
+export const getAvailableOperations = (form, userRole, username) => {
   const operations = [];
   const { current_node, status, current_handler } = form;
 
   if (status === 'archived') return operations;
 
-  if (current_node === 'entry_registration' && userRole === 'merchant_registrar') {
-    if (status === 'pending_sign' || status === 'abnormal_return' || status === 'supplement_required') {
-      operations.push({ key: 'sign', label: '签收', type: 'primary' });
-    }
-    if (status === 'sign_completed') {
-      operations.push({ key: 'submit_audit', label: '提交审核', type: 'primary' });
-      operations.push({ key: 'supplement', label: '补正材料', type: 'default' });
-    }
-    if (status === 'supplement_required' || status === 'abnormal_return') {
-      operations.push({ key: 'supplement', label: '补正材料', type: 'warning' });
-    }
-  }
+  Object.entries(OPERATION_MATRIX).forEach(([key, matrix]) => {
+    if (!matrix.allowedNodes.includes(current_node)) return;
+    if (!matrix.allowedStatuses.includes(status)) return;
+    if (!matrix.allowedRoles.includes(userRole)) return;
+    if (matrix.requireHandler && current_handler && username && current_handler !== username) return;
 
-  if (current_node === 'qualification_audit' && userRole === 'audit_supervisor') {
-    if (status === 'pending_audit') {
-      operations.push({ key: 'audit_pass', label: '审核通过', type: 'primary' });
-      operations.push({ key: 'return_supplement', label: '退回补正', type: 'warning' });
-      operations.push({ key: 'audit_reject', label: '审核拒绝', type: 'danger' });
-    }
-  }
-
-  if (current_node === 'entry_form_registration' && userRole === 'merchant_registrar') {
-    if (status === 'pending_registration') {
-      operations.push({ key: 'register', label: '完成登记', type: 'primary' });
-      operations.push({ key: 'supplement', label: '补正材料', type: 'default' });
-    }
-    if (status === 'registration_completed') {
-      operations.push({ key: 'submit_final_review', label: '提交复核', type: 'primary' });
-    }
-    if (status === 'supplement_required' || status === 'abnormal_return') {
-      operations.push({ key: 'supplement', label: '补正材料', type: 'warning' });
-    }
-  }
-
-  if (current_node === 'final_review' && userRole === 'platform_leader') {
-    if (status === 'pending_final_review') {
-      operations.push({ key: 'final_review_pass', label: '复核通过', type: 'primary' });
-      operations.push({ key: 'return_supplement', label: '退回补正', type: 'warning' });
-      operations.push({ key: 'final_review_reject', label: '复核拒绝', type: 'danger' });
-    }
-  }
+    operations.push({ key, label: matrix.label, type: matrix.type });
+  });
 
   return operations;
 };

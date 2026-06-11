@@ -45,6 +45,7 @@ export const formsApi = {
   getDetail: (id) => api.get(`/forms/${id}`),
   create: (data) => api.post('/forms', data),
   operation: (id, data) => api.post(`/forms/${id}/operation`, data),
+  getSupplementInfo: (id) => api.get(`/forms/${id}/supplement-info`),
   getConstants: () => api.get('/forms/constants'),
   getStatistics: () => api.get('/forms/statistics'),
   addAuditNote: (id, data) => api.post(`/forms/${id}/audit-notes`, data),
