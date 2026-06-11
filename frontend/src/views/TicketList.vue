@@ -248,21 +248,22 @@
             <div class="form-group">
               <label>动作：</label>
               <select v-model="batchForm.action">
-                <option value="签收">签收</option>
-                <option value="派单">派单</option>
-                <option value="回访关闭">回访关闭</option>
+                <option value="签收">签收登记（按优先级交主管/质检）</option>
+                <option value="派单">派单处理（交客服坐席）</option>
+                <option value="回访关闭">回访关闭（交复核负责人）</option>
+                <option value="签收完成">签收完成（交复核负责人）</option>
                 <option value="复核归档">复核归档</option>
-                <option value="退回补正">退回补正</option>
+                <option value="退回补正">退回补正（交登记员）</option>
               </select>
             </div>
             <div class="form-group">
               <label>目标状态：</label>
               <select v-model="batchForm.target_status">
-                <option value="call_registered">来电登记</option>
-                <option value="dispatched">问题派单</option>
-                <option value="receipt_completed">签收完成</option>
-                <option value="callback_closed">回访关闭</option>
-                <option value="exception_returned">异常回传</option>
+                <option value="call_registered">来电登记（下一处理人：主管/质检）</option>
+                <option value="dispatched">问题派单（下一处理人：客服坐席）</option>
+                <option value="receipt_completed">签收完成（下一处理人：复核负责人）</option>
+                <option value="callback_closed">回访关闭（下一处理人：复核负责人）</option>
+                <option value="exception_returned">异常回传（下一处理人：登记员）</option>
                 <option value="archived">已归档</option>
               </select>
             </div>

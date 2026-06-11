@@ -417,13 +417,14 @@ const availableActions = computed(() => {
       if (status === 'dispatched') push('回访并关闭工单', 'callback_closed', 'btn-success', true, true, true, false)
       break
     case 'supervisor':
-      if (status === 'call_registered') push('派单处理', 'dispatched', 'btn-primary', true, true, false, false)
-      if (status === 'call_registered') push('退回补正（缺材料）', 'exception_returned', 'btn-warning', false, true, false, true)
-      if (status === 'dispatched') push('审核签收完成', 'receipt_completed', 'btn-success', true, true, true, false)
-      if (status === 'dispatched') push('退回补正', 'exception_returned', 'btn-danger', false, true, false, true)
+      if (status === 'call_registered') push('派单处理（交客服坐席）', 'dispatched', 'btn-primary', true, true, false, false)
+      if (status === 'call_registered') push('退回补正（交登记员）', 'exception_returned', 'btn-warning', false, true, false, true)
+      if (status === 'dispatched') push('审核签收完成（交复核）', 'receipt_completed', 'btn-success', true, true, true, false)
+      if (status === 'dispatched') push('退回补正（交登记员）', 'exception_returned', 'btn-danger', false, true, false, true)
       break
     case 'qa_supervisor':
-      if (status === 'dispatched') push('质检签收完成', 'receipt_completed', 'btn-success', true, true, true, false)
+      if (status === 'call_registered') push('派单处理（交客服坐席）', 'dispatched', 'btn-primary', true, true, false, false)
+      if (status === 'dispatched') push('质检签收完成（交复核）', 'receipt_completed', 'btn-success', true, true, true, false)
       break
     case 'reviewer':
       if (status === 'callback_closed') push('复核归档', 'archived', 'btn-primary', false, true, false, false)

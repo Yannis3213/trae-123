@@ -131,6 +131,7 @@ pub async fn compute_next_handler(
     pool: &Pool<Sqlite>,
     current_status: TicketStatus,
     target_status: TicketStatus,
+    priority: Priority,
     current_handler_id: &str,
     current_handler_name: &str,
     operator_id: &str,
@@ -139,28 +140,39 @@ pub async fn compute_next_handler(
     match (current_status, target_status) {
         (TicketStatus::PendingReceipt, TicketStatus::CallRegistered)
         | (TicketStatus::ExceptionReturned, TicketStatus::CallRegistered) => {
-            Ok((operator_id.to_string(), operator_name.to_string(), None))
+            let target_role = if priority == Priority::Urgent || priority == Priority::High {
+                "qa_supervisor"
+            } else {
+                "supervisor"
+            };
+            let row: Option<(String, String)> = sqlx::query_as(
+                "SELECT id, name FROM users WHERE role = ? LIMIT 1",
+            )
+            .bind(target_role)
+            .fetch_optional(pool)
+            .await?;
+            let (next_id, next_name) = row.unwrap_or_else(|| (operator_id.to_string(), operator_name.to_string()));
+            let future_hint = Some(("u_supervisor".to_string(), if target_role == "qa_supervisor" { "质检主管-陈强".to_string() } else { "客服审核主管-王芳".to_string() }));
+            Ok((next_id, next_name, future_hint))
         }
         (TicketStatus::CallRegistered, TicketStatus::Dispatched) => {
             let row: Option<(String, String)> = sqlx::query_as(
-                "SELECT id, name FROM users WHERE role = 'supervisor' LIMIT 1",
+                "SELECT id, name FROM users WHERE role = 'agent' LIMIT 1",
             )
             .fetch_optional(pool)
             .await?;
             let (next_id, next_name) = row.unwrap_or_else(|| (operator_id.to_string(), operator_name.to_string()));
-            Ok((next_id.clone(), next_name.clone(), Some(("u_supervisor".to_string(), "客服审核主管-王芳".to_string()))))
+            Ok((next_id, next_name, Some(("u_reviewer".to_string(), "复核负责人-张伟".to_string()))))
         }
-        (TicketStatus::Dispatched, TicketStatus::CallbackClosed) => {
-            Ok((operator_id.to_string(), operator_name.to_string(), Some(("u_reviewer".to_string(), "复核负责人-张伟".to_string()))))
-        }
-        (TicketStatus::Dispatched, TicketStatus::ReceiptCompleted) => {
+        (TicketStatus::Dispatched, TicketStatus::CallbackClosed)
+        | (TicketStatus::Dispatched, TicketStatus::ReceiptCompleted) => {
             let row: Option<(String, String)> = sqlx::query_as(
                 "SELECT id, name FROM users WHERE role = 'reviewer' LIMIT 1",
             )
             .fetch_optional(pool)
             .await?;
             let (next_id, next_name) = row.unwrap_or_else(|| (operator_id.to_string(), operator_name.to_string()));
-            Ok((next_id.clone(), next_name.clone(), None))
+            Ok((next_id, next_name, None))
         }
         (TicketStatus::CallbackClosed, TicketStatus::Archived)
         | (TicketStatus::ReceiptCompleted, TicketStatus::Archived) => {
@@ -173,7 +185,7 @@ pub async fn compute_next_handler(
             .fetch_optional(pool)
             .await?;
             let (next_id, next_name) = row.unwrap_or_else(|| (operator_id.to_string(), operator_name.to_string()));
-            Ok((next_id.clone(), next_name.clone(), None))
+            Ok((next_id, next_name, None))
         }
         _ => {
             Ok((current_handler_id.to_string(), current_handler_name.to_string(), None))
@@ -186,16 +198,15 @@ pub fn peek_next_handler_hint(
     priority: &str,
 ) -> (Option<String>, Option<String>) {
     match TicketStatus::from_str(status) {
-        Some(TicketStatus::PendingReceipt) => (None, None),
-        Some(TicketStatus::CallRegistered) => (Some("u_supervisor".to_string()), Some("客服审核主管-王芳".to_string())),
-        Some(TicketStatus::Dispatched) => {
+        Some(TicketStatus::PendingReceipt) | Some(TicketStatus::ExceptionReturned) => {
             if priority == "urgent" || priority == "high" {
-                (Some("u_qa_supervisor".to_string()), Some("质检主管-陈强".to_string()))
+                (Some("u_qa".to_string()), Some("质检主管-陈强".to_string()))
             } else {
                 (Some("u_supervisor".to_string()), Some("客服审核主管-王芳".to_string()))
             }
         }
-        Some(TicketStatus::ExceptionReturned) => (Some("u_registrar".to_string()), Some("客服登记员-李明".to_string())),
+        Some(TicketStatus::CallRegistered) => (Some("u_agent".to_string()), Some("客服坐席-赵敏".to_string())),
+        Some(TicketStatus::Dispatched) => (Some("u_reviewer".to_string()), Some("复核负责人-张伟".to_string())),
         Some(TicketStatus::CallbackClosed) | Some(TicketStatus::ReceiptCompleted) => (Some("u_reviewer".to_string()), Some("复核负责人-张伟".to_string())),
         _ => (None, None),
     }
@@ -241,51 +252,51 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         (
             "t_normal",
             "【正常】客户咨询产品退换货流程",
-            "客户来电咨询7天无理由退换货流程，需要详细解答并指引操作。",
+            "客户来电咨询7天无理由退换货流程，需要详细解答并指引操作。客服坐席签收登记后转交主管审核派单。",
             "孙先生", "13800138001",
             TicketStatus::PendingReceipt, Priority::Medium,
             "u_agent", "客服坐席-赵敏", "u_agent", "客服坐席-赵敏",
-            now + Duration::days(3),
+            now + Duration::days(3), 1,
             vec![],
         ),
         (
             "t_missing",
             "【缺材料】客户退款申请缺少凭证",
-            "客户申请退款，但未上传购买凭证和商品照片，需要补正材料。登记员补正并上传附件后可继续推进。",
+            "客户申请退款，但未上传购买凭证和商品照片，需要补正材料。登记员补正并上传附件后提交，高优工单转交质检主管审核。",
             "周女士", "13800138002",
             TicketStatus::ExceptionReturned, Priority::High,
             "u_registrar", "客服登记员-李明", "u_registrar", "客服登记员-李明",
-            now + Duration::days(1),
+            now + Duration::days(1), 3,
             vec!["缺材料".to_string()],
         ),
         (
             "t_overdue",
             "【逾期】客户投诉物流超时未送达",
-            "客户投诉物流已超过承诺送达时间3天，商品仍未收到，情绪激动。主管签收后可派单回访。",
+            "客户投诉物流已超过承诺送达时间3天，商品仍未收到，情绪激动。已派单给客服坐席进行回访关闭，完成后转交复核负责人归档。",
             "吴先生", "13800138003",
             TicketStatus::Dispatched, Priority::Urgent,
-            "u_supervisor", "客服审核主管-王芳", "u_supervisor", "客服审核主管-王芳",
-            now - Duration::days(1),
+            "u_supervisor", "客服审核主管-王芳", "u_agent", "客服坐席-赵敏",
+            now - Duration::days(1), 3,
             vec!["逾期".to_string(), "物流异常".to_string()],
         ),
         (
             "t_returned",
             "【退回】质量问题工单被退回补正",
-            "客户反映收到商品有质量问题，前次处理因证据不足被审核主管退回，需重新补充照片和视频证据。上传证据后可继续推进。",
+            "客户反映收到商品有质量问题，前次处理因证据不足被审核主管退回，需重新补充照片和视频证据。高优工单上传证据后提交质检主管审核。",
             "郑女士", "13800138004",
             TicketStatus::ExceptionReturned, Priority::High,
             "u_registrar", "客服登记员-李明", "u_registrar", "客服登记员-李明",
-            now + Duration::hours(20),
+            now + Duration::hours(20), 3,
             vec!["退回补正".to_string()],
         ),
     ];
 
-    for (id, title, desc, cname, cphone, status, priority, rid, rname, hid, hname, deadline, tags) in tickets {
+    for (id, title, desc, cname, cphone, status, priority, rid, rname, hid, hname, deadline, version, tags) in tickets {
         let tags_json = serde_json::to_string(&tags).unwrap_or_else(|_| "[]".to_string());
         sqlx::query(
             r#"INSERT INTO tickets (id, title, description, customer_name, customer_phone, status, priority,
-                responsible_id, responsible_name, current_handler_id, current_handler_name, deadline, exception_tags)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                responsible_id, responsible_name, current_handler_id, current_handler_name, deadline, version, exception_tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(id)
         .bind(title)
@@ -299,15 +310,17 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         .bind(hid)
         .bind(hname)
         .bind(deadline)
+        .bind(version)
         .bind(tags_json)
         .execute(pool)
         .await?;
     }
 
     let exception_seeds = [
-        ("t_missing", "缺材料", "缺少购买凭证和商品照片", "u_supervisor", "客服审核主管-王芳"),
-        ("t_returned", "退回补正", "证据照片模糊，需要重新上传高清图片和开箱视频", "u_supervisor", "客服审核主管-王芳"),
-        ("t_overdue", "逾期", "已超过承诺处理时效1天，客户多次催单", "u_manager", "客服经理-刘洋"),
+        ("t_missing", "缺材料", "缺少购买凭证和商品照片，客户仅提供了订单截图，无法证明商品问题", "u_supervisor", "客服审核主管-王芳"),
+        ("t_returned", "退回补正", "证据照片模糊，无法辨认商品问题，需要重新上传高清图片和开箱视频", "u_supervisor", "客服审核主管-王芳"),
+        ("t_overdue", "逾期", "已超过承诺处理时效1天，客户已3次来电催单，要求今天内给出明确答复", "u_manager", "客服经理-刘洋"),
+        ("t_overdue", "物流异常", "物流信息显示已签收，但客户称未收到商品，疑似快递员虚假签收", "u_supervisor", "客服审核主管-王芳"),
     ];
     for (tid, rt, desc, rb, rbn) in exception_seeds {
         sqlx::query(
@@ -324,34 +337,60 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         .await?;
     }
 
+    let audit_seeds = [
+        ("t_missing", "首次审核发现材料不完整，退回后已通知客户补充", "u_supervisor", "客服审核主管-王芳", "supervisor"),
+        ("t_returned", "质量问题证据不足，已电话告知登记员需要补充的材料类型", "u_supervisor", "客服审核主管-王芳", "supervisor"),
+        ("t_overdue", "逾期工单已升级处理，客服经理正在跟进，承诺24小时内解决", "u_manager", "客服经理-刘洋", "cs_manager"),
+    ];
+    for (tid, content, oid, oname, orole) in audit_seeds {
+        sqlx::query(
+            r#"INSERT INTO audit_remarks (id, ticket_id, content, operator_id, operator_name, operator_role)
+               VALUES (?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(tid)
+        .bind(content)
+        .bind(oid)
+        .bind(oname)
+        .bind(orole)
+        .execute(pool)
+        .await?;
+    }
+
     let record_seeds = [
-        ("t_normal", "创建", "", "pending_receipt", "u_agent", "客服坐席-赵敏", "agent", "系统自动创建，客服坐席负责签收"),
-        ("t_missing", "创建", "", "pending_receipt", "u_registrar", "客服登记员-李明", "registrar", "工单创建"),
-        ("t_missing", "登记来电", "pending_receipt", "call_registered", "u_registrar", "客服登记员-李明", "registrar", "客户来电登记"),
-        ("t_missing", "退回补正", "call_registered", "exception_returned", "u_supervisor", "客服审核主管-王芳", "supervisor", "缺少购买凭证和商品照片，退回补正"),
-        ("t_returned", "创建", "", "pending_receipt", "u_registrar", "客服登记员-李明", "registrar", "工单创建"),
-        ("t_returned", "登记来电", "pending_receipt", "call_registered", "u_registrar", "客服登记员-李明", "registrar", "客户反馈质量问题"),
-        ("t_returned", "退回", "call_registered", "exception_returned", "u_supervisor", "客服审核主管-王芳", "supervisor", "证据不足，退回补正"),
-        ("t_overdue", "创建", "", "pending_receipt", "u_agent", "客服坐席-赵敏", "agent", "工单创建"),
-        ("t_overdue", "登记来电", "pending_receipt", "call_registered", "u_agent", "客服坐席-赵敏", "agent", "客户来电投诉"),
-        ("t_overdue", "派单处理", "call_registered", "dispatched", "u_supervisor", "客服审核主管-王芳", "supervisor", "紧急投诉，优先处理"),
+        ("t_normal", "创建工单", "", "pending_receipt",
+            "", "", "u_agent", "客服坐席-赵敏",
+            "u_agent", "客服坐席-赵敏", "agent", "系统自动创建，客服坐席负责签收登记"),
+        ("t_missing", "创建工单", "", "pending_receipt",
+            "", "", "u_registrar", "客服登记员-李明",
+            "u_registrar", "客服登记员-李明", "registrar", "客户来电申请退款，创建工单"),
+        ("t_missing", "登记来电", "pending_receipt", "call_registered",
+            "u_registrar", "客服登记员-李明", "u_supervisor", "客服审核主管-王芳",
+            "u_registrar", "客服登记员-李明", "registrar", "客户来电登记，中优工单转交主管审核"),
+        ("t_missing", "退回补正", "call_registered", "exception_returned",
+            "u_supervisor", "客服审核主管-王芳", "u_registrar", "客服登记员-李明",
+            "u_supervisor", "客服审核主管-王芳", "supervisor", "缺少购买凭证和商品照片，退回补正"),
+        ("t_returned", "创建工单", "", "pending_receipt",
+            "", "", "u_registrar", "客服登记员-李明",
+            "u_registrar", "客服登记员-李明", "registrar", "客户反馈商品质量问题，创建工单"),
+        ("t_returned", "登记来电", "pending_receipt", "call_registered",
+            "u_registrar", "客服登记员-李明", "u_supervisor", "客服审核主管-王芳",
+            "u_registrar", "客服登记员-李明", "registrar", "客户来电登记，中优工单转交主管审核"),
+        ("t_returned", "退回补正", "call_registered", "exception_returned",
+            "u_supervisor", "客服审核主管-王芳", "u_registrar", "客服登记员-李明",
+            "u_supervisor", "客服审核主管-王芳", "supervisor", "证据照片模糊，无法辨认，退回补正"),
+        ("t_overdue", "创建工单", "", "pending_receipt",
+            "", "", "u_agent", "客服坐席-赵敏",
+            "u_agent", "客服坐席-赵敏", "agent", "客户投诉物流超时，创建紧急工单"),
+        ("t_overdue", "登记来电", "pending_receipt", "call_registered",
+            "u_agent", "客服坐席-赵敏", "u_qa", "质检主管-陈强",
+            "u_agent", "客服坐席-赵敏", "agent", "客户来电登记，紧急工单转交质检主管"),
+        ("t_overdue", "派单处理", "call_registered", "dispatched",
+            "u_qa", "质检主管-陈强", "u_agent", "客服坐席-赵敏",
+            "u_supervisor", "客服审核主管-王芳", "supervisor", "紧急投诉优先处理，派单给客服坐席回访"),
     ];
 
-    for (tid, action, fs, ts, oid, oname, orole, remark) in record_seeds {
-        let ticket: Option<(String, String)> = sqlx::query_as(
-            "SELECT current_handler_id, current_handler_name FROM tickets WHERE id = ?"
-        )
-        .bind(tid)
-        .fetch_optional(pool)
-        .await?;
-        let (from_hid, from_hname) = ticket.unwrap_or_else(|| (oid.to_string(), oname.to_string()));
-        let (to_hid, to_hname) = match ts {
-            "call_registered" => (oid.to_string(), oname.to_string()),
-            "dispatched" => ("u_supervisor".to_string(), "客服审核主管-王芳".to_string()),
-            "exception_returned" => ("u_registrar".to_string(), "客服登记员-李明".to_string()),
-            _ => (oid.to_string(), oname.to_string()),
-        };
-
+    for (tid, action, fs, ts, fh_id, fh_name, th_id, th_name, oid, oname, orole, remark) in record_seeds {
         sqlx::query(
             r#"INSERT INTO processing_records (id, ticket_id, action, from_status, to_status,
                 from_handler_id, from_handler_name, to_handler_id, to_handler_name,
@@ -363,34 +402,23 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         .bind(action)
         .bind(fs)
         .bind(ts)
-        .bind(&from_hid)
-        .bind(&from_hname)
-        .bind(&to_hid)
-        .bind(&to_hname)
+        .bind(fh_id)
+        .bind(fh_name)
+        .bind(th_id)
+        .bind(th_name)
         .bind(oid)
         .bind(oname)
         .bind(orole)
         .bind(remark)
         .execute(pool)
         .await?;
-
-        if fs != "" {
-            sqlx::query(
-                "UPDATE tickets SET current_handler_id = ?, current_handler_name = ? WHERE id = ?"
-            )
-            .bind(&to_hid)
-            .bind(&to_hname)
-            .bind(tid)
-            .execute(pool)
-            .await?;
-        }
     }
 
     for tid in ["t_missing", "t_returned"] {
         sqlx::query(
             "UPDATE tickets SET return_reason = ? WHERE id = ?"
         )
-        .bind("证据材料不足，请补充上传后重新提交")
+        .bind("证据材料不足，请补充购买凭证、商品问题照片和开箱视频后重新提交")
         .bind(tid)
         .execute(pool)
         .await?;
@@ -399,7 +427,7 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
     sqlx::query(
         "UPDATE tickets SET processing_result = ? WHERE id = ?"
     )
-    .bind("已联系物流方核实，承诺24小时内安排派送，并电话致歉客户")
+    .bind("已联系物流方核实，确认快递员虚假签收，承诺24小时内安排二次派送，并由客服经理电话致歉客户")
     .bind("t_overdue")
     .execute(pool)
     .await?;
@@ -768,7 +796,7 @@ pub fn validate_transition(
     let ok = match (user_role, current_status, target_status) {
         (Role::Registrar | Role::Agent, TicketStatus::PendingReceipt, TicketStatus::CallRegistered) => true,
         (Role::Registrar | Role::Agent, TicketStatus::ExceptionReturned, TicketStatus::CallRegistered) => true,
-        (Role::Supervisor, TicketStatus::CallRegistered, TicketStatus::Dispatched) => true,
+        (Role::Supervisor | Role::QaSupervisor, TicketStatus::CallRegistered, TicketStatus::Dispatched) => true,
         (Role::Supervisor, TicketStatus::CallRegistered, TicketStatus::ExceptionReturned) => true,
         (Role::Supervisor, TicketStatus::Dispatched, TicketStatus::ExceptionReturned) => true,
         (Role::Supervisor | Role::QaSupervisor, TicketStatus::Dispatched, TicketStatus::ReceiptCompleted) => true,
@@ -842,10 +870,12 @@ pub async fn process_ticket(
         }
     }
 
+    let priority = Priority::from_str(&ticket.priority).unwrap_or(Priority::Medium);
     let (next_handler_id, next_handler_name, _hint) = compute_next_handler(
         pool,
         current_status,
         target_status,
+        priority,
         &ticket.current_handler_id,
         &ticket.current_handler_name,
         &user.id,
