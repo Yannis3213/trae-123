@@ -241,57 +241,83 @@ export function processBatch(items, actionData, user) {
     const { clue_id, version } = item;
     const { target_status, remark, return_reason, action } = actionData;
 
+    let resultRecord = {
+      clue_id,
+      clue_no: null,
+      success: false,
+      error_code: null,
+      error_message: null,
+      from_status: null,
+      to_status: target_status,
+      old_version: version,
+      new_version: null,
+      abnormal_type: null,
+      processing_record_id: null
+    };
+
     try {
-      const clue = getQuery('SELECT id, clue_no, status, deadline, current_handler_id FROM clues WHERE id = ?', [clue_id]);
-      
+      const clue = getQuery('SELECT id, clue_no, status, deadline, current_handler_id, created_by, responsible_person_id, version FROM clues WHERE id = ?', [clue_id]);
+
       if (!clue) {
-        results.push({
-          clue_id,
-          clue_no: null,
-          success: false,
-          error_code: 'NOT_FOUND',
-          error_message: '线索单不存在'
-        });
+        resultRecord.error_code = 'NOT_FOUND';
+        resultRecord.error_message = '线索单不存在';
+        results.push(resultRecord);
         continue;
       }
 
+      resultRecord.clue_no = clue.clue_no;
+      resultRecord.from_status = clue.status;
+      resultRecord.old_version = clue.version;
+
       if (isOverdue(clue.deadline)) {
-        logAbnormal(clue_id, ABNORMAL_TYPES.OVERDUE, 
-          `批量处理时发现逾期：线索单${clue.clue_no}已逾期`, 
-          user.id
-        );
-        results.push({
-          clue_id,
-          clue_no: clue.clue_no,
-          success: false,
-          error_code: 'OVERDUE',
-          error_message: '线索单已逾期，请先进入详情页处理逾期问题'
-        });
+        const abnormalDesc = `批量处理时发现逾期：线索单${clue.clue_no}已逾期，截止时间：${clue.deadline}`;
+        logAbnormal(clue_id, ABNORMAL_TYPES.OVERDUE, abnormalDesc, user.id);
+        resultRecord.error_code = 'OVERDUE';
+        resultRecord.error_message = '线索单已逾期，请先进入详情页处理逾期问题，节点超时落到责任人处理';
+        resultRecord.abnormal_type = ABNORMAL_TYPES.OVERDUE;
+        results.push(resultRecord);
         continue;
       }
 
       const validation = validateAction(clue_id, user.id, user.role, version, target_status);
-      
+
       if (!validation.valid) {
-        results.push({
-          clue_id,
-          clue_no: clue.clue_no,
-          success: false,
-          error_code: 'VALIDATION_FAILED',
-          error_message: validation.error
-        });
+        let errorCode = 'VALIDATION_FAILED';
+        let abnormalType = null;
+        if (validation.error?.includes('版本冲突')) {
+          errorCode = 'VERSION_CONFLICT';
+          abnormalType = ABNORMAL_TYPES.VERSION_CONFLICT;
+        } else if (validation.error?.includes('无权') || validation.error?.includes('处理人')) {
+          errorCode = 'PERMISSION_DENIED';
+        } else if (validation.error?.includes('状态')) {
+          errorCode = 'STATUS_CONFLICT';
+          abnormalType = ABNORMAL_TYPES.STATUS_CONFLICT;
+        } else if (validation.error?.includes('附件') || validation.error?.includes('材料')) {
+          errorCode = 'MISSING_MATERIAL';
+          abnormalType = ABNORMAL_TYPES.MISSING_MATERIAL;
+        }
+
+        if (abnormalType) {
+          logAbnormal(clue_id, abnormalType, validation.error, user.id, actionData);
+        }
+
+        resultRecord.error_code = errorCode;
+        resultRecord.error_message = validation.error;
+        resultRecord.abnormal_type = abnormalType;
+        results.push(resultRecord);
         continue;
       }
 
       beginTransaction();
 
       try {
-        const { currentVersion } = validation;
-        const nextHandlerId = getNextHandler(user.role, target_status);
+        const { currentVersion, clue: validClue } = validation;
 
         if (target_status === STATUS.RETURNED && !return_reason) {
           throw new Error('退回操作必须填写退回原因');
         }
+
+        const nextHandlerId = getNextHandler(user.role, target_status, validClue);
 
         runQuery(`
           UPDATE clues 
@@ -299,60 +325,92 @@ export function processBatch(items, actionData, user) {
               return_reason = ?, audit_remark = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `, [
-          target_status, currentVersion + 1,
-          nextHandlerId || (target_status === STATUS.RETURNED ? clue.responsible_person_id : null),
-          return_reason || null, remark || null, clueId
+          target_status,
+          currentVersion + 1,
+          nextHandlerId,
+          return_reason || null,
+          remark || null,
+          clue_id
         ]);
 
-        runQuery(`
+        const recordResult = runQuery(`
           INSERT INTO processing_records (
             clue_id, from_status, to_status, action, result, remark, operator_id
           ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [clue_id, clue.status, target_status, action, 'success', remark || '', user.id]);
+        `, [
+          clue_id,
+          validClue.status,
+          target_status,
+          action,
+          'success',
+          remark || '',
+          user.id
+        ]);
+
+        const processingRecordId = recordResult?.lastInsertRowid || null;
+
+        if (target_status === STATUS.RETURNED && return_reason) {
+          const auditNoteContent = `【批量退回】退回原因：${return_reason}${remark ? `\n备注：${remark}` : ''}`;
+          runQuery(`
+            INSERT INTO audit_notes (clue_id, note, auditor_id)
+            VALUES (?, ?, ?)
+          `, [
+            clue_id,
+            auditNoteContent,
+            user.id
+          ]);
+        }
 
         updateAbnormalTags(clue_id);
 
         commitTransaction();
 
-        results.push({
-          clue_id,
-          clue_no: clue.clue_no,
-          success: true,
-          new_status: target_status,
-          new_version: currentVersion + 1
-        });
+        resultRecord.success = true;
+        resultRecord.to_status = target_status;
+        resultRecord.new_version = currentVersion + 1;
+        resultRecord.processing_record_id = processingRecordId;
+        resultRecord.error_code = null;
+        resultRecord.error_message = null;
+        results.push(resultRecord);
       } catch (e) {
         rollbackTransaction();
-        results.push({
-          clue_id,
-          clue_no: clue.clue_no,
-          success: false,
-          error_code: 'PROCESS_ERROR',
-          error_message: e.message
-        });
+        logAbnormal(clue_id, ABNORMAL_TYPES.STATUS_CONFLICT,
+          `批量处理失败: ${e.message}`,
+          user.id,
+          actionData
+        );
+        resultRecord.error_code = 'PROCESS_ERROR';
+        resultRecord.error_message = e.message;
+        resultRecord.abnormal_type = ABNORMAL_TYPES.STATUS_CONFLICT;
+        results.push(resultRecord);
       }
     } catch (e) {
-      results.push({
-        clue_id,
-        clue_no: null,
-        success: false,
-        error_code: 'SYSTEM_ERROR',
-        error_message: e.message
-      });
+      resultRecord.error_code = 'SYSTEM_ERROR';
+      resultRecord.error_message = e.message;
+      results.push(resultRecord);
     }
   }
 
   for (const result of results) {
     runQuery(`
       INSERT INTO batch_results (
-        batch_no, clue_id, success, error_code, error_message, operator_id
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        batch_no, clue_id, clue_no, success, error_code, error_message,
+        from_status, to_status, old_version, new_version,
+        abnormal_type, processing_record_id, operator_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       batchNo,
       result.clue_id,
+      result.clue_no,
       result.success ? 1 : 0,
-      result.error_code || null,
-      result.error_message || null,
+      result.error_code,
+      result.error_message,
+      result.from_status,
+      result.to_status,
+      result.old_version,
+      result.new_version,
+      result.abnormal_type,
+      result.processing_record_id,
       user.id
     ]);
   }
@@ -445,11 +503,15 @@ export function getAbnormalLogs(clueId) {
 
 export function getBatchResults(batchNo) {
   return allQuery(`
-    SELECT br.*, c.clue_no, c.title, u.name as operator_name
+    SELECT br.*, c.clue_no as current_clue_no, c.status as current_status, 
+           c.version as current_version, c.title,
+           u.name as operator_name,
+           from_u.name as from_status_label,
+           to_u.name as to_status_label
     FROM batch_results br
     LEFT JOIN clues c ON br.clue_id = c.id
     LEFT JOIN users u ON br.operator_id = u.id
     WHERE br.batch_no = ?
-    ORDER BY br.created_at DESC
+    ORDER BY br.id ASC
   `, [batchNo]);
 }

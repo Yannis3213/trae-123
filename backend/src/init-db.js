@@ -96,13 +96,21 @@ function initDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       batch_no TEXT NOT NULL,
       clue_id INTEGER,
+      clue_no TEXT,
       success INTEGER NOT NULL DEFAULT 0,
       error_code TEXT,
       error_message TEXT,
+      from_status TEXT,
+      to_status TEXT,
+      old_version INTEGER,
+      new_version INTEGER,
+      abnormal_type TEXT,
+      processing_record_id INTEGER,
       operator_id INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (clue_id) REFERENCES clues(id),
-      FOREIGN KEY (operator_id) REFERENCES users(id)
+      FOREIGN KEY (operator_id) REFERENCES users(id),
+      FOREIGN KEY (processing_record_id) REFERENCES processing_records(id)
     );
 
     CREATE INDEX IF NOT EXISTS idx_clues_status ON clues(status);
