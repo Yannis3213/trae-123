@@ -5,7 +5,7 @@ import { getErrorMessage } from '../lib/apiClient'
 interface BatchProcessModalProps {
   items: any[]
   onClose: () => void
-  onSuccess?: () => void
+  onSuccess?: (results?: any[]) => void
   currentRole: string
 }
 
@@ -42,6 +42,23 @@ export default function BatchProcessModal({
     if (!action) return
     setError('')
     setLoading(true)
+    
+    const missingFields: string[] = []
+    items.forEach((item) => {
+      const problems: string[] = []
+      if (!item.status) problems.push('状态')
+      if (!item.version) problems.push('版本')
+      if (problems.length > 0) {
+        missingFields.push(`${item.application_no || item.id} 缺少${problems.join('、')}`)
+      }
+    })
+    
+    if (missingFields.length > 0) {
+      setError(`以下条目缺少页面参数，无法提交：\n${missingFields.join('\n')}`)
+      setLoading(false)
+      return
+    }
+    
     try {
       const payload = items.map((item) => ({
         application_id: item.id,
@@ -52,8 +69,9 @@ export default function BatchProcessModal({
       }))
       const res = await batchProcess(payload)
       setResults(res.data)
-      if (res.data.every((r: any) => r.success)) {
-        onSuccess?.()
+      const hasAnySuccess = res.data.some((r: any) => r.success)
+      if (hasAnySuccess) {
+        onSuccess?.(res.data)
       }
     } catch (e) {
       setError(getErrorMessage(e))
@@ -81,10 +99,37 @@ export default function BatchProcessModal({
           </button>
         </div>
         <div className="modal-body">
-          {error && <div className="error-message">{error}</div>}
+          {error && (
+            <div className="error-message" style={{ whiteSpace: 'pre-wrap' }}>
+              {error}
+            </div>
+          )}
           <p style={{ marginBottom: 16, color: '#6b7280' }}>
             已选择 <strong>{items.length}</strong> 条上架单
           </p>
+          {(() => {
+            const missing = items.filter(i => !i.status || !i.version)
+            if (missing.length === 0) return null
+            return (
+              <div style={{
+                marginBottom: 16,
+                padding: '8px 12px',
+                background: '#fef3c7',
+                border: '1px solid #f59e0b',
+                borderRadius: 4,
+                color: '#92400e',
+                fontSize: 13,
+              }}>
+                <strong>⚠ 提示：</strong>有 {missing.length} 条条目缺少页面状态或版本参数，
+                提交时将直接返回失败。建议刷新列表后重新选择。
+                <div style={{ marginTop: 6, fontSize: 12 }}>
+                  {missing.map((m, i) => (
+                    <div key={i}>· {m.application_no || m.id}</div>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
           {!results && (
             <>
               <div className="form-group">

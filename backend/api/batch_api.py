@@ -63,16 +63,34 @@ def _process_single_item(operator, item):
 
     action = item.action
 
-    if item.status and item.version:
-        if app.status != item.status or app.version != item.version:
-            reason = f"车源上架单{app.application_no}：版本冲突：页面版本{item.version}与服务端版本{app.version}不一致"
-            _record_batch_failure(app, operator, action, reason)
-            return BatchProcessResult(
-                application_id=app.id,
-                application_no=app.application_no,
-                success=False,
-                reason=reason,
-            )
+    # 强制校验每条的页面状态和版本
+    if not item.status:
+        reason = f"车源上架单{app.application_no}：缺少页面状态参数，无法执行批量操作"
+        _record_batch_failure(app, operator, action, reason)
+        return BatchProcessResult(
+            application_id=app.id,
+            application_no=app.application_no,
+            success=False,
+            reason=reason,
+        )
+    if item.version <= 0:
+        reason = f"车源上架单{app.application_no}：缺少页面版本参数，无法执行批量操作"
+        _record_batch_failure(app, operator, action, reason)
+        return BatchProcessResult(
+            application_id=app.id,
+            application_no=app.application_no,
+            success=False,
+            reason=reason,
+        )
+    if app.status != item.status or app.version != item.version:
+        reason = f"车源上架单{app.application_no}：版本冲突：页面版本{item.version}与服务端版本{app.version}不一致，请刷新后重试"
+        _record_batch_failure(app, operator, action, reason)
+        return BatchProcessResult(
+            application_id=app.id,
+            application_no=app.application_no,
+            success=False,
+            reason=reason,
+        )
 
     if action == 'submit':
         if operator.role != RoleChoices.CONSULTANT:
@@ -331,57 +349,36 @@ def batch_advance_overdue(request):
 
     now = timezone.now()
     overdue_apps = VehicleListingApplication.objects.filter(
-        status=ApplicationStatus.PENDING_PROCESS,
         deadline__lt=now,
-    ).select_related('applicant', 'evaluator')
+    ).exclude(
+        status=ApplicationStatus.COMPLETED
+    ).select_related('applicant', 'evaluator', 'reviewer')
 
     results = []
     for app in overdue_apps:
         try:
-            with transaction.atomic():
-                app_locked = VehicleListingApplication.objects.select_for_update().get(id=app.id)
-                if app_locked.status != ApplicationStatus.PENDING_PROCESS:
-                    responsible = app_locked.responsible_person
-                    responsible_name = responsible.display_name if responsible else '未知'
-                    reason = f"车源上架单{app_locked.application_no}：逾期拦截——当前状态为'{_get_status_display(app_locked.status)}'已不是待处理状态，负责人{responsible_name}超时未处理"
-                    _record_batch_failure(app_locked, operator, 'advance_overdue', reason)
-                    results.append(BatchProcessResult(
-                        application_id=app_locked.id,
-                        application_no=app_locked.application_no,
-                        success=False,
-                        reason=reason,
-                    ))
-                    continue
-
-                from_status = app_locked.status
-                app_locked.evaluator = operator
-                app_locked.status = ApplicationStatus.UNDER_REVIEW
-                app_locked.version = F('version') + 1
-                app_locked.save()
-                app_locked.refresh_from_db()
-
-                responsible = app_locked.responsible_person
-                responsible_name = responsible.display_name if responsible else '未知'
-
-                role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
-                ProcessingRecord.objects.create(
-                    application=app_locked, operator=operator, operator_role=role_display,
-                    action='batch_advance_overdue', from_status=from_status, to_status=ApplicationStatus.UNDER_REVIEW,
-                    remark='逾期自动推进至复核',
-                    failure_reason=f'逾期处理：负责人{responsible_name}未在截止时间内处理',
-                )
-                AuditNote.objects.create(
-                    application=app_locked, operator=operator, operator_role=role_display,
-                    note='逾期自动推进至复核',
-                    failure_reason=f'逾期处理：负责人{responsible_name}未在截止时间内处理',
-                )
-
-                results.append(BatchProcessResult(
-                    application_id=app_locked.id,
-                    application_no=app_locked.application_no,
-                    success=True,
-                    reason=f"车源上架单{app_locked.application_no}：逾期自动推进至复核，原负责人{responsible_name}超时未处理",
-                ))
+            responsible = app.responsible_person
+            responsible_name = responsible.display_name if responsible else '未知'
+            responsible_role = ROLE_DISPLAY_MAP.get(responsible.role, responsible.role) if responsible else '未知'
+            
+            if app.status == ApplicationStatus.PENDING_PROCESS:
+                reason = f"车源上架单{app.application_no}：逾期拦截——当前状态为待处理，需评估师手动推进，原责任人{responsible_name}({responsible_role})超时未处理"
+            elif app.status in [ApplicationStatus.PENDING_SUPPLEMENT, ApplicationStatus.RETURNED, ApplicationStatus.DRAFT]:
+                reason = f"车源上架单{app.application_no}：逾期拦截——当前状态为'{_get_status_display(app.status)}'，需车源顾问先补正材料，原责任人{responsible_name}({responsible_role})超时未处理"
+            elif app.status == ApplicationStatus.UNDER_REVIEW:
+                reason = f"车源上架单{app.application_no}：逾期拦截——当前状态为复核中，需门店经理手动复核，原责任人{responsible_name}({responsible_role})超时未处理"
+            elif app.status == ApplicationStatus.PROCESSING:
+                reason = f"车源上架单{app.application_no}：逾期拦截——当前状态为处理中，需评估师手动提交评估，原责任人{responsible_name}({responsible_role})超时未处理"
+            else:
+                reason = f"车源上架单{app.application_no}：逾期拦截——当前状态为'{_get_status_display(app.status)}'，需要手动处理，原责任人{responsible_name}({responsible_role})超时未处理"
+            
+            _record_batch_failure(app, operator, 'advance_overdue', reason)
+            results.append(BatchProcessResult(
+                application_id=app.id,
+                application_no=app.application_no,
+                success=False,
+                reason=reason,
+            ))
         except Exception as e:
             reason = f"车源上架单{app.application_no}：处理异常 - {str(e)}"
             try:
