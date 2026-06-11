@@ -1,0 +1,455 @@
+import { getQuery, allQuery, runQuery, beginTransaction, commitTransaction, rollbackTransaction } from '../db.js';
+import { validateAction, logAbnormal, getNextHandler, updateAbnormalTags, getExpiryStatus, isOverdue } from './validation.js';
+import { STATUS, ROLES, ABNORMAL_TYPES } from '../config.js';
+import dayjs from 'dayjs';
+
+export function getClueList(user, filters = {}) {
+  const { status, priority, clue_type, keyword, expiryStatus } = filters;
+  
+  let sql = `
+    SELECT 
+      c.id, c.clue_no, c.title, c.clue_type, c.priority, c.status,
+      c.enterprise_name, c.amount, c.deadline, c.abnormal_tags,
+      c.created_at, c.updated_at, c.version,
+      rp.name as responsible_person,
+      ch.name as current_handler,
+      creator.name as created_by_name
+    FROM clues c
+    LEFT JOIN users rp ON c.responsible_person_id = rp.id
+    LEFT JOIN users ch ON c.current_handler_id = ch.id
+    LEFT JOIN users creator ON c.created_by = creator.id
+    WHERE 1=1
+  `;
+  
+  const params = [];
+
+  if (user.role === ROLES.REGISTRAR) {
+    sql += ' AND c.created_by = ?';
+    params.push(user.id);
+  } else if (user.role === ROLES.AUDITOR) {
+    sql += ' AND (c.current_handler_id = ? OR c.status IN (?, ?))';
+    params.push(user.id, STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED);
+  } else if (user.role === ROLES.REVIEWER) {
+    sql += ' AND c.status IN (?, ?, ?, ?)';
+    params.push(STATUS.PENDING_REVIEW, STATUS.APPROVED, STATUS.REJECTED, STATUS.ARCHIVED);
+  }
+
+  if (status) {
+    sql += ' AND c.status = ?';
+    params.push(status);
+  }
+
+  if (priority) {
+    sql += ' AND c.priority = ?';
+    params.push(priority);
+  }
+
+  if (clue_type) {
+    sql += ' AND c.clue_type = ?';
+    params.push(clue_type);
+  }
+
+  if (keyword) {
+    sql += ' AND (c.title LIKE ? OR c.enterprise_name LIKE ? OR c.clue_no LIKE ?)';
+    const searchTerm = `%${keyword}%`;
+    params.push(searchTerm, searchTerm, searchTerm);
+  }
+
+  sql += ' ORDER BY c.priority DESC, c.created_at DESC';
+
+  let clues = allQuery(sql, params);
+
+  clues = clues.map(clue => {
+    const expiry = getExpiryStatus(clue.deadline);
+    const abnormalTags = JSON.parse(clue.abnormal_tags || '[]');
+    
+    if (expiry.status === 'overdue' && !abnormalTags.includes('overdue')) {
+      abnormalTags.push('overdue');
+    }
+    
+    return {
+      ...clue,
+      expiry_status: expiry.status,
+      days_left: expiry.daysLeft,
+      abnormal_tags: abnormalTags
+    };
+  });
+
+  if (expiryStatus) {
+    clues = clues.filter(c => c.expiry_status === expiryStatus);
+  }
+
+  return clues;
+}
+
+export function getClueDetail(clueId, user) {
+  const clue = getQuery(`
+    SELECT 
+      c.*,
+      rp.name as responsible_person_name,
+      ch.name as current_handler_name,
+      creator.name as created_by_name
+    FROM clues c
+    LEFT JOIN users rp ON c.responsible_person_id = rp.id
+    LEFT JOIN users ch ON c.current_handler_id = ch.id
+    LEFT JOIN users creator ON c.created_by = creator.id
+    WHERE c.id = ?
+  `, [clueId]);
+
+  if (!clue) {
+    return null;
+  }
+
+  if (user.role === ROLES.REGISTRAR && clue.created_by !== user.id) {
+    return { error: '无权查看此线索单', code: 403 };
+  }
+
+  const attachments = allQuery(`
+    SELECT a.*, u.name as uploaded_by_name
+    FROM attachments a
+    LEFT JOIN users u ON a.uploaded_by = u.id
+    WHERE a.clue_id = ?
+    ORDER BY a.created_at DESC
+  `, [clueId]);
+
+  const processingRecords = allQuery(`
+    SELECT pr.*, u.name as operator_name
+    FROM processing_records pr
+    LEFT JOIN users u ON pr.operator_id = u.id
+    WHERE pr.clue_id = ?
+    ORDER BY pr.created_at DESC
+  `, [clueId]);
+
+  const auditNotes = allQuery(`
+    SELECT an.*, u.name as auditor_name
+    FROM audit_notes an
+    LEFT JOIN users u ON an.auditor_id = u.id
+    WHERE an.clue_id = ?
+    ORDER BY an.created_at DESC
+  `, [clueId]);
+
+  const abnormalLogs = allQuery(`
+    SELECT al.*, u.name as operator_name
+    FROM abnormal_logs al
+    LEFT JOIN users u ON al.operator_id = u.id
+    WHERE al.clue_id = ?
+    ORDER BY al.created_at DESC
+  `, [clueId]);
+
+  const expiry = getExpiryStatus(clue.deadline);
+  const abnormalTags = JSON.parse(clue.abnormal_tags || '[]');
+  
+  if (expiry.status === 'overdue' && !abnormalTags.includes('overdue')) {
+    abnormalTags.push('overdue');
+  }
+
+  return {
+    ...clue,
+    abnormal_tags: abnormalTags,
+    expiry_status: expiry.status,
+    days_left: expiry.daysLeft,
+    attachments,
+    processing_records: processingRecords,
+    audit_notes: auditNotes,
+    abnormal_logs: abnormalLogs
+  };
+}
+
+export function processClue(clueId, actionData, user) {
+  const { target_status, remark, return_reason, version, action } = actionData;
+
+  beginTransaction();
+
+  try {
+    const validation = validateAction(clueId, user.id, user.role, version, target_status);
+    
+    if (!validation.valid) {
+      rollbackTransaction();
+      return { success: false, message: validation.error, code: 400 };
+    }
+
+    const { clue, currentVersion } = validation;
+
+    if (target_status === STATUS.RETURNED && !return_reason) {
+      rollbackTransaction();
+      return { success: false, message: '退回操作必须填写退回原因', code: 400 };
+    }
+
+    const nextHandlerId = getNextHandler(user.role, target_status);
+
+    runQuery(`
+      UPDATE clues 
+      SET status = ?, 
+          version = ?, 
+          current_handler_id = ?,
+          return_reason = ?,
+          audit_remark = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      target_status,
+      currentVersion + 1,
+      nextHandlerId || (target_status === STATUS.RETURNED ? clue.responsible_person_id : null),
+      return_reason || null,
+      remark || null,
+      clueId
+    ]);
+
+    runQuery(`
+      INSERT INTO processing_records (
+        clue_id, from_status, to_status, action, result, remark, operator_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      clueId,
+      clue.status,
+      target_status,
+      action,
+      'success',
+      remark || '',
+      user.id
+    ]);
+
+    updateAbnormalTags(clueId);
+
+    commitTransaction();
+
+    return {
+      success: true,
+      message: '操作成功',
+      data: {
+        clue_id: clueId,
+        new_status: target_status,
+        new_version: currentVersion + 1
+      }
+    };
+  } catch (error) {
+    rollbackTransaction();
+    logAbnormal(clueId, ABNORMAL_TYPES.STATUS_CONFLICT, 
+      `处理线索单失败: ${error.message}`, 
+      user.id, 
+      actionData
+    );
+    return { success: false, message: '操作失败：' + error.message, code: 500 };
+  }
+}
+
+export function processBatch(items, actionData, user) {
+  const batchNo = 'BATCH' + dayjs().format('YYYYMMDDHHmmss');
+  const results = [];
+
+  for (const item of items) {
+    const { clue_id, version } = item;
+    const { target_status, remark, return_reason, action } = actionData;
+
+    try {
+      const clue = getQuery('SELECT id, clue_no, status, deadline, current_handler_id FROM clues WHERE id = ?', [clue_id]);
+      
+      if (!clue) {
+        results.push({
+          clue_id,
+          clue_no: null,
+          success: false,
+          error_code: 'NOT_FOUND',
+          error_message: '线索单不存在'
+        });
+        continue;
+      }
+
+      if (isOverdue(clue.deadline)) {
+        logAbnormal(clue_id, ABNORMAL_TYPES.OVERDUE, 
+          `批量处理时发现逾期：线索单${clue.clue_no}已逾期`, 
+          user.id
+        );
+        results.push({
+          clue_id,
+          clue_no: clue.clue_no,
+          success: false,
+          error_code: 'OVERDUE',
+          error_message: '线索单已逾期，请先进入详情页处理逾期问题'
+        });
+        continue;
+      }
+
+      const validation = validateAction(clue_id, user.id, user.role, version, target_status);
+      
+      if (!validation.valid) {
+        results.push({
+          clue_id,
+          clue_no: clue.clue_no,
+          success: false,
+          error_code: 'VALIDATION_FAILED',
+          error_message: validation.error
+        });
+        continue;
+      }
+
+      beginTransaction();
+
+      try {
+        const { currentVersion } = validation;
+        const nextHandlerId = getNextHandler(user.role, target_status);
+
+        if (target_status === STATUS.RETURNED && !return_reason) {
+          throw new Error('退回操作必须填写退回原因');
+        }
+
+        runQuery(`
+          UPDATE clues 
+          SET status = ?, version = ?, current_handler_id = ?,
+              return_reason = ?, audit_remark = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [
+          target_status, currentVersion + 1,
+          nextHandlerId || (target_status === STATUS.RETURNED ? clue.responsible_person_id : null),
+          return_reason || null, remark || null, clueId
+        ]);
+
+        runQuery(`
+          INSERT INTO processing_records (
+            clue_id, from_status, to_status, action, result, remark, operator_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [clue_id, clue.status, target_status, action, 'success', remark || '', user.id]);
+
+        updateAbnormalTags(clue_id);
+
+        commitTransaction();
+
+        results.push({
+          clue_id,
+          clue_no: clue.clue_no,
+          success: true,
+          new_status: target_status,
+          new_version: currentVersion + 1
+        });
+      } catch (e) {
+        rollbackTransaction();
+        results.push({
+          clue_id,
+          clue_no: clue.clue_no,
+          success: false,
+          error_code: 'PROCESS_ERROR',
+          error_message: e.message
+        });
+      }
+    } catch (e) {
+      results.push({
+        clue_id,
+        clue_no: null,
+        success: false,
+        error_code: 'SYSTEM_ERROR',
+        error_message: e.message
+      });
+    }
+  }
+
+  for (const result of results) {
+    runQuery(`
+      INSERT INTO batch_results (
+        batch_no, clue_id, success, error_code, error_message, operator_id
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      batchNo,
+      result.clue_id,
+      result.success ? 1 : 0,
+      result.error_code || null,
+      result.error_message || null,
+      user.id
+    ]);
+  }
+
+  const successCount = results.filter(r => r.success).length;
+  const failCount = results.length - successCount;
+
+  return {
+    batch_no: batchNo,
+    total: results.length,
+    success_count: successCount,
+    fail_count: failCount,
+    results
+  };
+}
+
+export function addAuditNote(clueId, note, user) {
+  if (![ROLES.AUDITOR, ROLES.REVIEWER].includes(user.role)) {
+    return { success: false, message: '只有审核和复核人员可以添加审计备注', code: 403 };
+  }
+
+  runQuery(`
+    INSERT INTO audit_notes (clue_id, note, auditor_id)
+    VALUES (?, ?, ?)
+  `, [clueId, note, user.id]);
+
+  return { success: true, message: '备注添加成功' };
+}
+
+export function getStatistics(user) {
+  let baseSql = `
+    SELECT 
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'pending_submit' THEN 1 ELSE 0 END) as pending_submit,
+      SUM(CASE WHEN status = 'pending_audit' THEN 1 ELSE 0 END) as pending_audit,
+      SUM(CASE WHEN status = 'returned' THEN 1 ELSE 0 END) as returned,
+      SUM(CASE WHEN status = 'resubmitted' THEN 1 ELSE 0 END) as resubmitted,
+      SUM(CASE WHEN status = 'pending_review' THEN 1 ELSE 0 END) as pending_review,
+      SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+      SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+      SUM(CASE WHEN status = 'archived' THEN 1 ELSE 0 END) as archived,
+      SUM(CASE WHEN priority = 'high' THEN 1 ELSE 0 END) as high_priority
+    FROM clues
+    WHERE 1=1
+  `;
+
+  const params = [];
+
+  if (user.role === ROLES.REGISTRAR) {
+    baseSql += ' AND created_by = ?';
+    params.push(user.id);
+  } else if (user.role === ROLES.AUDITOR) {
+    baseSql += ' AND (current_handler_id = ? OR status IN (?, ?))';
+    params.push(user.id, STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED);
+  } else if (user.role === ROLES.REVIEWER) {
+    baseSql += ' AND status IN (?, ?, ?, ?)';
+    params.push(STATUS.PENDING_REVIEW, STATUS.APPROVED, STATUS.REJECTED, STATUS.ARCHIVED);
+  }
+
+  const stats = getQuery(baseSql, params);
+
+  const allClues = allQuery('SELECT deadline, status FROM clues WHERE 1=1', []);
+  let overdue = 0;
+  let urgent = 0;
+
+  for (const clue of allClues) {
+    if (clue.deadline && ![STATUS.ARCHIVED, STATUS.APPROVED, STATUS.REJECTED].includes(clue.status)) {
+      const expiry = getExpiryStatus(clue.deadline);
+      if (expiry.status === 'overdue') overdue++;
+      else if (expiry.status === 'urgent') urgent++;
+    }
+  }
+
+  return {
+    ...stats,
+    overdue,
+    urgent
+  };
+}
+
+export function getAbnormalLogs(clueId) {
+  return allQuery(`
+    SELECT al.*, u.name as operator_name
+    FROM abnormal_logs al
+    LEFT JOIN users u ON al.operator_id = u.id
+    WHERE al.clue_id = ?
+    ORDER BY al.created_at DESC
+  `, [clueId]);
+}
+
+export function getBatchResults(batchNo) {
+  return allQuery(`
+    SELECT br.*, c.clue_no, c.title, u.name as operator_name
+    FROM batch_results br
+    LEFT JOIN clues c ON br.clue_id = c.id
+    LEFT JOIN users u ON br.operator_id = u.id
+    WHERE br.batch_no = ?
+    ORDER BY br.created_at DESC
+  `, [batchNo]);
+}
