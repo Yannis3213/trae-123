@@ -172,6 +172,14 @@ function OrdersPage() {
             <p className="text-sm text-gray-500">{roleNames[user.role]} - {user.name}</p>
           </div>
           <div className="flex gap-3 items-center">
+            {user.role === "registrar" && (
+              <button
+                onClick={() => navigate({ to: "/orders/new" })}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition"
+              >
+                + 新建入职单
+              </button>
+            )}
             <button
               onClick={() => setShowBatch(!showBatch)}
               className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition"

@@ -23,6 +23,10 @@ function OrderDetailPage() {
   const [auditNote, setAuditNote] = useState("");
   const [auditStatusLabel, setAuditStatusLabel] = useState("处理中");
   const [showAuditForm, setShowAuditForm] = useState(false);
+  const [showUploadForm, setShowUploadForm] = useState(null);
+  const [uploadType, setUploadType] = useState("");
+  const [uploadName, setUploadName] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   const loadDetail = async () => {
     setLoading(true);
@@ -151,6 +155,29 @@ function OrderDetailPage() {
       }
     }
     return actions;
+  };
+
+  const canUploadAttachment = (nodeId) => {
+    if (!user || !order) return false;
+    if (user.role !== "registrar") return false;
+    if (order.current_node !== nodeId) return false;
+    return order.status === "pending" || order.status === "returned";
+  };
+
+  const handleUploadAttachment = async (nodeId) => {
+    if (!uploadType || !uploadName) return;
+    setUploading(true);
+    try {
+      await api.addAttachment(id, { node: nodeId, type: uploadType, name: uploadName });
+      setShowUploadForm(null);
+      setUploadType("");
+      setUploadName("");
+      await loadDetail();
+    } catch (e) {
+      setError(`${e.message}${e.detail ? "：" + e.detail : ""}`);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const getNodeAttachments = (nodeId) => {
@@ -389,6 +416,71 @@ function OrderDetailPage() {
                   </div>
                 ) : (
                   <p className="text-sm text-gray-400">暂无附件</p>
+                )}
+
+                {canUploadAttachment(node.id) && (
+                  <div className="mt-3">
+                    {showUploadForm === node.id ? (
+                      <div className="p-3 bg-gray-50 rounded-lg space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-sm text-gray-600 mb-1">附件类型</label>
+                            <select
+                              value={uploadType}
+                              onChange={(e) => setUploadType(e.target.value)}
+                              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                            >
+                              <option value="">请选择</option>
+                              {getRequiredAttachments(node.id)
+                                .filter((r) => !getNodeAttachments(node.id).some((a) => a.type === r.type))
+                                .map((r) => (
+                                  <option key={r.type} value={r.type}>{r.name}</option>
+                                ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-sm text-gray-600 mb-1">附件名称</label>
+                            <input
+                              type="text"
+                              value={uploadName}
+                              onChange={(e) => setUploadName(e.target.value)}
+                              placeholder="如：身份证.pdf"
+                              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setShowUploadForm(null)}
+                            className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-100"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleUploadAttachment(node.id)}
+                            disabled={!uploadType || !uploadName || uploading}
+                            className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                          >
+                            {uploading ? "上传中..." : "补正上传"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowUploadForm(node.id);
+                          setUploadType("");
+                          setUploadName("");
+                        }}
+                        className="text-sm text-blue-600 hover:text-blue-800"
+                      >
+                        + 上传/补正附件
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

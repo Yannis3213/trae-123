@@ -190,14 +190,18 @@ func (h *orderHandler) List(w http.ResponseWriter, r *http.Request) {
 	status := query.Get("status")
 	node := query.Get("node")
 	search := query.Get("search")
-	roleFilter := query.Get("role")
 
-	filterRole := user.Role
-	if roleFilter != "" && (roleFilter == user.Role || user.Role == models.RoleReviewer) {
-		filterRole = roleFilter
+	var orders []*models.OnboardingOrder
+	var err error
+
+	if user.Role == models.RoleReviewer {
+		orders, err = database.ListOrders("", status, node, search)
+	} else if user.Role == models.RoleRegistrar {
+		orders, err = database.ListOrdersByRegistrar(user.ID, status, node, search)
+	} else {
+		orders, err = database.ListOrders(user.Role, status, node, search)
 	}
 
-	orders, err := database.ListOrders(filterRole, status, node, search)
 	if err != nil {
 		writeError(w, 500, "查询失败", err.Error())
 		return

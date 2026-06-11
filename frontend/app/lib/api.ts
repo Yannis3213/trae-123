@@ -48,6 +48,18 @@ export const api = {
 
   getOrder: (id) => apiRequest(`/orders/${id}`),
 
+  createOrder: (data) =>
+    apiRequest("/orders/", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  addAttachment: (orderId, data) =>
+    apiRequest(`/orders/${orderId}/attachments`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   processOrder: (id, action, remark, version) =>
     apiRequest(`/orders/${id}/process`, {
       method: "POST",

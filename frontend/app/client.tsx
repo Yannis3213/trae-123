@@ -1,13 +1,6 @@
 /// <reference types="vinxi/types/client" />
-import { createRouter } from "@tanstack/react-router";
-import { routeTree } from "./routeTree.gen";
+import { createAppRouter } from "./router";
 
-const router = createRouter({ routeTree });
-
-declare module "@tanstack/react-router" {
-  interface Register {
-    router: typeof router;
-  }
-}
+const router = createAppRouter();
 
 export default router;

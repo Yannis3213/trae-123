@@ -40,7 +40,7 @@ func GetUserByID(id string) (*models.User, error) {
 func GetOrderByID(id string) (*models.OnboardingOrder, error) {
 	var o models.OnboardingOrder
 	var dueDate, createdAt, updatedAt []byte
-	var handlerID, handlerName, exceptionReason sql.NullString
+	var handlerID, handlerName, exceptionReason, remark sql.NullString
 	var isException int
 
 	err := DB.QueryRow(`
@@ -55,7 +55,7 @@ func GetOrderByID(id string) (*models.OnboardingOrder, error) {
 		&handlerID, &handlerName,
 		&o.RegistrarID, &o.RegistrarName,
 		&dueDate, &o.WarningLevel, &o.Version, &isException, &exceptionReason,
-		&o.Remark, &createdAt, &updatedAt,
+		&remark, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -70,6 +70,9 @@ func GetOrderByID(id string) (*models.OnboardingOrder, error) {
 	o.IsException = isException == 1
 	if exceptionReason.Valid {
 		o.ExceptionReason = exceptionReason.String
+	}
+	if remark.Valid {
+		o.Remark = remark.String
 	}
 
 	o.DueDate, _ = time.Parse("2006-01-02 15:04:05", string(dueDate))
@@ -123,7 +126,7 @@ func ListOrders(role, status, node, search string) ([]*models.OnboardingOrder, e
 	for rows.Next() {
 		var o models.OnboardingOrder
 		var dueDate, createdAt, updatedAt []byte
-		var handlerID, handlerName, exceptionReason sql.NullString
+		var handlerID, handlerName, exceptionReason, remark sql.NullString
 		var isException int
 
 		err := rows.Scan(
@@ -132,7 +135,7 @@ func ListOrders(role, status, node, search string) ([]*models.OnboardingOrder, e
 			&handlerID, &handlerName,
 			&o.RegistrarID, &o.RegistrarName,
 			&dueDate, &o.WarningLevel, &o.Version, &isException, &exceptionReason,
-			&o.Remark, &createdAt, &updatedAt,
+			&remark, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -148,6 +151,81 @@ func ListOrders(role, status, node, search string) ([]*models.OnboardingOrder, e
 		if exceptionReason.Valid {
 			o.ExceptionReason = exceptionReason.String
 		}
+		if remark.Valid {
+			o.Remark = remark.String
+		}
+
+		o.DueDate, _ = time.Parse("2006-01-02 15:04:05", string(dueDate))
+		o.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", string(createdAt))
+		o.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", string(updatedAt))
+		orders = append(orders, &o)
+	}
+	return orders, nil
+}
+
+func ListOrdersByRegistrar(registrarID, status, node, search string) ([]*models.OnboardingOrder, error) {
+	query := `
+		SELECT id, title, candidate_name, position, department, status, current_node,
+		       current_role, handler_id, handler_name, registrar_id, registrar_name,
+		       due_date, warning_level, version, is_exception, exception_reason,
+		       remark, created_at, updated_at
+		FROM onboarding_orders WHERE registrar_id = ?
+	`
+	args := []interface{}{registrarID}
+
+	if status != "" {
+		query += " AND status = ?"
+		args = append(args, status)
+	}
+	if node != "" {
+		query += " AND current_node = ?"
+		args = append(args, node)
+	}
+	if search != "" {
+		query += " AND (title LIKE ? OR candidate_name LIKE ?)"
+		args = append(args, "%"+search+"%", "%"+search+"%")
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	rows, err := DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var orders []*models.OnboardingOrder
+	for rows.Next() {
+		var o models.OnboardingOrder
+		var dueDate, createdAt, updatedAt []byte
+		var handlerID, handlerName, exceptionReason, remark sql.NullString
+		var isException int
+
+		err := rows.Scan(
+			&o.ID, &o.Title, &o.CandidateName, &o.Position, &o.Department,
+			&o.Status, &o.CurrentNode, &o.CurrentRole,
+			&handlerID, &handlerName,
+			&o.RegistrarID, &o.RegistrarName,
+			&dueDate, &o.WarningLevel, &o.Version, &isException, &exceptionReason,
+			&remark, &createdAt, &updatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if handlerID.Valid {
+			o.HandlerID = handlerID.String
+		}
+		if handlerName.Valid {
+			o.HandlerName = handlerName.String
+		}
+		o.IsException = isException == 1
+		if exceptionReason.Valid {
+			o.ExceptionReason = exceptionReason.String
+		}
+		if remark.Valid {
+			o.Remark = remark.String
+		}
 
 		o.DueDate, _ = time.Parse("2006-01-02 15:04:05", string(dueDate))
 		o.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", string(createdAt))
@@ -158,6 +236,11 @@ func ListOrders(role, status, node, search string) ([]*models.OnboardingOrder, e
 }
 
 func UpdateOrder(o *models.OnboardingOrder) error {
+	handlerID := sql.NullString{String: o.HandlerID, Valid: o.HandlerID != ""}
+	handlerName := sql.NullString{String: o.HandlerName, Valid: o.HandlerName != ""}
+	exceptionReason := sql.NullString{String: o.ExceptionReason, Valid: o.ExceptionReason != ""}
+	remark := sql.NullString{String: o.Remark, Valid: o.Remark != ""}
+
 	_, err := DB.Exec(`
 		UPDATE onboarding_orders SET
 			title = ?, candidate_name = ?, position = ?, department = ?,
@@ -170,9 +253,9 @@ func UpdateOrder(o *models.OnboardingOrder) error {
 	`,
 		o.Title, o.CandidateName, o.Position, o.Department,
 		o.Status, o.CurrentNode, o.CurrentRole,
-		o.HandlerID, o.HandlerName,
+		handlerID, handlerName,
 		o.DueDate, o.WarningLevel, o.Version,
-		o.IsException, o.ExceptionReason, o.Remark,
+		o.IsException, exceptionReason, remark,
 		time.Now(), o.ID,
 	)
 	return err
@@ -265,6 +348,13 @@ func GetProcessRecords(orderID string) ([]*models.ProcessRecord, error) {
 }
 
 func CreateProcessRecord(r *models.ProcessRecord) error {
+	fromStatus := sql.NullString{String: r.FromStatus, Valid: r.FromStatus != ""}
+	toStatus := sql.NullString{String: r.ToStatus, Valid: r.ToStatus != ""}
+	fromNode := sql.NullString{String: r.FromNode, Valid: r.FromNode != ""}
+	toNode := sql.NullString{String: r.ToNode, Valid: r.ToNode != ""}
+	remark := sql.NullString{String: r.Remark, Valid: r.Remark != ""}
+	exceptionType := sql.NullString{String: r.ExceptionType, Valid: r.ExceptionType != ""}
+
 	_, err := DB.Exec(`
 		INSERT INTO process_records 
 		(id, order_id, node, action, operator_id, operator_name, operator_role,
@@ -273,8 +363,8 @@ func CreateProcessRecord(r *models.ProcessRecord) error {
 	`,
 		uuid.New().String(), r.OrderID, r.Node, r.Action,
 		r.OperatorID, r.OperatorName, r.OperatorRole,
-		r.FromStatus, r.ToStatus, r.FromNode, r.ToNode,
-		r.Remark, r.ExceptionType, time.Now(),
+		fromStatus, toStatus, fromNode, toNode,
+		remark, exceptionType, time.Now(),
 	)
 	return err
 }
@@ -317,21 +407,27 @@ func CreateAuditNote(n *models.AuditNote) error {
 func CreateOrder(o *models.OnboardingOrder) error {
 	id := uuid.New().String()
 	o.ID = id
+
+	handlerID := sql.NullString{String: o.HandlerID, Valid: o.HandlerID != ""}
+	handlerName := sql.NullString{String: o.HandlerName, Valid: o.HandlerName != ""}
+	exceptionReason := sql.NullString{String: o.ExceptionReason, Valid: o.ExceptionReason != ""}
+	remark := sql.NullString{String: o.Remark, Valid: o.Remark != ""}
+
 	_, err := DB.Exec(`
 		INSERT INTO onboarding_orders 
 		(id, title, candidate_name, position, department, status, current_node,
 		 current_role, handler_id, handler_name, registrar_id, registrar_name,
 		 due_date, warning_level, version, is_exception, exception_reason,
-		 created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 remark, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		o.ID, o.Title, o.CandidateName, o.Position, o.Department,
 		o.Status, o.CurrentNode, o.CurrentRole,
-		o.HandlerID, o.HandlerName,
+		handlerID, handlerName,
 		o.RegistrarID, o.RegistrarName,
 		o.DueDate, o.WarningLevel, o.Version,
-		o.IsException, o.ExceptionReason,
-		time.Now(), time.Now(),
+		o.IsException, exceptionReason,
+		remark, time.Now(), time.Now(),
 	)
 	return err
 }

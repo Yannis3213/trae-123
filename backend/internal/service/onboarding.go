@@ -187,9 +187,9 @@ func ProcessOrder(order *models.OnboardingOrder, user *models.User, action, rema
 		if isLastNode(order.CurrentNode) {
 			toStatus = models.StatusCompleted
 			toNode = order.CurrentNode
-			toRole = ""
-			handlerID = ""
-			handlerName = ""
+			toRole = user.Role
+			handlerID = user.ID
+			handlerName = user.Name
 		} else {
 			toStatus = models.StatusProcessing
 			toNode = nextNode(order.CurrentNode)
@@ -207,9 +207,9 @@ func ProcessOrder(order *models.OnboardingOrder, user *models.User, action, rema
 	case "close":
 		toStatus = models.StatusClosed
 		toNode = order.CurrentNode
-		toRole = ""
-		handlerID = ""
-		handlerName = ""
+		toRole = user.Role
+		handlerID = user.ID
+		handlerName = user.Name
 	}
 
 	order.Status = toStatus
