@@ -1,9 +1,75 @@
 import React, { useState } from 'react'
-import { Modal, Form, Input, Select, Button, Space, message, Radio } from 'antd'
+import { Modal, Form, Input, Select, Button, Space, message, Radio, Tag } from 'antd'
 import { BATCH_ACTIONS } from '../utils/constants.js'
 import { orderApi } from '../api.js'
 
 const { TextArea } = Input
+
+const getFailureType = (failureReason) => {
+  if (!failureReason) return 'other'
+  const reason = String(failureReason).toLowerCase()
+  if (reason.includes('版本冲突') || reason.includes('旧版本') || reason.includes('version')) {
+    return 'version'
+  }
+  if (reason.includes('非当前处理人') || reason.includes('当前处理人') || reason.includes('handler')) {
+    return 'handler'
+  }
+  if (reason.includes('缺少必填证据') || reason.includes('缺证据') || reason.includes('evidence') || reason.includes('必填')) {
+    return 'evidence'
+  }
+  if (reason.includes('越权') || reason.includes('权限')) {
+    return 'permission'
+  }
+  if (reason.includes('状态冲突') || reason.includes('状态')) {
+    return 'status'
+  }
+  return 'other'
+}
+
+const failureTypeConfig = {
+  version: {
+    label: '旧版本',
+    color: '#722ed1',
+    bgColor: '#f9f0ff',
+    borderColor: '#d3adf7',
+    icon: '🔄'
+  },
+  handler: {
+    label: '非当前处理人',
+    color: '#fa8c16',
+    bgColor: '#fff7e6',
+    borderColor: '#ffd591',
+    icon: '👤'
+  },
+  evidence: {
+    label: '缺证据',
+    color: '#eb2f96',
+    bgColor: '#fff0f6',
+    borderColor: '#ffadd2',
+    icon: '📄'
+  },
+  permission: {
+    label: '越权',
+    color: '#f5222d',
+    bgColor: '#fff1f0',
+    borderColor: '#ffa39e',
+    icon: '🔒'
+  },
+  status: {
+    label: '状态冲突',
+    color: '#faad14',
+    bgColor: '#fffbe6',
+    borderColor: '#ffe58f',
+    icon: '⚠️'
+  },
+  other: {
+    label: '其他',
+    color: '#8c8c8c',
+    bgColor: '#fafafa',
+    borderColor: '#d9d9d9',
+    icon: '❌'
+  }
+}
 
 export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess }) {
   const [form] = Form.useForm()
@@ -154,6 +220,8 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
                 const exceptionReason = r.exception_reason || r.exceptionReason
                 const failureReason = r.failure_reason || r.failureReason
                 const orderNo = r.order_no || r.orderNo
+                const type = getFailureType(failureReason)
+                const typeConfig = failureTypeConfig[type]
 
                 return (
                   <div
@@ -172,13 +240,13 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
                         padding: '8px 12px',
                         borderRadius: 4,
                         marginBottom: 6,
-                        background: r.success ? '#f6ffed' : '#fff1f0',
-                        border: `1px solid ${r.success ? '#b7eb8f' : '#ffa39e'}`,
-                        color: r.success ? '#389e0d' : '#cf1322'
+                        background: r.success ? '#f6ffed' : typeConfig.bgColor,
+                        border: `1px solid ${r.success ? '#b7eb8f' : typeConfig.borderColor}`,
+                        color: r.success ? '#389e0d' : typeConfig.color
                       }}
                     >
                       <Space>
-                        <span style={{ fontWeight: 500 }}>{r.success ? '✓' : '✗'}</span>
+                        <span style={{ fontWeight: 500 }}>{r.success ? '✓' : typeConfig.icon}</span>
                         <span>业务处理结果：{bizResult || (r.success ? '处理成功' : '处理失败')}</span>
                       </Space>
                     </div>
@@ -199,17 +267,24 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
                     )}
 
                     {!r.success && failureReason && (
-                      <div
-                        style={{
-                          padding: '8px 12px',
-                          borderRadius: 4,
-                          background: '#fff1f0',
-                          border: '1px solid #ffa39e',
-                          color: '#cf1322'
-                        }}
-                      >
-                        失败原因：{failureReason}
-                      </div>
+                      <>
+                        <div style={{ marginBottom: 6 }}>
+                          <Tag color={typeConfig.color}>
+                            {typeConfig.icon} {typeConfig.label}
+                          </Tag>
+                        </div>
+                        <div
+                          style={{
+                            padding: '8px 12px',
+                            borderRadius: 4,
+                            background: typeConfig.bgColor,
+                            border: `1px solid ${typeConfig.borderColor}`,
+                            color: typeConfig.color
+                          }}
+                        >
+                          失败原因：{failureReason}
+                        </div>
+                      </>
                     )}
                   </div>
                 )

@@ -295,6 +295,8 @@ class BatchProcessSchema(BaseModel):
     action: str
     remark: str = ''
     approved: Optional[bool] = None
+    version: Optional[int] = None
+    order_versions: Optional[Dict[int, int]] = None
 
 
 class BatchResultItem(BaseModel):

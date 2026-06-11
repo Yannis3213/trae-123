@@ -435,7 +435,7 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
             intercept_failed = False
 
             if not can_verify_order(user):
-                failure_reason = '越权操作：您没有核验权限'
+                failure_reason = '越权：您没有核验权限'
                 intercept_failed = True
 
             if order.status == OrderStatusChoices.VERIFY_FAILED and not intercept_failed:
@@ -443,7 +443,13 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
                 module_key = exception_module_type.lower()
                 allowed_roles = SUBMIT_ROLES.get(module_key, []) + AUDIT_ROLES.get(module_key, [])
                 if user.role not in allowed_roles:
-                    failure_reason = f'越权操作：您没有操作{exception_module_type}异常模块的权限'
+                    failure_reason = f'越权：您没有操作{exception_module_type}异常模块的权限'
+                    intercept_failed = True
+
+            # 拦截0：非当前处理人拦截（新增）
+            if not intercept_failed:
+                if order.current_handler and order.current_handler.id != user.id:
+                    failure_reason = f'非当前处理人：该单据当前处理人为 {order.current_handler.username}，您无权处理'
                     intercept_failed = True
 
             if not intercept_failed:
@@ -457,7 +463,7 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
                     try:
                         validate_version(order, version)
                     except VersionConflictError as e:
-                        failure_reason = str(e)
+                        failure_reason = f'旧版本：{str(e)}'
                         intercept_failed = True
                 else:
                     logger.warning(f'订单 {order_id} 未传版本号，跳过版本校验')
@@ -491,7 +497,7 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
                 if order.status == OrderStatusChoices.PENDING_VERIFY:
                     is_complete, msg = check_evidence_complete('requirement', order.requirement_evidence)
                     if not is_complete:
-                        failure_reason = f'证据缺失：{msg}'
+                        failure_reason = f'缺证据：缺少必填证据{msg.replace("缺少必填证据字段", "")}'
                         intercept_failed = True
                 elif order.status == OrderStatusChoices.VERIFY_FAILED:
                     exception_module_type = get_exception_module_type(order)
@@ -504,14 +510,53 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
                     evidence = evidence_map.get(module_key, {})
                     is_complete, msg = check_evidence_complete(module_key, evidence)
                     if not is_complete:
-                        failure_reason = f'证据缺失：{msg}'
+                        failure_reason = f'缺证据：缺少必填证据{msg.replace("缺少必填证据字段", "")}'
                         intercept_failed = True
 
             if intercept_failed:
+                # 拦截失败也要留痕
+                from_status = order.status
+                module_type = get_exception_module_type(order) if order.status == OrderStatusChoices.VERIFY_FAILED else ModuleTypeChoices.REQUIREMENT
+                # 状态变更：如果不是核验失败，改为核验失败
+                if order.status != OrderStatusChoices.VERIFY_FAILED:
+                    order.status = OrderStatusChoices.VERIFY_FAILED
+                    order.version += 1
+                    order.save()
+                
+                # 1. 写处理记录
+                ProcessingRecord.objects.create(
+                    order=order,
+                    action=ActionChoices.REJECT,
+                    operator=user,
+                    role=user.role,
+                    from_status=from_status,
+                    to_status=OrderStatusChoices.VERIFY_FAILED,
+                    remark=f'{failure_reason} | {payload.remark}',
+                )
+                
+                # 2. 写异常原因，handler 要与 current_handler 一致
+                ExceptionReason.objects.create(
+                    order=order,
+                    module_type=module_type,
+                    reason=failure_reason,
+                    handler=order.current_handler,  # 保持异常责任人是当前处理人
+                )
+                
+                # 3. 写审计备注
+                AuditNote.objects.create(
+                    order=order,
+                    note=f'{failure_reason} | {payload.remark}',
+                    author=user,
+                )
+                
                 results.append(BatchResultItem(
-                    order_id=order_id, order_no=order.order_no,
-                    success=False, message=failure_reason,
-                    failure_reason=failure_reason
+                    order_id=order_id,
+                    order_no=order.order_no,
+                    success=False,
+                    message='拦截失败',
+                    biz_result='批量核验拦截失败',
+                    exception_reason=failure_reason,
+                    failure_reason=failure_reason,
                 ))
                 continue
 
@@ -627,6 +672,8 @@ def batch_process_orders(request, payload: BatchProcessSchema):
             order_ids=payload.order_ids,
             approved=approved,
             remark=payload.remark,
+            version=payload.version,
+            order_versions=payload.order_versions,
         )
         return batch_verify_orders(request, verify_payload)
     else:

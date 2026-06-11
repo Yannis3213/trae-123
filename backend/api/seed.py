@@ -379,6 +379,74 @@ def seed():
         resolved=False,
     )
 
+    order7 = create_order(
+        order_no='XQJF202606010007',
+        title='会员营销系统需求交付单（非当前处理人样例）',
+        project_name='会员营销系统',
+        clue='市场部需求文档-2026-06-10',
+        status=OrderStatusChoices.PENDING_VERIFY,
+        current_handler=users[RoleChoices.DELIVERY_REGISTRAR],
+        version=2,
+        requirement_status=RequirementStatusChoices.NOT_STARTED,
+        schedule_status=RequirementStatusChoices.NOT_STARTED,
+        delivery_status=RequirementStatusChoices.NOT_STARTED,
+        requirement_deadline=today + timedelta(days=1),
+        schedule_deadline=today + timedelta(days=15),
+        delivery_deadline=today + timedelta(days=30),
+        created_by=users[RoleChoices.PROJECT_ASSISTANT],
+    )
+    AuditNote.objects.create(
+        order=order7,
+        note='待登记员处理',
+        author=users[RoleChoices.PROJECT_ASSISTANT],
+        created_at=today - timedelta(days=1),
+    )
+
+    order8 = create_order(
+        order_no='XQJF202606010008',
+        title='客服工单系统需求交付单（旧版本冲突样例）',
+        project_name='客服工单系统',
+        clue='客服中心访谈纪要-2026-05-30',
+        status=OrderStatusChoices.VERIFY_FAILED,
+        current_handler=users[RoleChoices.DELIVERY_REGISTRAR],
+        version=4,
+        requirement_status=RequirementStatusChoices.EXCEPTION,
+        schedule_status=RequirementStatusChoices.NOT_STARTED,
+        delivery_status=RequirementStatusChoices.NOT_STARTED,
+        requirement_evidence={
+            'confirmation_document': '客服工单系统需求说明书_v1.pdf',
+            'stakeholder_signature': '已签字-客服中心王经理',
+        },
+        requirement_deadline=today - timedelta(days=3),
+        schedule_deadline=today + timedelta(days=12),
+        delivery_deadline=today + timedelta(days=25),
+        created_by=users[RoleChoices.DELIVERY_REGISTRAR],
+    )
+    ProcessingRecord.objects.bulk_create([
+        ProcessingRecord(order=order8, action=ActionChoices.SUBMIT, operator=users[RoleChoices.DELIVERY_REGISTRAR],
+                         role=RoleChoices.DELIVERY_REGISTRAR, from_status=OrderStatusChoices.PENDING_VERIFY,
+                         to_status=OrderStatusChoices.REQUIREMENT_SUBMITTED, remark='需求确认提交',
+                         created_at=today - timedelta(days=8)),
+        ProcessingRecord(order=order8, action=ActionChoices.REJECT, operator=users[RoleChoices.AUDIT_SUPERVISOR],
+                         role=RoleChoices.AUDIT_SUPERVISOR, from_status=OrderStatusChoices.REQUIREMENT_SUBMITTED,
+                         to_status=OrderStatusChoices.VERIFY_FAILED, remark='需求缺少非功能性需求描述',
+                         created_at=today - timedelta(days=7)),
+    ])
+    ExceptionReason.objects.create(
+        order=order8,
+        module_type=ModuleTypeChoices.REQUIREMENT,
+        reason='需求缺少非功能性需求描述，需要补充性能、安全、可用性等方面的需求说明',
+        handler=users[RoleChoices.DELIVERY_REGISTRAR],
+        created_at=today - timedelta(days=7),
+        resolved=False,
+    )
+    AuditNote.objects.create(
+        order=order8,
+        note='版本已更新，请刷新后处理',
+        author=users[RoleChoices.AUDIT_SUPERVISOR],
+        created_at=today - timedelta(days=1),
+    )
+
     Attachment.objects.bulk_create([
         Attachment(order=order1, module_type=ModuleTypeChoices.REQUIREMENT,
                    file_name='需求确认书_v1.0.pdf', file_url='/files/req_001.pdf',
