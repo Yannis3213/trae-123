@@ -1,32 +1,32 @@
 <template>
   <div class="dashboard">
     <div class="stats-row mb-4">
-      <div class="stat-card">
+      <div class="stat-card" @click="setFilter('status', '')">
         <div class="stat-value text-primary-color">{{ stats?.total || 0 }}</div>
         <div class="stat-label">全部入会单</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" @click="setFilter('status', 'pending')">
         <div class="stat-value" style="color: #1890ff">{{ stats?.pending || 0 }}</div>
         <div class="stat-label">待核验</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" @click="setFilter('status', 'failed')">
         <div class="stat-value" style="color: #ff4d4f">{{ stats?.failed || 0 }}</div>
         <div class="stat-label">核验失败</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" @click="setFilter('status', 'completed')">
         <div class="stat-value" style="color: #52c41a">{{ stats?.completed || 0 }}</div>
         <div class="stat-label">核验完成</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-value" style="color: #52c41a">{{ stats?.normal || 0 }}</div>
+      <div class="stat-card stat-normal" @click="setFilter('expiry_status', 'normal')">
+        <div class="stat-value">{{ stats?.normal || 0 }}</div>
         <div class="stat-label">正常</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-value" style="color: #faad14">{{ stats?.approaching || 0 }}</div>
+      <div class="stat-card stat-approaching" @click="setFilter('expiry_status', 'approaching')">
+        <div class="stat-value">{{ stats?.approaching || 0 }}</div>
         <div class="stat-label">临期</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-value" style="color: #ff4d4f">{{ stats?.overdue || 0 }}</div>
+      <div class="stat-card stat-overdue" @click="setFilter('expiry_status', 'overdue')">
+        <div class="stat-value">{{ stats?.overdue || 0 }}</div>
         <div class="stat-label">逾期</div>
       </div>
     </div>
@@ -51,8 +51,8 @@
               >
                 批量处理 ({{ selectedIds.length }})
               </button>
-              <button class="btn btn-sm" @click="checkExceptions">
-                刷新队列
+              <button class="btn btn-sm btn-primary" @click="checkExceptions">
+                🔄 刷新队列
               </button>
             </div>
           </div>
@@ -71,11 +71,11 @@
             </div>
             <div class="filter-tabs mt-2">
               <button
-                v-for="tab in expiryTabs"
+                v-for="tab in viewTabs"
                 :key="tab.value"
                 class="tab-btn tab-btn-sm"
-                :class="{ active: filters.expiry_status === tab.value }"
-                @click="setFilter('expiry_status', tab.value)"
+                :class="{ active: viewMode === tab.value }"
+                @click="viewMode = tab.value"
               >
                 {{ tab.label }}
               </button>
@@ -98,13 +98,13 @@
             <div v-for="(alert, idx) in exceptionAlerts" :key="idx" class="alert alert-error">
               <span>⚠️</span>
               <div>
-                <div>队列异常检测：{{ EXCEPTION_LABELS[alert.exception_type] }}</div>
-                <div class="text-sm text-secondary">入会单 #{{ alert.enrollment_id }}：{{ alert.description }}</div>
+                <div>队列异常：{{ EXCEPTION_LABELS[alert.exception_type as ExceptionTypeEnum] || alert.exception_type }}</div>
+                <div class="text-sm text-secondary">{{ alert.member_name }}（#{{ alert.enrollment_id }}）：{{ alert.description }}</div>
               </div>
             </div>
           </div>
 
-          <div class="table-container">
+          <div v-if="viewMode === 'list'" class="table-container">
             <table class="table">
               <thead>
                 <tr>
@@ -125,6 +125,7 @@
                   <th>状态</th>
                   <th>到期状态</th>
                   <th>异常</th>
+                  <th>证据</th>
                   <th>处理时限</th>
                   <th>操作</th>
                 </tr>
@@ -134,7 +135,8 @@
                   v-for="item in enrollments"
                   :key="item.id"
                   class="table-row-clickable"
-                  @click="goToDetail(item.id)"
+                  :class="{ 'row-selected': selectedIds.includes(item.id) }"
+                  @click="selectAndShowDetail(item)"
                 >
                   <td @click.stop>
                     <input
@@ -168,6 +170,19 @@
                     <span v-if="item.has_exception" class="tag tag-overdue">有异常</span>
                     <span v-else class="text-tertiary">-</span>
                   </td>
+                  <td>
+                    <div class="evidence-mini">
+                      <span
+                        v-for="(label, key) in EVIDENCE_LABELS"
+                        :key="key"
+                        class="evidence-dot"
+                        :class="{ active: item.evidence_summary[key as string] }"
+                        :title="label"
+                      >
+                        {{ item.evidence_summary[key as string] ? '✓' : '○' }}
+                      </span>
+                    </div>
+                  </td>
                   <td class="text-sm text-secondary">
                     {{ formatDate(item.due_at) }}
                   </td>
@@ -178,13 +193,135 @@
                   </td>
                 </tr>
                 <tr v-if="enrollments.length === 0">
-                  <td colspan="12" class="text-center text-tertiary py-8">暂无数据</td>
+                  <td colspan="13" class="text-center text-tertiary py-8">暂无数据</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <div class="pagination">
+          <div v-else class="squad-view">
+            <div class="squad-col squad-col-normal">
+              <div class="squad-header">
+                <span class="squad-title">🟢 正常</span>
+                <span class="squad-count">{{ normalSquad.length }} 条</span>
+              </div>
+              <div class="squad-list">
+                <div
+                  v-for="item in normalSquad"
+                  :key="item.id"
+                  class="squad-card"
+                  :class="{ selected: selectedIds.includes(item.id) }"
+                  @click="selectAndShowDetail(item)"
+                >
+                  <div class="squad-card-header">
+                    <span class="squad-name">{{ item.member_name }}</span>
+                    <span class="tag tag-pending">{{ STATUS_LABELS[item.status] }}</span>
+                  </div>
+                  <div class="squad-card-body">
+                    <div class="text-sm text-secondary">#{{ item.id }} · {{ item.membership_type }}</div>
+                    <div class="evidence-mini mt-2">
+                      <span
+                        v-for="(label, key) in EVIDENCE_LABELS"
+                        :key="key"
+                        class="evidence-dot"
+                        :class="{ active: item.evidence_summary[key as string] }"
+                        :title="label"
+                      >
+                        {{ item.evidence_summary[key as string] ? '✓' : '○' }}
+                      </span>
+                    </div>
+                    <div class="text-xs text-tertiary mt-2">{{ formatDate(item.due_at) }}</div>
+                  </div>
+                  <div v-if="item.has_exception" class="squad-card-badge">
+                    <span class="tag tag-overdue tag-sm">有异常</span>
+                  </div>
+                </div>
+                <div v-if="normalSquad.length === 0" class="squad-empty">暂无数据</div>
+              </div>
+            </div>
+
+            <div class="squad-col squad-col-approaching">
+              <div class="squad-header">
+                <span class="squad-title">🟡 临期</span>
+                <span class="squad-count">{{ approachingSquad.length }} 条</span>
+              </div>
+              <div class="squad-list">
+                <div
+                  v-for="item in approachingSquad"
+                  :key="item.id"
+                  class="squad-card"
+                  :class="{ selected: selectedIds.includes(item.id) }"
+                  @click="selectAndShowDetail(item)"
+                >
+                  <div class="squad-card-header">
+                    <span class="squad-name">{{ item.member_name }}</span>
+                    <span class="tag tag-approaching">{{ EXPIRY_LABELS.approaching }}</span>
+                  </div>
+                  <div class="squad-card-body">
+                    <div class="text-sm text-secondary">#{{ item.id }} · {{ item.membership_type }}</div>
+                    <div class="evidence-mini mt-2">
+                      <span
+                        v-for="(label, key) in EVIDENCE_LABELS"
+                        :key="key"
+                        class="evidence-dot"
+                        :class="{ active: item.evidence_summary[key as string] }"
+                        :title="label"
+                      >
+                        {{ item.evidence_summary[key as string] ? '✓' : '○' }}
+                      </span>
+                    </div>
+                    <div class="text-xs text-approaching mt-2 font-medium">{{ formatDate(item.due_at) }}</div>
+                  </div>
+                  <div v-if="item.has_exception" class="squad-card-badge">
+                    <span class="tag tag-overdue tag-sm">有异常</span>
+                  </div>
+                </div>
+                <div v-if="approachingSquad.length === 0" class="squad-empty">暂无数据</div>
+              </div>
+            </div>
+
+            <div class="squad-col squad-col-overdue">
+              <div class="squad-header">
+                <span class="squad-title">🔴 逾期</span>
+                <span class="squad-count">{{ overdueSquad.length }} 条</span>
+              </div>
+              <div class="squad-list">
+                <div
+                  v-for="item in overdueSquad"
+                  :key="item.id"
+                  class="squad-card"
+                  :class="{ selected: selectedIds.includes(item.id) }"
+                  @click="selectAndShowDetail(item)"
+                >
+                  <div class="squad-card-header">
+                    <span class="squad-name">{{ item.member_name }}</span>
+                    <span class="tag tag-overdue">{{ EXPIRY_LABELS.overdue }}</span>
+                  </div>
+                  <div class="squad-card-body">
+                    <div class="text-sm text-secondary">#{{ item.id }} · {{ item.membership_type }}</div>
+                    <div class="evidence-mini mt-2">
+                      <span
+                        v-for="(label, key) in EVIDENCE_LABELS"
+                        :key="key"
+                        class="evidence-dot"
+                        :class="{ active: item.evidence_summary[key as string] }"
+                        :title="label"
+                      >
+                        {{ item.evidence_summary[key as string] ? '✓' : '○' }}
+                      </span>
+                    </div>
+                    <div class="text-xs text-overdue mt-2 font-medium">{{ formatDate(item.due_at) }}</div>
+                  </div>
+                  <div v-if="item.has_exception" class="squad-card-badge">
+                    <span class="tag tag-overdue tag-sm">有异常</span>
+                  </div>
+                </div>
+                <div v-if="overdueSquad.length === 0" class="squad-empty">暂无数据</div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="viewMode === 'list'" class="pagination">
             <span class="text-sm text-secondary">共 {{ listData?.total || 0 }} 条</span>
             <div class="page-btns">
               <button
@@ -211,22 +348,83 @@
         <div class="card mb-4">
           <div class="card-header">
             <span>证据摘要</span>
+            <span v-if="selectedEnrollment" class="text-sm text-secondary">
+              #{{ selectedEnrollment.id }} {{ selectedEnrollment.member_name }}
+            </span>
           </div>
           <div class="card-body">
-            <div class="evidence-summary">
+            <div v-if="selectedEnrollment" class="evidence-summary">
               <div v-for="(label, key) in EVIDENCE_LABELS" :key="key" class="evidence-item">
-                <span class="evidence-icon">{{ evidenceSummary[key as string] ? '✓' : '○' }}</span>
+                <span class="evidence-icon" :class="{ valid: selectedEnrollment.evidence_summary[key as string] }">
+                  {{ selectedEnrollment.evidence_summary[key as string] ? '✓' : '○' }}
+                </span>
                 <span class="evidence-label">{{ label }}</span>
                 <span
                   class="evidence-status text-sm"
-                  :class="evidenceSummary[key as string] ? 'text-success' : 'text-tertiary'"
+                  :class="selectedEnrollment.evidence_summary[key as string] ? 'text-success' : 'text-tertiary'"
                 >
-                  {{ evidenceSummary[key as string] ? '已上传' : '未上传' }}
+                  {{ selectedEnrollment.evidence_summary[key as string] ? '已上传' : '未上传' }}
                 </span>
               </div>
             </div>
-            <div class="evidence-stats mt-4 text-sm text-secondary">
-              点击列表中的入会单查看详情证据
+            <div v-else class="evidence-empty">
+              <div class="text-tertiary text-center py-4">
+                点击左侧单据查看证据摘要
+              </div>
+              <div class="evidence-summary mt-4">
+                <div v-for="(label, key) in EVIDENCE_LABELS" :key="key" class="evidence-item">
+                  <span class="evidence-icon">○</span>
+                  <span class="evidence-label">{{ label }}</span>
+                  <span class="evidence-status text-sm text-tertiary">待查看</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="selectedEnrollment" class="evidence-quick mt-4">
+              <button class="btn btn-primary btn-sm w-full" @click="goToDetail(selectedEnrollment.id)">
+                进入详情办理 →
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="selectedEnrollment" class="card mb-4">
+          <div class="card-header">
+            <span>单据概况</span>
+          </div>
+          <div class="card-body">
+            <div class="info-row">
+              <span class="info-label">状态</span>
+              <span class="tag" :class="'tag-' + selectedEnrollment.status">
+                {{ STATUS_LABELS[selectedEnrollment.status] }}
+              </span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">版本</span>
+              <span class="text-secondary">v{{ selectedEnrollment.version }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">会籍</span>
+              <span>{{ selectedEnrollment.membership_type }} / {{ selectedEnrollment.card_level || '-' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">金额</span>
+              <span class="font-medium">¥{{ selectedEnrollment.amount }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">销售/私教</span>
+              <span class="text-sm">{{ selectedEnrollment.salesperson || '-' }} / {{ selectedEnrollment.private_trainer || '-' }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">处理时限</span>
+              <span
+                class="text-sm"
+                :class="{
+                  'text-overdue': selectedEnrollment.expiry_status === 'overdue',
+                  'text-approaching': selectedEnrollment.expiry_status === 'approaching',
+                }"
+              >
+                {{ formatDate(selectedEnrollment.due_at) }}
+              </span>
             </div>
           </div>
         </div>
@@ -247,17 +445,23 @@
               <button
                 v-if="canBatchAudit"
                 class="btn w-full mb-2"
+                :disabled="selectedIds.length === 0"
                 @click="showBatchModal = true"
               >
-                批量审核
+                批量审核{{ selectedIds.length > 0 ? ` (${selectedIds.length})` : '' }}
               </button>
               <button
                 v-if="canBatchReview"
                 class="btn w-full mb-2"
+                :disabled="selectedIds.length === 0"
                 @click="showBatchModal = true"
               >
-                批量复核
+                批量复核{{ selectedIds.length > 0 ? ` (${selectedIds.length})` : '' }}
               </button>
+            </div>
+            <div class="mt-4 text-xs text-tertiary">
+              <div>当前角色：{{ ROLE_LABELS[auth.userRole.value as RoleEnum] || '未登录' }}</div>
+              <div class="mt-1">我的待办：{{ stats?.my_todo || 0 }} 条</div>
             </div>
           </div>
         </div>
@@ -289,13 +493,14 @@ import {
   EXPIRY_LABELS,
   EXCEPTION_LABELS,
   EVIDENCE_LABELS,
+  ROLE_LABELS,
   type Enrollment,
   type EnrollmentListResponse,
   type StatsResponse,
   type StatusEnum,
   type ExpiryStatusEnum,
   type ExceptionTypeEnum,
-  type EvidenceTypeEnum,
+  type RoleEnum,
 } from '~/types'
 import CreateEnrollmentModal from '~/components/CreateEnrollmentModal.vue'
 import BatchProcessModal from '~/components/BatchProcessModal.vue'
@@ -309,6 +514,8 @@ const enrollments = computed(() => listData.value?.items || [])
 
 const exceptionAlerts = ref<any[]>([])
 
+const viewMode = ref<'list' | 'squad'>('squad')
+
 const filters = ref({
   status: '' as StatusEnum | '',
   expiry_status: '' as ExpiryStatusEnum | '',
@@ -316,22 +523,24 @@ const filters = ref({
   keyword: '',
   my_todo: false,
   page: 1,
-  page_size: 20,
+  page_size: 50,
 })
 
 const selectedIds = ref<number[]>([])
+const selectedEnrollment = ref<Enrollment | null>(null)
 
 const showCreateModal = ref(false)
 const showBatchModal = ref(false)
 
-const evidenceSummary = computed(() => {
-  const summary: Record<string, boolean> = {
-    membership_form: false,
-    contract_confirmation: false,
-    card_benefits: false,
-  }
-  return summary
-})
+const normalSquad = computed(() =>
+  enrollments.value.filter((e) => e.expiry_status === 'normal')
+)
+const approachingSquad = computed(() =>
+  enrollments.value.filter((e) => e.expiry_status === 'approaching')
+)
+const overdueSquad = computed(() =>
+  enrollments.value.filter((e) => e.expiry_status === 'overdue')
+)
 
 const statusTabs = [
   { label: '全部', value: '' },
@@ -340,11 +549,9 @@ const statusTabs = [
   { label: '核验完成', value: 'completed' },
 ]
 
-const expiryTabs = [
-  { label: '全部到期', value: '' },
-  { label: '正常', value: 'normal' },
-  { label: '临期', value: 'approaching' },
-  { label: '逾期', value: 'overdue' },
+const viewTabs = [
+  { label: '分队视图', value: 'squad' },
+  { label: '列表视图', value: 'list' },
 ]
 
 const canCreate = computed(() => auth.userRole.value === 'registration_clerk')
@@ -390,6 +597,12 @@ const loadList = async () => {
     if (!params.keyword) delete params.keyword
     if (!params.store) delete params.store
     listData.value = await api.getList(params)
+    if (selectedIds.value.length > 0 && selectedEnrollment.value) {
+      const found = listData.value.items.find((e) => e.id === selectedEnrollment.value?.id)
+      if (found) {
+        selectedEnrollment.value = found
+      }
+    }
   } catch (e) {
     console.error('加载列表失败', e)
   }
@@ -431,6 +644,16 @@ const toggleSelectAll = () => {
   }
 }
 
+const selectAndShowDetail = (item: Enrollment) => {
+  selectedEnrollment.value = item
+  const idx = selectedIds.value.indexOf(item.id)
+  if (idx > -1) {
+    selectedIds.value.splice(idx, 1)
+  } else {
+    selectedIds.value.push(item.id)
+  }
+}
+
 const goToDetail = (id: number) => {
   navigateTo(`/enrollment/${id}`)
 }
@@ -462,12 +685,12 @@ const formatDate = (dateStr: string) => {
   })
 
   if (diffMs < 0) {
-    return `${dateStrFormatted} (已逾期${Math.abs(diffDays)}天)`
+    return `${dateStrFormatted}（已逾期${Math.abs(diffDays)}天）`
   } else if (diffDays <= 1) {
     const diffHours = Math.ceil(diffMs / (1000 * 60 * 60))
-    return `${dateStrFormatted} (还剩${diffHours}小时)`
+    return `${dateStrFormatted}（还剩${diffHours}小时）`
   }
-  return `${dateStrFormatted} (还剩${diffDays}天)`
+  return `${dateStrFormatted}（还剩${diffDays}天）`
 }
 
 watch(
@@ -501,9 +724,31 @@ onMounted(() => {
   gap: 12px;
 }
 
+.stat-card {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.stat-normal .stat-value {
+  color: #52c41a;
+}
+
+.stat-approaching .stat-value {
+  color: #faad14;
+}
+
+.stat-overdue .stat-value {
+  color: #ff4d4f;
+}
+
 .main-content {
   display: grid;
-  grid-template-columns: 1fr 300px;
+  grid-template-columns: 1fr 320px;
   gap: 16px;
 }
 
@@ -572,6 +817,141 @@ onMounted(() => {
   overflow-x: auto;
 }
 
+.row-selected {
+  background-color: #e6f7ff !important;
+}
+
+.evidence-mini {
+  display: flex;
+  gap: 4px;
+}
+
+.evidence-dot {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  border-radius: 50%;
+  background: #f0f0f0;
+  color: #bfbfbf;
+}
+
+.evidence-dot.active {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.squad-view {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 16px;
+  min-height: 400px;
+}
+
+.squad-col {
+  background: #fafafa;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.squad-col-normal {
+  border: 1px solid #b7eb8f;
+}
+
+.squad-col-approaching {
+  border: 1px solid #ffe58f;
+}
+
+.squad-col-overdue {
+  border: 1px solid #ffa39e;
+}
+
+.squad-header {
+  padding: 12px 16px;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.squad-title {
+  font-size: 14px;
+}
+
+.squad-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: #fff;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.squad-list {
+  flex: 1;
+  padding: 8px;
+  overflow-y: auto;
+  max-height: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.squad-card {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.squad-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-color: var(--primary-color);
+}
+
+.squad-card.selected {
+  border-color: var(--primary-color);
+  background: #e6f7ff;
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.2);
+}
+
+.squad-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.squad-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.squad-card-body {
+  font-size: 13px;
+}
+
+.squad-card-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.squad-empty {
+  text-align: center;
+  padding: 32px 0;
+  color: #bfbfbf;
+  font-size: 13px;
+}
+
 .pagination {
   padding: 12px 20px;
   display: flex;
@@ -596,7 +976,7 @@ onMounted(() => {
 .evidence-summary {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .evidence-item {
@@ -612,28 +992,69 @@ onMounted(() => {
 }
 
 .evidence-icon {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  color: var(--success-color);
+  font-size: 12px;
+  color: #bfbfbf;
   font-weight: bold;
+  border-radius: 50%;
+  background: #f5f5f5;
+}
+
+.evidence-icon.valid {
+  color: #fff;
+  background: #52c41a;
 }
 
 .evidence-label {
   flex: 1;
-  font-size: 14px;
+  font-size: 13px;
 }
 
-.evidence-stats {
-  padding-top: 8px;
+.evidence-empty {
+  padding: 8px 0;
+}
+
+.evidence-quick {
+  padding-top: 12px;
   border-top: 1px solid #f0f0f0;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed #f5f5f5;
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-label {
+  color: var(--text-secondary);
+}
+
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+}
+
+.w-full {
+  width: 100%;
 }
 
 .text-center {
   text-align: center;
+}
+
+.py-4 {
+  padding: 16px 0;
 }
 
 .py-8 {
@@ -644,16 +1065,56 @@ onMounted(() => {
   color: var(--primary-color);
 }
 
+.text-success {
+  color: #52c41a;
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-tertiary {
+  color: #bfbfbf;
+}
+
+.text-overdue {
+  color: #ff4d4f;
+}
+
+.text-approaching {
+  color: #faad14;
+}
+
+.text-sm {
+  font-size: 12px;
+}
+
+.text-xs {
+  font-size: 11px;
+}
+
+.font-medium {
+  font-weight: 500;
+}
+
 .exception-alerts {
   padding: 12px 20px;
 }
 
-.quick-actions {
-  display: flex;
-  flex-direction: column;
+.mt-2 {
+  margin-top: 8px;
 }
 
-.w-full {
-  width: 100%;
+.mt-4 {
+  margin-top: 16px;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
+}
+
+.tag-sm {
+  font-size: 10px;
+  padding: 1px 6px;
 }
 </style>

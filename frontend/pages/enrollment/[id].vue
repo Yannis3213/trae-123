@@ -14,15 +14,26 @@
         >
           {{ EXPIRY_LABELS[enrollment.expiry_status] }}
         </span>
+        <span v-if="enrollment?.has_exception" class="tag tag-overdue ml-2">
+          有异常
+        </span>
       </div>
     </div>
 
-    <div v-if="error" class="alert alert-error mb-4">{{ error }}</div>
+    <div v-if="error" class="alert alert-error mb-4">
+      <span class="alert-icon">⚠️</span>
+      <span>{{ error }}</span>
+    </div>
 
     <div v-if="enrollment" class="detail-content">
       <div class="detail-main">
         <div class="card mb-4">
-          <div class="card-header">基本信息</div>
+          <div class="card-header">
+            <span>基本信息</span>
+            <span class="text-sm text-secondary">
+              版本 v{{ enrollment.version }}
+            </span>
+          </div>
           <div class="card-body">
             <div class="info-grid">
               <div class="info-item">
@@ -76,7 +87,7 @@
         <div class="card mb-4">
           <div class="card-header">
             <span>证据材料</span>
-            <span class="text-sm text-secondary">
+            <span class="text-sm" :class="evidenceCompleteCount === totalEvidenceTypes ? 'text-success' : 'text-warning'">
               {{ evidenceCompleteCount }}/{{ totalEvidenceTypes }} 项齐全
             </span>
           </div>
@@ -102,36 +113,54 @@
                 </div>
               </div>
             </div>
+            <div v-if="evidenceCompleteCount < totalEvidenceTypes" class="evidence-tip mt-3">
+              <span class="tip-icon">💡</span>
+              <span class="text-sm text-warning">
+                缺少 {{ totalEvidenceTypes - evidenceCompleteCount }} 项证据，审核/复核通过前请补齐
+              </span>
+            </div>
           </div>
         </div>
 
         <div class="card">
-          <div class="card-header">操作记录</div>
+          <div class="card-header">
+            <span>操作与补正记录</span>
+            <span class="text-sm text-secondary">
+              共 {{ detail?.audit_logs?.length || 0 }} 条记录
+            </span>
+          </div>
           <div class="card-body">
             <div class="timeline">
               <div v-for="log in detail?.audit_logs || []" :key="log.id" class="timeline-item">
-                <div class="timeline-header">
-                  <span class="action-badge" :class="'action-' + log.action_type">
-                    {{ ACTION_LABELS[log.action_type] }}
-                  </span>
-                  <span class="timeline-user">{{ log.user?.full_name || '系统' }}</span>
-                  <span class="timeline-time text-sm text-tertiary">
-                    {{ formatDateTime(log.created_at) }}
-                  </span>
-                </div>
-                <div v-if="log.comment" class="timeline-comment text-sm text-secondary">
-                  {{ log.comment }}
-                </div>
-                <div v-if="log.old_status || log.new_status" class="timeline-status text-sm">
-                  <template v-if="log.old_status">
-                    <span class="tag" :class="'tag-' + log.old_status">
-                      {{ STATUS_LABELS[log.old_status] }}
+                <div class="timeline-dot" :class="'dot-' + log.action_type"></div>
+                <div class="timeline-content">
+                  <div class="timeline-header">
+                    <span class="action-badge" :class="'action-' + log.action_type">
+                      {{ ACTION_LABELS[log.action_type] }}
                     </span>
-                    <span class="arrow">→</span>
-                  </template>
-                  <span v-if="log.new_status" class="tag" :class="'tag-' + log.new_status">
-                    {{ STATUS_LABELS[log.new_status] }}
-                  </span>
+                    <span class="timeline-user">{{ log.user?.full_name || '系统' }}</span>
+                    <span class="timeline-role text-sm text-tertiary">
+                      {{ log.user ? ROLE_LABELS[log.user.role as RoleEnum] : '' }}
+                    </span>
+                    <span class="timeline-time text-sm text-tertiary">
+                      {{ formatDateTime(log.created_at) }}
+                    </span>
+                  </div>
+                  <div v-if="log.comment" class="timeline-comment">
+                    <span class="comment-label">备注：</span>
+                    <span>{{ log.comment }}</span>
+                  </div>
+                  <div v-if="log.old_status || log.new_status" class="timeline-status">
+                    <template v-if="log.old_status">
+                      <span class="tag tag-sm" :class="'tag-' + log.old_status">
+                        {{ STATUS_LABELS[log.old_status] }}
+                      </span>
+                      <span class="arrow">→</span>
+                    </template>
+                    <span v-if="log.new_status" class="tag tag-sm" :class="'tag-' + log.new_status">
+                      {{ STATUS_LABELS[log.new_status] }}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -140,6 +169,38 @@
       </div>
 
       <div class="detail-sidebar">
+        <div class="card mb-4 role-card">
+          <div class="card-header">
+            <span>当前角色</span>
+          </div>
+          <div class="card-body">
+            <div class="role-info">
+              <div class="role-avatar">👤</div>
+              <div class="role-detail">
+                <div class="role-name">{{ auth.currentUser.value?.full_name || '未登录' }}</div>
+                <div class="role-label text-sm text-secondary">
+                  {{ ROLE_LABELS[auth.userRole.value as RoleEnum] || '-' }}
+                </div>
+              </div>
+            </div>
+            <div class="role-divider"></div>
+            <div class="handler-section">
+              <div class="handler-label text-sm text-secondary">当前处理人</div>
+              <div class="handler-value">
+                <span v-if="enrollment.current_handler">
+                  {{ enrollment.current_handler.full_name }}
+                  <span class="text-sm text-tertiary">
+                    ({{ ROLE_LABELS[enrollment.current_handler.role as RoleEnum] }})
+                  </span>
+                </span>
+                <span v-else class="text-tertiary">
+                  {{ enrollment.status === 'completed' ? '已完成' : '待分配' }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="card mb-4">
           <div class="card-header">处理进度</div>
           <div class="card-body">
@@ -154,7 +215,7 @@
                 </div>
               </div>
             </div>
-            <div class="progress-step" :class="{ done: enrollment.audited_at }">
+            <div class="progress-step" :class="{ done: enrollment.audited_at, current: !enrollment.audited_at && enrollment.status === 'pending' && !enrollment.audit_by_id }">
               <div class="step-dot"></div>
               <div class="step-content">
                 <div class="step-title">主管审核</div>
@@ -165,7 +226,7 @@
                 </div>
               </div>
             </div>
-            <div class="progress-step" :class="{ done: enrollment.reviewed_at }">
+            <div class="progress-step" :class="{ done: enrollment.reviewed_at, current: enrollment.audited_at && !enrollment.reviewed_at && enrollment.status === 'pending' }">
               <div class="step-dot"></div>
               <div class="step-content">
                 <div class="step-title">复核归档</div>
@@ -179,31 +240,62 @@
           </div>
         </div>
 
-        <div v-if="detail?.exceptions?.length" class="card mb-4">
-          <div class="card-header" style="color: var(--error-color)">
-            异常记录 <span class="text-sm">({{ detail.exceptions.length }})</span>
+        <div v-if="unresolvedExceptions.length > 0" class="card mb-4 exception-card">
+          <div class="card-header card-header-error">
+            <span>⚠️ 待解决异常</span>
+            <span class="text-sm">{{ unresolvedExceptions.length }} 项</span>
           </div>
           <div class="card-body">
-            <div v-for="exc in detail.exceptions" :key="exc.id" class="exception-item">
+            <div v-for="exc in unresolvedExceptions" :key="exc.id" class="exception-item exception-item-active">
               <div class="exception-header">
-                <span class="tag tag-overdue">{{ EXCEPTION_LABELS[exc.exception_type] }}</span>
-                <span v-if="exc.resolved" class="tag tag-completed ml-2">已解决</span>
+                <span class="tag tag-overdue tag-sm">
+                  {{ EXCEPTION_LABELS[exc.exception_type] }}
+                </span>
+                <span class="error-code text-xs text-tertiary">
+                  错误码: {{ exc.exception_type }}
+                </span>
               </div>
               <div class="exception-desc text-sm mt-2">{{ exc.description }}</div>
-              <div class="exception-meta text-sm text-tertiary mt-1">
+              <div class="exception-meta text-xs text-tertiary mt-1">
                 检测方：{{ exc.detected_by || '系统' }} · {{ formatDateTime(exc.detected_at) }}
-              </div>
-              <div v-if="exc.resolution_note" class="exception-resolution text-sm mt-2">
-                处理：{{ exc.resolution_note }}
               </div>
             </div>
           </div>
         </div>
 
-        <div class="card">
-          <div class="card-header">操作</div>
+        <div v-if="resolvedExceptions.length > 0" class="card mb-4">
+          <div class="card-header">
+            <span>✓ 已解决异常</span>
+            <span class="text-sm text-secondary">{{ resolvedExceptions.length }} 项</span>
+          </div>
           <div class="card-body">
-            <div v-if="canAudit" class="action-buttons">
+            <div v-for="exc in resolvedExceptions" :key="exc.id" class="exception-item exception-item-resolved">
+              <div class="exception-header">
+                <span class="tag tag-completed tag-sm">
+                  {{ EXCEPTION_LABELS[exc.exception_type] }}
+                </span>
+              </div>
+              <div class="exception-desc text-sm mt-2">{{ exc.description }}</div>
+              <div v-if="exc.resolution_note" class="exception-resolution text-sm mt-2">
+                <span class="resolution-label">解决：</span>
+                <span>{{ exc.resolution_note }}</span>
+              </div>
+              <div class="exception-meta text-xs text-tertiary mt-1">
+                {{ formatDateTime(exc.resolved_at || '') }} 解决
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card action-card">
+          <div class="card-header">
+            <span>办理操作</span>
+          </div>
+          <div class="card-body">
+            <div v-if="canAudit" class="action-section">
+              <div class="action-hint mb-2 text-sm text-success">
+                ✓ 您可以审核此单据
+              </div>
               <button class="btn btn-success w-full mb-2" @click="handleAuditPass">
                 审核通过
               </button>
@@ -212,7 +304,10 @@
               </button>
             </div>
 
-            <div v-if="canReview" class="action-buttons">
+            <div v-if="canReview" class="action-section">
+              <div class="action-hint mb-2 text-sm text-success">
+                ✓ 您可以复核此单据
+              </div>
               <button class="btn btn-success w-full mb-2" @click="handleReviewPass">
                 复核通过
               </button>
@@ -221,25 +316,31 @@
               </button>
             </div>
 
-            <div v-if="canCorrect" class="action-buttons">
+            <div v-if="canCorrect" class="action-section">
+              <div class="action-hint mb-2 text-sm text-warning">
+                ⚡ 您需要补正此单据
+              </div>
               <button class="btn btn-primary w-full" @click="showCorrectModal = true">
                 补正提交
               </button>
             </div>
 
-            <div v-if="!canAudit && !canReview && !canCorrect" class="text-secondary text-sm">
-              当前角色无操作权限
-            </div>
-
-            <div class="current-handler mt-4 pt-4 border-top">
-              <div class="text-sm text-secondary">当前处理人</div>
-              <div class="mt-1">
-                {{ enrollment.current_handler?.full_name || '暂无' }}
+            <div v-if="!canAudit && !canReview && !canCorrect" class="action-section">
+              <div class="no-permission">
+                <div class="no-perm-icon">🔒</div>
+                <div class="no-perm-text text-sm text-secondary">
+                  当前角色无此单据的操作权限
+                </div>
+                <div class="no-perm-reason text-xs text-tertiary mt-1">
+                  {{ noPermissionReason }}
+                </div>
               </div>
             </div>
 
-            <div class="version-info mt-2 text-sm text-tertiary">
-              版本号：v{{ enrollment.version }}
+            <div class="version-info mt-4 pt-3 border-top text-xs text-tertiary">
+              <div>版本号：v{{ enrollment.version }}</div>
+              <div class="mt-1">创建人：{{ enrollment.created_by?.full_name || '-' }}</div>
+              <div class="mt-1">处理时限：{{ formatDateTime(enrollment.due_at) }}</div>
             </div>
           </div>
         </div>
@@ -255,7 +356,10 @@
         <div class="modal-body">
           <div class="form-item">
             <label class="form-label">退回原因 *</label>
-            <textarea v-model="auditFailComment" class="form-input" rows="3" placeholder="请输入退回原因"></textarea>
+            <textarea v-model="auditFailComment" class="form-input" rows="3" placeholder="请输入退回原因，登记员将根据此原因补正"></textarea>
+          </div>
+          <div class="form-tip text-sm text-tertiary mt-2">
+            💡 退回后单据状态变为「核验失败」，当前处理人将变为登记员
           </div>
         </div>
         <div class="modal-footer">
@@ -276,7 +380,10 @@
         <div class="modal-body">
           <div class="form-item">
             <label class="form-label">退回原因 *</label>
-            <textarea v-model="reviewFailComment" class="form-input" rows="3" placeholder="请输入退回原因"></textarea>
+            <textarea v-model="reviewFailComment" class="form-input" rows="3" placeholder="请输入退回原因，登记员将根据此原因补正"></textarea>
+          </div>
+          <div class="form-tip text-sm text-tertiary mt-2">
+            💡 退回后单据状态变为「核验失败」，需要重新走审核流程
           </div>
         </div>
         <div class="modal-footer">
@@ -309,10 +416,13 @@ import {
   EVIDENCE_LABELS,
   ACTION_LABELS,
   EXCEPTION_LABELS,
+  ROLE_LABELS,
   EVIDENCE_LABELS as EVIDENCE,
   type Enrollment,
   type EnrollmentDetail,
   type EvidenceTypeEnum,
+  type RoleEnum,
+  type ExceptionLog,
 } from '~/types'
 import CorrectModal from '~/components/CorrectModal.vue'
 
@@ -336,16 +446,24 @@ const evidenceCompleteCount = computed(() => {
   return Object.values(detail.value.evidence_summary).filter(Boolean).length
 })
 
+const unresolvedExceptions = computed<ExceptionLog[]>(() => {
+  return detail.value?.exceptions?.filter(e => !e.resolved) || []
+})
+
+const resolvedExceptions = computed<ExceptionLog[]>(() => {
+  return detail.value?.exceptions?.filter(e => e.resolved) || []
+})
+
 const canAudit = computed(() => {
   if (auth.userRole.value !== 'audit_supervisor') return false
   if (!enrollment.value) return false
-  return enrollment.value.status === 'pending'
+  return enrollment.value.status === 'pending' && !enrollment.value.audit_by_id
 })
 
 const canReview = computed(() => {
   if (auth.userRole.value !== 'review_lead') return false
   if (!enrollment.value) return false
-  return enrollment.value.status === 'pending' && enrollment.value.audit_by_id !== null
+  return enrollment.value.status === 'pending' && enrollment.value.audit_by_id !== null && !enrollment.value.review_by_id
 })
 
 const canCorrect = computed(() => {
@@ -355,6 +473,50 @@ const canCorrect = computed(() => {
     enrollment.value.status === 'failed' &&
     enrollment.value.created_by_id === auth.currentUser.value?.id
   )
+})
+
+const noPermissionReason = computed(() => {
+  if (!enrollment.value) return ''
+  const role = auth.userRole.value
+  const status = enrollment.value.status
+
+  if (role === 'registration_clerk') {
+    if (status === 'failed' && enrollment.value.created_by_id !== auth.currentUser.value?.id) {
+      return '这不是您创建的单据，无法补正'
+    }
+    if (status === 'pending') {
+      return '单据待审核中，登记员无法操作'
+    }
+    if (status === 'completed') {
+      return '单据已完成归档'
+    }
+  }
+  if (role === 'audit_supervisor') {
+    if (enrollment.value.audit_by_id) {
+      return '单据已审核过，请勿重复审核'
+    }
+    if (status === 'completed') {
+      return '单据已完成归档'
+    }
+    if (status === 'failed') {
+      return '单据为核验失败状态，需补正后再审核'
+    }
+  }
+  if (role === 'review_lead') {
+    if (!enrollment.value.audit_by_id) {
+      return '单据尚未审核，无法复核'
+    }
+    if (enrollment.value.review_by_id) {
+      return '单据已复核过，请勿重复复核'
+    }
+    if (status === 'failed') {
+      return '单据为核验失败状态，需补正后再复核'
+    }
+    if (status === 'completed') {
+      return '单据已完成归档'
+    }
+  }
+  return '当前状态不支持操作'
 })
 
 const getAttachment = (type: EvidenceTypeEnum) => {
@@ -379,6 +541,7 @@ const loadDetail = async () => {
 
 const handleAuditPass = async () => {
   if (!enrollment.value) return
+  error.value = ''
   try {
     await api.audit({
       enrollment_id: enrollment.value.id,
@@ -393,6 +556,7 @@ const handleAuditPass = async () => {
 
 const handleAuditFail = async () => {
   if (!enrollment.value) return
+  error.value = ''
   try {
     await api.audit({
       enrollment_id: enrollment.value.id,
@@ -410,6 +574,7 @@ const handleAuditFail = async () => {
 
 const handleReviewPass = async () => {
   if (!enrollment.value) return
+  error.value = ''
   try {
     await api.review({
       enrollment_id: enrollment.value.id,
@@ -424,6 +589,7 @@ const handleReviewPass = async () => {
 
 const handleReviewFail = async () => {
   if (!enrollment.value) return
+  error.value = ''
   try {
     await api.review({
       enrollment_id: enrollment.value.id,
@@ -502,7 +668,7 @@ onMounted(() => {
 
 .detail-content {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: 1fr 340px;
   gap: 16px;
 }
 
@@ -585,30 +751,43 @@ onMounted(() => {
   word-break: break-all;
 }
 
-.timeline {
-  position: relative;
-  padding-left: 24px;
+.evidence-tip {
+  padding: 8px 12px;
+  background-color: #fffbe6;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.timeline::before {
-  content: '';
-  position: absolute;
-  left: 8px;
-  top: 4px;
-  bottom: 4px;
-  width: 2px;
-  background-color: #f0f0f0;
+.tip-icon {
+  font-size: 14px;
+}
+
+.text-warning {
+  color: var(--warning-color);
+}
+
+.timeline {
+  position: relative;
+  padding-left: 8px;
 }
 
 .timeline-item {
   position: relative;
+  padding-left: 24px;
   padding-bottom: 20px;
+  display: flex;
+  gap: 12px;
 }
 
-.timeline-item::before {
-  content: '';
+.timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+.timeline-dot {
   position: absolute;
-  left: -20px;
+  left: -4px;
   top: 4px;
   width: 12px;
   height: 12px;
@@ -616,13 +795,56 @@ onMounted(() => {
   background-color: var(--primary-color);
   border: 2px solid white;
   box-shadow: 0 0 0 2px var(--primary-color);
+  z-index: 1;
+}
+
+.timeline-dot.dot-create {
+  background-color: #2f54eb;
+  box-shadow: 0 0 0 2px #2f54eb;
+}
+
+.timeline-dot.dot-audit_pass,
+.timeline-dot.dot-review_pass {
+  background-color: var(--success-color);
+  box-shadow: 0 0 0 2px var(--success-color);
+}
+
+.timeline-dot.dot-audit_fail,
+.timeline-dot.dot-review_fail {
+  background-color: var(--error-color);
+  box-shadow: 0 0 0 2px var(--error-color);
+}
+
+.timeline-dot.dot-correct {
+  background-color: var(--warning-color);
+  box-shadow: 0 0 0 2px var(--warning-color);
+}
+
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 16px;
+  bottom: -4px;
+  width: 2px;
+  background-color: #f0f0f0;
+}
+
+.timeline-item:last-child::before {
+  display: none;
+}
+
+.timeline-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .timeline-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
 }
 
 .action-badge {
@@ -661,6 +883,10 @@ onMounted(() => {
   font-size: 14px;
 }
 
+.timeline-role {
+  color: var(--text-tertiary);
+}
+
 .timeline-time {
   margin-left: auto;
 }
@@ -668,6 +894,14 @@ onMounted(() => {
 .timeline-comment {
   color: var(--text-secondary);
   margin-top: 4px;
+  font-size: 13px;
+  background: #fafafa;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
+.comment-label {
+  color: var(--text-tertiary);
 }
 
 .timeline-status {
@@ -679,6 +913,63 @@ onMounted(() => {
 
 .arrow {
   color: var(--text-tertiary);
+}
+
+.role-card {
+  background: linear-gradient(135deg, #f0f5ff 0%, #e6f7ff 100%);
+}
+
+.role-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.role-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.role-detail {
+  flex: 1;
+}
+
+.role-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.role-label {
+  margin-top: 2px;
+}
+
+.role-divider {
+  height: 1px;
+  background: rgba(0, 0, 0, 0.06);
+  margin: 12px 0;
+}
+
+.handler-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.handler-label {
+  color: var(--text-tertiary);
+}
+
+.handler-value {
+  font-weight: 500;
+  font-size: 13px;
+  text-align: right;
 }
 
 .progress-step {
@@ -696,6 +987,16 @@ onMounted(() => {
   bottom: 0;
   width: 2px;
   background-color: #f0f0f0;
+}
+
+.progress-step.current .step-dot {
+  background-color: var(--primary-color);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(24, 144, 255, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(24, 144, 255, 0); }
 }
 
 .step-dot {
@@ -717,9 +1018,16 @@ onMounted(() => {
   margin-bottom: 4px;
 }
 
+.exception-card .card-header-error {
+  color: var(--error-color);
+  background-color: #fff2f0;
+  margin: -1px -1px 0 -1px;
+  padding: 12px 16px;
+  border-radius: 8px 8px 0 0;
+}
+
 .exception-item {
   padding: 12px;
-  background-color: #fff2f0;
   border-radius: 6px;
   margin-bottom: 8px;
 }
@@ -728,24 +1036,72 @@ onMounted(() => {
   margin-bottom: 0;
 }
 
+.exception-item-active {
+  background-color: #fff2f0;
+  border-left: 3px solid var(--error-color);
+}
+
+.exception-item-resolved {
+  background-color: #f6ffed;
+  border-left: 3px solid var(--success-color);
+  opacity: 0.8;
+}
+
 .exception-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+}
+
+.error-code {
+  font-family: monospace;
 }
 
 .exception-resolution {
   padding-top: 6px;
-  border-top: 1px dashed #ffccc7;
+  border-top: 1px dashed #b7eb8f;
   color: var(--success-color);
+  font-size: 12px;
 }
 
-.action-buttons {
-  display: flex;
-  flex-direction: column;
+.resolution-label {
+  font-weight: 500;
 }
 
-.current-handler {
-  border-top: 1px solid #f0f0f0;
+.action-card {
+  border: 2px solid var(--primary-color);
+}
+
+.action-hint {
+  padding: 6px 10px;
+  background: #f6ffed;
+  border-radius: 4px;
+}
+
+.action-hint.text-warning {
+  background: #fffbe6;
+}
+
+.action-section {
+  margin-bottom: 8px;
+}
+
+.no-permission {
+  text-align: center;
+  padding: 16px 0;
+}
+
+.no-perm-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+.no-perm-text {
+  margin-bottom: 4px;
+}
+
+.no-perm-reason {
+  line-height: 1.5;
 }
 
 .w-full {
@@ -764,6 +1120,10 @@ onMounted(() => {
   margin-top: 8px;
 }
 
+.mt-3 {
+  margin-top: 12px;
+}
+
 .mt-4 {
   margin-top: 16px;
 }
@@ -772,8 +1132,16 @@ onMounted(() => {
   margin-bottom: 8px;
 }
 
+.mb-3 {
+  margin-bottom: 12px;
+}
+
 .mb-4 {
   margin-bottom: 16px;
+}
+
+.pt-3 {
+  padding-top: 12px;
 }
 
 .pt-4 {
@@ -786,6 +1154,10 @@ onMounted(() => {
 
 .text-sm {
   font-size: 12px;
+}
+
+.text-xs {
+  font-size: 11px;
 }
 
 .text-secondary {
@@ -802,5 +1174,36 @@ onMounted(() => {
 
 .text-success {
   color: var(--success-color);
+}
+
+.text-warning {
+  color: var(--warning-color);
+}
+
+.tag-sm {
+  font-size: 11px;
+  padding: 1px 6px;
+}
+
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 6px;
+}
+
+.alert-error {
+  background-color: #fff2f0;
+  border: 1px solid #ffccc7;
+  color: var(--error-color);
+}
+
+.alert-icon {
+  font-size: 18px;
+}
+
+.form-tip {
+  color: var(--text-tertiary);
 }
 </style>

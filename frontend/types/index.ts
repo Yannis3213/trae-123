@@ -103,6 +103,7 @@ export interface Enrollment {
   attachments: Attachment[]
   expiry_status?: ExpiryStatusEnum
   has_exception: boolean
+  evidence_summary: Record<string, boolean>
 }
 
 export interface EnrollmentDetail extends Enrollment {
@@ -122,6 +123,7 @@ export interface BatchItemResult {
   id: number
   success: boolean
   message: string
+  error_code?: string
   data?: Enrollment
 }
 
@@ -184,4 +186,14 @@ export const EXCEPTION_LABELS: Record<ExceptionTypeEnum, string> = {
   status_conflict: '状态冲突',
   unauthorized_advance: '越权推进',
   overdue: '超期未处理',
+}
+
+export const ERROR_CODE_LABELS: Record<string, string> = {
+  unauthorized_advance: '越权推进',
+  status_conflict: '状态冲突',
+  version_conflict: '版本冲突',
+  missing_materials: '资料缺失',
+  overdue: '逾期拦截',
+  not_found: '不存在',
+  business_error: '业务错误',
 }

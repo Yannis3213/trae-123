@@ -1,17 +1,17 @@
-from litestar import Litestar, Request
-from litestar.middleware import AbstractMiddleware
+from litestar import Request
 from litestar.datastructures import Headers
 from litestar.enums import MediaType
 from litestar.exceptions import HTTPException
 from litestar.status_codes import HTTP_401_UNAUTHORIZED
 from litestar.types import ASGIApp, Receive, Scope, Send
+from litestar.response import Response
 
 from app.auth import get_user_from_token
 from app.database import SessionLocal
 
 
-class AuthMiddleware(AbstractMiddleware):
-    async def __call__(self, scope: Scope, receive: Receive, send: Send, app: ASGIApp) -> None:
+def auth_middleware(app: ASGIApp) -> ASGIApp:
+    async def middleware(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await app(scope, receive, send)
             return
@@ -30,8 +30,16 @@ class AuthMiddleware(AbstractMiddleware):
         auth_header = headers.get("Authorization", "")
 
         if not auth_header.startswith("Bearer "):
-            response = HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="未授权：缺少有效的认证令牌")
-            await self.send_response(scope, receive, send, response)
+            response = Response(
+                content={
+                    "detail": "未授权：缺少有效的认证令牌",
+                    "status_code": HTTP_401_UNAUTHORIZED,
+                    "error_code": "unauthorized",
+                },
+                status_code=HTTP_401_UNAUTHORIZED,
+                media_type=MediaType.JSON,
+            )
+            await response(scope, receive, send)
             return
 
         token = auth_header[7:]
@@ -39,8 +47,16 @@ class AuthMiddleware(AbstractMiddleware):
         try:
             user = get_user_from_token(db, token)
             if not user:
-                response = HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="未授权：令牌无效或已过期")
-                await self.send_response(scope, receive, send, response)
+                response = Response(
+                    content={
+                        "detail": "未授权：令牌无效或已过期",
+                        "status_code": HTTP_401_UNAUTHORIZED,
+                        "error_code": "unauthorized",
+                    },
+                    status_code=HTTP_401_UNAUTHORIZED,
+                    media_type=MediaType.JSON,
+                )
+                await response(scope, receive, send)
                 return
 
             scope["user"] = user
@@ -48,16 +64,7 @@ class AuthMiddleware(AbstractMiddleware):
         finally:
             db.close()
 
-    async def send_response(self, scope, receive, send, exc: HTTPException):
-        from litestar.response import Response
-        import json
-
-        response = Response(
-            content={"detail": exc.detail, "status_code": exc.status_code},
-            status_code=exc.status_code,
-            media_type=MediaType.JSON,
-        )
-        await response(scope, receive, send)
+    return middleware
 
 
 def get_current_user(request: Request):

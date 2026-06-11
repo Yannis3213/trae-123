@@ -127,6 +127,7 @@ class EnrollmentResponse(BaseModel):
     attachments: list[AttachmentResponse] = []
     expiry_status: Optional[ExpiryStatusEnum] = None
     has_exception: bool = False
+    evidence_summary: dict[str, bool] = {}
 
     class Config:
         from_attributes = True
@@ -200,6 +201,7 @@ class BatchItemResult(BaseModel):
     id: int
     success: bool
     message: str
+    error_code: Optional[str] = None
     data: Optional[EnrollmentResponse] = None
 
 
