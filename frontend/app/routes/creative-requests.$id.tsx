@@ -166,24 +166,56 @@ export default function RequestDetail() {
 
   const deadlineLevel = computeDeadlineLevel(request.deadline);
   const isCurrentHandler = request.current_handler_id === numericUserId;
+  const isOverdue = deadlineLevel === "overdue";
+  const isBriefMissing = request.brief_status === "missing";
+  const isScheduleMissing = request.schedule_status === "missing";
+
+  const blockedReasons: string[] = [];
+  if (!isCurrentHandler) blockedReasons.push("非当前处理人");
+  if (isOverdue) blockedReasons.push("已逾期（仅允许退回/补正）");
+  if (isBriefMissing) blockedReasons.push("Brief缺失");
+  if (isScheduleMissing) blockedReasons.push("排期缺失");
+
+  const isSubmitBlocked =
+    isBriefMissing || isScheduleMissing || isOverdue;
+  const isReviewApproveBlocked =
+    isBriefMissing || (isScheduleMissing && request.status === "reviewed") || isOverdue;
+  const isStartReviewBlocked =
+    isBriefMissing || isOverdue;
+  const isApproveUnderReviewBlocked =
+    isBriefMissing || isScheduleMissing || isOverdue;
+  const isArchiveBlocked =
+    isBriefMissing || isScheduleMissing || isOverdue;
+  const isAdvanceBlocked = isOverdue;
 
   const canSubmit =
-    canTransition(role, request.status as RequestStatus, "submitted") && isCurrentHandler;
+    canTransition(role, request.status as RequestStatus, "submitted") && isCurrentHandler && !isSubmitBlocked;
   const canStartReview =
-    canTransition(role, request.status as RequestStatus, "under_review") && isCurrentHandler;
+    canTransition(role, request.status as RequestStatus, "under_review") && isCurrentHandler && !isStartReviewBlocked;
   const canApprove =
-    canTransition(role, request.status as RequestStatus, "reviewed") && isCurrentHandler;
+    canTransition(role, request.status as RequestStatus, "reviewed") && isCurrentHandler && !isApproveUnderReviewBlocked;
   const canReturn =
     canTransition(role, request.status as RequestStatus, "returned") && isCurrentHandler;
   const canArchive =
-    canTransition(role, request.status as RequestStatus, "archived") && isCurrentHandler;
+    canTransition(role, request.status as RequestStatus, "archived") && isCurrentHandler && !isArchiveBlocked;
   const canResubmit =
-    canTransition(role, request.status as RequestStatus, "resubmitted") && isCurrentHandler;
+    canTransition(role, request.status as RequestStatus, "resubmitted") && isCurrentHandler && !isSubmitBlocked;
   const canSupplement =
     role === "creative_registrar" &&
     request.status === "returned" &&
-    (request.brief_status === "missing" || request.schedule_status === "missing") &&
+    (isBriefMissing || isScheduleMissing) &&
     isCurrentHandler;
+
+  const showSubmitButBlocked =
+    canTransition(role, request.status as RequestStatus, "submitted") && isCurrentHandler && isSubmitBlocked;
+  const showStartReviewButBlocked =
+    canTransition(role, request.status as RequestStatus, "under_review") && isCurrentHandler && isStartReviewBlocked;
+  const showApproveButBlocked =
+    canTransition(role, request.status as RequestStatus, "reviewed") && isCurrentHandler && isApproveUnderReviewBlocked;
+  const showArchiveButBlocked =
+    canTransition(role, request.status as RequestStatus, "archived") && isCurrentHandler && isArchiveBlocked;
+  const showResubmitButBlocked =
+    canTransition(role, request.status as RequestStatus, "resubmitted") && isCurrentHandler && isSubmitBlocked;
 
   const opinionRequiredForReview = canStartReview || canApprove || canArchive || canReturn;
 
@@ -511,6 +543,27 @@ export default function RequestDetail() {
                     {getActionLabel(request.status as RequestStatus, "submitted")}
                   </button>
                 )}
+                {showSubmitButBlocked && (
+                  <div className="w-full">
+                    <button
+                      disabled
+                      className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-gray-400 bg-gray-200 cursor-not-allowed"
+                    >
+                      <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                      {getActionLabel(request.status as RequestStatus, "submitted")}
+                      <svg className="w-4 h-4 ml-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 008.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    <p className="mt-1 text-xs text-red-500">
+                      {isBriefMissing && "Brief缺失 "}{" "}
+                      {isScheduleMissing && "排期缺失 "}{" "}
+                      {isOverdue && "已逾期"} — 请先补正或退回
+                    </p>
+                  </div>
+                )}
 
                 {canStartReview && (
                   <button
@@ -525,6 +578,23 @@ export default function RequestDetail() {
                     {getActionLabel(request.status as RequestStatus, "under_review")}
                   </button>
                 )}
+                {showStartReviewButBlocked && (
+                  <div className="w-full">
+                    <button
+                      disabled
+                      className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-gray-400 bg-gray-200 cursor-not-allowed"
+                    >
+                      开始审核
+                      <svg className="w-4 h-4 ml-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 008.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    <p className="mt-1 text-xs text-red-500">
+                      {isBriefMissing && "Brief缺失 "}{" "}
+                      {isOverdue && "已逾期"} — 无法开始审核
+                    </p>
+                  </div>
+                )}
 
                 {canApprove && (
                   <button
@@ -538,6 +608,24 @@ export default function RequestDetail() {
                     {getActionLabel(request.status as RequestStatus, "reviewed")}
                   </button>
                 )}
+                {showApproveButBlocked && (
+                  <div className="w-full">
+                    <button
+                      disabled
+                      className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-gray-400 bg-gray-200 cursor-not-allowed"
+                    >
+                      通过
+                      <svg className="w-4 h-4 ml-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 008.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    <p className="mt-1 text-xs text-red-500">
+                      {isBriefMissing && "Brief缺失 "}{" "}
+                      {isScheduleMissing && "排期缺失 "}{" "}
+                      {isOverdue && "已逾期"} — 无法通过
+                    </p>
+                  </div>
+                )}
 
                 {canArchive && (
                   <button
@@ -550,6 +638,24 @@ export default function RequestDetail() {
                     </svg>
                     {getActionLabel(request.status as RequestStatus, "archived")}
                   </button>
+                )}
+                {showArchiveButBlocked && (
+                  <div className="w-full">
+                    <button
+                      disabled
+                      className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-gray-400 bg-gray-200 cursor-not-allowed"
+                    >
+                      归档
+                      <svg className="w-4 h-4 ml-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 008.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    <p className="mt-1 text-xs text-red-500">
+                      {isBriefMissing && "Brief缺失 "}{" "}
+                      {isScheduleMissing && "排期缺失 "}{" "}
+                      {isOverdue && "已逾期"} — 无法归档
+                    </p>
+                  </div>
                 )}
 
                 {canReturn && (
@@ -576,6 +682,24 @@ export default function RequestDetail() {
                     </svg>
                     重新提交
                   </button>
+                )}
+                {showResubmitButBlocked && (
+                  <div className="w-full">
+                    <button
+                      disabled
+                      className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-gray-400 bg-gray-200 cursor-not-allowed"
+                    >
+                      重新提交
+                      <svg className="w-4 h-4 ml-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 008.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    <p className="mt-1 text-xs text-red-500">
+                      {isBriefMissing && "Brief缺失 "}{" "}
+                      {isScheduleMissing && "排期缺失 "}{" "}
+                      {isOverdue && "已逾期"} — 请先补正
+                    </p>
+                  </div>
                 )}
               </div>
 
@@ -633,7 +757,7 @@ export default function RequestDetail() {
                 </div>
               )}
 
-              {!canSubmit && !canStartReview && !canApprove && !canReturn && !canArchive && !canResubmit && !canSupplement && (
+              {!canSubmit && !canStartReview && !canApprove && !canReturn && !canArchive && !canResubmit && !canSupplement && !showSubmitButBlocked && !showStartReviewButBlocked && !showApproveButBlocked && !showArchiveButBlocked && !showResubmitButBlocked && (
                 <div className="text-center py-4 text-sm text-gray-400">
                   当前角色在此状态下无可用操作
                 </div>

@@ -1,8 +1,17 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { Link, useOutletContext } from "@remix-run/react";
 import { getRequests, batchProcess, type CreativeRequestListItem, type BatchResult } from "~/utils/api";
 import type { UserRole, RequestStatus } from "~/utils/status";
-import { STATUS_LABELS, USER_NUMERIC_ID, ROLE_LABELS } from "~/utils/status";
+import {
+  STATUS_LABELS,
+  USER_NUMERIC_ID,
+  ROLE_LABELS,
+  BRIEF_STATUS_LABELS,
+  BRIEF_STATUS_COLORS,
+  SCHEDULE_STATUS_LABELS,
+  SCHEDULE_STATUS_COLORS,
+  computeDeadlineLevel,
+} from "~/utils/status";
 import StatusBadge from "~/components/StatusBadge";
 import DeadlineWarning from "~/components/DeadlineWarning";
 
@@ -193,21 +202,33 @@ export default function BatchResults() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">标题</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">客户</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brief</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">排期</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">当前处理人</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">版本</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">到期预警</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">拦截原因</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {requests.map((req) => {
                   const isMine = req.current_handler_id === numericUserId;
+                  const isOverdue = computeDeadlineLevel(req.deadline) === "overdue";
+                  const isBriefMissing = req.brief_status === "missing";
+                  const isScheduleMissing = req.schedule_status === "missing";
+                  const blockReasons: string[] = [];
+                  if (!isMine) blockReasons.push("非当前处理人");
+                  if (isOverdue) blockReasons.push("逾期");
+                  if (isBriefMissing) blockReasons.push("Brief缺失");
+                  if (isScheduleMissing) blockReasons.push("排期缺失");
+                  const isBlocked = blockReasons.length > 0;
                   return (
                     <tr
                       key={req.id}
                       className={`cursor-pointer ${
                         selected.has(req.id)
                           ? "bg-blue-50"
-                          : isMine
+                          : isMine && !isBlocked
                           ? "hover:bg-gray-50"
                           : "bg-gray-50/50 opacity-70 hover:bg-gray-100/70"
                       }`}
@@ -217,9 +238,15 @@ export default function BatchResults() {
                           type="checkbox"
                           checked={selected.has(req.id)}
                           onChange={() => toggleSelect(req.id)}
-                          disabled={!isMine}
+                          disabled={!isMine || isOverdue}
                           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
-                          title={isMine ? undefined : "非当前分派给您处理的单据"}
+                          title={
+                            !isMine
+                              ? "非当前分派给您处理的单据"
+                              : isOverdue
+                              ? "逾期单据不可批量推进，请逐单处理"
+                              : undefined
+                          }
                         />
                       </td>
                     <td className="px-6 py-4 text-sm font-mono">
@@ -230,6 +257,20 @@ export default function BatchResults() {
                     <td className="px-6 py-4 text-sm text-gray-900">{req.title}</td>
                     <td className="px-6 py-4 text-sm text-gray-700">{req.client_name}</td>
                     <td className="px-6 py-4"><StatusBadge status={req.status as RequestStatus} size="sm" /></td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                        BRIEF_STATUS_COLORS[req.brief_status as keyof typeof BRIEF_STATUS_COLORS] || "bg-gray-100 text-gray-600"
+                      }`}>
+                        {BRIEF_STATUS_LABELS[req.brief_status as keyof typeof BRIEF_STATUS_LABELS] || req.brief_status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                        SCHEDULE_STATUS_COLORS[req.schedule_status as keyof typeof SCHEDULE_STATUS_COLORS] || "bg-gray-100 text-gray-600"
+                      }`}>
+                        {SCHEDULE_STATUS_LABELS[req.schedule_status as keyof typeof SCHEDULE_STATUS_LABELS] || req.schedule_status}
+                      </span>
+                    </td>
                     <td className="px-6 py-4 text-sm">
                       {isMine ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
@@ -246,6 +287,22 @@ export default function BatchResults() {
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500">v{req.version}</td>
                     <td className="px-6 py-4"><DeadlineWarning deadline={req.deadline} showLabel={false} /></td>
+                    <td className="px-6 py-4 text-xs">
+                      {isBlocked ? (
+                        <div className="space-y-0.5">
+                          {blockReasons.map((r, i) => (
+                            <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-50 text-red-600">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                              {r}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-green-600">可操作</span>
+                      )}
+                    </td>
                   </tr>
                   );
                 })}

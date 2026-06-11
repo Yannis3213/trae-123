@@ -32,6 +32,25 @@ fn log_audit_note(
     );
 }
 
+fn log_blocked_action(
+    conn: &rusqlite::Connection,
+    request_id: i64,
+    user_id: i64,
+    user_role: &str,
+    attempted_action: &str,
+    from_status: &str,
+    reason_type: &str,
+    reason_detail: &str,
+    now: &str,
+) {
+    let _ = conn.execute(
+        "INSERT INTO processing_records (request_id, handler_id, handler_role, action, opinion, from_status, to_status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![request_id, user_id, user_role, format!("blocked_{}", attempted_action), reason_detail, from_status, from_status, now],
+    );
+    log_exception(conn, request_id, user_id, reason_type, reason_detail, now);
+    log_audit_note(conn, request_id, user_id, "exception", &format!("操作被拦截[{}]：{}", attempted_action, reason_type), now);
+}
+
 fn is_overdue(deadline_str: &str) -> bool {
     matches!(compute_deadline_warning(deadline_str), DeadlineWarning::Overdue)
 }
@@ -414,23 +433,13 @@ pub async fn update(
 
     if current_version != payload.version {
         let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "update", &current_status,
             "version_conflict",
             &format!(
                 "更新版本冲突：期望 v{}，收到 v{}，需求单状态 '{}' 下被拒绝",
                 current_version, payload.version, current_status
             ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!("版本冲突拦截：用户 {} 尝试更新", user.display_name),
             &now,
         );
         return Err(AppError::Conflict(format!(
@@ -441,23 +450,13 @@ pub async fn update(
 
     if handler_id != user.id {
         let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "update", &current_status,
             "handler_mismatch",
             &format!(
                 "越权更新：当前处理人 ID={}，操作者 ID={} ({})",
                 handler_id, user.id, user.display_name
             ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!("非当前处理人 {} 试图更新单据，被拦截", user.display_name),
             &now,
         );
         return Err(AppError::Forbidden(format!(
@@ -469,23 +468,13 @@ pub async fn update(
     let allowed_statuses = ["draft", "pending_submit", "returned"];
     if !allowed_statuses.contains(&current_status.as_str()) {
         let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "update", &current_status,
             "status_conflict",
             &format!(
                 "状态冲突：不允许从 '{}' 更新，允许状态 = {:?}",
                 current_status, allowed_statuses
             ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!("状态冲突：当前状态 {} 下无法执行更新", current_status),
             &now,
         );
         return Err(AppError::Conflict(format!(
@@ -611,40 +600,31 @@ pub async fn submit(
 
     let current = conn
         .query_row(
-            "SELECT status, version, brief_status, current_handler_id, deadline FROM creative_requests WHERE id = ?1",
+            "SELECT status, version, brief_status, schedule_status, current_handler_id, deadline FROM creative_requests WHERE id = ?1",
             rusqlite::params![id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             },
         )
         .map_err(|_| AppError::NotFound(format!("Creative request {} not found", id)))?;
 
-    let (current_status, current_version, brief_st, handler_id, deadline_str) = current;
+    let (current_status, current_version, brief_st, schedule_st, handler_id, deadline_str) = current;
 
     if current_version != payload.version {
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "submit", &current_status,
             "version_conflict",
             &format!(
                 "提交版本冲突：期望 v{}，收到 v{}",
                 current_version, payload.version
             ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!("提交被拦截：版本冲突 (v{} vs v{})", current_version, payload.version),
             &now,
         );
         return Err(AppError::Conflict(format!(
@@ -654,23 +634,13 @@ pub async fn submit(
     }
 
     if handler_id != user.id {
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "submit", &current_status,
             "handler_mismatch",
             &format!(
                 "越权提交：当前处理人 ID={}，操作者 ID={} ({})",
                 handler_id, user.id, user.display_name
             ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!("非当前处理人 {} 试图提交，被拦截", user.display_name),
             &now,
         );
         return Err(AppError::Forbidden(format!(
@@ -684,23 +654,13 @@ pub async fn submit(
         "pending_submit" => ("pending_submit", "submitted"),
         "returned" => ("returned", "resubmitted"),
         _ => {
-            log_exception(
-                &conn,
-                id,
-                user.id,
+            log_blocked_action(
+                &conn, id, user.id, &user.role, "submit", &current_status,
                 "status_conflict",
                 &format!(
                     "提交状态冲突：'{}' 不可提交，仅允许 draft/pending_submit/returned",
                     current_status
                 ),
-                &now,
-            );
-            log_audit_note(
-                &conn,
-                id,
-                user.id,
-                "exception",
-                &format!("提交被拦截：当前状态 {} 不允许提交", current_status),
                 &now,
             );
             return Err(AppError::Validation(format!(
@@ -711,45 +671,31 @@ pub async fn submit(
     };
 
     if brief_st == "missing" {
-        log_exception(
-            &conn,
-            id,
-            user.id,
-            "brief_missing",
-            "提交被拦截：Brief缺失 (brief_status=missing)",
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            "提交被拦截：Brief 缺失，请先补正后再提交",
-            &now,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "submit", &current_status,
+            "brief_missing", "提交被拦截：Brief缺失 (brief_status=missing)", &now,
         );
         return Err(AppError::Validation(
             "Cannot submit: brief_status is 'missing'. Please supplement the brief first.".into(),
         ));
     }
 
+    if schedule_st == "missing" {
+        log_blocked_action(&conn, id, user.id, &user.role, "submit", &current_status,
+            "schedule_missing", "提交被拦截：排期缺失 (schedule_status=missing)", &now);
+        return Err(AppError::Validation(
+            "Cannot submit: schedule_status is 'missing'. Please supplement the schedule first.".into(),
+        ));
+    }
+
     if is_overdue(&deadline_str) {
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "submit", &current_status,
             "overdue_blocked",
             &format!(
                 "提交被拦截：需求单已逾期（截止日期 {}），仅允许补正或退回",
                 deadline_str
             ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!("逾期拦截：{} 已过截止日期 {}，无法提交推进", user.display_name, deadline_str),
             &now,
         );
         return Err(AppError::Validation(format!(
@@ -840,25 +786,12 @@ pub async fn review(
     let (current_status, current_version, schedule_st, brief_st, handler_id, deadline_str) = current;
 
     if current_version != payload.version {
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, &payload.action, &current_status,
             "version_conflict",
             &format!(
                 "审核版本冲突：期望 v{}，收到 v{}，动作={}",
                 current_version, payload.version, payload.action
-            ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!(
-                "审核被拦截：{} 操作版本冲突 (v{} vs v{})",
-                payload.action, current_version, payload.version
             ),
             &now,
         );
@@ -869,25 +802,12 @@ pub async fn review(
     }
 
     if handler_id != user.id {
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, &payload.action, &current_status,
             "handler_mismatch",
             &format!(
                 "越权审核：当前处理人 ID={}，操作者 ID={} ({})，动作={}",
                 handler_id, user.id, user.display_name, payload.action
-            ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!(
-                "非当前处理人 {} 试图执行 {}，被拦截",
-                user.display_name, payload.action
             ),
             &now,
         );
@@ -898,23 +818,13 @@ pub async fn review(
     }
 
     if payload.opinion.trim().is_empty() {
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, &payload.action, &current_status,
             "opinion_required",
             &format!(
                 "审核意见缺失：动作 {} 必须填写处理意见",
                 payload.action
             ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!("{} 被拦截：审核意见不能为空", payload.action),
             &now,
         );
         return Err(AppError::Validation(
@@ -925,25 +835,12 @@ pub async fn review(
     let overdue = is_overdue(&deadline_str);
     let is_return_action = payload.action == "return";
     if overdue && !is_return_action {
-        log_exception(
-            &conn,
-            id,
-            user.id,
+        log_blocked_action(
+            &conn, id, user.id, &user.role, &payload.action, &current_status,
             "overdue_blocked",
             &format!(
                 "逾期拦截：{} 操作被拒绝，截止日期 {} 已过，仅允许退回或补正",
                 payload.action, deadline_str
-            ),
-            &now,
-        );
-        log_audit_note(
-            &conn,
-            id,
-            user.id,
-            "exception",
-            &format!(
-                "逾期阻止 {}：单据 {} 已过 {}，仅退回或补正可执行",
-                payload.action, id, deadline_str
             ),
             &now,
         );
@@ -958,43 +855,42 @@ pub async fn review(
     match payload.action.as_str() {
         "start_review" => {
             if user.role != "review_supervisor" {
-                log_exception(
-                    &conn, id, user.id, "role_mismatch",
+                log_blocked_action(
+                    &conn, id, user.id, &user.role, "start_review", &current_status,
+                    "role_mismatch",
                     &format!("开始审核角色不匹配：期望 review_supervisor，当前={}", user.role),
                     &now,
                 );
-                log_audit_note(&conn, id, user.id, "exception", "越权：非审核主管试图开始审核", &now);
                 return Err(AppError::Forbidden(
                     "Only review_supervisor can start reviewing".into(),
                 ));
             }
             if current_status != "submitted" && current_status != "resubmitted" {
-                log_exception(
-                    &conn, id, user.id, "status_conflict",
+                log_blocked_action(
+                    &conn, id, user.id, &user.role, "start_review", &current_status,
+                    "status_conflict",
                     &format!("开始审核状态冲突：期望 submitted/resubmitted，当前={}", current_status),
                     &now,
                 );
-                log_audit_note(&conn, id, user.id, "exception",
-                    &format!("开始审核被拦截：{} 状态不匹配", current_status), &now);
                 return Err(AppError::Validation(format!(
                     "Cannot start review from status '{}'. Expected 'submitted' or 'resubmitted'.",
                     current_status
                 )));
             }
             if brief_st == "missing" {
-                log_exception(
-                    &conn, id, user.id, "brief_missing",
+                log_blocked_action(
+                    &conn, id, user.id, &user.role, "start_review", &current_status,
+                    "brief_missing",
                     "开始审核被拦截：Brief 缺失 (brief_status=missing)", &now,
                 );
-                log_audit_note(&conn, id, user.id, "exception",
-                    "开始审核不通过：Brief 缺失，退回登记员补正", &now);
                 return Err(AppError::Validation(
                     "Cannot start review: brief_status is 'missing'. Return to registrar to supplement.".into(),
                 ));
             }
             if schedule_st == "missing" {
-                log_exception(
-                    &conn, id, user.id, "schedule_missing",
+                log_blocked_action(
+                    &conn, id, user.id, &user.role, "start_review", &current_status,
+                    "schedule_missing",
                     "开始审核提醒：排期状态为 missing，建议退回补正", &now,
                 );
             }
@@ -1010,22 +906,27 @@ pub async fn review(
         "approve" => {
             if current_status == "under_review" {
                 if user.role != "review_supervisor" {
-                    log_exception(
-                        &conn, id, user.id, "role_mismatch",
+                    log_blocked_action(
+                        &conn, id, user.id, &user.role, "approve", "under_review",
+                        "role_mismatch",
                         &format!("通过审核角色不匹配：期望 review_supervisor，当前={}", user.role), &now,
                     );
-                    log_audit_note(&conn, id, user.id, "exception", "越权：非审核主管试图通过审核", &now);
                     return Err(AppError::Forbidden(
                         "Only review_supervisor can approve from under_review".into(),
                     ));
                 }
                 if brief_st == "missing" {
-                    log_exception(&conn, id, user.id, "brief_missing",
-                        "审核通过被拦截：Brief 仍为 missing", &now);
-                    log_audit_note(&conn, id, user.id, "exception",
-                        "审核通过失败：Brief 缺失，请先退回补正", &now);
+                    log_blocked_action(&conn, id, user.id, &user.role, "approve", "under_review",
+                        "brief_missing", "审核通过被拦截：Brief 仍为 missing", &now);
                     return Err(AppError::Validation(
                         "Cannot approve: brief_status is 'missing'. Return to supplement first.".into(),
+                    ));
+                }
+                if schedule_st == "missing" {
+                    log_blocked_action(&conn, id, user.id, &user.role, "approve", "under_review",
+                        "schedule_missing", "审核通过被拦截：排期缺失 (schedule_status=missing)", &now);
+                    return Err(AppError::Validation(
+                        "Cannot approve: schedule_status is 'missing'. Resolve schedule first.".into(),
                     ));
                 }
                 conn.execute(
@@ -1038,29 +939,25 @@ pub async fn review(
                 )?;
             } else if current_status == "reviewed" {
                 if user.role != "review_manager" {
-                    log_exception(
-                        &conn, id, user.id, "role_mismatch",
+                    log_blocked_action(
+                        &conn, id, user.id, &user.role, "approve", "reviewed",
+                        "role_mismatch",
                         &format!("归档角色不匹配：期望 review_manager，当前={}", user.role), &now,
                     );
-                    log_audit_note(&conn, id, user.id, "exception", "越权：非复核负责人试图归档", &now);
                     return Err(AppError::Forbidden(
                         "Only review_manager can archive from reviewed".into(),
                     ));
                 }
                 if schedule_st == "missing" {
-                    log_exception(&conn, id, user.id, "schedule_missing",
-                        "归档被拦截：排期缺失 (schedule_status=missing)", &now);
-                    log_audit_note(&conn, id, user.id, "exception",
-                        "归档失败：创意排期缺失，请退回补正", &now);
+                    log_blocked_action(&conn, id, user.id, &user.role, "approve", "reviewed",
+                        "schedule_missing", "归档被拦截：排期缺失 (schedule_status=missing)", &now);
                     return Err(AppError::Validation(
                         "Cannot archive: schedule_status is 'missing'. Resolve schedule first.".into(),
                     ));
                 }
                 if brief_st == "missing" {
-                    log_exception(&conn, id, user.id, "brief_missing",
-                        "归档被拦截：Brief 缺失 (brief_status=missing)", &now);
-                    log_audit_note(&conn, id, user.id, "exception",
-                        "归档失败：Brief 缺失，请退回补正", &now);
+                    log_blocked_action(&conn, id, user.id, &user.role, "approve", "reviewed",
+                        "brief_missing", "归档被拦截：Brief 缺失 (brief_status=missing)", &now);
                     return Err(AppError::Validation(
                         "Cannot archive: brief_status is 'missing'. Resolve brief first.".into(),
                     ));
@@ -1074,12 +971,11 @@ pub async fn review(
                     rusqlite::params![id, user.id, user.role, "archive", payload.opinion, "reviewed", "archived", now],
                 )?;
             } else {
-                log_exception(
-                    &conn, id, user.id, "status_conflict",
+                log_blocked_action(
+                    &conn, id, user.id, &user.role, "approve", &current_status,
+                    "status_conflict",
                     &format!("approve 状态冲突：期望 under_review/reviewed，当前={}", current_status), &now,
                 );
-                log_audit_note(&conn, id, user.id, "exception",
-                    &format!("approve 被拦截：{} 状态不可执行通过/归档", current_status), &now);
                 return Err(AppError::Validation(format!(
                     "Cannot approve from status '{}'. Expected 'under_review' or 'reviewed'.",
                     current_status
@@ -1088,23 +984,22 @@ pub async fn review(
         }
         "return" => {
             if user.role != "review_supervisor" && user.role != "review_manager" {
-                log_exception(
-                    &conn, id, user.id, "role_mismatch",
+                log_blocked_action(
+                    &conn, id, user.id, &user.role, "return", &current_status,
+                    "role_mismatch",
                     &format!("退回角色不匹配：期望 review_supervisor/review_manager，当前={}", user.role), &now,
                 );
-                log_audit_note(&conn, id, user.id, "exception", "越权：非审核/复核角色试图退回", &now);
                 return Err(AppError::Forbidden(
                     "Only review_supervisor or review_manager can return requests".into(),
                 ));
             }
             let allowed = ["submitted", "resubmitted", "under_review", "reviewed"];
             if !allowed.contains(&current_status.as_str()) {
-                log_exception(
-                    &conn, id, user.id, "status_conflict",
+                log_blocked_action(
+                    &conn, id, user.id, &user.role, "return", &current_status,
+                    "status_conflict",
                     &format!("退回状态冲突：当前={}，允许={:?}", current_status, allowed), &now,
                 );
-                log_audit_note(&conn, id, user.id, "exception",
-                    &format!("退回被拦截：{} 状态不允许退回", current_status), &now);
                 return Err(AppError::Validation(format!(
                     "Cannot return from status '{}'. Expected 'submitted', 'resubmitted', 'under_review', or 'reviewed'.",
                     current_status
@@ -1135,8 +1030,9 @@ pub async fn review(
             );
         }
         _ => {
-            log_exception(
-                &conn, id, user.id, "unknown_action",
+            log_blocked_action(
+                &conn, id, user.id, &user.role, &payload.action, &current_status,
+                "unknown_action",
                 &format!("未知审核动作：'{}'", payload.action), &now,
             );
             return Err(AppError::BadRequest(format!(
@@ -1215,12 +1111,11 @@ pub async fn supplement(
     let (current_status, current_version, brief_st, schedule_st, handler_id) = current;
 
     if current_version != payload.version {
-        log_exception(
-            &conn, id, user.id, "version_conflict",
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "supplement", &current_status,
+            "version_conflict",
             &format!("补正版本冲突：期望 v{}，收到 v{}", current_version, payload.version), &now,
         );
-        log_audit_note(&conn, id, user.id, "exception",
-            &format!("补正被拦截：版本冲突 (v{} vs v{})", current_version, payload.version), &now);
         return Err(AppError::Conflict(format!(
             "Version mismatch: expected {} but got {}",
             current_version, payload.version
@@ -1228,12 +1123,11 @@ pub async fn supplement(
     }
 
     if handler_id != user.id {
-        log_exception(
-            &conn, id, user.id, "handler_mismatch",
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "supplement", &current_status,
+            "handler_mismatch",
             &format!("越权补正：当前处理人 ID={}，操作者 ID={} ({})", handler_id, user.id, user.display_name), &now,
         );
-        log_audit_note(&conn, id, user.id, "exception",
-            &format!("非当前处理人 {} 试图补正，被拦截", user.display_name), &now);
         return Err(AppError::Forbidden(format!(
             "You are not the current handler (ID={}) of request {}. Only handler can supplement.",
             handler_id, id
@@ -1241,12 +1135,11 @@ pub async fn supplement(
     }
 
     if current_status != "returned" {
-        log_exception(
-            &conn, id, user.id, "status_conflict",
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "supplement", &current_status,
+            "status_conflict",
             &format!("补正状态冲突：期望 returned，当前={}", current_status), &now,
         );
-        log_audit_note(&conn, id, user.id, "exception",
-            &format!("补正被拦截：只有 returned 状态可以补正，当前={}", current_status), &now);
         return Err(AppError::Validation(format!(
             "Cannot supplement from status '{}'. Only returned requests can be supplemented.",
             current_status
@@ -1254,16 +1147,15 @@ pub async fn supplement(
     }
 
     if brief_st != "missing" && schedule_st != "missing" {
-        log_exception(
-            &conn, id, user.id, "supplement_not_needed",
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "supplement", &current_status,
+            "supplement_not_needed",
             format!(
                 "补正条件不满足：brief={}, schedule={}，两者都不为 missing，无需补正",
                 brief_st, schedule_st
             ).as_str(),
             &now,
         );
-        log_audit_note(&conn, id, user.id, "exception",
-            "补正被拦截：Brief 和排期都不是 missing 状态", &now);
         return Err(AppError::Validation(
             "Supplement is only allowed when brief_status=missing or schedule_status=missing".into(),
         ));
@@ -1274,23 +1166,21 @@ pub async fn supplement(
     let has_description = payload.description.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
 
     if brief_st == "missing" && !has_brief_supplement && !has_description {
-        log_exception(
-            &conn, id, user.id, "insufficient_supplement",
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "supplement", &current_status,
+            "insufficient_supplement",
             "补正失败：Brief 为 missing，但未提供 brief_status 补正或补充说明", &now,
         );
-        log_audit_note(&conn, id, user.id, "exception",
-            "补正拦截：Brief 缺失时必须提供 brief_status 或补充说明", &now);
         return Err(AppError::Validation(
             "Brief is missing: must provide brief_status supplement or description".into(),
         ));
     }
     if schedule_st == "missing" && !has_schedule_supplement && !has_description {
-        log_exception(
-            &conn, id, user.id, "insufficient_supplement",
+        log_blocked_action(
+            &conn, id, user.id, &user.role, "supplement", &current_status,
+            "insufficient_supplement",
             "补正失败：排期为 missing，但未提供 schedule_status 补正或补充说明", &now,
         );
-        log_audit_note(&conn, id, user.id, "exception",
-            "补正拦截：排期缺失时必须提供 schedule_status 或补充说明", &now);
         return Err(AppError::Validation(
             "Schedule is missing: must provide schedule_status supplement or description".into(),
         ));
@@ -1454,9 +1344,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             "Version mismatch: expected {} but got {}",
             current_version, item.version
         );
-        log_exception(&conn, item.id, user.id, "version_conflict", &format!("批量{}：{}", item.action, err), &now);
-        log_audit_note(&conn, item.id, user.id, "exception",
-            &format!("批量 {} 被拦截：版本冲突", item.action), &now);
+        log_blocked_action(&conn, item.id, user.id, &user.role, &item.action, &current_status,
+            "version_conflict", &format!("批量{}：{}", item.action, err), &now);
         return BatchItemResult {
             id: item.id,
             success: false,
@@ -1470,11 +1359,10 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             "Not the current handler (ID={}) for request {}",
             handler_id, item.id
         );
-        log_exception(&conn, item.id, user.id, "handler_mismatch",
+        log_blocked_action(&conn, item.id, user.id, &user.role, &item.action, &current_status,
+            "handler_mismatch",
             &format!("批量{}越权：操作者={} (ID={})，处理人ID={}",
                 item.action, user.display_name, user.id, handler_id), &now);
-        log_audit_note(&conn, item.id, user.id, "exception",
-            &format!("批量 {} 被拦截：非当前处理人", item.action), &now);
         return BatchItemResult {
             id: item.id,
             success: false,
@@ -1493,11 +1381,10 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             "Overdue request (deadline={}). Only return or supplement allowed.",
             deadline_str
         );
-        log_exception(&conn, item.id, user.id, "overdue_blocked",
+        log_blocked_action(&conn, item.id, user.id, &user.role, &item.action, &current_status,
+            "overdue_blocked",
             &format!("批量 {} 逾期拦截：{}，截止 {}，仅允许退回补正",
                 item.action, user.display_name, deadline_str), &now);
-        log_audit_note(&conn, item.id, user.id, "exception",
-            &format!("批量 {} 被逾期拦截：截止 {} 已过", item.action, deadline_str), &now);
         return BatchItemResult {
             id: item.id,
             success: false,
@@ -1512,10 +1399,9 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
         "submit" => {
             if user.role != "creative_registrar" {
                 let err = "Only creative_registrar can submit".to_string();
-                log_exception(&conn, item.id, user.id, "role_mismatch",
+                log_blocked_action(&conn, item.id, user.id, &user.role, "submit", &current_status,
+                    "role_mismatch",
                     &format!("批量提交：角色 {} 不匹配 creative_registrar", user.role), &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    "批量提交被拦截：角色不匹配", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1525,10 +1411,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             }
             if current_status != "draft" && current_status != "pending_submit" && current_status != "returned" {
                 let err = format!("Cannot submit from status '{}'", current_status);
-                log_exception(&conn, item.id, user.id, "status_conflict",
-                    &format!("批量提交状态冲突：{}", err), &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    &format!("批量提交被拦截：{}", err), &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "submit", &current_status,
+                    "status_conflict", &format!("批量提交状态冲突：{}", err), &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1538,10 +1422,19 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             }
             if brief_st == "missing" {
                 let err = "Cannot submit: brief_status is 'missing'".to_string();
-                log_exception(&conn, item.id, user.id, "brief_missing",
-                    "批量提交拦截：Brief 缺失", &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    "批量提交被拦截：Brief 缺失", &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "submit", &current_status,
+                    "brief_missing", "批量提交拦截：Brief 缺失", &now);
+                return BatchItemResult {
+                    id: item.id,
+                    success: false,
+                    error: Some(err),
+                    new_status: None,
+                };
+            }
+            if schedule_st == "missing" {
+                let err = "Cannot submit: schedule_status is 'missing'".to_string();
+                log_blocked_action(&conn, item.id, user.id, &user.role, "submit", &current_status,
+                    "schedule_missing", "批量提交拦截：排期缺失", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1577,8 +1470,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                     }
                 }
                 Err(e) => {
-                    log_exception(&conn, item.id, user.id, "db_error",
-                        &format!("批量提交数据库错误：{}", e), &now);
+                    log_blocked_action(&conn, item.id, user.id, &user.role, "submit", &current_status,
+                        "db_error", &format!("批量提交数据库错误：{}", e), &now);
                     BatchItemResult {
                         id: item.id,
                         success: false,
@@ -1591,10 +1484,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
         "start_review" => {
             if opinion.trim().is_empty() {
                 let err = "Opinion is required for batch start_review".to_string();
-                log_exception(&conn, item.id, user.id, "opinion_required",
-                    "批量开始审核：意见为空", &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    "批量开始审核被拦截：审核意见必填", &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "start_review", &current_status,
+                    "opinion_required", "批量开始审核：意见为空", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1604,10 +1495,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             }
             if user.role != "review_supervisor" {
                 let err = format!("Only review_supervisor can start_review, got role '{}'", user.role);
-                log_exception(&conn, item.id, user.id, "role_mismatch",
-                    &format!("批量开始审核：{}", err), &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    "批量开始审核被拦截：角色不匹配", &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "start_review", &current_status,
+                    "role_mismatch", &format!("批量开始审核：{}", err), &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1617,10 +1506,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             }
             if current_status != "submitted" && current_status != "resubmitted" {
                 let err = format!("Cannot start_review from status '{}'", current_status);
-                log_exception(&conn, item.id, user.id, "status_conflict",
-                    &format!("批量开始审核状态冲突：{}", err), &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    &format!("批量开始审核被拦截：{}", err), &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "start_review", &current_status,
+                    "status_conflict", &format!("批量开始审核状态冲突：{}", err), &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1630,10 +1517,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             }
             if brief_st == "missing" {
                 let err = "Cannot start_review: brief_status is 'missing'".to_string();
-                log_exception(&conn, item.id, user.id, "brief_missing",
-                    "批量开始审核拦截：Brief 缺失", &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    "批量开始审核被拦截：Brief 缺失", &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "start_review", &current_status,
+                    "brief_missing", "批量开始审核拦截：Brief 缺失", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1658,8 +1543,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                     }
                 }
                 Err(e) => {
-                    log_exception(&conn, item.id, user.id, "db_error",
-                        &format!("批量开始审核数据库错误：{}", e), &now);
+                    log_blocked_action(&conn, item.id, user.id, &user.role, "start_review", &current_status,
+                        "db_error", &format!("批量开始审核数据库错误：{}", e), &now);
                     BatchItemResult {
                         id: item.id,
                         success: false,
@@ -1672,10 +1557,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
         "approve" => {
             if opinion.trim().is_empty() {
                 let err = "Opinion is required for batch approve".to_string();
-                log_exception(&conn, item.id, user.id, "opinion_required",
-                    "批量通过/归档：意见为空", &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    "批量 approve 被拦截：审核意见必填", &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "approve", &current_status,
+                    "opinion_required", "批量通过/归档：意见为空", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1686,10 +1569,19 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             if current_status == "under_review" && user.role == "review_supervisor" {
                 if brief_st == "missing" {
                     let err = "Cannot approve: brief_status is 'missing'".to_string();
-                    log_exception(&conn, item.id, user.id, "brief_missing",
-                        "批量审核通过拦截：Brief 缺失", &now);
-                    log_audit_note(&conn, item.id, user.id, "exception",
-                        "批量 approve 被拦截：Brief 缺失", &now);
+                    log_blocked_action(&conn, item.id, user.id, &user.role, "approve", &current_status,
+                        "brief_missing", "批量审核通过拦截：Brief 缺失", &now);
+                    return BatchItemResult {
+                        id: item.id,
+                        success: false,
+                        error: Some(err),
+                        new_status: None,
+                    };
+                }
+                if schedule_st == "missing" {
+                    let err = "Cannot approve: schedule_status is 'missing'".to_string();
+                    log_blocked_action(&conn, item.id, user.id, &user.role, "approve", &current_status,
+                        "schedule_missing", "批量审核通过拦截：排期缺失", &now);
                     return BatchItemResult {
                         id: item.id,
                         success: false,
@@ -1714,8 +1606,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                         }
                     }
                     Err(e) => {
-                        log_exception(&conn, item.id, user.id, "db_error",
-                            &format!("批量审核通过数据库错误：{}", e), &now);
+                        log_blocked_action(&conn, item.id, user.id, &user.role, "approve", &current_status,
+                            "db_error", &format!("批量审核通过数据库错误：{}", e), &now);
                         BatchItemResult {
                             id: item.id,
                             success: false,
@@ -1727,10 +1619,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             } else if current_status == "reviewed" && user.role == "review_manager" {
                 if schedule_st == "missing" {
                     let err = "Cannot archive: schedule_status is 'missing'".to_string();
-                    log_exception(&conn, item.id, user.id, "schedule_missing",
-                        "批量归档拦截：排期缺失", &now);
-                    log_audit_note(&conn, item.id, user.id, "exception",
-                        "批量归档被拦截：排期缺失", &now);
+                    log_blocked_action(&conn, item.id, user.id, &user.role, "approve", "reviewed",
+                        "schedule_missing", "批量归档拦截：排期缺失", &now);
                     return BatchItemResult {
                         id: item.id,
                         success: false,
@@ -1740,10 +1630,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                 }
                 if brief_st == "missing" {
                     let err = "Cannot archive: brief_status is 'missing'".to_string();
-                    log_exception(&conn, item.id, user.id, "brief_missing",
-                        "批量归档拦截：Brief 缺失", &now);
-                    log_audit_note(&conn, item.id, user.id, "exception",
-                        "批量归档被拦截：Brief 缺失", &now);
+                    log_blocked_action(&conn, item.id, user.id, &user.role, "approve", "reviewed",
+                        "brief_missing", "批量归档拦截：Brief 缺失", &now);
                     return BatchItemResult {
                         id: item.id,
                         success: false,
@@ -1768,8 +1656,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                         }
                     }
                     Err(e) => {
-                        log_exception(&conn, item.id, user.id, "db_error",
-                            &format!("批量归档数据库错误：{}", e), &now);
+                        log_blocked_action(&conn, item.id, user.id, &user.role, "approve", "reviewed",
+                            "db_error", &format!("批量归档数据库错误：{}", e), &now);
                         BatchItemResult {
                             id: item.id,
                             success: false,
@@ -1783,10 +1671,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                     "Cannot approve from status '{}' with role '{}'",
                     current_status, user.role
                 );
-                log_exception(&conn, item.id, user.id, "status_conflict",
-                    &format!("批量 approve：{}", err), &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    &format!("批量 approve 被拦截：{}", err), &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "approve", &current_status,
+                    "status_conflict", &format!("批量 approve：{}", err), &now);
                 BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1798,10 +1684,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
         "return" => {
             if opinion.trim().is_empty() {
                 let err = "Opinion is required when returning".to_string();
-                log_exception(&conn, item.id, user.id, "opinion_required",
-                    "批量退回：意见为空", &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    "批量退回被拦截：退回意见必填", &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "return", &current_status,
+                    "opinion_required", "批量退回：意见为空", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1814,10 +1698,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                     "Only review_supervisor or review_manager can return, got '{}'",
                     user.role
                 );
-                log_exception(&conn, item.id, user.id, "role_mismatch",
-                    &format!("批量退回：{}", err), &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    "批量退回被拦截：角色不匹配", &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "return", &current_status,
+                    "role_mismatch", &format!("批量退回：{}", err), &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1828,10 +1710,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
             let allowed = ["submitted", "resubmitted", "under_review", "reviewed"];
             if !allowed.contains(&current_status.as_str()) {
                 let err = format!("Cannot return from status '{}'", current_status);
-                log_exception(&conn, item.id, user.id, "status_conflict",
-                    &format!("批量退回状态冲突：{}", err), &now);
-                log_audit_note(&conn, item.id, user.id, "exception",
-                    &format!("批量退回被拦截：{}", err), &now);
+                log_blocked_action(&conn, item.id, user.id, &user.role, "return", &current_status,
+                    "status_conflict", &format!("批量退回状态冲突：{}", err), &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
@@ -1866,8 +1746,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                     }
                 }
                 Err(e) => {
-                    log_exception(&conn, item.id, user.id, "db_error",
-                        &format!("批量退回数据库错误：{}", e), &now);
+                    log_blocked_action(&conn, item.id, user.id, &user.role, "return", &current_status,
+                        "db_error", &format!("批量退回数据库错误：{}", e), &now);
                     BatchItemResult {
                         id: item.id,
                         success: false,
@@ -1879,7 +1759,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
         }
         _ => {
             let err = format!("Unknown action '{}'", item.action);
-            log_exception(&conn, item.id, user.id, "unknown_action", &err, &now);
+            log_blocked_action(&conn, item.id, user.id, &user.role, &item.action, &current_status,
+                "unknown_action", &err, &now);
             BatchItemResult {
                 id: item.id,
                 success: false,
