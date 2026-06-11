@@ -100,10 +100,18 @@ export interface Application {
   unresolved_exception_count?: number;
   exception_summary?: string;
   allowed_actions?: ProcessAction[];
+  action_requirements?: Record<string, ActionRequirements>;
   attachments: Attachment[];
   process_records: ProcessRecord[];
   exceptions: ExceptionReason[];
   audit_notes: AuditNote[];
+}
+
+export interface ActionRequirements {
+  require_comment: boolean;
+  require_payment_evidence: boolean;
+  require_overdue_note: boolean;
+  require_reason_code: boolean;
 }
 
 export interface ApplicationListParams {
@@ -172,6 +180,7 @@ export interface BatchResultItem {
   new_version?: number;
   exception_summary?: string;
   rectify_note?: string;
+  audit_note?: string;
 }
 
 export interface BatchProcessResponse {
@@ -192,8 +201,8 @@ export interface LoginResponse {
 }
 
 export interface AllowedActionsResponse {
-  ids: number[];
-  allowed_actions: ProcessAction[];
+  common_actions: ProcessAction[];
+  actions_by_id: Record<number, ProcessAction[]>;
 }
 
 export type ReasonCode =

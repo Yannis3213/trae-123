@@ -40,8 +40,8 @@ router.get('/allowed-actions',
       return;
     }
     const user = ctx.state.user;
-    const actions = applicationService.getAllowedActionsBatch(ids, user.role);
-    success(ctx, { ids, allowed_actions: actions });
+    const actions = applicationService.getAllowedActionsBatch(ids, user);
+    success(ctx, actions);
   }
 );
 
@@ -54,7 +54,7 @@ router.get('/:id',
       error(ctx, '无效的申请单ID', 400);
       return;
     }
-    const detail = applicationService.getApplicationDetail(id);
+    const detail = applicationService.getApplicationDetail(id, ctx.state.user);
     if (!detail) {
       error(ctx, '申请单不存在', 404);
       return;

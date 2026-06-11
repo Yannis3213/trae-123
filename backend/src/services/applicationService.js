@@ -52,21 +52,164 @@ const STATUS_FLOW = {
   }
 };
 
-function _getAllowedActions(status, role) {
+function _getHandlerByRole(role) {
+  const user = db.prepare('SELECT * FROM users WHERE role = ? LIMIT 1').get(role);
+  return user || null;
+}
+
+function _checkActionAllowed(app, user, action) {
+  const flow = STATUS_FLOW[action];
+  if (!flow) return { allowed: false, reason: '未知操作类型' };
+
+  if (flow.role !== '*' && flow.role !== user.role) {
+    return { allowed: false, reason: `当前角色(${user.role})无权执行${action}操作` };
+  }
+
+  if (!flow.from.includes(app.status) && !(flow.from.includes(null) && action === 'submit')) {
+    return { allowed: false, reason: `当前状态(${app.status})不允许${action}操作` };
+  }
+
+  if (action === 'submit') {
+    if (user.role !== 'reimbursement_clerk') {
+      return { allowed: false, reason: '只有报销专员可以提交申请' };
+    }
+    if (app.status === 'returned') {
+      const attachCount = db.prepare('SELECT COUNT(*) as cnt FROM attachments WHERE application_id = ?').get(app.id).cnt;
+      if (attachCount === 0) {
+        return { allowed: false, reason: '退回重提前需至少上传一个附件凭证' };
+      }
+    }
+    return { allowed: true };
+  }
+
+  if (action === 'rectify') {
+    if (user.role !== 'reimbursement_clerk') {
+      return { allowed: false, reason: '只有报销专员可以补正重提' };
+    }
+    if (app.applicant_id && app.applicant_id !== user.id) {
+      return { allowed: false, reason: '越权操作：只能补正自己提交的申请' };
+    }
+    const attachCount = db.prepare('SELECT COUNT(*) as cnt FROM attachments WHERE application_id = ?').get(app.id).cnt;
+    if (attachCount === 0) {
+      return { allowed: false, reason: '补正重提前需至少上传一个附件凭证' };
+    }
+    return { allowed: true };
+  }
+
+  if (action === 'review') {
+    if (app.current_handler_role && app.current_handler_role !== user.role) {
+      return { allowed: false, reason: `越权操作：当前待审核处理人角色为${app.current_handler_role}` };
+    }
+    if (app.current_handler && app.current_handler !== user.id) {
+      return { allowed: false, reason: '越权操作：当前待审核处理人不是您' };
+    }
+    const attachCount = db.prepare('SELECT COUNT(*) as cnt FROM attachments WHERE application_id = ?').get(app.id).cnt;
+    if (attachCount === 0) {
+      return { allowed: false, reason: '缺证据：该申请无任何附件凭证，需退回或标记异常' };
+    }
+    const lastRecord = db.prepare(`
+      SELECT * FROM process_records
+      WHERE application_id = ? AND action IN ('submit','rectify')
+      ORDER BY id DESC LIMIT 1
+    `).get(app.id);
+    if (lastRecord && lastRecord.operator_id === user.id) {
+      return { allowed: false, reason: '状态冲突：不能审核自己提交的申请' };
+    }
+    return { allowed: true, require_comment: app.version > 1 };
+  }
+
+  if (action === 'verify') {
+    if (app.current_handler_role && app.current_handler_role !== user.role) {
+      return { allowed: false, reason: `越权操作：当前待复核处理人角色为${app.current_handler_role}` };
+    }
+    if (app.current_handler && app.current_handler !== user.id) {
+      return { allowed: false, reason: '越权操作：当前待复核处理人不是您' };
+    }
+    if (app.is_overdue) {
+      return { allowed: false, reason: '该申请已逾期，请先标记异常并说明逾期原因，不可直接推进复核' };
+    }
+    const unresolved = db.prepare(`
+      SELECT COUNT(*) as cnt FROM exception_reasons
+      WHERE application_id = ? AND resolved = 0 AND reason_code IN ('state_conflict','returned_rectify','risky_amount')
+    `).get(app.id).cnt;
+    if (unresolved > 0) {
+      return { allowed: false, reason: `存在${unresolved}条状态冲突/退回补正/高风险异常，需逐条处理` };
+    }
+    const lastReview = db.prepare(`
+      SELECT * FROM process_records
+      WHERE application_id = ? AND action = 'review'
+      ORDER BY id DESC LIMIT 1
+    `).get(app.id);
+    if (!lastReview) {
+      return { allowed: false, reason: '缺少上一处理人（费用会计）的审核结果，不可越级复核' };
+    }
+    return { allowed: true, require_comment: true };
+  }
+
+  if (action === 'confirm') {
+    if (app.current_handler_role && app.current_handler_role !== user.role) {
+      return { allowed: false, reason: `越权操作：当前待确认处理人角色为${app.current_handler_role}` };
+    }
+    if (app.current_handler && app.current_handler !== user.id) {
+      return { allowed: false, reason: '越权操作：当前待确认处理人不是您' };
+    }
+    if (app.status === 'exception') {
+      const unresolved = db.prepare('SELECT COUNT(*) as cnt FROM exception_reasons WHERE application_id = ? AND resolved = 0').get(app.id).cnt;
+      if (unresolved > 0) {
+        return { allowed: false, reason: `存在${unresolved}条未解决异常，需先完成异常处理才能付款确认` };
+      }
+    }
+    return { allowed: true, require_payment_evidence: true, require_overdue_note: !!app.is_overdue };
+  }
+
+  if (action === 'return' || action === 'reject' || action === 'exception') {
+    if (app.status === 'exception' && action === 'return') {
+      if (app.current_handler_role && app.current_handler_role !== user.role) {
+        return { allowed: false, reason: `当前异常处理人为${app.current_handler_role}角色，您(${user.role})无权操作` };
+      }
+    } else if (app.status !== 'exception' && app.status !== 'returned') {
+      if (app.current_handler_role && app.current_handler_role !== user.role) {
+        return { allowed: false, reason: `越权操作：当前处理人角色为${app.current_handler_role}，您(${user.role})无权执行${action}` };
+      }
+      if (app.current_handler && app.current_handler !== user.id) {
+        return { allowed: false, reason: `越权操作：当前处理人不是您，无权${action === 'return' ? '退回' : action === 'reject' ? '拒绝' : '标记异常'}` };
+      }
+    }
+    if (action === 'exception' && app.status === 'exception') {
+      return { allowed: false, reason: '已是异常状态，无需重复标记' };
+    }
+    if (action === 'reject' && app.status === 'rejected') {
+      return { allowed: false, reason: '已是拒绝状态' };
+    }
+    if (action === 'return' && app.status === 'returned') {
+      return { allowed: false, reason: '已是退回状态' };
+    }
+    return { allowed: true, require_comment: true, require_reason_code: action === 'exception' };
+  }
+
+  return { allowed: false, reason: '不支持的操作' };
+}
+
+function getAllowedActions(app, user) {
   const actions = [];
-  for (const [action, flow] of Object.entries(STATUS_FLOW)) {
-    if (!flow.from.includes(status) && !(flow.from.includes(null) && action === 'submit')) {
-      continue;
+  for (const action of Object.keys(STATUS_FLOW)) {
+    const check = _checkActionAllowed(app, user, action);
+    if (check.allowed) {
+      actions.push({
+        action,
+        require_comment: !!check.require_comment,
+        require_payment_evidence: !!check.require_payment_evidence,
+        require_overdue_note: !!check.require_overdue_note,
+        require_reason_code: !!check.require_reason_code
+      });
     }
-    if (flow.role !== '*' && flow.role !== role) {
-      continue;
-    }
-    actions.push(action);
   }
   return actions;
 }
 
 function getApplicationsByRole(userId, role, status = null) {
+  const user = { id: userId, role };
+
   let sql = `
     SELECT ra.*,
       u.real_name as handler_name,
@@ -166,13 +309,23 @@ function getApplicationsByRole(userId, role, status = null) {
   list.forEach(item => {
     if (item.is_overdue) statistics.overdue++;
     if (item.unresolved_exception_count > 0) statistics.has_exception++;
-    item.allowed_actions = _getAllowedActions(item.status, role);
+    const actions = getAllowedActions(item, user);
+    item.allowed_actions = actions.map(a => a.action);
+    item.action_requirements = actions.reduce((acc, a) => {
+      acc[a.action] = {
+        require_comment: a.require_comment,
+        require_payment_evidence: a.require_payment_evidence,
+        require_overdue_note: a.require_overdue_note,
+        require_reason_code: a.require_reason_code
+      };
+      return acc;
+    }, {});
   });
 
   return { list, statistics };
 }
 
-function getApplicationDetail(id) {
+function getApplicationDetail(id, user = null) {
   const application = db.prepare(`
     SELECT ra.*, u.real_name as handler_name
     FROM reimbursement_applications ra
@@ -221,6 +374,20 @@ function getApplicationDetail(id) {
     .map(e => `${e.reason_code}: ${e.reason_detail ? e.reason_detail.substring(0, 40) : ''}`)
     .join(' | ') || null;
 
+  if (user) {
+    const actions = getAllowedActions(application, user);
+    application.allowed_actions = actions.map(a => a.action);
+    application.action_requirements = actions.reduce((acc, a) => {
+      acc[a.action] = {
+        require_comment: a.require_comment,
+        require_payment_evidence: a.require_payment_evidence,
+        require_overdue_note: a.require_overdue_note,
+        require_reason_code: a.require_reason_code
+      };
+      return acc;
+    }, {});
+  }
+
   return {
     ...application,
     attachments,
@@ -233,15 +400,6 @@ function getApplicationDetail(id) {
 function processApplication(applicationId, user, payload) {
   const { action, comment = '', version, evidence_snapshot = null } = payload;
 
-  if (!STATUS_FLOW[action]) {
-    return { success: false, message: `未知操作类型: ${action}` };
-  }
-
-  const flow = STATUS_FLOW[action];
-  if (flow.role !== '*' && flow.role !== user.role) {
-    return { success: false, message: `当前角色(${user.role})无权执行${action}操作` };
-  }
-
   const app = db.prepare('SELECT * FROM reimbursement_applications WHERE id = ?').get(applicationId);
   if (!app) {
     return { success: false, message: '申请单不存在' };
@@ -251,136 +409,45 @@ function processApplication(applicationId, user, payload) {
     return { success: false, message: `版本冲突，当前版本: ${app.version}，提交版本: ${version}，请刷新后重试` };
   }
 
-  if (!flow.from.includes(app.status) && !(flow.from.includes(null) && action === 'submit')) {
-    return { success: false, message: `当前状态(${app.status})不允许${action}操作` };
+  const check = _checkActionAllowed(app, user, action);
+  if (!check.allowed) {
+    return { success: false, message: check.reason };
   }
 
-  if (action === 'return' || action === 'reject' || action === 'exception') {
-    if (app.current_handler_role && app.current_handler !== user.id && flow.role === '*') {
-      if (action === 'return' && app.status === 'exception') {
-        if (app.current_handler_role !== user.role) {
-          return { success: false, message: `当前异常处理人为${app.current_handler_role}角色，您(${user.role})无权操作` };
-        }
-      } else if (app.current_handler_role !== user.role) {
-        return { success: false, message: `越权操作：当前处理人角色为${app.current_handler_role}，您(${user.role})无权执行${action}` };
-      }
-    }
-    if (!comment || comment.trim().length < 3) {
-      const actionLabel = action === 'return' ? '退回' : action === 'reject' ? '拒绝' : '标记异常';
-      return { success: false, message: `${actionLabel}操作必须填写意见（comment不少于3字）` };
-    }
-    if (action === 'exception' && !payload.reason_code) {
-      return { success: false, message: '标记异常必须选择异常原因类型（reason_code）' };
-    }
-    if (action === 'return' && app.status === 'exception') {
-      const unresolvedOthers = db.prepare(`
-        SELECT COUNT(*) as cnt FROM exception_reasons
-        WHERE application_id = ? AND resolved = 0 AND reason_code != 'returned_rectify'
-      `).get(applicationId).cnt;
-      if (unresolvedOthers > 0) {
-        return { success: false, message: `异常状态下退回，仍有${unresolvedOthers}条非退回类异常未解决，请先处理或一并说明` };
-      }
+  if (check.require_comment && (!comment || comment.trim().length < 3)) {
+    const actionLabel = action === 'return' ? '退回' : action === 'reject' ? '拒绝' : action === 'exception' ? '标记异常' : action === 'review' ? '审核' : action === 'verify' ? '复核' : action;
+    const minLen = (action === 'review' && app.version > 1) || action === 'rectify' || (action === 'submit' && app.status === 'returned') ? 5 : 3;
+    if (!comment || comment.trim().length < minLen) {
+      return { success: false, message: `${actionLabel}操作必须填写意见（不少于${minLen}字）` };
     }
   }
 
-  if (action === 'review') {
-    if (app.current_handler_role !== user.role || (app.current_handler && app.current_handler !== user.id)) {
-      return { success: false, message: `越权操作：当前待审核处理人不是您（当前处理人角色为${app.current_handler_role}）` };
-    }
-    if (app.version > 1) {
-      const unresolved = db.prepare(`
-        SELECT COUNT(*) as cnt FROM exception_reasons
-        WHERE application_id = ? AND resolved = 0
-      `).get(applicationId).cnt;
-      if (unresolved > 0) {
-        return { success: false, message: `复核失败：存在${unresolved}条未解决的异常原因，请先处理补正或退回` };
-      }
-      const lastReturn = db.prepare(`
-        SELECT * FROM process_records
-        WHERE application_id = ? AND action = 'return'
-        ORDER BY id DESC LIMIT 1
-      `).get(applicationId);
-      if (lastReturn && (!comment || comment.trim().length < 5)) {
-        return { success: false, message: '该申请曾被退回，复核时必须说明是否已核实退回意见（comment不少于5字）' };
-      }
-    }
-    const lastRecord = db.prepare(`
-      SELECT * FROM process_records
-      WHERE application_id = ? AND action IN ('submit','rectify')
-      ORDER BY id DESC LIMIT 1
-    `).get(applicationId);
-    if (lastRecord && lastRecord.operator_id === user.id) {
-      return { success: false, message: '状态冲突：不能复核自己提交的申请' };
-    }
-    const attachCount = db.prepare('SELECT COUNT(*) as cnt FROM attachments WHERE application_id = ?').get(applicationId).cnt;
-    if (attachCount === 0) {
-      return { success: false, message: '缺证据：该申请无任何附件凭证，需退回或标记异常' };
-    }
+  if (check.require_reason_code && !payload.reason_code) {
+    return { success: false, message: '标记异常必须选择异常原因类型（reason_code）' };
   }
 
-  if (action === 'verify') {
-    if (app.current_handler_role !== user.role || (app.current_handler && app.current_handler !== user.id)) {
-      return { success: false, message: `越权操作：当前待复核处理人不是您（当前处理人角色为${app.current_handler_role}）` };
-    }
-    if (app.is_overdue) {
-      return { success: false, message: '该申请已逾期，请先标记异常并说明逾期原因，不可直接推进复核' };
-    }
-    const unresolved = db.prepare(`
-      SELECT COUNT(*) as cnt FROM exception_reasons
-      WHERE application_id = ? AND resolved = 0 AND reason_code IN ('state_conflict','returned_rectify','risky_amount')
-    `).get(applicationId).cnt;
-    if (unresolved > 0) {
-      return { success: false, message: `财务经理复核被拦截：存在${unresolved}条状态冲突/退回补正/高风险异常，需逐条处理` };
-    }
-    const lastReview = db.prepare(`
-      SELECT * FROM process_records
-      WHERE application_id = ? AND action = 'review'
-      ORDER BY id DESC LIMIT 1
-    `).get(applicationId);
-    if (!lastReview) {
-      return { success: false, message: '缺少上一处理人（费用会计）的审核结果，不可越级复核' };
-    }
-    if (!comment || comment.trim().length < 3) {
-      return { success: false, message: '财务经理必须填写复核意见（不少于3字）' };
-    }
+  if (check.require_payment_evidence && (!payload.payment_evidence || payload.payment_evidence.trim().length < 5)) {
+    return { success: false, message: '付款确认必须填写付款凭证/流水号，缺付款记录时报销申请不得放行' };
   }
 
-  if (action === 'confirm') {
-    if (app.current_handler_role !== user.role || (app.current_handler && app.current_handler !== user.id)) {
-      return { success: false, message: `越权操作：当前待确认处理人不是您（当前处理人角色为${app.current_handler_role}）` };
-    }
-    if (!payload.payment_evidence || payload.payment_evidence.trim().length < 5) {
-      return { success: false, message: '付款确认必须填写付款凭证/流水号，缺付款记录时报销申请不得放行' };
-    }
-    if (app.status === 'exception') {
-      const unresolved = db.prepare('SELECT COUNT(*) as cnt FROM exception_reasons WHERE application_id = ? AND resolved = 0').get(applicationId).cnt;
-      if (unresolved > 0) {
-        return { success: false, message: `存在${unresolved}条未解决异常，需先完成异常处理才能付款确认` };
-      }
-    }
-    if (app.is_overdue) {
-      if (!payload.overdue_note || payload.overdue_note.trim().length < 10) {
-        return { success: false, message: '逾期申请付款确认需额外填写逾期说明（overdue_note不少于10字），不可悄悄放行' };
-      }
-    }
+  if (check.require_overdue_note && (!payload.overdue_note || payload.overdue_note.trim().length < 10)) {
+    return { success: false, message: '逾期申请付款确认需额外填写逾期说明（overdue_note不少于10字），不可悄悄放行' };
   }
 
   if ((action === 'submit' && app.status === 'returned') || action === 'rectify') {
-    const attachCount = db.prepare('SELECT COUNT(*) as cnt FROM attachments WHERE application_id = ?').get(applicationId).cnt;
-    if (attachCount === 0) {
-      return { success: false, message: '退回重提前请至少上传一个附件凭证' };
-    }
     if (!comment || comment.trim().length < 5) {
       return { success: false, message: '补正重提必须填写补正说明（不少于5字），说明上次退回问题已解决' };
     }
   }
+
+  const flow = STATUS_FLOW[action];
 
   const tx = db.transaction(() => {
     let nextHandlerId = null;
     let nextHandlerRole = flow.nextHandlerRole;
 
     if (nextHandlerRole) {
-      const handler = db.prepare('SELECT * FROM users WHERE role = ? LIMIT 1').get(nextHandlerRole);
+      const handler = _getHandlerByRole(nextHandlerRole);
       if (handler) nextHandlerId = handler.id;
     }
 
@@ -509,7 +576,7 @@ function processApplication(applicationId, user, payload) {
 
   try {
     const result = tx();
-    const detail = getApplicationDetail(applicationId);
+    const detail = getApplicationDetail(applicationId, user);
     return { ...result, message: '操作成功', detail };
   } catch (err) {
     console.error('[processApplication] 事务失败:', err);
@@ -527,6 +594,22 @@ function batchProcess(items, user) {
   const results = items.map(item => {
     try {
       const result = processApplication(item.id, user, item);
+      const detail = result.detail;
+      const auditNote = `批量处理：${item.action}，结果：${result.success ? '成功' : '失败'}，原因：${result.message}`;
+      try {
+        db.prepare(`
+          INSERT INTO audit_notes (application_id, note, operator_id, created_at)
+          VALUES (?, ?, ?, ?)
+        `).run(
+          item.id,
+          auditNote,
+          user.id,
+          dayjs().format('YYYY-MM-DD HH:mm:ss')
+        );
+      } catch (e) {
+        console.error('[batchProcess] 写入audit_notes失败:', e);
+      }
+
       return {
         id: item.id,
         application_no: appNos[item.id] || '',
@@ -536,9 +619,10 @@ function batchProcess(items, user) {
         ...(result.success ? {
           to_status: result.to_status,
           new_version: result.new_version,
-          exception_summary: result.detail?.exception_summary || null,
-          rectify_note: result.detail?.exceptions?.filter(e => e.resolved && e.rectify_note).map(e => e.rectify_note).join('; ') || null
-        } : {})
+          exception_summary: detail?.exception_summary || null,
+          rectify_note: detail?.exceptions?.filter(e => e.resolved && e.rectify_note).map(e => e.rectify_note).join('; ') || null
+        } : {}),
+        audit_note: auditNote
       };
     } catch (err) {
       return {
@@ -562,14 +646,17 @@ function batchProcess(items, user) {
   };
 }
 
-function getAllowedActionsBatch(ids, role) {
-  const apps = db.prepare(`SELECT id, status, current_handler_role, current_handler FROM reimbursement_applications WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+function getAllowedActionsBatch(ids, user) {
+  const apps = db.prepare(`SELECT * FROM reimbursement_applications WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY id`).all(...ids);
 
-  if (apps.length === 0) return [];
+  if (apps.length === 0) return { common_actions: [], actions_by_id: {} };
 
   let commonActions = null;
+  const actionsById = {};
+
   for (const app of apps) {
-    const actions = _getAllowedActions(app.status, role);
+    const actions = getAllowedActions(app, user).map(a => a.action);
+    actionsById[app.id] = actions;
     if (commonActions === null) {
       commonActions = new Set(actions);
     } else {
@@ -581,7 +668,10 @@ function getAllowedActionsBatch(ids, role) {
     }
   }
 
-  return Array.from(commonActions || []);
+  return {
+    common_actions: Array.from(commonActions || []),
+    actions_by_id: actionsById
+  };
 }
 
 module.exports = {
@@ -590,5 +680,5 @@ module.exports = {
   processApplication,
   batchProcess,
   getAllowedActionsBatch,
-  _getAllowedActions
+  getAllowedActions
 };
