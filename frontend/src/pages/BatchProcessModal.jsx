@@ -21,6 +21,7 @@ export default function BatchProcessModal({ config, store, onClose }) {
   const needRectifyNotice = to_status === 'rectifying'
   const needRecheckResult = to_status === 'rechecking' || to_status === 'closed'
   const needHandler = to_status === 'assigned' || to_status === 'transferred'
+  const needAttachments = ['rectifying', 'rechecking', 'revisited', 'closed'].includes(to_status)
 
   const addAttachmentLocal = () => {
     const name = newAttachment.trim()
@@ -56,6 +57,10 @@ export default function BatchProcessModal({ config, store, onClose }) {
       showToast('请指定处理人', 'warning')
       return
     }
+    if (needAttachments && form.attachments.length === 0) {
+      showToast('请至少添加一份佐证材料', 'warning')
+      return
+    }
 
     setSubmitting(true)
     try {
@@ -63,7 +68,8 @@ export default function BatchProcessModal({ config, store, onClose }) {
         items: items.map(it => ({
           id: it.id,
           page_status: it.status,
-          version: it.version
+          version: it.version,
+          evidence: [...form.attachments]
         })),
         action,
         to_status,
@@ -72,7 +78,8 @@ export default function BatchProcessModal({ config, store, onClose }) {
         rectify_notice: form.rectify_notice,
         recheck_result: form.recheck_result,
         current_handler: form.current_handler,
-        attachments: form.attachments
+        attachments: form.attachments,
+        evidence: [...form.attachments]
       }
 
       const res = await api.batchProcess(payload)
@@ -98,6 +105,8 @@ export default function BatchProcessModal({ config, store, onClose }) {
     'missing_recheck_result': '缺复查结果',
     'missing_return_reason': '缺退回原因',
     'missing_handler': '缺处理人',
+    'missing_evidence': '缺佐证材料',
+    'not_current_handler': '非当前处理人',
     'update_conflict': '更新冲突',
     'not_found': '单据不存在'
   }
@@ -187,7 +196,10 @@ export default function BatchProcessModal({ config, store, onClose }) {
               )}
 
               <div className="form-group">
-                <label className="form-label">附件/佐证材料（可选）</label>
+                <label className="form-label">
+                  附件/佐证材料
+                  {needAttachments && <span className="required-tag" style={{marginLeft: '8px', color: '#dc2626', fontSize: '12px'}}>* 必填</span>}
+                </label>
                 {form.attachments.length > 0 && (
                   <div style={{marginBottom: '8px'}}>
                     {form.attachments.map((name, idx) => (

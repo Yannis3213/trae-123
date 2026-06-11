@@ -846,6 +846,7 @@ type BatchItemRequest struct {
 	ID         int64               `json:"id"`
 	PageStatus models.HazardStatus `json:"page_status"`
 	Version    int64               `json:"version"`
+	Evidence   []string            `json:"evidence"`
 }
 
 type BatchRequest struct {
@@ -950,8 +951,16 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 				"版本冲突", user.Name)
 			result.Message = fmt.Sprintf("版本冲突：页面 v%d / 后端 v%d", item.Version, currentVersion)
 			result.ErrorCode = "version_conflict"
-			result.FixByRole = string(user.Role)
-			result.FixByName = currentHandler
+			if result.FixByRole == "" {
+				result.FixByRole = string(user.Role)
+			}
+			if strings.TrimSpace(result.FixByName) == "" {
+				if strings.TrimSpace(currentHandler) != "" {
+					result.FixByName = currentHandler
+				} else if strings.TrimSpace(currentResponsible) != "" {
+					result.FixByName = currentResponsible
+				}
+			}
 			results = append(results, result)
 			continue
 		}
@@ -964,7 +973,13 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 			result.Message = fmt.Sprintf("状态冲突：页面「%s」/ 后端「%s」",
 				getStatusName(item.PageStatus), getStatusName(currentStatus))
 			result.ErrorCode = "status_conflict"
-			result.FixByName = currentHandler
+			if strings.TrimSpace(result.FixByName) == "" {
+				if strings.TrimSpace(currentHandler) != "" {
+					result.FixByName = currentHandler
+				} else if strings.TrimSpace(currentResponsible) != "" {
+					result.FixByName = currentResponsible
+				}
+			}
 			results = append(results, result)
 			continue
 		}
@@ -980,8 +995,18 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 			h.handleFailure(tx, item.ID, "已逾期不能直接推进", "逾期", user.Name)
 			result.Message = "已逾期，不能直接推进。请先到详情页补正或退回"
 			result.ErrorCode = "overdue_blocked"
-			result.FixByRole = string(models.RoleSupervisor)
-			result.FixByName = getRoleName(models.RoleSupervisor)
+			if result.FixByRole == "" {
+				result.FixByRole = string(models.RoleSupervisor)
+			}
+			if strings.TrimSpace(result.FixByName) == "" {
+				if strings.TrimSpace(currentHandler) != "" {
+					result.FixByName = currentHandler
+				} else if strings.TrimSpace(currentResponsible) != "" {
+					result.FixByName = currentResponsible
+				} else {
+					result.FixByName = getRoleName(models.RoleSupervisor)
+				}
+			}
 			results = append(results, result)
 			continue
 		}
@@ -1006,7 +1031,9 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 				"越权操作", user.Name)
 			result.Message = fmt.Sprintf("非当前处理人：该单据处理人为「%s」", currentHandler)
 			result.ErrorCode = "not_current_handler"
-			result.FixByName = currentHandler
+			if strings.TrimSpace(result.FixByName) == "" {
+				result.FixByName = currentHandler
+			}
 			results = append(results, result)
 			continue
 		}
@@ -1019,15 +1046,28 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 					"状态冲突", user.Name)
 				result.Message = vr.Message
 				result.ErrorCode = vr.ErrorCode
-				if vr.FixByRole != "" {
+				if vr.FixByRole != "" && result.FixByRole == "" {
 					result.FixByRole = string(vr.FixByRole)
+				}
+				if vr.FixByName != "" && strings.TrimSpace(result.FixByName) == "" {
 					result.FixByName = vr.FixByName
+				}
+				if strings.TrimSpace(result.FixByName) == "" {
+					if strings.TrimSpace(currentHandler) != "" {
+						result.FixByName = currentHandler
+					} else if strings.TrimSpace(currentResponsible) != "" {
+						result.FixByName = currentResponsible
+					}
 				}
 				results = append(results, result)
 				continue
 			}
 		}
 
+		itemEvidence := item.Evidence
+		if len(itemEvidence) == 0 {
+			itemEvidence = req.Evidence
+		}
 		paReq := &ProcessActionRequest{
 			ToStatus:       req.ToStatus,
 			Remark:         req.Remark,
@@ -1035,7 +1075,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 			RectifyNotice:  req.RectifyNotice,
 			RecheckResult:  req.RecheckResult,
 			CurrentHandler: req.CurrentHandler,
-			Evidence:       req.Evidence,
+			Evidence:       itemEvidence,
 			Attachments:    req.Attachments,
 		}
 		evr := h.validateRequiredEvidence(req.ToStatus, paReq)
@@ -1047,7 +1087,13 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 			result.ErrorCode = evr.ErrorCode
 			if evr.FixByRole != "" {
 				result.FixByRole = string(evr.FixByRole)
+			}
+			if evr.FixByName != "" {
 				result.FixByName = evr.FixByName
+			} else if strings.TrimSpace(currentHandler) != "" {
+				result.FixByName = currentHandler
+			} else if strings.TrimSpace(currentResponsible) != "" {
+				result.FixByName = currentResponsible
 			}
 			results = append(results, result)
 			continue
@@ -1095,6 +1141,13 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 				"系统错误", user.Name)
 			result.Message = "更新失败：" + err.Error()
 			result.ErrorCode = "update_error"
+			if strings.TrimSpace(result.FixByName) == "" {
+				if strings.TrimSpace(currentHandler) != "" {
+					result.FixByName = currentHandler
+				} else if strings.TrimSpace(currentResponsible) != "" {
+					result.FixByName = currentResponsible
+				}
+			}
 			results = append(results, result)
 			continue
 		}
@@ -1105,7 +1158,13 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 				"更新冲突", user.Name)
 			result.Message = "状态冲突或已被他人修改，请刷新后重试"
 			result.ErrorCode = "update_conflict"
-			result.FixByName = currentHandler
+			if strings.TrimSpace(result.FixByName) == "" {
+				if strings.TrimSpace(currentHandler) != "" {
+					result.FixByName = currentHandler
+				} else if strings.TrimSpace(currentResponsible) != "" {
+					result.FixByName = currentResponsible
+				}
+			}
 			results = append(results, result)
 			continue
 		}
@@ -1117,7 +1176,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		allEvidence := append([]string{}, req.Evidence...)
+		allEvidence := append([]string{}, itemEvidence...)
 		allEvidence = append(allEvidence, req.Attachments...)
 		h.insertProcessRecordTx(tx, item.ID, req.Action, currentStatus, newStatus, user, req.Remark, allEvidence)
 
@@ -1127,6 +1186,13 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 				"系统错误", user.Name)
 			result.Message = "提交失败"
 			result.ErrorCode = "commit_error"
+			if strings.TrimSpace(result.FixByName) == "" {
+				if strings.TrimSpace(currentHandler) != "" {
+					result.FixByName = currentHandler
+				} else if strings.TrimSpace(currentResponsible) != "" {
+					result.FixByName = currentResponsible
+				}
+			}
 			results = append(results, result)
 			continue
 		}
@@ -1451,6 +1517,25 @@ func (h *Handler) insertAbnormalReasonTx(tx *sql.Tx, hazardID int64, reason stri
 func (h *Handler) insertAbnormalReason(hazardID int64, reason string, category string, reportedBy string) {
 	db.DB.Exec(`INSERT INTO abnormal_reasons (hazard_id, reason, category, reported_by, resolved) 
 		VALUES (?, ?, ?, ?, 0)`, hazardID, reason, category, reportedBy)
+	if category != "" {
+		var abnormalTagsStr string
+		db.DB.QueryRow("SELECT abnormal_tags FROM fire_hazards WHERE id = ?", hazardID).Scan(&abnormalTagsStr)
+		tags := []string{}
+		json.Unmarshal([]byte(abnormalTagsStr), &tags)
+		hasCat := false
+		for _, t := range tags {
+			if t == category {
+				hasCat = true
+				break
+			}
+		}
+		if !hasCat {
+			tags = append(tags, category)
+			tagsJSON, _ := json.Marshal(tags)
+			db.DB.Exec("UPDATE fire_hazards SET abnormal_tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+				string(tagsJSON), hazardID)
+		}
+	}
 }
 
 func (h *Handler) handleFailure(tx *sql.Tx, hazardID int64, reason string, category string, reportedBy string) {
