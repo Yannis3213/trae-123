@@ -179,6 +179,37 @@
 
 <div class="animate-fade-in">
 	<div class="bg-white rounded-xl shadow-sm p-5 mb-5">
+		<div class="flex items-center gap-3 mb-4">
+			<span class="text-sm text-gray-500">快速筛选：</span>
+			{#if $currentRole === 'quality_engineer'}
+				<button
+					on:click={() => { filterStatus = 'pending_review'; page = 1; loadData(); }}
+					class="px-3 py-1 rounded-md text-sm {filterStatus === 'pending_review' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'} transition-colors"
+				>待审核</button>
+				<button
+					on:click={() => { filterStatus = ''; page = 1; loadData(); }}
+					class="px-3 py-1 rounded-md text-sm {filterStatus === '' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'} transition-colors"
+				>全部</button>
+			{:else if $currentRole === 'pond_admin'}
+				<button
+					on:click={() => { filterStatus = 'pending_correction'; page = 1; loadData(); }}
+					class="px-3 py-1 rounded-md text-sm {filterStatus === 'pending_correction' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'} transition-colors"
+				>待补正</button>
+				<button
+					on:click={() => { filterStatus = ''; page = 1; loadData(); }}
+					class="px-3 py-1 rounded-md text-sm {filterStatus === '' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'} transition-colors"
+				>全部</button>
+			{:else if $currentRole === 'base_director'}
+				<button
+					on:click={() => { filterStatus = 'approved'; page = 1; loadData(); }}
+					class="px-3 py-1 rounded-md text-sm {filterStatus === 'approved' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'} transition-colors"
+				>待确认</button>
+				<button
+					on:click={() => { filterStatus = ''; page = 1; loadData(); }}
+					class="px-3 py-1 rounded-md text-sm {filterStatus === '' ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'} transition-colors"
+				>全部</button>
+			{/if}
+		</div>
 		<div class="flex items-end gap-4 flex-wrap">
 			<div class="flex flex-col gap-1">
 				<label class="text-xs text-gray-500">状态</label>
@@ -188,7 +219,6 @@
 				>
 					<option value="">全部</option>
 					<option value="pending_review">待审核</option>
-					<option value="under_review">审核中</option>
 					<option value="approved">审核通过</option>
 					<option value="pending_correction">待补正</option>
 					<option value="synced">已同步</option>

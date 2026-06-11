@@ -140,7 +140,7 @@
 		const role = $currentRole;
 		const status = detail.inspection.status;
 		const actions: Action[] = [];
-		if (role === 'quality_engineer' && (status === 'pending_review' || status === 'under_review')) actions.push('approve', 'reject');
+		if (role === 'quality_engineer' && status === 'pending_review') actions.push('approve', 'reject');
 		if (role === 'pond_admin' && status === 'pending_correction') actions.push('correct');
 		if (role === 'base_director' && status === 'approved') actions.push('confirm_sync', 'reject');
 		return actions;
@@ -229,18 +229,22 @@
 			<div class="flex items-center justify-between relative">
 				<div class="absolute top-5 left-[calc(16.67%)] right-[calc(16.67%)] h-0.5 bg-gray-200"></div>
 				{#each detail.process_flow as node}
-					<div class="flex flex-col items-center relative z-10 w-1/3">
+					<div class="flex flex-col items-center relative z-10" style="width: {100 / detail.process_flow.length}%">
 						<div class="relative">
 							{#if isNodeCompleted(node)}
 								<div class="w-10 h-10 rounded-full bg-status-synced flex items-center justify-center text-white text-lg">
 									✓
 								</div>
-							{:else if isNodeCurrent(node)}
+							{:else if node.status === 'active'}
 								<div class="relative">
 									<div class="absolute inset-0 w-10 h-10 rounded-full bg-accent/30 animate-pulse-ring"></div>
 									<div class="w-10 h-10 rounded-full bg-accent flex items-center justify-center text-white text-sm font-bold relative z-10">
 										{node.step}
 									</div>
+								</div>
+							{:else if node.status === 'rejected'}
+								<div class="w-10 h-10 rounded-full bg-status-overdue flex items-center justify-center text-white text-sm font-bold">
+									✗
 								</div>
 							{:else}
 								<div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-400 text-sm font-bold">
@@ -248,7 +252,7 @@
 								</div>
 							{/if}
 						</div>
-						<p class="mt-3 text-sm font-medium {isNodeCurrent(node) ? 'text-accent' : isNodeCompleted(node) ? 'text-status-synced' : 'text-gray-400'}">
+						<p class="mt-3 text-sm font-medium {node.status === 'active' ? 'text-accent' : isNodeCompleted(node) ? 'text-status-synced' : node.status === 'rejected' ? 'text-status-overdue' : 'text-gray-400'}">
 							{node.title}
 						</p>
 						{#if node.operator}
@@ -257,7 +261,7 @@
 						{#if node.time}
 							<p class="text-xs text-gray-400 mt-0.5">{node.time}</p>
 						{/if}
-						<p class="text-xs mt-1 {node.status === 'rejected' ? 'text-status-overdue' : 'text-gray-400'}">
+						<p class="text-xs mt-1 {node.status === 'rejected' ? 'text-status-overdue font-medium' : node.status === 'active' ? 'text-accent font-medium' : 'text-gray-400'}">
 							{nodeStatusLabel(node.status)}
 						</p>
 					</div>

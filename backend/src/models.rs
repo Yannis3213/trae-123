@@ -219,6 +219,12 @@ pub fn build_process_flow(inspection: &Inspection, audit_records: &[AuditRecord]
     sorted_audits.sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
     let has_correct = sorted_audits.iter().any(|r| r.action == "correct");
+    let last_reject = sorted_audits.iter().rev().find(|r| r.action == "reject");
+    let last_correct = sorted_audits.iter().rev().find(|r| r.action == "correct");
+    let last_approve = sorted_audits.iter().rev().find(|r| r.action == "approve");
+    let last_confirm = sorted_audits.iter().rev().find(|r| r.action == "confirm_sync");
+
+    let status = inspection.status.as_str();
 
     let mut nodes: Vec<ProcessNode> = Vec::new();
 
@@ -232,73 +238,86 @@ pub fn build_process_flow(inspection: &Inspection, audit_records: &[AuditRecord]
     });
 
     if has_correct {
-        let correct_record = sorted_audits.iter().rev().find(|r| r.action == "correct");
-        let reject_record = sorted_audits.iter().rev().find(|r| r.action == "reject");
-        let correct_status = if inspection.status == "pending_correction" {
-            if reject_record.is_some() && correct_record.is_some() {
-                let reject_time = reject_record.map(|r| &r.created_at);
-                let correct_time = correct_record.map(|r| &r.created_at);
-                if reject_time > correct_time {
-                    "rejected"
-                } else {
-                    "completed"
-                }
-            } else {
-                "active"
-            }
-        } else if inspection.status == "approved" || inspection.status == "synced" {
-            "completed"
-        } else {
-            "active"
-        };
-
         nodes.push(ProcessNode {
             step: 2,
             title: "塘口管理员补正".to_string(),
             role: "pond_admin".to_string(),
-            operator: correct_record.map(|r| r.operator.clone()),
-            status: correct_status.to_string(),
-            time: correct_record.map(|r| r.created_at.clone()),
+            operator: last_correct.map(|r| r.operator.clone()),
+            status: "completed".to_string(),
+            time: last_correct.map(|r| r.created_at.clone()),
         });
     }
 
     let engineer_step = if has_correct { 3 } else { 2 };
-    let engineer_status = match inspection.status.as_str() {
-        "pending_review" => "active",
-        "under_review" => "active",
-        "pending_correction" => "rejected",
-        "approved" => "completed",
-        "synced" => "completed",
-        _ => "pending",
+    let (engineer_status, engineer_operator, engineer_time): (String, Option<String>, Option<String>) = match status {
+        "pending_review" => (
+            "active".to_string(),
+            last_approve.or(last_reject).map(|r| r.operator.clone()),
+            last_approve.or(last_reject).map(|r| r.created_at.clone()),
+        ),
+        "pending_correction" => (
+            "rejected".to_string(),
+            last_reject.map(|r| r.operator.clone()),
+            last_reject.map(|r| r.created_at.clone()),
+        ),
+        "approved" | "synced" => (
+            "completed".to_string(),
+            last_approve.map(|r| r.operator.clone()),
+            last_approve.map(|r| r.created_at.clone()),
+        ),
+        _ => (
+            "pending".to_string(),
+            None,
+            None,
+        ),
     };
-    let engineer_record = sorted_audits.iter().rev().find(|r| {
-        r.action == "approve" || r.action == "reject"
-    });
     nodes.push(ProcessNode {
         step: engineer_step,
         title: "水质工程师核验".to_string(),
         role: "quality_engineer".to_string(),
-        operator: engineer_record.map(|r| r.operator.clone()),
-        status: engineer_status.to_string(),
-        time: engineer_record.map(|r| r.created_at.clone()),
+        operator: engineer_operator,
+        status: engineer_status,
+        time: engineer_time,
     });
 
     let director_step = if has_correct { 4 } else { 3 };
-    let director_status = match inspection.status.as_str() {
-        "approved" => "active",
-        "synced" => "completed",
-        _ => "pending",
+    let (director_status, director_operator, director_time): (String, Option<String>, Option<String>) = match status {
+        "approved" => (
+            "active".to_string(),
+            None,
+            None,
+        ),
+        "synced" => (
+            "completed".to_string(),
+            last_confirm.map(|r| r.operator.clone()),
+            last_confirm.map(|r| r.created_at.clone()),
+        ),
+        "pending_correction" => {
+            let base_director_rejected = match (last_reject, last_approve) {
+                (Some(r), Some(a)) => {
+                    r.operator_role == "base_director" && r.created_at > a.created_at
+                }
+                _ => false,
+            };
+            if base_director_rejected {
+                (
+                    "rejected".to_string(),
+                    last_reject.map(|r| r.operator.clone()),
+                    last_reject.map(|r| r.created_at.clone()),
+                )
+            } else {
+                ("pending".to_string(), None, None)
+            }
+        }
+        _ => ("pending".to_string(), None, None),
     };
-    let director_record = sorted_audits.iter().rev().find(|r| {
-        r.action == "confirm_sync"
-    });
     nodes.push(ProcessNode {
         step: director_step,
         title: "基地负责人确认".to_string(),
         role: "base_director".to_string(),
-        operator: director_record.map(|r| r.operator.clone()),
-        status: director_status.to_string(),
-        time: director_record.map(|r| r.created_at.clone()),
+        operator: director_operator,
+        status: director_status,
+        time: director_time,
     });
 
     nodes

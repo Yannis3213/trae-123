@@ -29,7 +29,8 @@ pub fn validate_current_handler_role(current_handler_role: &str, action: &Action
 
     let required_role = match action {
         Action::Submit | Action::Correct => "pond_admin",
-        Action::Approve | Action::Reject => "quality_engineer",
+        Action::Approve => "quality_engineer",
+        Action::Reject => current_handler_role,
         Action::ConfirmSync => "base_director",
     };
 

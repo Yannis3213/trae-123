@@ -10,12 +10,15 @@
 	let error = '';
 	let activeFilter: OverdueType | 'all' = 'all';
 
-	const statCards = [
-		{ key: 'pending_review', label: '待审核', icon: '⏳', color: 'bg-status-pending', textColor: 'text-status-pending' },
-		{ key: 'approved', label: '审核通过', icon: '✅', color: 'bg-status-approved', textColor: 'text-status-approved' },
-		{ key: 'synced', label: '已同步', icon: '🔄', color: 'bg-status-synced', textColor: 'text-status-synced' },
-		{ key: 'overdue', label: '逾期', icon: '⚠️', color: 'bg-status-overdue', textColor: 'text-status-overdue' }
-	];
+	$: statCards = (() => {
+		const cards = [
+			{ key: 'pending_review', label: '待审核', icon: '⏳', color: 'bg-status-pending', textColor: 'text-status-pending' },
+			{ key: 'pending_correction', label: '待补正', icon: '🔄', color: 'bg-status-approaching', textColor: 'text-status-approaching' },
+			{ key: 'approved', label: '审核通过', icon: '✅', color: 'bg-status-approved', textColor: 'text-status-approved' },
+			{ key: 'overdue', label: '逾期', icon: '⚠️', color: 'bg-status-overdue', textColor: 'text-status-overdue' }
+		];
+		return cards;
+	})();
 
 	async function loadData() {
 		loading = true;
