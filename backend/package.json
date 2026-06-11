@@ -1,0 +1,24 @@
+{
+  "name": "merchant-entry-backend",
+  "version": "1.0.0",
+  "description": "Merchant Entry Backend Service",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "init-db": "node scripts/init-db.js",
+    "seed": "node scripts/seed.js"
+  },
+  "dependencies": {
+    "fastify": "4.28.1",
+    "@fastify/cors": "9.0.1",
+    "better-sqlite3": "11.3.0",
+    "bcryptjs": "2.4.3",
+    "jsonwebtoken": "9.0.2",
+    "dayjs": "1.11.13",
+    "dotenv": "16.4.5"
+  },
+  "devDependencies": {
+    "nodemon": "3.1.7"
+  }
+}

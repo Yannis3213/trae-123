@@ -1,0 +1,156 @@
+const ROLES = {
+  MERCHANT_REGISTRAR: 'merchant_registrar',
+  AUDIT_SUPERVISOR: 'audit_supervisor',
+  PLATFORM_LEADER: 'platform_leader'
+};
+
+const ROLE_LABELS = {
+  [ROLES.MERCHANT_REGISTRAR]: '商家入驻登记员',
+  [ROLES.AUDIT_SUPERVISOR]: '商家入驻审核主管',
+  [ROLES.PLATFORM_LEADER]: 'B2B批发平台复核负责人'
+};
+
+const NODES = {
+  ENTRY_REGISTRATION: 'entry_registration',
+  QUALIFICATION_AUDIT: 'qualification_audit',
+  ENTRY_FORM_REGISTRATION: 'entry_form_registration',
+  FINAL_REVIEW: 'final_review',
+  ARCHIVED: 'archived'
+};
+
+const NODE_LABELS = {
+  [NODES.ENTRY_REGISTRATION]: '商家入驻',
+  [NODES.QUALIFICATION_AUDIT]: '资质审核',
+  [NODES.ENTRY_FORM_REGISTRATION]: '商家入驻单登记',
+  [NODES.FINAL_REVIEW]: '平台复核',
+  [NODES.ARCHIVED]: '已归档'
+};
+
+const STATUSES = {
+  PENDING_SIGN: 'pending_sign',
+  ABNORMAL_RETURN: 'abnormal_return',
+  SIGN_COMPLETED: 'sign_completed',
+  PENDING_AUDIT: 'pending_audit',
+  AUDIT_PASSED: 'audit_passed',
+  AUDIT_REJECTED: 'audit_rejected',
+  PENDING_REGISTRATION: 'pending_registration',
+  REGISTRATION_COMPLETED: 'registration_completed',
+  PENDING_FINAL_REVIEW: 'pending_final_review',
+  FINAL_REVIEW_PASSED: 'final_review_passed',
+  FINAL_REVIEW_REJECTED: 'final_review_rejected',
+  SUPPLEMENT_REQUIRED: 'supplement_required',
+  ARCHIVED: 'archived'
+};
+
+const STATUS_LABELS = {
+  [STATUSES.PENDING_SIGN]: '待签收',
+  [STATUSES.ABNORMAL_RETURN]: '异常回传',
+  [STATUSES.SIGN_COMPLETED]: '签收完成',
+  [STATUSES.PENDING_AUDIT]: '待审核',
+  [STATUSES.AUDIT_PASSED]: '审核通过',
+  [STATUSES.AUDIT_REJECTED]: '审核拒绝',
+  [STATUSES.PENDING_REGISTRATION]: '待登记',
+  [STATUSES.REGISTRATION_COMPLETED]: '登记完成',
+  [STATUSES.PENDING_FINAL_REVIEW]: '待复核',
+  [STATUSES.FINAL_REVIEW_PASSED]: '复核通过',
+  [STATUSES.FINAL_REVIEW_REJECTED]: '复核拒绝',
+  [STATUSES.SUPPLEMENT_REQUIRED]: '需补正',
+  [STATUSES.ARCHIVED]: '已归档'
+};
+
+const OPERATION_TYPES = {
+  CREATE: 'create',
+  SIGN: 'sign',
+  SUBMIT_AUDIT: 'submit_audit',
+  AUDIT_PASS: 'audit_pass',
+  AUDIT_REJECT: 'audit_reject',
+  REGISTER: 'register',
+  SUBMIT_FINAL_REVIEW: 'submit_final_review',
+  FINAL_REVIEW_PASS: 'final_review_pass',
+  FINAL_REVIEW_REJECT: 'final_review_reject',
+  SUPPLEMENT: 'supplement',
+  RETURN_SUPPLEMENT: 'return_supplement',
+  ARCHIVE: 'archive',
+  ADD_AUDIT_NOTE: 'add_audit_note',
+  BATCH_PROCESS: 'batch_process',
+  BATCH_PROMOTE: 'batch_promote'
+};
+
+const EXCEPTION_TYPES = {
+  MATERIAL_MISSING: 'material_missing',
+  PERMISSION_DENIED: 'permission_denied',
+  TIMEOUT: 'timeout',
+  STATUS_CONFLICT: 'status_conflict',
+  VERSION_CONFLICT: 'version_conflict',
+  DUPLICATE_SUBMIT: 'duplicate_submit',
+  EVIDENCE_MISSING: 'evidence_missing'
+};
+
+const EXCEPTION_TYPE_LABELS = {
+  [EXCEPTION_TYPES.MATERIAL_MISSING]: '材料问题',
+  [EXCEPTION_TYPES.PERMISSION_DENIED]: '权限问题',
+  [EXCEPTION_TYPES.TIMEOUT]: '时限问题',
+  [EXCEPTION_TYPES.STATUS_CONFLICT]: '状态问题',
+  [EXCEPTION_TYPES.VERSION_CONFLICT]: '版本冲突',
+  [EXCEPTION_TYPES.DUPLICATE_SUBMIT]: '重复提交',
+  [EXCEPTION_TYPES.EVIDENCE_MISSING]: '证据缺失'
+};
+
+const EVIDENCE_TYPES = {
+  BUSINESS_LICENSE: 'business_license',
+  TAX_CERTIFICATE: 'tax_certificate',
+  ID_CARD: 'id_card',
+  BANK_CERTIFICATE: 'bank_certificate',
+  OTHER: 'other',
+  SUPPLEMENT_DOCUMENT: 'supplement_document'
+};
+
+const EVIDENCE_TYPE_LABELS = {
+  [EVIDENCE_TYPES.BUSINESS_LICENSE]: '营业执照',
+  [EVIDENCE_TYPES.TAX_CERTIFICATE]: '税务登记证',
+  [EVIDENCE_TYPES.ID_CARD]: '法人身份证',
+  [EVIDENCE_TYPES.BANK_CERTIFICATE]: '开户许可证',
+  [EVIDENCE_TYPES.OTHER]: '其他材料',
+  [EVIDENCE_TYPES.SUPPLEMENT_DOCUMENT]: '补正材料'
+};
+
+const NODE_REQUIRED_EVIDENCE = {
+  [NODES.ENTRY_REGISTRATION]: [EVIDENCE_TYPES.BUSINESS_LICENSE],
+  [NODES.QUALIFICATION_AUDIT]: [EVIDENCE_TYPES.BUSINESS_LICENSE, EVIDENCE_TYPES.TAX_CERTIFICATE, EVIDENCE_TYPES.ID_CARD],
+  [NODES.ENTRY_FORM_REGISTRATION]: [EVIDENCE_TYPES.BANK_CERTIFICATE],
+  [NODES.FINAL_REVIEW]: [EVIDENCE_TYPES.BUSINESS_LICENSE, EVIDENCE_TYPES.TAX_CERTIFICATE, EVIDENCE_TYPES.ID_CARD, EVIDENCE_TYPES.BANK_CERTIFICATE]
+};
+
+const NODE_DEADLINE_DAYS = {
+  [NODES.ENTRY_REGISTRATION]: 3,
+  [NODES.QUALIFICATION_AUDIT]: 2,
+  [NODES.ENTRY_FORM_REGISTRATION]: 2,
+  [NODES.FINAL_REVIEW]: 1
+};
+
+const NODE_HANDLER_ROLES = {
+  [NODES.ENTRY_REGISTRATION]: ROLES.MERCHANT_REGISTRAR,
+  [NODES.QUALIFICATION_AUDIT]: ROLES.AUDIT_SUPERVISOR,
+  [NODES.ENTRY_FORM_REGISTRATION]: ROLES.MERCHANT_REGISTRAR,
+  [NODES.FINAL_REVIEW]: ROLES.PLATFORM_LEADER
+};
+
+const BUSINESS_TYPES = ['日用百货', '服装鞋帽', '电子产品', '食品饮料', '家居建材', '五金交电', '办公用品', '其他'];
+
+module.exports = {
+  ROLES,
+  ROLE_LABELS,
+  NODES,
+  NODE_LABELS,
+  STATUSES,
+  STATUS_LABELS,
+  OPERATION_TYPES,
+  EXCEPTION_TYPES,
+  EXCEPTION_TYPE_LABELS,
+  EVIDENCE_TYPES,
+  EVIDENCE_TYPE_LABELS,
+  NODE_REQUIRED_EVIDENCE,
+  NODE_DEADLINE_DAYS,
+  NODE_HANDLER_ROLES,
+  BUSINESS_TYPES
+};
