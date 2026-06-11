@@ -1,0 +1,23 @@
+{
+  "name": "gym-enrollment-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev --port 3109",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview --port 3109",
+    "postinstall": "nuxt prepare"
+  },
+  "devDependencies": {
+    "@nuxt/types": "^2.17.0",
+    "nuxt": "^3.12.0",
+    "typescript": "^5.4.0",
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0"
+  },
+  "dependencies": {
+    "@vueuse/core": "^10.9.0"
+  }
+}
