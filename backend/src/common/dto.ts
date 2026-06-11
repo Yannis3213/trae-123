@@ -21,7 +21,13 @@ export class UpdateStatusDto {
   version: number;
   review_opinion?: string;
   review_result?: 'approved' | 'rejected';
-  correction_reason?: string;
+  return_reason?: string;
+}
+
+export class SubmitCorrectionDto {
+  comment?: string;
+  correction_note: string;
+  version: number;
 }
 
 export class BatchProcessDto {
@@ -31,7 +37,7 @@ export class BatchProcessDto {
   comment?: string;
   review_opinion?: string;
   review_result?: 'approved' | 'rejected';
-  correction_reason?: string;
+  return_reason?: string;
 }
 
 export class BatchOverdueAdvanceDto {

@@ -52,7 +52,7 @@ export default function BatchPage() {
   const [comment, setComment] = useState("");
   const [reviewOpinion, setReviewOpinion] = useState("");
   const [reviewResult, setReviewResult] = useState<"approved" | "rejected">("approved");
-  const [correctionReason, setCorrectionReason] = useState("");
+  const [returnReason, setReturnReason] = useState("");
   const [users, setUsers] = useState<UserOption[]>([]);
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState<BatchResult[]>([]);
@@ -148,7 +148,7 @@ export default function BatchPage() {
         body.review_opinion = reviewOpinion;
         body.review_result = reviewResult;
       }
-      if (correctionReason) body.correction_reason = correctionReason;
+      if (returnReason) body.return_reason = returnReason;
       const data = await apiFetch("/batch/process", {
         method: "POST",
         body: JSON.stringify(body),
@@ -250,12 +250,12 @@ export default function BatchPage() {
           </div>
 
           <div className="form-group" style={{ marginBottom: 0 }}>
-            <label>补正原因</label>
+            <label>退回补正要求</label>
             <input
               className="form-control"
-              value={correctionReason}
-              onChange={(e) => setCorrectionReason(e.target.value)}
-              placeholder="退回时的补正原因"
+              value={returnReason}
+              onChange={(e) => setReturnReason(e.target.value)}
+              placeholder="退回时的补正要求"
               style={{ minWidth: 160 }}
             />
           </div>

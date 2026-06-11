@@ -18,7 +18,7 @@ export class BatchService {
           version: -1,
           review_opinion: dto.review_opinion,
           review_result: dto.review_result,
-          correction_reason: dto.correction_reason,
+          return_reason: dto.return_reason,
         };
 
         const db = this.dbService.getDb();
@@ -147,27 +147,27 @@ export class BatchService {
 
       db.prepare(`
         UPDATE suitability_records SET status = ?, assigned_to = ?, current_handler = ?, version = version + 1, updated_at = datetime('now'),
-        review_opinion = ?, review_result = ?, correction_reason = ?
+        review_opinion = ?, review_result = ?, return_reason = ?
         WHERE id = ?
       `).run(newStatus, newAssignedTo, newCurrentHandler,
         dto.review_opinion || record.review_opinion,
         dto.review_result || record.review_result,
-        dto.correction_reason || record.correction_reason,
+        dto.return_reason || record.return_reason,
         id);
 
       this.dbService.recalcExpiryStatus(id);
 
       db.prepare(`
-        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, correction_reason)
+        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, return_reason)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(id, dto.action, record.status, newStatus, user.id, user.role, dto.comment || null,
         dto.review_opinion || null,
         dto.review_result || null,
-        dto.correction_reason || null);
+        dto.return_reason || null);
 
-      if (dto.action === 'return' && dto.correction_reason) {
+      if (dto.action === 'return' && dto.return_reason) {
         db.prepare('INSERT INTO exception_reasons (record_id, reason_type, description, created_by) VALUES (?, ?, ?, ?)')
-          .run(id, 'return_correction', dto.correction_reason, user.id);
+          .run(id, 'return_correction', dto.return_reason, user.id);
       }
     });
 
@@ -242,8 +242,8 @@ export class BatchService {
         if (!dto.comment) {
           throw new Error('MISSING_EVIDENCE: 退回必须填写原因');
         }
-        if (!dto.correction_reason) {
-          throw new Error('MISSING_EVIDENCE: 退回必须填写补正原因');
+        if (!dto.return_reason) {
+          throw new Error('MISSING_EVIDENCE: 退回必须填写补正要求');
         }
         if (record.status !== 'transferred' && record.status !== 'visited') {
           throw new Error('INVALID_STATUS: 只有已转办或已回访状态的记录可以退回');

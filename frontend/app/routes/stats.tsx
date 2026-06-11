@@ -29,7 +29,8 @@ interface AuditLog {
   comment?: string;
   review_opinion?: string;
   review_result?: string;
-  correction_reason?: string;
+  return_reason?: string;
+  correction_note?: string;
   created_at: string;
   details?: string;
 }
@@ -327,7 +328,8 @@ export default function StatsPage() {
                 <th>操作</th>
                 <th>备注</th>
                 <th>复核意见</th>
-                <th>补正原因</th>
+                <th>退回补正要求</th>
+                <th>补正说明</th>
               </tr>
             </thead>
             <tbody>
@@ -363,8 +365,11 @@ export default function StatsPage() {
                       </span>
                     ) : "—"}
                   </td>
-                  <td className="text-sm" style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: log.correction_reason ? "var(--warning)" : undefined }}>
-                    {log.correction_reason || "—"}
+                  <td className="text-sm" style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: log.return_reason ? "var(--warning)" : undefined }}>
+                    {log.return_reason || "—"}
+                  </td>
+                  <td className="text-sm" style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: log.correction_note ? "var(--info)" : undefined }}>
+                    {log.correction_note || "—"}
                   </td>
                 </tr>
               ))}

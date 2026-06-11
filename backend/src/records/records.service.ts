@@ -164,27 +164,27 @@ export class RecordsService {
 
       db.prepare(`
         UPDATE suitability_records SET status = ?, assigned_to = ?, current_handler = ?, version = version + 1, updated_at = datetime('now'),
-        review_opinion = ?, review_result = ?, correction_reason = ?
+        review_opinion = ?, review_result = ?, return_reason = ?
         WHERE id = ?
       `).run(newStatus, newAssignedTo, newCurrentHandler,
         dto.review_opinion || record.review_opinion,
         dto.review_result || record.review_result,
-        dto.correction_reason || record.correction_reason,
+        dto.return_reason || record.return_reason,
         id);
 
       this.dbService.recalcExpiryStatus(id);
 
       db.prepare(`
-        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, correction_reason)
+        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, return_reason)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(id, dto.action, record.status, newStatus, user.id, user.role, dto.comment || null,
         dto.review_opinion || null,
         dto.review_result || null,
-        dto.correction_reason || null);
+        dto.return_reason || null);
 
-      if (dto.action === 'return' && dto.correction_reason) {
+      if (dto.action === 'return' && dto.return_reason) {
         db.prepare('INSERT INTO exception_reasons (record_id, reason_type, description, created_by) VALUES (?, ?, ?, ?)')
-          .run(id, 'return_correction', dto.correction_reason, user.id);
+          .run(id, 'return_correction', dto.return_reason, user.id);
       }
     });
 
@@ -260,8 +260,8 @@ export class RecordsService {
         if (!dto.comment) {
           throw new BadRequestException('MISSING_EVIDENCE: 退回必须填写原因');
         }
-        if (!dto.correction_reason) {
-          throw new BadRequestException('MISSING_EVIDENCE: 退回必须填写补正原因');
+        if (!dto.return_reason) {
+          throw new BadRequestException('MISSING_EVIDENCE: 退回必须填写补正要求');
         }
         if (record.status !== 'transferred' && record.status !== 'visited') {
           throw new BadRequestException('INVALID_STATUS: 只有已转办或已回访状态的记录可以退回');
@@ -273,14 +273,17 @@ export class RecordsService {
     }
   }
 
-  submitCorrection(id: number, user: any, comment?: string, correctionReason?: string, version?: number) {
+  submitCorrection(id: number, user: any, comment: string | undefined, correctionNote: string, version: number) {
     const db = this.dbService.getDb();
     const record = db.prepare('SELECT * FROM suitability_records WHERE id = ?').get(id) as any;
     if (!record) {
       throw new BadRequestException('记录不存在');
     }
 
-    if (version !== undefined && version !== record.version) {
+    if (version === undefined || version === null) {
+      throw new BadRequestException('MISSING_EVIDENCE: 版本号必填');
+    }
+    if (version !== record.version) {
       throw new ConflictException('VERSION_CONFLICT: 记录已被其他人修改，请刷新后重试');
     }
 
@@ -288,13 +291,23 @@ export class RecordsService {
       throw new BadRequestException('INVALID_STATUS: 只有待分派或已转办状态的记录可以提交补正');
     }
 
+    if (!correctionNote || !correctionNote.trim()) {
+      throw new BadRequestException('MISSING_EVIDENCE: 补正说明必填');
+    }
+
     if (user.role === 'financial_advisor') {
       if (record.created_by !== user.id) {
-        throw new ForbiddenException('NOT_ASSIGNED_HANDLER: 您不是该记录的创建人');
+        throw new ForbiddenException('NOT_ASSIGNED_HANDLER: 您不是该记录的创建人，无权提交补正');
+      }
+      if (record.status !== 'pending_assign') {
+        throw new BadRequestException('INVALID_STATUS: 理财顾问只能补正待分派状态的记录');
       }
     } else if (user.role === 'compliance_officer') {
       if (record.current_handler !== user.id) {
-        throw new ForbiddenException('NOT_ASSIGNED_HANDLER: 您不是该记录的当前处理人');
+        throw new ForbiddenException('NOT_ASSIGNED_HANDLER: 您不是该记录的当前处理人，无权提交补正');
+      }
+      if (record.status !== 'transferred') {
+        throw new BadRequestException('INVALID_STATUS: 合规专员只能补正已转办状态的记录');
       }
     } else {
       throw new ForbiddenException('UNAUTHORIZED_ROLE: 只有理财顾问或合规专员可以提交补正');
@@ -302,14 +315,14 @@ export class RecordsService {
 
     const txn = db.transaction(() => {
       db.prepare(`
-        UPDATE suitability_records SET version = version + 1, updated_at = datetime('now'), correction_reason = ?
+        UPDATE suitability_records SET version = version + 1, updated_at = datetime('now'), correction_note = ?
         WHERE id = ?
-      `).run(correctionReason || comment || '提交修正材料', id);
+      `).run(correctionNote, id);
 
       db.prepare(`
-        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, correction_reason)
+        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, correction_note)
         VALUES (?, 'correction', ?, ?, ?, ?, ?, ?)
-      `).run(id, record.status, record.status, user.id, user.role, comment || '提交修正材料', correctionReason || null);
+      `).run(id, record.status, record.status, user.id, user.role, comment || null, correctionNote);
 
       const unresolvedCorrections = db.prepare(
         "SELECT id FROM exception_reasons WHERE record_id = ? AND reason_type = 'return_correction' AND resolved = 0"

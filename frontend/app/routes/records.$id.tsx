@@ -14,7 +14,8 @@ interface ProcessingRecord {
   comment?: string;
   review_opinion?: string;
   review_result?: string;
-  correction_reason?: string;
+  return_reason?: string;
+  correction_note?: string;
   created_at: string;
 }
 
@@ -57,7 +58,8 @@ interface RecordDetail {
   business_opening: boolean;
   review_opinion?: string;
   review_result?: string;
-  correction_reason?: string;
+  return_reason?: string;
+  correction_note?: string;
   processing_records: ProcessingRecord[];
   exception_reasons: ExceptionReason[];
   audit_notes: AuditNote[];
@@ -97,7 +99,8 @@ export default function RecordDetailPage() {
   const [uploading, setUploading] = useState(false);
   const [reviewOpinion, setReviewOpinion] = useState("");
   const [reviewResult, setReviewResult] = useState<"approved" | "rejected">("approved");
-  const [correctionReason, setCorrectionReason] = useState("");
+  const [returnReason, setReturnReason] = useState("");
+  const [correctionNote, setCorrectionNote] = useState("");
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -150,12 +153,12 @@ export default function RecordDetailPage() {
           setActionError("请填写退回原因");
           return;
         }
-        if (!correctionReason) {
-          setActionError("请填写补正原因");
+        if (!returnReason) {
+          setActionError("请填写补正要求");
           return;
         }
         body.comment = comment;
-        body.correction_reason = correctionReason;
+        body.return_reason = returnReason;
       }
       if (action === "transfer" && comment) {
         body.comment = comment;
@@ -182,7 +185,7 @@ export default function RecordDetailPage() {
       setComment("");
       setSelectedUser("");
       setReviewOpinion("");
-      setCorrectionReason("");
+      setReturnReason("");
       loadRecord();
     } catch (err: any) {
       setActionError(err.message || "操作失败");
@@ -209,8 +212,12 @@ export default function RecordDetailPage() {
   };
 
   const handleSubmitCorrection = async () => {
-    if (!correctionReason) {
+    if (!correctionNote) {
       setActionError("请填写补正说明");
+      return;
+    }
+    if (!record?.version) {
+      setActionError("版本号缺失，请刷新页面");
       return;
     }
     try {
@@ -220,13 +227,13 @@ export default function RecordDetailPage() {
         method: "PUT",
         body: JSON.stringify({
           comment: comment || "提交补正材料",
-          correction_reason: correctionReason,
-          version: record?.version,
+          correction_note: correctionNote,
+          version: record.version,
         }),
       }, token || undefined);
       setActionSuccess("补正提交成功");
       setComment("");
-      setCorrectionReason("");
+      setCorrectionNote("");
       loadRecord();
     } catch (err: any) {
       setActionError(err.message || "提交补正失败");
@@ -350,10 +357,16 @@ export default function RecordDetailPage() {
                 </div>
               </div>
             )}
-            {record.correction_reason && (
+            {record.return_reason && (
               <div>
-                <div className="text-xs text-muted">补正原因</div>
-                <div className="font-medium text-sm" style={{ color: "var(--warning)" }}>{record.correction_reason}</div>
+                <div className="text-xs text-muted">退回补正要求</div>
+                <div className="font-medium text-sm" style={{ color: "var(--warning)" }}>{record.return_reason}</div>
+              </div>
+            )}
+            {record.correction_note && (
+              <div>
+                <div className="text-xs text-muted">补正说明</div>
+                <div className="font-medium text-sm" style={{ color: "var(--info)" }}>{record.correction_note}</div>
               </div>
             )}
           </div>
@@ -419,20 +432,23 @@ export default function RecordDetailPage() {
                 分派
               </button>
             </div>
-            {record.correction_reason && (
+            {record.return_reason && (
               <div style={{ padding: "8px 12px", background: "var(--warning-light)", borderRadius: "var(--radius)", fontSize: 13 }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>退回补正要求</div>
-                <div>{record.correction_reason}</div>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  退回补正要求
+                  {record.correction_note && <span className="badge badge-green" style={{ marginLeft: 8 }}>已补正</span>}
+                </div>
+                <div>{record.return_reason}</div>
               </div>
             )}
-            {record.correction_reason && (
+            {record.return_reason && !record.correction_note && (
               <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
                 <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
                   <label>补正说明 <span style={{ color: "var(--danger)" }}>*</span></label>
                   <textarea
                     className="form-control"
-                    value={correctionReason}
-                    onChange={(e) => setCorrectionReason(e.target.value)}
+                    value={correctionNote}
+                    onChange={(e) => setCorrectionNote(e.target.value)}
                     placeholder="请说明已补充的材料和修正内容"
                     rows={2}
                   />
@@ -449,6 +465,12 @@ export default function RecordDetailPage() {
                 <button className="btn btn-secondary" onClick={handleSubmitCorrection}>
                   提交补正
                 </button>
+              </div>
+            )}
+            {record.return_reason && record.correction_note && (
+              <div style={{ padding: "8px 12px", background: "var(--info-light)", borderRadius: "var(--radius)", fontSize: 13 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>已提交的补正说明</div>
+                <div>{record.correction_note}</div>
               </div>
             )}
           </div>
@@ -476,20 +498,23 @@ export default function RecordDetailPage() {
                 转办
               </button>
             </div>
-            {record.correction_reason && (
+            {record.return_reason && (
               <div style={{ padding: "8px 12px", background: "var(--warning-light)", borderRadius: "var(--radius)", fontSize: 13 }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>退回补正要求</div>
-                <div>{record.correction_reason}</div>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  退回补正要求
+                  {record.correction_note && <span className="badge badge-green" style={{ marginLeft: 8 }}>已补正</span>}
+                </div>
+                <div>{record.return_reason}</div>
               </div>
             )}
-            {record.correction_reason && (
+            {record.return_reason && !record.correction_note && (
               <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
                 <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
                   <label>补正说明 <span style={{ color: "var(--danger)" }}>*</span></label>
                   <textarea
                     className="form-control"
-                    value={correctionReason}
-                    onChange={(e) => setCorrectionReason(e.target.value)}
+                    value={correctionNote}
+                    onChange={(e) => setCorrectionNote(e.target.value)}
                     placeholder="请说明已补充的材料和修正内容"
                     rows={2}
                   />
@@ -508,6 +533,12 @@ export default function RecordDetailPage() {
                 </button>
               </div>
             )}
+            {record.return_reason && record.correction_note && (
+              <div style={{ padding: "8px 12px", background: "var(--info-light)", borderRadius: "var(--radius)", fontSize: 13 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>已提交的补正说明</div>
+                <div>{record.correction_note}</div>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
               <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
                 <label>退回原因 <span style={{ color: "var(--danger)" }}>*</span></label>
@@ -519,12 +550,12 @@ export default function RecordDetailPage() {
                 />
               </div>
               <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
-                <label>补正原因 <span style={{ color: "var(--danger)" }}>*</span></label>
+                <label>补正要求 <span style={{ color: "var(--danger)" }}>*</span></label>
                 <input
                   className="form-control"
-                  value={correctionReason}
-                  onChange={(e) => setCorrectionReason(e.target.value)}
-                  placeholder="请输入补正原因"
+                  value={returnReason}
+                  onChange={(e) => setReturnReason(e.target.value)}
+                  placeholder="请输入补正要求"
                 />
               </div>
               <button className="btn btn-danger" onClick={() => handleStatusUpdate("return")}>
@@ -573,12 +604,12 @@ export default function RecordDetailPage() {
                 />
               </div>
               <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
-                <label>补正原因 <span style={{ color: "var(--danger)" }}>*</span></label>
+                <label>补正要求 <span style={{ color: "var(--danger)" }}>*</span></label>
                 <input
                   className="form-control"
-                  value={correctionReason}
-                  onChange={(e) => setCorrectionReason(e.target.value)}
-                  placeholder="请输入补正原因"
+                  value={returnReason}
+                  onChange={(e) => setReturnReason(e.target.value)}
+                  placeholder="请输入补正要求"
                 />
               </div>
               <button className="btn btn-danger" onClick={() => handleStatusUpdate("return")}>
@@ -628,9 +659,14 @@ export default function RecordDetailPage() {
                         </span>
                       </div>
                     )}
-                    {pr.correction_reason && (
+                    {pr.return_reason && (
                       <div style={{ marginTop: 2, padding: "4px 8px", background: "var(--warning-light)", borderRadius: 4, fontSize: 12 }}>
-                        补正原因：{pr.correction_reason}
+                        退回补正要求：{pr.return_reason}
+                      </div>
+                    )}
+                    {pr.correction_note && (
+                      <div style={{ marginTop: 2, padding: "4px 8px", background: "var(--info-light)", borderRadius: 4, fontSize: 12 }}>
+                        补正说明：{pr.correction_note}
                       </div>
                     )}
                   </div>

@@ -3,7 +3,7 @@ import { RecordsService } from './records.service';
 import { JwtGuard } from '../common/guards/jwt.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { CreateRecordDto, UpdateStatusDto, AddAuditNoteDto, AddAttachmentDto } from '../common/dto';
+import { CreateRecordDto, UpdateStatusDto, AddAuditNoteDto, AddAttachmentDto, SubmitCorrectionDto } from '../common/dto';
 
 @Controller('records')
 @UseGuards(JwtGuard, RolesGuard)
@@ -42,8 +42,14 @@ export class RecordsController {
   }
 
   @Put(':id/correction')
-  submitCorrection(@Param('id') id: string, @Req() req: any, @Body() body?: { comment?: string; correction_reason?: string; version?: number }) {
-    return this.recordsService.submitCorrection(parseInt(id, 10), req.user, body?.comment, body?.correction_reason, body?.version);
+  submitCorrection(@Param('id') id: string, @Req() req: any, @Body() body: SubmitCorrectionDto) {
+    return this.recordsService.submitCorrection(
+      parseInt(id, 10),
+      req.user,
+      body?.comment,
+      body?.correction_note,
+      body?.version,
+    );
   }
 
   @Post(':id/attachments')
