@@ -153,10 +153,10 @@ func seedOrders(tx *sql.Tx) error {
 			"赵六-人事部-退回补正-缺材料",
 			"赵六", "人事专员", "人事部",
 			models.StatusReturned, models.NodeDocs, models.RoleRegistrar,
-			regID, "张登记",
+			reg2ID, "赵登记",
 			reg2ID, "赵登记",
 			now.AddDate(0, 0, 7),
-			models.WarningNormal, false, "",
+			models.WarningNormal, false, "缺少离职证明和学历证书，退回补正",
 			2,
 		},
 		{
@@ -367,10 +367,10 @@ func seedProcessRecords(tx *sql.Tx) error {
 			"登记员发起入职办理单", ""},
 		{o4, models.NodeDocs, "submit", reg2ID, "赵登记", models.RoleRegistrar,
 			models.StatusPending, models.StatusProcessing, models.NodeDocs, models.NodeDocs,
-			"初次提交（资料不全）", ""},
+			"初次提交（资料不全，仅上传身份证）", ""},
 		{o4, models.NodeDocs, "return", audID, "李审核", models.RoleAuditor,
 			models.StatusProcessing, models.StatusReturned, models.NodeDocs, models.NodeDocs,
-			"缺少离职证明和学历证书，退回补正", "missing_document"},
+			"缺少学历证书和离职证明，退回补正", "missing_documents"},
 
 		{o5, models.NodeDocs, "create", regID, "张登记", models.RoleRegistrar,
 			"", models.StatusPending, "", models.NodeDocs,
@@ -463,9 +463,9 @@ func seedAuditNotes(tx *sql.Tx) error {
 		byName      string
 	}{
 		{o1, "待派发", "登记员张登记发起入职办理单，等待提交", regID, "张登记"},
-		{o4, "待派发", "登记员赵登记初次提交入职资料", regID, "赵登记"},
+		{o4, "待派发", "登记员赵登记初次提交入职资料", reg2ID, "赵登记"},
 		{o4, "处理中", "李审核已接手审核，发现缺离职证明和学历证书", audID, "李审核"},
-		{o4, "已关闭", "退回补正，需登记员补充学历证书和离职证明后重新提交", audID, "李审核"},
+		{o4, "处理中", "退回补正，需登记员补充学历证书和离职证明后重新提交", audID, "李审核"},
 		{o3, "处理中", "合同签署已逾期3天，已通知HRBP负责人跟进，合同逾期影响入职", audID, "李审核"},
 		{o3, "处理中", "复核负责人王复核已认领，正在处理账号开通，需注意逾期异常", revID, "王复核"},
 		{o5, "处理中", "合同审核通过，流转至账号开通节点", audID, "李审核"},

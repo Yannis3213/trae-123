@@ -121,6 +121,11 @@ func (h *orderHandler) AddAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if order.RegistrarID != user.ID {
+		writeError(w, 403, "跨登记员越权", fmt.Sprintf("该单据由 %s 登记，您无权补正附件", order.RegistrarName))
+		return
+	}
+
 	if order.Status != models.StatusPending && order.Status != models.StatusReturned {
 		writeError(w, 409, "状态冲突", fmt.Sprintf("当前状态为 %s，无法补正附件，仅待派发或退回补正状态可上传", service.StatusName(order.Status)))
 		return
@@ -165,6 +170,14 @@ func (h *orderHandler) AddAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if order.ExceptionReason != "" {
+		order.ExceptionReason = ""
+		if err := database.UpdateOrder(order); err != nil {
+			writeError(w, 500, "更新单据异常原因失败", err.Error())
+			return
+		}
+	}
+
 	record := &models.ProcessRecord{
 		OrderID:       id,
 		Node:          req.Node,
@@ -172,10 +185,19 @@ func (h *orderHandler) AddAttachment(w http.ResponseWriter, r *http.Request) {
 		OperatorID:    user.ID,
 		OperatorName:  user.Name,
 		OperatorRole:  user.Role,
-		Remark:        fmt.Sprintf("上传附件：%s", req.Name),
+		Remark:        fmt.Sprintf("上传/补正附件：%s（%s）", req.Name, service.NodeName(req.Node)),
 		ExceptionType: "",
 	}
 	_ = database.CreateProcessRecord(record)
+
+	note := &models.AuditNote{
+		OrderID:       id,
+		StatusLabel:   service.StatusName(order.Status),
+		Content:       fmt.Sprintf("登记员%s补正附件：%s（%s节点）", user.Name, req.Name, service.NodeName(req.Node)),
+		CreatedBy:     user.ID,
+		CreatedByName: user.Name,
+	}
+	_ = database.CreateAuditNote(note)
 
 	writeJSON(w, 201, map[string]interface{}{
 		"message":    "上传成功",
