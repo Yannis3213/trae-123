@@ -21,6 +21,7 @@ interface AppState {
   fetchOrders: (filters?: Record<string, string>) => Promise<void>;
   fetchOrderDetail: (id: string) => Promise<void>;
   createOrder: (data: Record<string, unknown>) => Promise<boolean>;
+  createAndSubmitOrder: (data: Record<string, unknown>) => Promise<string | null>;
   updateOrder: (id: string, data: Record<string, unknown>) => Promise<boolean>;
 
   submitOrder: (id: string, version: number) => Promise<boolean>;
@@ -83,6 +84,18 @@ export const useStore = create<AppState>((set, get) => ({
     if (res.success) return true;
     set({ error: res.message });
     return false;
+  },
+
+  createAndSubmitOrder: async (data) => {
+    set({ loading: true, error: null });
+    const res = await api.createAndSubmitOrder(data);
+    if (res.success) {
+      const orderData = res.data as { id: string };
+      set({ loading: false });
+      return orderData.id;
+    }
+    set({ error: res.message, loading: false });
+    return null;
   },
 
   updateOrder: async (id, data) => {

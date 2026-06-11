@@ -66,18 +66,52 @@ export default function RepairDetailPage() {
         <h2 className="text-lg font-semibold text-gray-900">报修单详情</h2>
       </div>
 
-      <div className="card p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <StatusBadge status={status} />
-          <span className="text-sm text-gray-500">{STATUS_LABELS[status]}</span>
+      <div className="card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <StatusBadge status={status} />
+            <span className="text-sm text-gray-500">{STATUS_LABELS[status]}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {canSubmit && <button onClick={handleSubmit} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 提交</button>}
+            {canProcess && <button onClick={handleProcess} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 受理处理</button>}
+            {canSubmitVerify && <button onClick={handleVerify} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 提交核验</button>}
+            {canReview && <button onClick={handleReview} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 复核通过</button>}
+            {canArchive && <button onClick={handleArchive} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 归档</button>}
+            {canReturn && !showReturn && <button onClick={() => setShowReturn(true)} className="btn-danger flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> 退回</button>}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {canSubmit && <button onClick={handleSubmit} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 提交</button>}
-          {canProcess && <button onClick={handleProcess} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 受理处理</button>}
-          {canSubmitVerify && <button onClick={handleVerify} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 提交核验</button>}
-          {canReview && <button onClick={handleReview} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 复核通过</button>}
-          {canArchive && <button onClick={handleArchive} disabled={loading} className="btn-primary flex items-center gap-1"><CheckCircle className="w-4 h-4" /> 归档</button>}
-          {canReturn && !showReturn && <button onClick={() => setShowReturn(true)} className="btn-danger flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> 退回</button>}
+        <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-gray-100">
+          <div className="flex items-center gap-2">
+            <Paperclip className="w-4 h-4 text-gray-400" />
+            <span className="text-sm text-gray-600">附件：</span>
+            <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+              {order.attachment_count ?? order.attachments?.length ?? 0}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-gray-400" />
+            <span className="text-sm text-gray-600">处理记录：</span>
+            <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+              {order.processing_record_count ?? order.processing_records?.length ?? 0}
+            </span>
+          </div>
+          {order.dispatch_status && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">调度状态：</span>
+              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                {order.dispatch_status}
+              </span>
+            </div>
+          )}
+          {order.confirmation_status && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">确认状态：</span>
+              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
+                {order.confirmation_status}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 

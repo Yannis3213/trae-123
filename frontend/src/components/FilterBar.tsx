@@ -8,10 +8,12 @@ interface Props {
   status: string;
   category: string;
   deadlineGroup: string;
+  enterpriseName: string;
   keyword: string;
   onStatusChange: (v: string) => void;
   onCategoryChange: (v: string) => void;
   onDeadlineGroupChange: (v: string) => void;
+  onEnterpriseNameChange: (v: string) => void;
   onKeywordChange: (v: string) => void;
   onSearch: () => void;
 }
@@ -37,8 +39,8 @@ const DEADLINE_OPTIONS = [
 ];
 
 export default function FilterBar({
-  status, category, deadlineGroup, keyword,
-  onStatusChange, onCategoryChange, onDeadlineGroupChange, onKeywordChange, onSearch,
+  status, category, deadlineGroup, enterpriseName, keyword,
+  onStatusChange, onCategoryChange, onDeadlineGroupChange, onEnterpriseNameChange, onKeywordChange, onSearch,
 }: Props) {
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -52,6 +54,13 @@ export default function FilterBar({
         <option value="">全部分类</option>
         {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
       </select>
+      <input
+        value={enterpriseName}
+        onChange={(e) => onEnterpriseNameChange(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && onSearch()}
+        placeholder="企业名称"
+        className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-primary w-40"
+      />
       <div className="flex items-center gap-1">
         {DEADLINE_OPTIONS.map((o) => (
           <button
@@ -68,7 +77,7 @@ export default function FilterBar({
           value={keyword}
           onChange={(e) => onKeywordChange(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && onSearch()}
-          placeholder="搜索工单号/标题/企业名称"
+          placeholder="搜索工单号/标题/描述"
           className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-primary"
         />
         <button onClick={onSearch} className="px-3 py-2 bg-primary text-white rounded-md text-sm hover:opacity-90">

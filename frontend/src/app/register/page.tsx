@@ -8,7 +8,7 @@ import { CATEGORIES } from '@/types';
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { currentUser, createOrder, submitOrder, loading } = useStore();
+  const { currentUser, createOrder, createAndSubmitOrder, loading } = useStore();
 
   const [form, setForm] = useState({
     title: '',
@@ -23,14 +23,21 @@ export default function RegisterPage() {
 
   const update = (key: string, value: string) => setForm((prev) => ({ ...prev, [key]: value }));
 
-  const handleSave = async (submit: boolean) => {
+  const handleSaveDraft = async () => {
     if (!currentUser) return;
     const data = { ...form, created_by: currentUser.id, created_by_role: currentUser.role };
     const ok = await createOrder(data);
     if (ok) {
-      if (submit) {
-        router.push('/');
-      }
+      alert('草稿保存成功');
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!currentUser) return;
+    const data = { ...form, created_by: currentUser.id, created_by_role: currentUser.role };
+    const orderId = await createAndSubmitOrder(data);
+    if (orderId) {
+      router.push('/');
     }
   };
 
@@ -107,10 +114,10 @@ export default function RegisterPage() {
           </div>
         </div>
         <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t">
-          <button onClick={() => handleSave(false)} disabled={loading} className="btn-outline flex items-center gap-1">
+          <button onClick={handleSaveDraft} disabled={loading} className="btn-outline flex items-center gap-1">
             <Save className="w-4 h-4" /> 保存草稿
           </button>
-          <button onClick={() => handleSave(true)} disabled={loading} className="btn-primary flex items-center gap-1">
+          <button onClick={handleSubmit} disabled={loading} className="btn-primary flex items-center gap-1">
             <Send className="w-4 h-4" /> 提交
           </button>
         </div>

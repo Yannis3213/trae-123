@@ -32,11 +32,14 @@ async def list_repair_orders(request: Request):
     created_by = request.query_params.get("created_by")
     keyword = request.query_params.get("keyword")
     deadline_group = request.query_params.get("deadline_group")
+    category = request.query_params.get("category")
+    enterprise_name = request.query_params.get("enterprise_name")
     page = int(request.query_params.get("page", "1"))
     page_size = int(request.query_params.get("page_size", "20"))
     orders, total = service.list_repair_orders(
         status=status, handler_role=handler_role, handler_id=handler_id,
         created_by=created_by, keyword=keyword, deadline_group=deadline_group,
+        category=category, enterprise_name=enterprise_name,
         page=page, page_size=page_size,
     )
     return _json_response(data=orders, total=total)
@@ -54,7 +57,11 @@ async def get_repair_order(request: Request):
 async def create_repair_order(request: Request):
     body = await request.json()
     try:
-        order = service.create_repair_order(body)
+        submit_now = body.get("submit_now", False)
+        if submit_now:
+            order = service.create_and_submit_repair_order(body)
+        else:
+            order = service.create_repair_order(body)
         return _json_response(data=order, status_code=201)
     except validator.ValidationError as e:
         return _json_response(message=e.message, code=1, status_code=400)
@@ -171,10 +178,13 @@ async def get_ledger(request: Request):
     status = request.query_params.get("status")
     handler_role = request.query_params.get("handler_role")
     keyword = request.query_params.get("keyword")
+    category = request.query_params.get("category")
+    enterprise_name = request.query_params.get("enterprise_name")
     page = int(request.query_params.get("page", "1"))
     page_size = int(request.query_params.get("page_size", "20"))
     orders, total = service.get_ledger(
         status=status, handler_role=handler_role, keyword=keyword,
+        category=category, enterprise_name=enterprise_name,
         page=page, page_size=page_size,
     )
     return _json_response(data=orders, total=total)

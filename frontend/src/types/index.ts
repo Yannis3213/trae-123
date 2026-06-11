@@ -92,6 +92,8 @@ export interface RepairOrder {
   exception_reasons?: ExceptionReason[];
   dispatch_status?: string;
   confirmation_status?: string;
+  attachment_count?: number;
+  processing_record_count?: number;
 }
 
 export interface BatchResult {

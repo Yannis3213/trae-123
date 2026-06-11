@@ -2,22 +2,17 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Filter } from 'lucide-react';
 import { useStore } from '@/store';
-import { CATEGORIES, STATUS_LABELS } from '@/types';
 import type { LedgerItem, Status } from '@/types';
 import StatusBadge from '@/components/StatusBadge';
-
-const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: '全部状态' },
-  ...Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label })),
-];
+import FilterBar from '@/components/FilterBar';
 
 export default function LedgerPage() {
   const router = useRouter();
   const { ledgerItems, ledgerTotal, loading, fetchLedger } = useStore();
   const [category, setCategory] = useState('');
   const [status, setStatus] = useState('');
+  const [deadlineGroup, setDeadlineGroup] = useState('');
   const [enterpriseName, setEnterpriseName] = useState('');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
@@ -27,10 +22,11 @@ export default function LedgerPage() {
     const params: Record<string, string> = { page: String(page), page_size: String(pageSize) };
     if (category) params.category = category;
     if (status) params.status = status;
+    if (deadlineGroup) params.deadline_group = deadlineGroup;
     if (enterpriseName) params.enterprise_name = enterpriseName;
     if (keyword) params.keyword = keyword;
     fetchLedger(params);
-  }, [category, status, enterpriseName, keyword, page, fetchLedger]);
+  }, [category, status, deadlineGroup, enterpriseName, keyword, page, fetchLedger]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -41,34 +37,15 @@ export default function LedgerPage() {
       <h2 className="text-lg font-semibold text-gray-900">报修单台账</h2>
 
       <div className="card p-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <Filter className="w-4 h-4 text-gray-400" />
-            <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-primary">
-              {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </div>
-          <select value={category} onChange={(e) => { setCategory(e.target.value); setPage(1); }} className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-primary">
-            <option value="">全部分类</option>
-            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <input
-            value={enterpriseName}
-            onChange={(e) => setEnterpriseName(e.target.value)}
-            placeholder="企业名称"
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-primary w-40"
-          />
-          <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
-            <input
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (setPage(1), load())}
-              placeholder="搜索工单号/标题"
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-primary"
-            />
-            <button onClick={() => { setPage(1); load(); }} className="px-3 py-2 bg-primary text-white rounded-md text-sm hover:opacity-90"><Search className="w-4 h-4" /></button>
-          </div>
-        </div>
+        <FilterBar
+          status={status} category={category} deadlineGroup={deadlineGroup} enterpriseName={enterpriseName} keyword={keyword}
+          onStatusChange={(v) => { setStatus(v); setPage(1); }}
+          onCategoryChange={(v) => { setCategory(v); setPage(1); }}
+          onDeadlineGroupChange={(v) => { setDeadlineGroup(v); setPage(1); }}
+          onEnterpriseNameChange={(v) => { setEnterpriseName(v); setPage(1); }}
+          onKeywordChange={setKeyword}
+          onSearch={() => { setPage(1); load(); }}
+        />
       </div>
 
       <div className="card overflow-x-auto">

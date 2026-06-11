@@ -18,6 +18,7 @@ export default function HomePage() {
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
   const [deadlineGroup, setDeadlineGroup] = useState('');
+  const [enterpriseName, setEnterpriseName] = useState('');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -32,9 +33,10 @@ export default function HomePage() {
     if (status) params.status = status;
     if (category) params.category = category;
     if (deadlineGroup) params.deadline_group = deadlineGroup;
+    if (enterpriseName) params.enterprise_name = enterpriseName;
     if (keyword) params.keyword = keyword;
     fetchOrders(params);
-  }, [status, category, deadlineGroup, keyword, page, fetchOrders]);
+  }, [status, category, deadlineGroup, enterpriseName, keyword, page, fetchOrders]);
 
   useEffect(() => { load(); fetchWarnings(); }, [load, fetchWarnings]);
 
@@ -80,6 +82,14 @@ export default function HomePage() {
     { key: 'enterprise_name', title: '企业名称', width: '140px' },
     { key: 'status', title: '状态', width: '110px', render: (row: RepairOrder) => <StatusBadge status={row.status} /> },
     { key: 'current_handler_name', title: '当前处理人', width: '120px' },
+    { key: 'attachment_count', title: '附件', width: '70px', render: (row: RepairOrder) => {
+      const count = row.attachment_count ?? row.attachments?.length ?? 0;
+      return count > 0 ? <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">{count}</span> : <span className="text-gray-400 text-sm">0</span>;
+    }},
+    { key: 'processing_record_count', title: '记录', width: '70px', render: (row: RepairOrder) => {
+      const count = row.processing_record_count ?? row.processing_records?.length ?? 0;
+      return count > 0 ? <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">{count}</span> : <span className="text-gray-400 text-sm">0</span>;
+    }},
     { key: 'deadline', title: '截止日期', width: '120px', render: (row: RepairOrder) => (
       <span className={`text-sm ${getDeadlineColor(row.deadline)}`}>{row.deadline?.slice(0, 10)}</span>
     )},
@@ -95,17 +105,18 @@ export default function HomePage() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-3 gap-4">
-        <WarningCard type="normal" count={warnings.normal.length} onClick={() => setDeadlineGroup('normal')} active={deadlineGroup === 'normal'} />
-        <WarningCard type="approaching" count={warnings.approaching.length} onClick={() => setDeadlineGroup('approaching')} active={deadlineGroup === 'approaching'} />
-        <WarningCard type="overdue" count={warnings.overdue.length} onClick={() => setDeadlineGroup('overdue')} active={deadlineGroup === 'overdue'} />
+        <WarningCard type="normal" count={warnings.normal.length} orders={warnings.normal} onClick={() => setDeadlineGroup('normal')} active={deadlineGroup === 'normal'} />
+        <WarningCard type="approaching" count={warnings.approaching.length} orders={warnings.approaching} onClick={() => setDeadlineGroup('approaching')} active={deadlineGroup === 'approaching'} />
+        <WarningCard type="overdue" count={warnings.overdue.length} orders={warnings.overdue} onClick={() => setDeadlineGroup('overdue')} active={deadlineGroup === 'overdue'} />
       </div>
 
       <div className="card p-4">
         <FilterBar
-          status={status} category={category} deadlineGroup={deadlineGroup} keyword={keyword}
+          status={status} category={category} deadlineGroup={deadlineGroup} enterpriseName={enterpriseName} keyword={keyword}
           onStatusChange={(v) => { setStatus(v); setPage(1); }}
           onCategoryChange={(v) => { setCategory(v); setPage(1); }}
           onDeadlineGroupChange={(v) => { setDeadlineGroup(v); setPage(1); }}
+          onEnterpriseNameChange={(v) => { setEnterpriseName(v); setPage(1); }}
           onKeywordChange={setKeyword}
           onSearch={() => { setPage(1); load(); }}
         />

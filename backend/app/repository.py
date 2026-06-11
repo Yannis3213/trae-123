@@ -44,6 +44,7 @@ def create_user(user_id, name, role):
 
 def get_repair_orders(status=None, handler_role=None, handler_id=None,
                       created_by=None, keyword=None, deadline_group=None,
+                      category=None, enterprise_name=None,
                       offset=0, limit=20):
     conn = get_connection()
     try:
@@ -61,9 +62,15 @@ def get_repair_orders(status=None, handler_role=None, handler_id=None,
         if created_by:
             conditions.append("created_by = ?")
             params.append(created_by)
+        if category:
+            conditions.append("category = ?")
+            params.append(category)
+        if enterprise_name:
+            conditions.append("enterprise_name LIKE ?")
+            params.append(f"%{enterprise_name}%")
         if keyword:
-            conditions.append("(title LIKE ? OR order_no LIKE ? OR enterprise_name LIKE ?)")
-            params.extend([f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"])
+            conditions.append("(title LIKE ? OR description LIKE ? OR order_no LIKE ? OR enterprise_name LIKE ?)")
+            params.extend([f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"])
         if deadline_group == "normal":
             conditions.append("datetime(deadline) > datetime('now', '+3 days')")
         elif deadline_group == "approaching":
@@ -146,6 +153,15 @@ def get_processing_records(repair_id):
     try:
         cursor = conn.execute("SELECT * FROM processing_records WHERE repair_id = ? ORDER BY created_at", (repair_id,))
         return _rows_to_dicts(cursor.fetchall())
+    finally:
+        conn.close()
+
+
+def count_processing_records(repair_id):
+    conn = get_connection()
+    try:
+        cursor = conn.execute("SELECT COUNT(*) as cnt FROM processing_records WHERE repair_id = ?", (repair_id,))
+        return cursor.fetchone()["cnt"]
     finally:
         conn.close()
 

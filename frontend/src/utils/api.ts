@@ -51,6 +51,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  createAndSubmitOrder: (data: Record<string, unknown>) =>
+    request<unknown>('/api/repairs', {
+      method: 'POST',
+      body: JSON.stringify({ ...data, submit_now: true }),
+    }),
+
   updateOrder: (id: string, data: Record<string, unknown>) =>
     request<unknown>(`/api/repairs/${id}`, {
       method: 'PUT',

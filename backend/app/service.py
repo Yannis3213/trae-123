@@ -47,6 +47,40 @@ def _get_user_info(user_id):
     return user
 
 
+def _log_exception(repair_id, exception_type, reason, detail):
+    exception_data = {
+        "id": _generate_id(),
+        "repair_id": repair_id,
+        "exception_type": exception_type,
+        "reason": reason,
+        "detail": detail,
+        "resolved": 0,
+    }
+    repository.create_exception_reason(exception_data)
+
+
+def _classify_exception_type(message):
+    if "权限" in message or "无权" in message:
+        return "permission_denied"
+    if "状态" in message and ("不能" in message or "要求" in message):
+        return "status_conflict"
+    if "版本冲突" in message:
+        return "version_conflict"
+    if "缺少佐证" in message or "附件" in message:
+        return "missing_evidence"
+    if "缺少" in message or "不能为空" in message:
+        return "missing_argument"
+    return "other"
+
+
+def _enrich_order_with_computed(order):
+    order["attachment_count"] = repository.count_attachments(order["id"])
+    order["processing_record_count"] = repository.count_processing_records(order["id"])
+    order["dispatch_status"] = DISPATCH_STATUS_MAP.get(order["status"], "未派单")
+    order["confirmation_status"] = CONFIRMATION_STATUS_MAP.get(order["status"], "未确认")
+    return order
+
+
 # ── Users ──
 
 def get_all_users():
@@ -61,15 +95,18 @@ def get_user_by_id(user_id):
 
 def list_repair_orders(status=None, handler_role=None, handler_id=None,
                        created_by=None, keyword=None, deadline_group=None,
+                       category=None, enterprise_name=None,
                        page=1, page_size=20):
     offset = (page - 1) * page_size
     orders, total = repository.get_repair_orders(
         status=status, handler_role=handler_role, handler_id=handler_id,
         created_by=created_by, keyword=keyword, deadline_group=deadline_group,
+        category=category, enterprise_name=enterprise_name,
         offset=offset, limit=page_size,
     )
     for order in orders:
         order["attachments"] = repository.get_attachments(order["id"])
+        _enrich_order_with_computed(order)
     return orders, total
 
 
@@ -113,215 +150,288 @@ def create_repair_order(data):
 
 
 def update_repair_order(order_id, data):
-    order = repository.get_repair_order_by_id(order_id)
-    if not order:
-        raise validator.ValidationError("工单不存在")
-    validator.validate_update(order, data.get("updated_by", ""), data.get("updated_by_role", ""))
-    update_data = {}
-    for field in REPAIR_ORDER_UPDATE_FIELDS:
-        if field in data:
-            update_data[field] = data[field]
-    update_data["version"] = order["version"] + 1
-    repository.update_repair_order(order_id, update_data)
-    return repository.get_repair_order_by_id(order_id)
+    updated_by = data.get("updated_by", "")
+    action = "update"
+    try:
+        order = repository.get_repair_order_by_id(order_id)
+        if not order:
+            raise validator.ValidationError("工单不存在")
+        user = _get_user_info(updated_by)
+        user_role = user["role"]
+        validator.validate_update(order, updated_by, user_role)
+        update_data = {}
+        for field in REPAIR_ORDER_UPDATE_FIELDS:
+            if field in data:
+                update_data[field] = data[field]
+        update_data["version"] = order["version"] + 1
+        repository.update_repair_order(order_id, update_data)
+        return repository.get_repair_order_by_id(order_id)
+    except validator.ValidationError as e:
+        exc_type = _classify_exception_type(e.message)
+        detail = f"action={action}, handler_id={updated_by}"
+        _log_exception(order_id, exc_type, e.message, detail)
+        raise
+
+
+def create_and_submit_repair_order(data):
+    order = create_repair_order(data)
+    submit_data = {
+        "handler_id": data["created_by"],
+        "version": order["version"],
+    }
+    return submit_repair_order(order["id"], submit_data)
 
 
 # ── Status Transitions ──
 
 def submit_repair_order(order_id, data):
-    order = repository.get_repair_order_by_id(order_id)
-    if not order:
-        raise validator.ValidationError("工单不存在")
-    handler_role = data.get("handler_role", "enterprise_service")
-    validator.validate_action_permission(handler_role, "submit")
-    validator.validate_status_transition("submit", order["status"])
-    validator.validate_version(order["version"], data.get("version", 0))
-    user = _get_user_info(data.get("handler_id", order["created_by"]))
-    update_data = {
-        "status": "pending_process",
-        "current_handler_role": "engineering_supervisor",
-        "current_handler_id": "",
-        "current_handler_name": "",
-        "version": order["version"] + 1,
-        "last_handler_id": data.get("handler_id", order["created_by"]),
-        "last_handler_result": "submit",
-    }
-    repository.update_repair_order(order_id, update_data)
-    _create_record(order_id, "submit", data.get("handler_id", order["created_by"]),
-                   user["name"], handler_role, "pending_submit", "pending_process", "提交报修单")
-    return repository.get_repair_order_by_id(order_id)
+    handler_id = data.get("handler_id", "")
+    action = "submit"
+    try:
+        order = repository.get_repair_order_by_id(order_id)
+        if not order:
+            raise validator.ValidationError("工单不存在")
+        user = _get_user_info(handler_id or order["created_by"])
+        handler_role = user["role"]
+        validator.validate_action_permission(handler_role, action)
+        validator.validate_status_transition(action, order["status"])
+        validator.validate_version(order["version"], data.get("version", 0))
+        actual_handler_id = handler_id or order["created_by"]
+        update_data = {
+            "status": "pending_process",
+            "current_handler_role": "engineering_supervisor",
+            "current_handler_id": "",
+            "current_handler_name": "",
+            "version": order["version"] + 1,
+            "last_handler_id": actual_handler_id,
+            "last_handler_result": "submit",
+        }
+        repository.update_repair_order(order_id, update_data)
+        _create_record(order_id, action, actual_handler_id,
+                       user["name"], handler_role, "pending_submit", "pending_process", "提交报修单")
+        return repository.get_repair_order_by_id(order_id)
+    except validator.ValidationError as e:
+        exc_type = _classify_exception_type(e.message)
+        detail = f"action={action}, handler_id={handler_id}"
+        _log_exception(order_id, exc_type, e.message, detail)
+        raise
 
 
 def process_repair_order(order_id, data):
-    order = repository.get_repair_order_by_id(order_id)
-    if not order:
-        raise validator.ValidationError("工单不存在")
-    handler_role = data.get("handler_role", "engineering_supervisor")
     handler_id = data.get("handler_id", "")
-    validator.validate_action_permission(handler_role, "process")
-    validator.validate_status_transition("process", order["status"])
-    validator.validate_handler("process", order, handler_id)
-    validator.validate_version(order["version"], data.get("version", 0))
-    user = _get_user_info(handler_id)
-    update_data = {
-        "status": "processing",
-        "current_handler_role": "engineering_supervisor",
-        "current_handler_id": handler_id,
-        "current_handler_name": user["name"],
-        "version": order["version"] + 1,
-        "last_handler_id": handler_id,
-        "last_handler_result": "process",
-    }
-    repository.update_repair_order(order_id, update_data)
-    _create_record(order_id, "process", handler_id, user["name"], handler_role,
-                   "pending_process", "processing", data.get("opinion", "受理工单"))
-    return repository.get_repair_order_by_id(order_id)
+    action = "process"
+    try:
+        order = repository.get_repair_order_by_id(order_id)
+        if not order:
+            raise validator.ValidationError("工单不存在")
+        user = _get_user_info(handler_id)
+        handler_role = user["role"]
+        validator.validate_action_permission(handler_role, action)
+        validator.validate_status_transition(action, order["status"])
+        validator.validate_handler(action, order, handler_id)
+        validator.validate_version(order["version"], data.get("version", 0))
+        update_data = {
+            "status": "processing",
+            "current_handler_role": "engineering_supervisor",
+            "current_handler_id": handler_id,
+            "current_handler_name": user["name"],
+            "version": order["version"] + 1,
+            "last_handler_id": handler_id,
+            "last_handler_result": "process",
+        }
+        repository.update_repair_order(order_id, update_data)
+        _create_record(order_id, action, handler_id, user["name"], handler_role,
+                       "pending_process", "processing", data.get("opinion", "受理工单"))
+        return repository.get_repair_order_by_id(order_id)
+    except validator.ValidationError as e:
+        exc_type = _classify_exception_type(e.message)
+        detail = f"action={action}, handler_id={handler_id}"
+        _log_exception(order_id, exc_type, e.message, detail)
+        raise
 
 
 def verify_repair_order(order_id, data):
-    order = repository.get_repair_order_by_id(order_id)
-    if not order:
-        raise validator.ValidationError("工单不存在")
-    handler_role = data.get("handler_role", "engineering_supervisor")
     handler_id = data.get("handler_id", "")
-    validator.validate_action_permission(handler_role, "verify")
-    validator.validate_status_transition("verify", order["status"])
-    validator.validate_handler("verify", order, handler_id)
-    validator.validate_version(order["version"], data.get("version", 0))
-    attachments = repository.get_attachments(order_id)
-    validator.validate_evidence(attachments)
-    user = _get_user_info(handler_id)
-    update_data = {
-        "status": "pending_review",
-        "current_handler_role": "park_manager",
-        "current_handler_id": "",
-        "current_handler_name": "",
-        "version": order["version"] + 1,
-        "last_handler_id": handler_id,
-        "last_handler_result": "verify",
-    }
-    repository.update_repair_order(order_id, update_data)
-    _create_record(order_id, "verify", handler_id, user["name"], handler_role,
-                   "processing", "pending_review", data.get("opinion", "核验通过"))
-    return repository.get_repair_order_by_id(order_id)
+    action = "verify"
+    try:
+        order = repository.get_repair_order_by_id(order_id)
+        if not order:
+            raise validator.ValidationError("工单不存在")
+        user = _get_user_info(handler_id)
+        handler_role = user["role"]
+        validator.validate_action_permission(handler_role, action)
+        validator.validate_status_transition(action, order["status"])
+        validator.validate_handler(action, order, handler_id)
+        validator.validate_version(order["version"], data.get("version", 0))
+        attachments = repository.get_attachments(order_id)
+        validator.validate_evidence(attachments)
+        update_data = {
+            "status": "pending_review",
+            "current_handler_role": "park_manager",
+            "current_handler_id": "",
+            "current_handler_name": "",
+            "version": order["version"] + 1,
+            "last_handler_id": handler_id,
+            "last_handler_result": "verify",
+        }
+        repository.update_repair_order(order_id, update_data)
+        _create_record(order_id, action, handler_id, user["name"], handler_role,
+                       "processing", "pending_review", data.get("opinion", "核验通过"))
+        return repository.get_repair_order_by_id(order_id)
+    except validator.ValidationError as e:
+        exc_type = _classify_exception_type(e.message)
+        detail = f"action={action}, handler_id={handler_id}"
+        _log_exception(order_id, exc_type, e.message, detail)
+        raise
 
 
 def review_repair_order(order_id, data):
-    order = repository.get_repair_order_by_id(order_id)
-    if not order:
-        raise validator.ValidationError("工单不存在")
-    handler_role = data.get("handler_role", "park_manager")
     handler_id = data.get("handler_id", "")
-    validator.validate_action_permission(handler_role, "review")
-    validator.validate_status_transition("review", order["status"])
-    validator.validate_handler("review", order, handler_id)
-    validator.validate_version(order["version"], data.get("version", 0))
-    attachments = repository.get_attachments(order_id)
-    validator.validate_evidence(attachments)
-    user = _get_user_info(handler_id)
-    update_data = {
-        "status": "pending_archive",
-        "current_handler_role": "park_manager",
-        "current_handler_id": handler_id,
-        "current_handler_name": user["name"],
-        "version": order["version"] + 1,
-        "last_handler_id": handler_id,
-        "last_handler_result": "review",
-    }
-    repository.update_repair_order(order_id, update_data)
-    _create_record(order_id, "review", handler_id, user["name"], handler_role,
-                   "pending_review", "pending_archive", data.get("opinion", "复核通过"))
-    return repository.get_repair_order_by_id(order_id)
+    action = "review"
+    try:
+        order = repository.get_repair_order_by_id(order_id)
+        if not order:
+            raise validator.ValidationError("工单不存在")
+        user = _get_user_info(handler_id)
+        handler_role = user["role"]
+        validator.validate_action_permission(handler_role, action)
+        validator.validate_status_transition(action, order["status"])
+        validator.validate_handler(action, order, handler_id)
+        validator.validate_version(order["version"], data.get("version", 0))
+        attachments = repository.get_attachments(order_id)
+        validator.validate_evidence(attachments)
+        update_data = {
+            "status": "pending_archive",
+            "current_handler_role": "park_manager",
+            "current_handler_id": handler_id,
+            "current_handler_name": user["name"],
+            "version": order["version"] + 1,
+            "last_handler_id": handler_id,
+            "last_handler_result": "review",
+        }
+        repository.update_repair_order(order_id, update_data)
+        _create_record(order_id, action, handler_id, user["name"], handler_role,
+                       "pending_review", "pending_archive", data.get("opinion", "复核通过"))
+        return repository.get_repair_order_by_id(order_id)
+    except validator.ValidationError as e:
+        exc_type = _classify_exception_type(e.message)
+        detail = f"action={action}, handler_id={handler_id}"
+        _log_exception(order_id, exc_type, e.message, detail)
+        raise
 
 
 def archive_repair_order(order_id, data):
-    order = repository.get_repair_order_by_id(order_id)
-    if not order:
-        raise validator.ValidationError("工单不存在")
-    handler_role = data.get("handler_role", "park_manager")
     handler_id = data.get("handler_id", "")
-    validator.validate_action_permission(handler_role, "archive")
-    validator.validate_status_transition("archive", order["status"])
-    validator.validate_handler("archive", order, handler_id)
-    validator.validate_version(order["version"], data.get("version", 0))
-    attachments = repository.get_attachments(order_id)
-    validator.validate_evidence(attachments)
-    user = _get_user_info(handler_id)
-    update_data = {
-        "status": "archived",
-        "current_handler_role": "park_manager",
-        "current_handler_id": handler_id,
-        "current_handler_name": user["name"],
-        "version": order["version"] + 1,
-        "last_handler_id": handler_id,
-        "last_handler_result": "archive",
-    }
-    repository.update_repair_order(order_id, update_data)
-    _create_record(order_id, "archive", handler_id, user["name"], handler_role,
-                   "pending_archive", "archived", data.get("opinion", "归档"))
-    return repository.get_repair_order_by_id(order_id)
+    action = "archive"
+    try:
+        order = repository.get_repair_order_by_id(order_id)
+        if not order:
+            raise validator.ValidationError("工单不存在")
+        user = _get_user_info(handler_id)
+        handler_role = user["role"]
+        validator.validate_action_permission(handler_role, action)
+        validator.validate_status_transition(action, order["status"])
+        validator.validate_handler(action, order, handler_id)
+        validator.validate_version(order["version"], data.get("version", 0))
+        attachments = repository.get_attachments(order_id)
+        validator.validate_evidence(attachments)
+        update_data = {
+            "status": "archived",
+            "current_handler_role": "park_manager",
+            "current_handler_id": handler_id,
+            "current_handler_name": user["name"],
+            "version": order["version"] + 1,
+            "last_handler_id": handler_id,
+            "last_handler_result": "archive",
+        }
+        repository.update_repair_order(order_id, update_data)
+        _create_record(order_id, action, handler_id, user["name"], handler_role,
+                       "pending_archive", "archived", data.get("opinion", "归档"))
+        return repository.get_repair_order_by_id(order_id)
+    except validator.ValidationError as e:
+        exc_type = _classify_exception_type(e.message)
+        detail = f"action={action}, handler_id={handler_id}"
+        _log_exception(order_id, exc_type, e.message, detail)
+        raise
 
 
 def return_repair_order(order_id, data):
-    order = repository.get_repair_order_by_id(order_id)
-    if not order:
-        raise validator.ValidationError("工单不存在")
-    handler_role = data.get("handler_role", "")
     handler_id = data.get("handler_id", "")
-    return_reason = data.get("return_reason", "")
-    return_opinion = data.get("return_opinion", "")
-    validator.validate_action_permission(handler_role, "return")
-    validator.validate_status_transition("return", order["status"])
-    validator.validate_version(order["version"], data.get("version", 0))
-    validator.validate_return_reason(return_reason, return_opinion)
-    user = _get_user_info(handler_id)
-    creator = _get_user_info(order["created_by"])
-    new_handler_role = "enterprise_service"
-    new_handler_id = order["created_by"]
-    new_handler_name = creator["name"]
-    update_data = {
-        "status": "returned",
-        "current_handler_role": new_handler_role,
-        "current_handler_id": new_handler_id,
-        "current_handler_name": new_handler_name,
-        "version": order["version"] + 1,
-        "return_reason": return_reason,
-        "return_opinion": return_opinion,
-        "last_handler_id": handler_id,
-        "last_handler_result": "return",
-    }
-    repository.update_repair_order(order_id, update_data)
-    _create_record(order_id, "return", handler_id, user["name"], handler_role,
-                   order["status"], "returned", return_opinion)
-    return repository.get_repair_order_by_id(order_id)
+    action = "return"
+    try:
+        order = repository.get_repair_order_by_id(order_id)
+        if not order:
+            raise validator.ValidationError("工单不存在")
+        user = _get_user_info(handler_id)
+        handler_role = user["role"]
+        return_reason = data.get("return_reason", "")
+        return_opinion = data.get("return_opinion", "")
+        validator.validate_action_permission(handler_role, action)
+        validator.validate_status_transition(action, order["status"])
+        validator.validate_version(order["version"], data.get("version", 0))
+        validator.validate_return_reason(return_reason, return_opinion)
+        creator = _get_user_info(order["created_by"])
+        new_handler_role = "enterprise_service"
+        new_handler_id = order["created_by"]
+        new_handler_name = creator["name"]
+        from_status = order["status"]
+        update_data = {
+            "status": "returned",
+            "current_handler_role": new_handler_role,
+            "current_handler_id": new_handler_id,
+            "current_handler_name": new_handler_name,
+            "version": order["version"] + 1,
+            "return_reason": return_reason,
+            "return_opinion": return_opinion,
+            "last_handler_id": handler_id,
+            "last_handler_result": "return",
+        }
+        repository.update_repair_order(order_id, update_data)
+        _create_record(order_id, action, handler_id, user["name"], handler_role,
+                       from_status, "returned", return_opinion)
+        return repository.get_repair_order_by_id(order_id)
+    except validator.ValidationError as e:
+        exc_type = _classify_exception_type(e.message)
+        detail = f"action={action}, handler_id={handler_id}"
+        _log_exception(order_id, exc_type, e.message, detail)
+        raise
 
 
 def resubmit_repair_order(order_id, data):
-    order = repository.get_repair_order_by_id(order_id)
-    if not order:
-        raise validator.ValidationError("工单不存在")
-    correction_reason = data.get("correction_reason", "")
-    handler_role = data.get("handler_role", "enterprise_service")
-    validator.validate_action_permission(handler_role, "resubmit")
-    validator.validate_resubmit(order, correction_reason)
-    validator.validate_version(order["version"], data.get("version", 0))
-    user = _get_user_info(data.get("handler_id", order["created_by"]))
-    update_data = {
-        "status": "pending_process",
-        "current_handler_role": "engineering_supervisor",
-        "current_handler_id": "",
-        "current_handler_name": "",
-        "version": order["version"] + 1,
-        "correction_reason": correction_reason,
-        "return_reason": None,
-        "return_opinion": None,
-        "last_handler_id": data.get("handler_id", order["created_by"]),
-        "last_handler_result": "resubmit",
-    }
-    repository.update_repair_order(order_id, update_data)
-    _create_record(order_id, "resubmit", data.get("handler_id", order["created_by"]),
-                   user["name"], handler_role, "returned", "pending_process", correction_reason)
-    return repository.get_repair_order_by_id(order_id)
+    handler_id = data.get("handler_id", "")
+    action = "resubmit"
+    try:
+        order = repository.get_repair_order_by_id(order_id)
+        if not order:
+            raise validator.ValidationError("工单不存在")
+        correction_reason = data.get("correction_reason", "")
+        user = _get_user_info(handler_id or order["created_by"])
+        handler_role = user["role"]
+        validator.validate_action_permission(handler_role, action)
+        validator.validate_resubmit(order, correction_reason)
+        validator.validate_version(order["version"], data.get("version", 0))
+        actual_handler_id = handler_id or order["created_by"]
+        update_data = {
+            "status": "pending_process",
+            "current_handler_role": "engineering_supervisor",
+            "current_handler_id": "",
+            "current_handler_name": "",
+            "version": order["version"] + 1,
+            "correction_reason": correction_reason,
+            "return_reason": None,
+            "return_opinion": None,
+            "last_handler_id": actual_handler_id,
+            "last_handler_result": "resubmit",
+        }
+        repository.update_repair_order(order_id, update_data)
+        _create_record(order_id, action, actual_handler_id,
+                       user["name"], handler_role, "returned", "pending_process", correction_reason)
+        return repository.get_repair_order_by_id(order_id)
+    except validator.ValidationError as e:
+        exc_type = _classify_exception_type(e.message)
+        detail = f"action={action}, handler_id={handler_id}"
+        _log_exception(order_id, exc_type, e.message, detail)
+        raise
 
 
 # ── Batch Operations ──
@@ -329,59 +439,61 @@ def resubmit_repair_order(order_id, data):
 def batch_advance(items):
     results = []
     for item in items:
+        repair_id = item.get("id", "")
         try:
-            order = repository.get_repair_order_by_id(item["id"])
+            order = repository.get_repair_order_by_id(repair_id)
             if not order:
-                results.append({"id": item["id"], "success": False, "message": "工单不存在"})
+                results.append({"id": repair_id, "success": False, "message": "工单不存在"})
                 continue
             action = STATUS_ACTION_MAP.get(order["status"])
             if not action:
-                results.append({"id": item["id"], "success": False, "message": f"状态 {order['status']} 无法推进"})
+                msg = f"状态 {order['status']} 无法推进"
+                _log_exception(repair_id, "status_conflict", msg, f"action=batch_advance, handler_id={item.get('handler_id', '')}")
+                results.append({"id": repair_id, "success": False, "message": msg})
                 continue
             if _is_overdue(order["deadline"]):
-                results.append({"id": item["id"], "success": False, "message": "报修单已逾期，请先补正"})
+                msg = "报修单已逾期，请先补正"
+                _log_exception(repair_id, "other", msg, f"action=batch_advance, handler_id={item.get('handler_id', '')}")
+                results.append({"id": repair_id, "success": False, "message": msg})
                 continue
             handler_id = item.get("handler_id", "")
-            handler_role = item.get("handler_role", "")
-            user = repository.get_user_by_id(handler_id)
-            handler_name = user["name"] if user else ""
             action_data = {
                 "handler_id": handler_id,
-                "handler_role": handler_role,
-                "handler_name": handler_name,
                 "version": item.get("version", order["version"]),
                 "opinion": "",
             }
             action_func = _ACTION_FUNCS.get(action)
             if action_func:
-                action_func(item["id"], action_data)
-                results.append({"id": item["id"], "success": True, "message": "操作成功"})
+                action_func(repair_id, action_data)
+                results.append({"id": repair_id, "success": True, "message": "操作成功"})
             else:
-                results.append({"id": item["id"], "success": False, "message": f"未知操作: {action}"})
+                msg = f"未知操作: {action}"
+                _log_exception(repair_id, "other", msg, f"action=batch_advance, handler_id={handler_id}")
+                results.append({"id": repair_id, "success": False, "message": msg})
         except validator.ValidationError as e:
-            results.append({"id": item["id"], "success": False, "message": e.message})
+            results.append({"id": repair_id, "success": False, "message": e.message})
         except Exception as e:
-            results.append({"id": item["id"], "success": False, "message": str(e)})
+            results.append({"id": repair_id, "success": False, "message": str(e)})
     return results
 
 
 def batch_return(items):
     results = []
     for item in items:
+        repair_id = item.get("id", "")
         try:
             return_data = {
                 "handler_id": item.get("handler_id", ""),
-                "handler_role": item.get("handler_role", ""),
                 "return_reason": item.get("return_reason", ""),
                 "return_opinion": item.get("return_opinion", ""),
                 "version": item.get("version", 0),
             }
-            return_repair_order(item["id"], return_data)
-            results.append({"id": item["id"], "success": True, "message": "退回成功"})
+            return_repair_order(repair_id, return_data)
+            results.append({"id": repair_id, "success": True, "message": "退回成功"})
         except validator.ValidationError as e:
-            results.append({"id": item["id"], "success": False, "message": e.message})
+            results.append({"id": repair_id, "success": False, "message": e.message})
         except Exception as e:
-            results.append({"id": item["id"], "success": False, "message": str(e)})
+            results.append({"id": repair_id, "success": False, "message": str(e)})
     return results
 
 
@@ -410,7 +522,10 @@ def get_warnings():
             "current_handler_role": order["current_handler_role"],
             "current_handler_id": order["current_handler_id"],
             "current_handler_name": order["current_handler_name"],
+            "enterprise_name": order.get("enterprise_name", ""),
+            "category": order.get("category", ""),
         }
+        _enrich_order_with_computed(entry)
         try:
             deadline = datetime.fromisoformat(order["deadline"])
             if deadline <= now:
@@ -426,15 +541,17 @@ def get_warnings():
 
 # ── Ledger ──
 
-def get_ledger(status=None, handler_role=None, keyword=None, page=1, page_size=20):
+def get_ledger(status=None, handler_role=None, keyword=None,
+               category=None, enterprise_name=None,
+               page=1, page_size=20):
     offset = (page - 1) * page_size
     orders, total = repository.get_repair_orders(
         status=status, handler_role=handler_role, keyword=keyword,
+        category=category, enterprise_name=enterprise_name,
         offset=offset, limit=page_size,
     )
     for order in orders:
-        order["dispatch_status"] = DISPATCH_STATUS_MAP.get(order["status"], "未派单")
-        order["confirmation_status"] = CONFIRMATION_STATUS_MAP.get(order["status"], "未确认")
+        _enrich_order_with_computed(order)
     return orders, total
 
 
