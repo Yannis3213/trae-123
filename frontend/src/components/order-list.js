@@ -28,6 +28,26 @@ class OrderList extends LitElement {
     return true
   }
 
+  getStatusLabel(order) {
+    if (order.status === 'sign_complete' && this.currentUser?.role === 'review') {
+      return '待复核'
+    }
+    const labels = {
+      'pending_sign': '待签收',
+      'exception_return': '异常回传',
+      'sign_complete': '签收完成',
+      'reviewed': '已归档'
+    }
+    return labels[order.status] || order.status
+  }
+
+  getStatusClass(order) {
+    if (order.status === 'sign_complete' && this.currentUser?.role === 'review') {
+      return 'status-pending_review'
+    }
+    return `status-${order.status}`
+  }
+
   getOverdueClass(order) {
     const level = order.overdue_info?.level || 'normal'
     return `overdue-${level}`
@@ -109,9 +129,19 @@ class OrderList extends LitElement {
                   </span>
                 </td>
                 <td>
-                  <span class="status-tag status-${order.status}">
-                    ${order.status_label || order.status}
+                  <span class="status-tag ${this.getStatusClass(order)}">
+                    ${this.getStatusLabel(order)}
                   </span>
+                  ${order.status === 'sign_complete' && this.currentUser?.role === 'review' ? html`
+                    <span style="font-size: 11px; color: #8b5cf6; margin-left: 4px;">
+                      ◀ 待您处理
+                    </span>
+                  ` : ''}
+                  ${order.status === 'reviewed' ? html`
+                    <span style="font-size: 11px; color: #6d28d9; margin-left: 4px;">
+                      ✓ 已归档
+                    </span>
+                  ` : ''}
                 </td>
                 <td>${order.deadline}</td>
                 <td>${order.handler_name || order.handler || '-'}</td>
@@ -289,6 +319,12 @@ class OrderList extends LitElement {
     .status-sign_complete {
       background: #dcfce7;
       color: #16a34a;
+    }
+
+    .status-pending_review {
+      background: #ede9fe;
+      color: #6d28d9;
+      font-weight: 600;
     }
 
     .status-reviewed {

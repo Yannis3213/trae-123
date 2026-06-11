@@ -210,6 +210,30 @@ class OrderDetail extends LitElement {
     }
   }
 
+  getStatusLabel() {
+    const order = this.detail?.order
+    if (!order) return ''
+    if (order.status === 'sign_complete' && this.detail?.current_user?.role === 'review') {
+      return '待复核'
+    }
+    const labels = {
+      'pending_sign': '待签收',
+      'exception_return': '异常回传',
+      'sign_complete': '签收完成',
+      'reviewed': '已归档'
+    }
+    return labels[order.status] || order.status
+  }
+
+  getStatusClass() {
+    const order = this.detail?.order
+    if (!order) return ''
+    if (order.status === 'sign_complete' && this.detail?.current_user?.role === 'review') {
+      return 'status-pending_review'
+    }
+    return `status-${order.status}`
+  }
+
   getActionLabel(action) {
     const labels = {
       'approve': '审核通过',
@@ -249,13 +273,23 @@ class OrderDetail extends LitElement {
       <div class="detail-modal" @click=${(e) => e.target === e.currentTarget && this.dispatchEvent(new CustomEvent('close'))}>
         <div class="detail-content">
           <div class="detail-header">
-            <div>
-              <span class="status-tag status-${order.status}">
-                ${order.status_label}
+            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <span class="status-tag ${this.getStatusClass()}">
+                ${this.getStatusLabel()}
               </span>
               <span class="stage-tag">
                 ${order.stage_label}
               </span>
+              ${order.status === 'reviewed' ? html`
+                <span class="archived-badge">
+                  📋 已完成归档
+                </span>
+              ` : ''}
+              ${order.status === 'sign_complete' && this.detail?.current_user?.role === 'review' ? html`
+                <span class="pending-review-badge">
+                  ⏳ 待您复核
+                </span>
+              ` : ''}
             </div>
             <div style="display: flex; align-items: center; gap: 16px;">
               <span style="font-size: 14px; color: #6b7280;">
@@ -264,6 +298,25 @@ class OrderDetail extends LitElement {
               <button class="close-btn" @click=${() => this.dispatchEvent(new CustomEvent('close'))}>×</button>
             </div>
           </div>
+          
+          ${order.status === 'reviewed' || order.status === 'sign_complete' ? html`
+            <div class="flow-progress">
+              <div class="flow-step ${['pending_sign', 'exception_return', 'sign_complete', 'reviewed'].includes(order.status) ? 'done' : ''}">
+                <div class="step-dot"></div>
+                <div class="step-label">创建登记</div>
+              </div>
+              <div class="step-line ${order.status === 'sign_complete' || order.status === 'reviewed' ? 'done' : ''}"></div>
+              <div class="flow-step ${order.status === 'sign_complete' || order.status === 'reviewed' ? 'done' : ''}">
+                <div class="step-dot"></div>
+                <div class="step-label">审核办理</div>
+              </div>
+              <div class="step-line ${order.status === 'reviewed' ? 'done' : ''}"></div>
+              <div class="flow-step ${order.status === 'reviewed' ? 'done' : ''} ${order.status === 'sign_complete' && this.detail?.current_user?.role === 'review' ? 'current' : ''}">
+                <div class="step-dot"></div>
+                <div class="step-label">复核归档</div>
+              </div>
+            </div>
+          ` : ''}
           
           <div class="detail-body">
             <div class="detail-section">
@@ -1121,6 +1174,115 @@ class OrderDetail extends LitElement {
     .status-reviewed {
       background: #ede9fe;
       color: #6d28d9;
+    }
+
+    .status-pending_review {
+      background: #ede9fe;
+      color: #6d28d9;
+      font-weight: 600;
+    }
+
+    .archived-badge {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .pending-review-badge {
+      background: #fef3c7;
+      color: #b45309;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .flow-progress {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px 24px;
+      background: linear-gradient(90deg, #f0f9ff 0%, #ede9fe 100%);
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .flow-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .step-dot {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #e5e7eb;
+      border: 2px solid #d1d5db;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.3s ease;
+    }
+
+    .flow-step.done .step-dot {
+      background: #10b981;
+      border-color: #059669;
+    }
+
+    .flow-step.done .step-dot::after {
+      content: '✓';
+      color: white;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .flow-step.current .step-dot {
+      background: #8b5cf6;
+      border-color: #7c3aed;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+      50% { box-shadow: 0 0 0 8px rgba(139, 92, 246, 0); }
+    }
+
+    .step-label {
+      font-size: 12px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    .flow-step.done .step-label {
+      color: #065f46;
+      font-weight: 600;
+    }
+
+    .flow-step.current .step-label {
+      color: #6d28d9;
+      font-weight: 600;
+    }
+
+    .step-line {
+      flex: 1;
+      height: 2px;
+      background: #e5e7eb;
+      margin: 0 12px 24px 12px;
+      max-width: 60px;
+    }
+
+    .step-line.done {
+      background: #10b981;
     }
   `
 }

@@ -210,9 +210,9 @@ def _init_sample_data(conn):
             'created_by': 'zhangsan',
             'handler': 'wangwu',
             'current_role': 'review',
-            'status': 'sign_complete',
+            'status': 'reviewed',
             'current_stage': 'usage_confirm',
-            'version': 4,
+            'version': 5,
             'room_booking_evidence': '贵宾室已确认【VIP-2026-0610-001】',
             'equipment_evidence': '投影、音响、茶水已准备',
             'usage_evidence': '客户签字确认单'
@@ -292,7 +292,7 @@ def _init_sample_data(conn):
             'current_role': 'review',
             'status': 'sign_complete',
             'current_stage': 'usage_confirm',
-            'version': 5,
+            'version': 6,
             'room_booking_evidence': '大会议室已确认【PERF-2026-0609-001】',
             'equipment_evidence': '投影仪、麦克风、签到系统已就绪',
             'usage_evidence': '参会人员签到表及评审结论'
@@ -744,7 +744,7 @@ def _init_sample_records(conn, orders):
         },
         {
             'order_no': f'MEET-{now.strftime("%Y%m")}-009',
-            'version': 3,
+            'version': 4,
             'action': 'approve',
             'from_status': 'pending_sign',
             'to_status': 'pending_sign',
@@ -762,7 +762,7 @@ def _init_sample_records(conn, orders):
         },
         {
             'order_no': f'MEET-{now.strftime("%Y%m")}-009',
-            'version': 4,
+            'version': 5,
             'action': 'approve',
             'from_status': 'pending_sign',
             'to_status': 'sign_complete',
@@ -773,7 +773,7 @@ def _init_sample_records(conn, orders):
             'handler': 'lisi',
             'handler_role': 'audit',
             'opinion': '使用确认完成，提交复核归档',
-            'audit_remark': None,
+            'audit_remark': '补正后流程完整，三阶段证据齐全，待复核归档',
             'exception_reason': None,
             'is_exception': 0,
             'hours_ago': 48

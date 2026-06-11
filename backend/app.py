@@ -173,6 +173,17 @@ def validate_evidence(order: Dict[str, Any], action: str, evidence: Optional[Dic
                 'code': 'MISSING_CORRECTION',
                 'expected': '至少补充一项证据材料'
             }
+        
+        valid_fields = set(STAGE_REQUIRED_EVIDENCE.values())
+        invalid_fields = [f for f in evidence.keys() if f not in valid_fields]
+        if invalid_fields:
+            return {
+                'error': f"无效补正字段：{', '.join(invalid_fields)}，仅支持：{', '.join(valid_fields)}",
+                'code': 'INVALID_EVIDENCE_FIELD',
+                'invalid_fields': invalid_fields,
+                'valid_fields': list(valid_fields)
+            }
+        
         has_real_evidence = any(v and v.strip() for v in evidence.values())
         if not has_real_evidence:
             return {
