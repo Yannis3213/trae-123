@@ -170,13 +170,26 @@ import {
           </span>
         </div>
 
-        <div *ngIf="plan.accept_status === 'assigned'" class="alert mb-md"
-             [ngClass]="showAcceptButton ? 'alert-success' : 'alert-info'">
-          <ng-container *ngIf="showAcceptButton">
-            <strong>✋ 等待您接办：</strong>该单据已由客户成功经理{{plan.owner}}指派给您，请先点击上方「接办」按钮，然后再办理材料并提交复核。
+        <div *ngIf="plan.accept_status !== 'accepted' && plan.status === 'draft'" class="alert mb-md"
+             [ngClass]="{
+               'alert-warning': plan.accept_status === 'unassigned',
+               'alert-info': plan.accept_status === 'assigned' && !showAcceptButton,
+               'alert-success': showAcceptButton
+             }">
+          <ng-container *ngIf="plan.accept_status === 'unassigned'">
+            <strong>⚠️ 尚未指派交付顾问：</strong>该单据由客户成功经理{{plan.owner}}负责，当前接办状态为「未指派」。
+            请先指派交付顾问，由交付顾问接办后才能提交待复核。
+            <ng-container *ngIf="canAssign">
+              <br>👉 点击上方「🔄 指派交付顾问」按钮选择交付顾问。
+            </ng-container>
           </ng-container>
-          <ng-container *ngIf="!showAcceptButton">
-            <strong>⏳ 等待交付顾问接办：</strong>该单据已指派给交付顾问{{plan.assignee}}（{{plan.accept_status_name}}），暂不能提交待复核，请先完成接办。
+          <ng-container *ngIf="plan.accept_status === 'assigned' && showAcceptButton">
+            <strong>✋ 等待您接办：</strong>该单据已由客户成功经理{{plan.owner}}指派给您，
+            请先点击上方「✋ 接办」按钮，然后再办理材料并提交复核。
+          </ng-container>
+          <ng-container *ngIf="plan.accept_status === 'assigned' && !showAcceptButton">
+            <strong>⏳ 等待交付顾问接办：</strong>该单据已指派给交付顾问{{plan.assignee}}（{{plan.accept_status_name}}），
+            暂不能提交待复核，请先完成接办。
           </ng-container>
         </div>
 
@@ -484,8 +497,10 @@ export class LaunchPlanDetailComponent implements OnInit, OnDestroy {
   get canSubmit(): boolean {
     if (!this.plan) return false;
     const u = this.currentUser;
-    return (u.name === this.plan!.current_handler || u.name === this.plan!.owner || u.role === 'cs_lead')
-      && ['cs_manager', 'delivery_consultant', 'cs_lead'].includes(u.role);
+    if (this.plan.status !== 'draft') return false;
+    if (u.role === 'cs_lead') return true;
+    if (u.role === 'delivery_consultant' && this.plan.accept_status === 'accepted' && this.plan.assignee === u.name) return true;
+    return false;
   }
 
   get canAssign(): boolean {
@@ -509,13 +524,16 @@ export class LaunchPlanDetailComponent implements OnInit, OnDestroy {
 
   get submitDisabled(): boolean {
     if (!this.plan) return false;
-    return this.plan.accept_status === 'assigned';
+    return this.plan.accept_status !== 'accepted';
   }
 
   get submitDisabledReason(): string {
     if (!this.plan) return '';
+    if (this.plan.accept_status === 'unassigned') {
+      return '该单据尚未指派交付顾问，请先指派并由交付顾问接办后再提交';
+    }
     if (this.plan.accept_status === 'assigned') {
-      return `该单据已指派给${this.plan.assignee}但尚未接办，请先点击「接办」按钮后再提交`;
+      return `该单据已指派给${this.plan.assignee}但尚未接办，请先完成接办后再提交`;
     }
     return '';
   }

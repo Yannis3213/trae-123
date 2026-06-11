@@ -325,8 +325,8 @@ export default async function (fastify, opts) {
     handler: async (req, reply) => {
       const user = req.user;
       const { version, comment, evidence } = req.body;
-      if (!checkRolePermission(user, [ROLES.CS_MANAGER, ROLES.DELIVERY_CONSULTANT])) {
-        reply.status(403); return { error: '当前角色无权限提交审核' };
+      if (!checkRolePermission(user, [ROLES.DELIVERY_CONSULTANT, ROLES.CS_LEAD])) {
+        reply.status(403); return { error: '仅交付顾问或客户成功负责人有权提交审核' };
       }
       const existing = db.prepare('SELECT * FROM launch_plans WHERE id = ?').get(req.params.id);
       if (!existing) { reply.status(404); return { error: '上线计划单不存在' }; }
@@ -337,21 +337,38 @@ export default async function (fastify, opts) {
       if (existing.status !== STATUSES.DRAFT) {
         reply.status(400); return { error: `当前状态为${STATUS_NAMES[existing.status]}，不能提交审核` };
       }
-      // 指派了交付顾问但未接办，拒绝提交
-      if (existing.accept_status === ACCEPT_STATUS.ASSIGNED) {
-        reply.status(400); return { error: `该单据已指派给交付顾问${existing.assignee}但尚未接办，请先接办后再提交` };
+      const ts = now();
+
+      // ============ 拦截 1：未指派交付顾问 ============
+      if (existing.accept_status === ACCEPT_STATUS.UNASSIGNED) {
+        logException(req.params.id, 'not_assigned', `提交拦截：单据未指派交付顾问`, user.name);
+        db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(uuidv4(), req.params.id, 'blocked', existing.status, existing.status, user.name, user.role,
+            '提交被拦截：未指派交付顾问，需先指派再接办后提交', '未指派', ts);
+        db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+          .run(uuidv4(), req.params.id, `提交待复核被拦截：该单据尚未指派交付顾问（当前接办状态：未指派）。请先由客户成功经理指派交付顾问，并完成接办后再提交。`, user.name, user.role, ts);
+        reply.status(400);
+        return { error: '该单据尚未指派交付顾问，请先指派并完成接办后再提交' };
       }
-      // 如果指派并已接办，只有被指派的交付顾问或负责人可以提交；如果未指派，owner/current_handler 都可提交
+      // ============ 拦截 2：已指派但未接办 ============
+      if (existing.accept_status === ACCEPT_STATUS.ASSIGNED) {
+        logException(req.params.id, 'not_accepted', `提交拦截：已指派给${existing.assignee}但未接办`, user.name);
+        db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(uuidv4(), req.params.id, 'blocked', existing.status, existing.status, user.name, user.role,
+            `提交被拦截：已指派交付顾问${existing.assignee}但尚未接办`, '未接办', ts);
+        db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+          .run(uuidv4(), req.params.id, `提交待复核被拦截：已指派给交付顾问${existing.assignee}但尚未执行「接办」。请由${existing.assignee}登录后先接办再提交。`, user.name, user.role, ts);
+        reply.status(400);
+        return { error: `该单据已指派给交付顾问${existing.assignee}但尚未接办，请先接办后再提交` };
+      }
+      // ============ 拦截 3：不是已接办的交付顾问本人 ============
       if (existing.accept_status === ACCEPT_STATUS.ACCEPTED) {
         if (existing.assignee !== user.name && user.role !== ROLES.CS_LEAD) {
-          reply.status(403); return { error: `该单据已指派给交付顾问${existing.assignee}并已接办，仅本人或负责人可提交复核` };
-        }
-      } else {
-        // 未指派情形
-        if (existing.current_handler !== user.name && existing.owner !== user.name && user.role !== ROLES.CS_LEAD) {
-          reply.status(403); return { error: `当前处理人应为${existing.current_handler}或责任人${existing.owner}` };
+          reply.status(403);
+          return { error: `该单据已由交付顾问${existing.assignee}接办，仅本人或客户成功负责人可提交复核` };
         }
       }
+
       const missing = [];
       if (!existing.launch_target || existing.launch_target.trim().length < 10) missing.push('上线目标');
       if (!existing.config_checklist || existing.config_checklist.trim().length < 10) missing.push('配置检查清单');
@@ -364,7 +381,6 @@ export default async function (fastify, opts) {
         logException(req.params.id, 'missing_evidence', '提交审核缺少附件或证据说明', user.name);
         reply.status(400); return { error: '请至少上传一个附件或填写证据说明' };
       }
-      const ts = now();
       const csLead = Object.entries(SIMULATED_USERS).find(([, r]) => r === ROLES.CS_LEAD)?.[0] || '王总';
       db.prepare(`UPDATE launch_plans SET status = ?, current_handler = ?, last_submitter = ?, version = ?, updated_at = ?, reject_reason = '' WHERE id = ?`)
         .run(STATUSES.PENDING_REVIEW, csLead, user.name, existing.version + 1, ts, req.params.id);
@@ -466,6 +482,22 @@ export default async function (fastify, opts) {
           const warning = getDeadlineWarning(plan.deadline, plan.status);
           if (plan.status === STATUSES.ARCHIVED) {
             results.push({ id, plan_no: plan.plan_no, customer_name: plan.customer_name, success: false, result_type: 'error', reason: '已归档单据无需推进', correction_hint: '' });
+            continue;
+          }
+          // ============ 拦截 0：未指派交付顾问 ============
+          if (plan.accept_status === ACCEPT_STATUS.UNASSIGNED) {
+            logException(id, 'not_assigned', `批量推进拦截：未指派交付顾问`, user.name);
+            db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              .run(uuidv4(), id, 'blocked', plan.status, plan.status, user.name, user.role,
+                '批量推进拦截：未指派交付顾问，需先指派交付顾问再接办后推进', '未指派', ts);
+            db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+              .run(uuidv4(), id, `批量推进被拦截：该单据尚未指派交付顾问（接办状态：未指派）。请先由客户成功经理指派交付顾问，完成接办后再推进。`, user.name, user.role, ts);
+            results.push({
+              id, plan_no: plan.plan_no, customer_name: plan.customer_name,
+              success: false, result_type: 'not_assigned',
+              reason: '未指派拦截：尚未指派交付顾问，无法推进',
+              correction_hint: `补正建议：由客户成功经理在详情页指派交付顾问，并由交付顾问接办后再推进`,
+            });
             continue;
           }
           // ============ 拦截 1：已指派但未接办 ============
@@ -577,6 +609,7 @@ export default async function (fastify, opts) {
         failed: results.filter(r => !r.success).length,
         overdue_blocked: results.filter(r => r.result_type === 'overdue_blocked').length,
         missing_evidence: results.filter(r => r.result_type === 'missing_evidence').length,
+        not_assigned: results.filter(r => r.result_type === 'not_assigned').length,
         not_accepted: results.filter(r => r.result_type === 'not_accepted').length,
         items: results,
       };

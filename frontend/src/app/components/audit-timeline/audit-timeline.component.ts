@@ -167,6 +167,8 @@ export class AuditTimelineComponent {
       accept: '✋ 接办',
       blocked: '⛔ 批量拦截',
       missing_evidence: '📋 材料缺失',
+      not_assigned: '📭 未指派拦截',
+      not_accepted: '✋ 未接办拦截',
     };
     return map[a] || a;
   }

@@ -96,6 +96,7 @@ export interface BatchResult {
   failed: number;
   overdue_blocked: number;
   missing_evidence: number;
+  not_assigned: number;
   not_accepted: number;
   items: BatchResultItem[];
 }
@@ -106,7 +107,7 @@ export interface BatchResultItem {
   customer_name?: string;
   success: boolean;
   reason: string;
-  result_type: 'success' | 'overdue_blocked' | 'missing_evidence' | 'not_accepted' | 'blocked' | 'error';
+  result_type: 'success' | 'overdue_blocked' | 'missing_evidence' | 'not_assigned' | 'not_accepted' | 'blocked' | 'error';
   correction_hint: string;
 }
 
