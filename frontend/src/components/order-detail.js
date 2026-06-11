@@ -110,8 +110,8 @@ class OrderDetail extends LitElement {
     if (action === 'approve') {
       if (!this.processForm.opinion) return false
       const evidenceField = this.detail.required_evidence
-      if (evidenceField && !this.evidenceInputs[evidenceField]) return false
-      if (this.detail.order.overdue_info?.level === 'overdue' && !this.processForm.audit_remark) {
+      if (evidenceField && !this.evidenceInputs[evidenceField]?.trim()) return false
+      if (this.detail.order.overdue_info?.level === 'overdue' && !this.processForm.audit_remark?.trim()) {
         return false
       }
     }
@@ -119,12 +119,25 @@ class OrderDetail extends LitElement {
     if (action === 'resubmit') {
       const hasEvidence = Object.values(this.evidenceInputs).some(v => v && v.trim())
       if (!hasEvidence) return false
-      if (this.detail.order.overdue_info?.level === 'overdue' && !this.processForm.audit_remark) {
+      if (this.detail.order.overdue_info?.level === 'overdue' && !this.processForm.audit_remark?.trim()) {
         return false
       }
     }
     
-    if ((action === 'return' || action === 'exception') && !this.processForm.exception_reason) {
+    if (action === 'review') {
+      if (!this.processForm.opinion?.trim()) return false
+      const allEvidence = [
+        this.evidenceInputs.room_booking_evidence || this.detail.order.room_booking_evidence,
+        this.evidenceInputs.equipment_evidence || this.detail.order.equipment_evidence,
+        this.evidenceInputs.usage_evidence || this.detail.order.usage_evidence
+      ]
+      if (allEvidence.some(e => !e || !e.trim())) return false
+      if (this.detail.order.overdue_info?.level === 'overdue' && !this.processForm.audit_remark?.trim()) {
+        return false
+      }
+    }
+    
+    if ((action === 'return' || action === 'exception') && !this.processForm.exception_reason?.trim()) {
       return false
     }
     
@@ -161,7 +174,7 @@ class OrderDetail extends LitElement {
       } else {
         const evidenceField = this.detail.required_evidence
         const evidence = {}
-        if (evidenceField && this.evidenceInputs[evidenceField]) {
+        if (action === 'approve' && evidenceField && this.evidenceInputs[evidenceField]) {
           evidence[evidenceField] = this.evidenceInputs[evidenceField]
         }
         
@@ -177,7 +190,7 @@ class OrderDetail extends LitElement {
         
         if (result.success_count > 0) {
           this.dispatchEvent(new CustomEvent('toast', {
-            detail: { message: '处理成功', type: 'success' }
+            detail: { message: action === 'review' ? '复核归档成功' : '处理成功', type: 'success' }
           }))
           this.dispatchEvent(new CustomEvent('updated'))
           this.dispatchEvent(new CustomEvent('close'))
@@ -202,7 +215,8 @@ class OrderDetail extends LitElement {
       'approve': '审核通过',
       'return': '退回补正',
       'exception': '异常回传',
-      'resubmit': '补正提交'
+      'resubmit': '补正提交',
+      'review': '复核归档'
     }
     return labels[action] || action
   }
@@ -212,7 +226,8 @@ class OrderDetail extends LitElement {
       'approve': 'btn-success',
       'return': 'btn-danger',
       'exception': 'btn-warning',
-      'resubmit': 'btn-primary'
+      'resubmit': 'btn-primary',
+      'review': 'btn-archived'
     }
     return classes[action] || 'btn-primary'
   }
@@ -401,7 +416,7 @@ class OrderDetail extends LitElement {
               </div>
             ` : ''}
 
-            ${can_operate && order.status !== 'sign_complete' ? html`
+            ${can_operate && allowed_actions && allowed_actions.length > 0 ? html`
               <div class="detail-section">
                 <h3>⚙️ 办理操作</h3>
                 <div class="process-form">
@@ -422,12 +437,12 @@ class OrderDetail extends LitElement {
                     </select>
                   </div>
 
-                  ${(this.processForm.action === 'approve' || this.processForm.action === 'resubmit') ? html`
+                  ${(this.processForm.action === 'approve' || this.processForm.action === 'resubmit' || this.processForm.action === 'review') ? html`
                     <div class="form-group">
-                      <label>处理意见 ${this.processForm.action === 'approve' ? html`<span class="required">*</span>` : ''}</label>
+                      <label>处理意见 <span class="required">*</span></label>
                       <textarea
                         rows="2"
-                        placeholder="请输入处理意见..."
+                        placeholder=${this.processForm.action === 'review' ? '请输入复核意见...' : '请输入处理意见...'}
                         .value=${this.processForm.opinion}
                         @input=${(e) => { 
                           this.processForm = { ...this.processForm, opinion: e.target.value }
@@ -454,7 +469,27 @@ class OrderDetail extends LitElement {
                     </div>
                   ` : ''}
 
-                  ${(this.processForm.action === 'approve' || this.processForm.action === 'resubmit') && 
+                  ${this.processForm.action === 'review' ? html`
+                    <div class="review-evidence-check">
+                      <div class="review-check-title">三阶段证据完整性检查</div>
+                      ${[
+                        { key: 'room_booking_evidence', label: '会议室预约', field: 'room_booking_evidence' },
+                        { key: 'equipment_evidence', label: '设备准备', field: 'equipment_evidence' },
+                        { key: 'usage_evidence', label: '使用确认', field: 'usage_evidence' }
+                      ].map(item => {
+                        const val = this.evidenceInputs[item.field] || order[item.field]
+                        const hasIt = val && val.trim()
+                        return html`
+                          <div class="review-check-item ${hasIt ? 'pass' : 'fail'}">
+                            <span>${hasIt ? '✓' : '✗'} ${item.label}</span>
+                            <span>${hasIt ? '已提供' : '缺少证据'}</span>
+                          </div>
+                        `
+                      })}
+                    </div>
+                  ` : ''}
+
+                  ${(this.processForm.action === 'approve' || this.processForm.action === 'resubmit' || this.processForm.action === 'review') && 
                     order.overdue_info?.level === 'overdue' ? html`
                     <div class="form-group">
                       <label>审计备注 <span class="required">*</span></label>
@@ -939,6 +974,16 @@ class OrderDetail extends LitElement {
       background: #d97706;
     }
 
+    .btn-archived {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      color: white;
+    }
+
+    .btn-archived:hover:not(:disabled) {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+
     .btn-secondary {
       background: #6b7280;
       color: white;
@@ -1037,6 +1082,45 @@ class OrderDetail extends LitElement {
       text-align: center;
       padding: 40px;
       color: #6b7280;
+    }
+
+    .review-evidence-check {
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 14px;
+    }
+
+    .review-check-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #0369a1;
+      margin-bottom: 8px;
+    }
+
+    .review-check-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .review-check-item.pass {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .review-check-item.fail {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .status-reviewed {
+      background: #ede9fe;
+      color: #6d28d9;
     }
   `
 }

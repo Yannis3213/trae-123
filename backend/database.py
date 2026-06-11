@@ -20,7 +20,8 @@ STAGES = {
 STATUS_FLOW = {
     'pending_sign': '待签收',
     'exception_return': '异常回传',
-    'sign_complete': '签收完成'
+    'sign_complete': '签收完成',
+    'reviewed': '已归档'
 }
 
 def init_db():
@@ -275,6 +276,26 @@ def _init_sample_data(conn):
             'room_booking_evidence': '董事会议室已预约',
             'equipment_evidence': '',
             'usage_evidence': ''
+        },
+        {
+            'order_no': f'MEET-{now.strftime("%Y%m")}-009',
+            'title': '年中绩效评审会',
+            'meeting_date': (now + timedelta(days=3)).strftime('%Y-%m-%d'),
+            'start_time': '09:00',
+            'end_time': '12:00',
+            'room_name': '大会议室',
+            'attendees': 30,
+            'content': '上半年绩效评审与下半年目标设定',
+            'deadline': (now + timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S'),
+            'created_by': 'zhangsan',
+            'handler': 'wangwu',
+            'current_role': 'review',
+            'status': 'sign_complete',
+            'current_stage': 'usage_confirm',
+            'version': 5,
+            'room_booking_evidence': '大会议室已确认【PERF-2026-0609-001】',
+            'equipment_evidence': '投影仪、麦克风、签到系统已就绪',
+            'usage_evidence': '参会人员签到表及评审结论'
         }
     ]
     
@@ -490,9 +511,9 @@ def _init_sample_records(conn, orders):
         {
             'order_no': f'MEET-{now.strftime("%Y%m")}-005',
             'version': 4,
-            'action': 'approve',
+            'action': 'review',
             'from_status': 'sign_complete',
-            'to_status': 'sign_complete',
+            'to_status': 'reviewed',
             'from_stage': 'usage_confirm',
             'to_stage': 'usage_confirm',
             'from_role': 'review',
@@ -648,6 +669,114 @@ def _init_sample_records(conn, orders):
             'exception_reason': '董事会议室需配备专业音响系统和视频会议设备，请补充设备清单后重新提交',
             'is_exception': 1,
             'hours_ago': 72
+        },
+        {
+            'order_no': f'MEET-{now.strftime("%Y%m")}-009',
+            'version': 1,
+            'action': 'create',
+            'from_status': None,
+            'to_status': 'pending_sign',
+            'from_stage': None,
+            'to_stage': 'room_booking',
+            'from_role': None,
+            'to_role': 'audit',
+            'handler': 'zhangsan',
+            'handler_role': 'register',
+            'opinion': '创建年中绩效评审会预约单',
+            'audit_remark': None,
+            'exception_reason': None,
+            'is_exception': 0,
+            'hours_ago': 120
+        },
+        {
+            'order_no': f'MEET-{now.strftime("%Y%m")}-009',
+            'version': 1,
+            'action': 'exception',
+            'from_status': 'pending_sign',
+            'to_status': 'exception_return',
+            'from_stage': 'room_booking',
+            'to_stage': 'room_booking',
+            'from_role': 'audit',
+            'to_role': 'register',
+            'handler': 'lisi',
+            'handler_role': 'audit',
+            'opinion': '会议室预约信息缺少确认编号',
+            'audit_remark': None,
+            'exception_reason': '大会议室预约缺少确认编号，请补充后重新提交',
+            'is_exception': 1,
+            'hours_ago': 108
+        },
+        {
+            'order_no': f'MEET-{now.strftime("%Y%m")}-009',
+            'version': 2,
+            'action': 'resubmit',
+            'from_status': 'exception_return',
+            'to_status': 'pending_sign',
+            'from_stage': 'room_booking',
+            'to_stage': 'room_booking',
+            'from_role': 'register',
+            'to_role': 'audit',
+            'handler': 'zhangsan',
+            'handler_role': 'register',
+            'opinion': '已补充会议室预约确认编号',
+            'audit_remark': None,
+            'exception_reason': None,
+            'is_exception': 0,
+            'hours_ago': 96
+        },
+        {
+            'order_no': f'MEET-{now.strftime("%Y%m")}-009',
+            'version': 3,
+            'action': 'approve',
+            'from_status': 'pending_sign',
+            'to_status': 'pending_sign',
+            'from_stage': 'room_booking',
+            'to_stage': 'equipment_prep',
+            'from_role': 'audit',
+            'to_role': 'audit',
+            'handler': 'lisi',
+            'handler_role': 'audit',
+            'opinion': '会议室预约已确认，进入设备准备环节',
+            'audit_remark': None,
+            'exception_reason': None,
+            'is_exception': 0,
+            'hours_ago': 84
+        },
+        {
+            'order_no': f'MEET-{now.strftime("%Y%m")}-009',
+            'version': 3,
+            'action': 'approve',
+            'from_status': 'pending_sign',
+            'to_status': 'pending_sign',
+            'from_stage': 'equipment_prep',
+            'to_stage': 'usage_confirm',
+            'from_role': 'audit',
+            'to_role': 'audit',
+            'handler': 'lisi',
+            'handler_role': 'audit',
+            'opinion': '设备全部就绪，进入使用确认环节',
+            'audit_remark': None,
+            'exception_reason': None,
+            'is_exception': 0,
+            'hours_ago': 72
+        },
+        {
+            'order_no': f'MEET-{now.strftime("%Y%m")}-009',
+            'version': 4,
+            'action': 'approve',
+            'from_status': 'pending_sign',
+            'to_status': 'sign_complete',
+            'from_stage': 'usage_confirm',
+            'to_stage': 'usage_confirm',
+            'from_role': 'audit',
+            'to_role': 'review',
+            'handler': 'lisi',
+            'handler_role': 'audit',
+            'opinion': '使用确认完成，提交复核归档',
+            'audit_remark': None,
+            'exception_reason': None,
+            'is_exception': 0,
+            'hours_ago': 48
         }
     ]
     
@@ -683,6 +812,13 @@ def _init_sample_records(conn, orders):
             'reason': '董事会议室需配备专业音响系统和视频会议设备，请补充设备清单后重新提交',
             'reported_by': 'lisi',
             'hours_ago': 72
+        },
+        {
+            'order_no': f'MEET-{now.strftime("%Y%m")}-009',
+            'stage': 'room_booking',
+            'reason': '大会议室预约缺少确认编号，请补充后重新提交',
+            'reported_by': 'lisi',
+            'hours_ago': 108
         }
     ]
     
@@ -705,6 +841,12 @@ def _init_sample_records(conn, orders):
             'remark': '重要客户会议，流程合规，证据齐全，同意归档',
             'created_by': 'wangwu',
             'hours_ago': 24
+        },
+        {
+            'order_no': f'MEET-{now.strftime("%Y%m")}-009',
+            'remark': '补正后流程完整，三阶段证据齐全，待复核归档',
+            'created_by': 'lisi',
+            'hours_ago': 48
         }
     ]
     

@@ -123,7 +123,7 @@ class MeetingApp extends LitElement {
     if (this.selectedOrders.length === this.orders.length) {
       this.selectedOrders = []
     } else {
-      this.selectedOrders = this.orders.filter(o => o.status !== 'sign_complete').map(o => o.id)
+      this.selectedOrders = this.orders.filter(o => o.status !== 'reviewed').map(o => o.id)
     }
   }
 
@@ -178,17 +178,27 @@ class MeetingApp extends LitElement {
 
     if (action === 'approve') {
       processData.opinion = '批量审核通过'
-    } else if (action === 'return') {
+    } else if (action === 'review') {
+      const opinion = prompt('请输入批量复核意见：')
+      if (!opinion) return
+      processData.opinion = opinion
+    } else if (action === 'resubmit') {
+      processData.opinion = '批量补正提交'
+    } else if (action === 'return' || action === 'exception') {
       const reason = prompt('请输入批量退回的原因：')
-      if (!reason) return
-      processData.exception_reason = reason
-    } else if (action === 'exception') {
-      const reason = prompt('请输入异常回传的原因：')
       if (!reason) return
       processData.exception_reason = reason
     }
 
-    if (!confirm(`确定要对选中的 ${this.selectedOrders.length} 条单据执行批量操作吗？`)) {
+    const actionLabel = {
+      'approve': '批量审核通过',
+      'review': '批量复核归档',
+      'resubmit': '批量补正提交',
+      'exception': '批量退回',
+      'return': '批量退回'
+    }
+
+    if (!confirm(`确定要对选中的 ${this.selectedOrders.length} 条单据执行${actionLabel[action] || action}吗？`)) {
       return
     }
 
@@ -216,9 +226,20 @@ class MeetingApp extends LitElement {
 
   get canApprove() {
     if (!this.currentUser) return false
+    if (this.currentUser.role === 'review') return false
     return this.selectedOrders.some(id => {
       const order = this.orders.find(o => o.id === id)
-      return order && order.status !== 'sign_complete' && 
+      return order && order.status === 'pending_sign' && 
+             order.current_role === this.currentUser.role
+    })
+  }
+
+  get canReview() {
+    if (!this.currentUser) return false
+    if (this.currentUser.role !== 'review') return false
+    return this.selectedOrders.some(id => {
+      const order = this.orders.find(o => o.id === id)
+      return order && order.status === 'sign_complete' && 
              order.current_role === this.currentUser.role
     })
   }
@@ -244,7 +265,7 @@ class MeetingApp extends LitElement {
 
   get showBatchBar() {
     if (this.selectedOrders.length === 0) return false
-    return this.canApprove || this.canReturn || this.canBatchResubmit
+    return this.canApprove || this.canReturn || this.canBatchResubmit || this.canReview
   }
 
   render() {
@@ -354,6 +375,10 @@ class MeetingApp extends LitElement {
           <div class="stat-value" style="color: #16a34a;">${this.stats.sign_complete || 0}</div>
           <div class="stat-label">签收完成</div>
         </div>
+        <div class="stat-item">
+          <div class="stat-value" style="color: #6d28d9;">${this.stats.reviewed || 0}</div>
+          <div class="stat-label">已归档</div>
+        </div>
         <div class="stat-item urgent">
           <div class="stat-value">${this.stats.urgent || 0}</div>
           <div class="stat-label">临期</div>
@@ -424,7 +449,23 @@ class MeetingApp extends LitElement {
               class="btn btn-success"
               @click=${() => this.handleBatchProcess('approve')}
             >
-              ✓ 批量通过
+              ✓ 批量审核通过
+            </button>
+          ` : ''}
+          ${this.canBatchResubmit ? html`
+            <button
+              class="btn btn-primary"
+              @click=${() => this.handleBatchProcess('resubmit')}
+            >
+              📝 批量补正提交
+            </button>
+          ` : ''}
+          ${this.canReview ? html`
+            <button
+              class="btn btn-archived"
+              @click=${() => this.handleBatchProcess('review')}
+            >
+              📋 批量复核归档
             </button>
           ` : ''}
           ${this.canReturn ? html`
@@ -720,6 +761,24 @@ class MeetingApp extends LitElement {
 
     .btn-success:hover:not(:disabled) {
       background: #059669;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      opacity: 0.9;
+    }
+
+    .btn-archived {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      color: white;
+    }
+
+    .btn-archived:hover:not(:disabled) {
+      opacity: 0.9;
     }
 
     .btn-danger {

@@ -22,7 +22,7 @@ class OrderList extends LitElement {
 
   canOperate(order) {
     if (!this.currentUser) return false
-    if (order.status === 'sign_complete') return false
+    if (order.status === 'reviewed') return false
     if (order.current_role !== this.currentUser.role) return false
     if (order.handler && order.handler !== this.currentUser.id) return false
     return true
@@ -145,6 +145,14 @@ class OrderList extends LitElement {
                         退回
                       </button>
                     ` : ''}
+                    ${order.status === 'sign_complete' && this.currentUser?.role === 'review' ? html`
+                      <button
+                        class="action-btn review"
+                        @click=${() => this._quickReview(order)}
+                      >
+                        归档
+                      </button>
+                    ` : ''}
                   ` : ''}
                 </td>
               </tr>
@@ -171,6 +179,10 @@ class OrderList extends LitElement {
   }
 
   _quickResubmit(order) {
+    this.dispatchEvent(new CustomEvent('view-detail', { detail: order.id }))
+  }
+
+  _quickReview(order) {
     this.dispatchEvent(new CustomEvent('view-detail', { detail: order.id }))
   }
 
@@ -279,6 +291,11 @@ class OrderList extends LitElement {
       color: #16a34a;
     }
 
+    .status-reviewed {
+      background: #ede9fe;
+      color: #6d28d9;
+    }
+
     .action-btn {
       padding: 5px 12px;
       border: none;
@@ -318,6 +335,15 @@ class OrderList extends LitElement {
 
     .action-btn.return:hover {
       background: #fecaca;
+    }
+
+    .action-btn.review {
+      background: #ede9fe;
+      color: #6d28d9;
+    }
+
+    .action-btn.review:hover {
+      background: #ddd6fe;
     }
 
     .empty-state {

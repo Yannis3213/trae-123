@@ -123,7 +123,8 @@ def validate_status_transition(order: Dict[str, Any], action: str) -> Optional[D
     valid_transitions = {
         'pending_sign': ['approve', 'return', 'exception'],
         'exception_return': ['resubmit', 'return'],
-        'sign_complete': []
+        'sign_complete': ['review'],
+        'reviewed': []
     }
     
     if action not in valid_transitions.get(current_status, []):
@@ -142,6 +143,7 @@ def _action_label(action: str) -> str:
         'return': '退回补正',
         'exception': '异常回传',
         'resubmit': '补正提交',
+        'review': '复核归档',
         'create': '创建',
         'update_evidence': '更新证据'
     }
@@ -171,11 +173,32 @@ def validate_evidence(order: Dict[str, Any], action: str, evidence: Optional[Dic
                 'code': 'MISSING_CORRECTION',
                 'expected': '至少补充一项证据材料'
             }
+        has_real_evidence = any(v and v.strip() for v in evidence.values())
+        if not has_real_evidence:
+            return {
+                'error': '补正证据不能为空，请填写有效的证据材料',
+                'code': 'EMPTY_CORRECTION_EVIDENCE',
+                'expected': '每项补正证据必须填写非空内容'
+            }
+    
+    if action == 'review':
+        all_stages_evidence = [
+            ('room_booking', order.get('room_booking_evidence', '')),
+            ('equipment_prep', order.get('equipment_evidence', '')),
+            ('usage_confirm', order.get('usage_evidence', ''))
+        ]
+        missing_stages = [STAGES[stage] for stage, ev in all_stages_evidence if not ev or not ev.strip()]
+        if missing_stages:
+            return {
+                'error': f"复核归档要求三阶段证据齐全，缺少：{'、'.join(missing_stages)}",
+                'code': 'INCOMPLETE_EVIDENCE_FOR_REVIEW',
+                'missing_stages': missing_stages
+            }
     
     return None
 
 def validate_overdue(order: Dict[str, Any], action: str, audit_remark: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    if action not in ['approve', 'resubmit']:
+    if action not in ['approve', 'resubmit', 'review']:
         return None
     
     deadline = datetime.strptime(order['deadline'], '%Y-%m-%d %H:%M:%S')
@@ -201,7 +224,7 @@ def validate_batch_request(data: Dict[str, Any], user: Dict[str, Any]) -> Option
     if action in ['return', 'exception'] and not data.get('exception_reason'):
         return {'error': '退回/异常回传必须填写异常原因', 'code': 'MISSING_EXCEPTION_REASON'}
     
-    if action in ['approve'] and not data.get('opinion'):
+    if action in ['approve', 'review'] and not data.get('opinion'):
         return {'error': '请填写处理意见', 'code': 'MISSING_OPINION'}
     
     return None
@@ -236,13 +259,18 @@ def validate_single_order_full(order: Dict[str, Any], user: Dict[str, Any], acti
             'code': 'MISSING_EXCEPTION_REASON'
         }
     
-    if action in ['approve'] and not evidence and not check_order.get(STAGE_REQUIRED_EVIDENCE[check_order['current_stage']]):
+    if action == 'approve':
         evidence_error = validate_evidence(check_order, action, evidence)
         if evidence_error:
             return evidence_error
     
-    if action in ['approve', 'resubmit'] and evidence:
+    if action == 'resubmit':
         evidence_error = validate_evidence(check_order, action, evidence)
+        if evidence_error:
+            return evidence_error
+    
+    if action == 'review':
+        evidence_error = validate_evidence(check_order, action, None)
         if evidence_error:
             return evidence_error
     
@@ -321,6 +349,11 @@ def update_order_status(conn, order_id: int, action: str, user: Dict[str, Any],
         new_status = 'pending_sign'
         new_role = 'audit'
         new_handler = _get_next_handler('audit', user['id'])
+    
+    elif action == 'review':
+        new_status = 'reviewed'
+        new_role = 'review'
+        new_handler = order['handler']
     
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     new_version = order['version'] + 1
@@ -416,8 +449,9 @@ async def list_orders(request: Request, user: Dict[str, Any]):
                     CASE status 
                       WHEN 'exception_return' THEN 0 
                       WHEN 'pending_sign' THEN 1 
-                      WHEN 'sign_complete' THEN 2 
-                      ELSE 3 
+                      WHEN 'sign_complete' THEN 2
+                      WHEN 'reviewed' THEN 3
+                      ELSE 4 
                     END,
                     deadline ASC,
                     created_at DESC'''
@@ -444,6 +478,7 @@ async def list_orders(request: Request, user: Dict[str, Any]):
                 'pending_sign': status_stats.get('pending_sign', 0),
                 'exception_return': status_stats.get('exception_return', 0),
                 'sign_complete': status_stats.get('sign_complete', 0),
+                'reviewed': status_stats.get('reviewed', 0),
                 'overdue': overdue_count,
                 'urgent': urgent_count
             },
@@ -500,7 +535,7 @@ async def get_order_detail(request: Request, user: Dict[str, Any]):
         can_operate = (order['current_role'] == user['role'] and 
                        (not order['handler'] or order['handler'] == user['id']))
         
-        can_edit_evidence = can_operate and order['status'] != 'sign_complete'
+        can_edit_evidence = can_operate and order['status'] not in ['sign_complete', 'reviewed']
         
         allowed_actions = []
         if can_operate:
@@ -510,6 +545,8 @@ async def get_order_detail(request: Request, user: Dict[str, Any]):
                 allowed_actions = ['resubmit', 'return']
             elif order['status'] == 'exception_return' and user['role'] in ['audit', 'review']:
                 allowed_actions = ['return']
+            elif order['status'] == 'sign_complete' and user['role'] == 'review':
+                allowed_actions = ['review']
         
         return JSONResponse({
             'order': order,
@@ -755,7 +792,7 @@ async def statistics(request: Request, user: Dict[str, Any]):
         
         role_stats = {}
         for role in ROLES:
-            role_stats[role] = {'total': 0, 'pending_sign': 0, 'exception_return': 0, 'sign_complete': 0}
+            role_stats[role] = {'total': 0, 'pending_sign': 0, 'exception_return': 0, 'sign_complete': 0, 'reviewed': 0}
         
         for row in rows:
             r = dict(row)
