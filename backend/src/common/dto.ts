@@ -19,6 +19,9 @@ export class UpdateStatusDto {
   assigned_to?: number;
   comment?: string;
   version: number;
+  review_opinion?: string;
+  review_result?: 'approved' | 'rejected';
+  correction_reason?: string;
 }
 
 export class BatchProcessDto {
@@ -26,6 +29,9 @@ export class BatchProcessDto {
   action: 'assign' | 'transfer' | 'review' | 'return';
   assigned_to?: number;
   comment?: string;
+  review_opinion?: string;
+  review_result?: 'approved' | 'rejected';
+  correction_reason?: string;
 }
 
 export class BatchOverdueAdvanceDto {

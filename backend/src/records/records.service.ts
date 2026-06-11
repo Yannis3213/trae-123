@@ -163,16 +163,29 @@ export class RecordsService {
       }
 
       db.prepare(`
-        UPDATE suitability_records SET status = ?, assigned_to = ?, current_handler = ?, version = version + 1, updated_at = datetime('now')
+        UPDATE suitability_records SET status = ?, assigned_to = ?, current_handler = ?, version = version + 1, updated_at = datetime('now'),
+        review_opinion = ?, review_result = ?, correction_reason = ?
         WHERE id = ?
-      `).run(newStatus, newAssignedTo, newCurrentHandler, id);
+      `).run(newStatus, newAssignedTo, newCurrentHandler,
+        dto.review_opinion || record.review_opinion,
+        dto.review_result || record.review_result,
+        dto.correction_reason || record.correction_reason,
+        id);
 
       this.dbService.recalcExpiryStatus(id);
 
       db.prepare(`
-        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(id, dto.action, record.status, newStatus, user.id, user.role, dto.comment || null);
+        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, correction_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, dto.action, record.status, newStatus, user.id, user.role, dto.comment || null,
+        dto.review_opinion || null,
+        dto.review_result || null,
+        dto.correction_reason || null);
+
+      if (dto.action === 'return' && dto.correction_reason) {
+        db.prepare('INSERT INTO exception_reasons (record_id, reason_type, description, created_by) VALUES (?, ?, ?, ?)')
+          .run(id, 'return_correction', dto.correction_reason, user.id);
+      }
     });
 
     txn();
@@ -229,6 +242,12 @@ export class RecordsService {
         if (record.current_handler !== user.id) {
           throw new ForbiddenException('NOT_ASSIGNED_HANDLER: 您不是该记录的当前处理人');
         }
+        if (!dto.review_opinion) {
+          throw new BadRequestException('MISSING_EVIDENCE: 审核必须填写复核意见');
+        }
+        if (!dto.review_result) {
+          throw new BadRequestException('MISSING_EVIDENCE: 审核必须选择复核结果');
+        }
         break;
 
       case 'return':
@@ -241,6 +260,9 @@ export class RecordsService {
         if (!dto.comment) {
           throw new BadRequestException('MISSING_EVIDENCE: 退回必须填写原因');
         }
+        if (!dto.correction_reason) {
+          throw new BadRequestException('MISSING_EVIDENCE: 退回必须填写补正原因');
+        }
         if (record.status !== 'transferred' && record.status !== 'visited') {
           throw new BadRequestException('INVALID_STATUS: 只有已转办或已回访状态的记录可以退回');
         }
@@ -251,7 +273,7 @@ export class RecordsService {
     }
   }
 
-  submitCorrection(id: number, user: any, comment?: string) {
+  submitCorrection(id: number, user: any, comment?: string, correctionReason?: string) {
     const db = this.dbService.getDb();
     const record = db.prepare('SELECT * FROM suitability_records WHERE id = ?').get(id) as any;
     if (!record) {
@@ -260,14 +282,14 @@ export class RecordsService {
 
     const txn = db.transaction(() => {
       db.prepare(`
-        UPDATE suitability_records SET version = version + 1, updated_at = datetime('now')
+        UPDATE suitability_records SET version = version + 1, updated_at = datetime('now'), correction_reason = ?
         WHERE id = ?
-      `).run(id);
+      `).run(correctionReason || comment || '提交修正材料', id);
 
       db.prepare(`
-        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment)
-        VALUES (?, 'correction', ?, ?, ?, ?, ?)
-      `).run(id, record.status, record.status, user.id, user.role, comment || '提交修正材料');
+        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, correction_reason)
+        VALUES (?, 'correction', ?, ?, ?, ?, ?, ?)
+      `).run(id, record.status, record.status, user.id, user.role, comment || '提交修正材料', correctionReason || null);
 
       this.dbService.recalcExpiryStatus(id);
     });

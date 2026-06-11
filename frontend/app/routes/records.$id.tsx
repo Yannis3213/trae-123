@@ -12,6 +12,9 @@ interface ProcessingRecord {
   action: string;
   handler: { id: string; name: string };
   comment?: string;
+  review_opinion?: string;
+  review_result?: string;
+  correction_reason?: string;
   created_at: string;
 }
 
@@ -50,6 +53,9 @@ interface RecordDetail {
   suitability_check: boolean;
   risk_assessment: boolean;
   business_opening: boolean;
+  review_opinion?: string;
+  review_result?: string;
+  correction_reason?: string;
   processing_records: ProcessingRecord[];
   exception_reasons: ExceptionReason[];
   audit_notes: AuditNote[];
@@ -64,11 +70,14 @@ interface UserOption {
 
 const ACTION_LABELS: Record<string, string> = {
   created: "创建记录",
-  assigned: "分派",
-  transferred: "转办",
+  assign: "分派",
+  transfer: "转办",
+  review: "复核",
   visited: "回访",
   approved: "审核通过",
   returned: "退回",
+  correction: "补正",
+  return: "退回",
 };
 
 export default function RecordDetailPage() {
@@ -84,6 +93,9 @@ export default function RecordDetailPage() {
   const [comment, setComment] = useState("");
   const [noteContent, setNoteContent] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [reviewOpinion, setReviewOpinion] = useState("");
+  const [reviewResult, setReviewResult] = useState<"approved" | "rejected">("approved");
+  const [correctionReason, setCorrectionReason] = useState("");
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -136,10 +148,23 @@ export default function RecordDetailPage() {
           setActionError("请填写退回原因");
           return;
         }
+        if (!correctionReason) {
+          setActionError("请填写补正原因");
+          return;
+        }
         body.comment = comment;
+        body.correction_reason = correctionReason;
       }
       if (action === "transfer" && comment) {
         body.comment = comment;
+      }
+      if (action === "review") {
+        if (!reviewOpinion) {
+          setActionError("请填写复核意见");
+          return;
+        }
+        body.review_opinion = reviewOpinion;
+        body.review_result = reviewResult;
       }
       await apiFetch(`/records/${id}/status`, {
         method: "PUT",
@@ -148,12 +173,14 @@ export default function RecordDetailPage() {
       const messages: Record<string, string> = {
         assign: "分派成功",
         transfer: "转办成功",
-        review: "审核通过",
+        review: "审核完成",
         return: "退回成功",
       };
       setActionSuccess(messages[action] || "操作成功");
       setComment("");
       setSelectedUser("");
+      setReviewOpinion("");
+      setCorrectionReason("");
       loadRecord();
     } catch (err: any) {
       setActionError(err.message || "操作失败");
@@ -176,6 +203,27 @@ export default function RecordDetailPage() {
       loadRecord();
     } catch (err: any) {
       setActionError(err.message || "添加备注失败");
+    }
+  };
+
+  const handleSubmitCorrection = async () => {
+    if (!correctionReason) {
+      setActionError("请填写补正原因");
+      return;
+    }
+    try {
+      setActionError("");
+      const token = getToken();
+      await apiFetch(`/records/${id}/correction`, {
+        method: "PUT",
+        body: JSON.stringify({ comment: comment || "提交补正材料", correction_reason: correctionReason }),
+      }, token || undefined);
+      setActionSuccess("补正提交成功");
+      setComment("");
+      setCorrectionReason("");
+      loadRecord();
+    } catch (err: any) {
+      setActionError(err.message || "提交补正失败");
     }
   };
 
@@ -280,6 +328,28 @@ export default function RecordDetailPage() {
                 {record.created_at ? new Date(record.created_at).toLocaleString("zh-CN") : "—"}
               </div>
             </div>
+            {record.review_opinion && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <div className="text-xs text-muted">复核意见</div>
+                <div className="font-medium text-sm" style={{ marginTop: 2 }}>{record.review_opinion}</div>
+              </div>
+            )}
+            {record.review_result && (
+              <div>
+                <div className="text-xs text-muted">复核结果</div>
+                <div style={{ marginTop: 2 }}>
+                  <span className={record.review_result === "approved" ? "badge badge-green" : "badge badge-red"}>
+                    {record.review_result === "approved" ? "通过" : "驳回"}
+                  </span>
+                </div>
+              </div>
+            )}
+            {record.correction_reason && (
+              <div>
+                <div className="text-xs text-muted">补正原因</div>
+                <div className="font-medium text-sm" style={{ color: "var(--warning)" }}>{record.correction_reason}</div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -322,25 +392,52 @@ export default function RecordDetailPage() {
       <div className="card" style={{ marginTop: 20 }}>
         <div className="card-header">操作区域</div>
         {user?.role === "financial_advisor" && record.status === "pending_assign" && (
-          <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-            <div className="form-group" style={{ marginBottom: 0, minWidth: 200 }}>
-              <label>选择合规专员</label>
-              <select
-                className="form-control"
-                value={selectedUser}
-                onChange={(e) => setSelectedUser(e.target.value)}
-              >
-                <option value="">请选择</option>
-                {complianceUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                  </option>
-                ))}
-              </select>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div className="form-group" style={{ marginBottom: 0, minWidth: 200 }}>
+                <label>选择合规专员</label>
+                <select
+                  className="form-control"
+                  value={selectedUser}
+                  onChange={(e) => setSelectedUser(e.target.value)}
+                >
+                  <option value="">请选择</option>
+                  {complianceUsers.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button className="btn btn-primary" onClick={() => handleStatusUpdate("assign")}>
+                分派
+              </button>
             </div>
-            <button className="btn btn-primary" onClick={() => handleStatusUpdate("assign")}>
-              分派
-            </button>
+            {record.correction_reason && (
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+                  <label>补正说明</label>
+                  <input
+                    className="form-control"
+                    value={correctionReason}
+                    onChange={(e) => setCorrectionReason(e.target.value)}
+                    placeholder="请输入补正说明"
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+                  <label>备注</label>
+                  <input
+                    className="form-control"
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                    placeholder="补充说明"
+                  />
+                </div>
+                <button className="btn btn-secondary" onClick={handleSubmitCorrection}>
+                  提交补正
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -368,12 +465,21 @@ export default function RecordDetailPage() {
             </div>
             <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
               <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
-                <label>退回原因</label>
+                <label>退回原因 <span style={{ color: "var(--danger)" }}>*</span></label>
                 <input
                   className="form-control"
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   placeholder="请输入退回原因"
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+                <label>补正原因 <span style={{ color: "var(--danger)" }}>*</span></label>
+                <input
+                  className="form-control"
+                  value={correctionReason}
+                  onChange={(e) => setCorrectionReason(e.target.value)}
+                  placeholder="请输入补正原因"
                 />
               </div>
               <button className="btn btn-danger" onClick={() => handleStatusUpdate("return")}>
@@ -384,17 +490,52 @@ export default function RecordDetailPage() {
         )}
 
         {user?.role === "branch_manager" && record.status === "visited" && (
-          <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
-            <button className="btn btn-success" onClick={() => handleStatusUpdate("review")}>
-              审核通过
-            </button>
-            <div style={{ display: "flex", gap: 8, flex: 1 }}>
-              <input
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>复核意见 <span style={{ color: "var(--danger)" }}>*</span></label>
+              <textarea
                 className="form-control"
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="退回原因"
+                value={reviewOpinion}
+                onChange={(e) => setReviewOpinion(e.target.value)}
+                placeholder="请填写复核意见"
+                rows={3}
               />
+            </div>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div className="form-group" style={{ marginBottom: 0, minWidth: 200 }}>
+                <label>复核结果 <span style={{ color: "var(--danger)" }}>*</span></label>
+                <select
+                  className="form-control"
+                  value={reviewResult}
+                  onChange={(e) => setReviewResult(e.target.value as "approved" | "rejected")}
+                >
+                  <option value="approved">审核通过</option>
+                  <option value="rejected">审核驳回</option>
+                </select>
+              </div>
+              <button className="btn btn-success" onClick={() => handleStatusUpdate("review")}>
+                提交复核意见
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+                <label>退回原因 <span style={{ color: "var(--danger)" }}>*</span></label>
+                <input
+                  className="form-control"
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="请输入退回原因"
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+                <label>补正原因 <span style={{ color: "var(--danger)" }}>*</span></label>
+                <input
+                  className="form-control"
+                  value={correctionReason}
+                  onChange={(e) => setCorrectionReason(e.target.value)}
+                  placeholder="请输入补正原因"
+                />
+              </div>
               <button className="btn btn-danger" onClick={() => handleStatusUpdate("return")}>
                 退回
               </button>
@@ -430,6 +571,23 @@ export default function RecordDetailPage() {
                       {pr.created_at ? new Date(pr.created_at).toLocaleString("zh-CN") : ""}
                     </div>
                     {pr.comment && <div className="timeline-desc">{pr.comment}</div>}
+                    {pr.review_opinion && (
+                      <div style={{ marginTop: 4, padding: "4px 8px", background: "var(--success-light)", borderRadius: 4, fontSize: 12 }}>
+                        复核意见：{pr.review_opinion}
+                      </div>
+                    )}
+                    {pr.review_result && (
+                      <div style={{ marginTop: 2, fontSize: 12 }}>
+                        复核结果：<span className={pr.review_result === "approved" ? "badge badge-green" : "badge badge-red"}>
+                          {pr.review_result === "approved" ? "通过" : "驳回"}
+                        </span>
+                      </div>
+                    )}
+                    {pr.correction_reason && (
+                      <div style={{ marginTop: 2, padding: "4px 8px", background: "var(--warning-light)", borderRadius: 4, fontSize: 12 }}>
+                        补正原因：{pr.correction_reason}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

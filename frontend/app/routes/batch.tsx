@@ -50,6 +50,9 @@ export default function BatchPage() {
   const [action, setAction] = useState("assign");
   const [handlerId, setHandlerId] = useState("");
   const [comment, setComment] = useState("");
+  const [reviewOpinion, setReviewOpinion] = useState("");
+  const [reviewResult, setReviewResult] = useState<"approved" | "rejected">("approved");
+  const [correctionReason, setCorrectionReason] = useState("");
   const [users, setUsers] = useState<UserOption[]>([]);
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState<BatchResult[]>([]);
@@ -126,6 +129,10 @@ export default function BatchPage() {
       setError("请选择至少一条记录");
       return;
     }
+    if (action === "review" && !reviewOpinion) {
+      setError("批量审核必须填写复核意见");
+      return;
+    }
     setProcessing(true);
     setResults([]);
     setError("");
@@ -137,6 +144,11 @@ export default function BatchPage() {
       };
       if (handlerId) body.assigned_to = parseInt(handlerId);
       if (comment) body.comment = comment;
+      if (action === "review") {
+        body.review_opinion = reviewOpinion;
+        body.review_result = reviewResult;
+      }
+      if (correctionReason) body.correction_reason = correctionReason;
       const data = await apiFetch("/batch/process", {
         method: "POST",
         body: JSON.stringify(body),
@@ -200,6 +212,32 @@ export default function BatchPage() {
             </div>
           )}
 
+          {action === "review" && (
+            <>
+              <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+                <label>复核意见 <span style={{ color: "var(--danger)" }}>*</span></label>
+                <input
+                  className="form-control"
+                  value={reviewOpinion}
+                  onChange={(e) => setReviewOpinion(e.target.value)}
+                  placeholder="请输入复核意见"
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>复核结果</label>
+                <select
+                  className="form-control"
+                  value={reviewResult}
+                  onChange={(e) => setReviewResult(e.target.value as "approved" | "rejected")}
+                  style={{ minWidth: 120 }}
+                >
+                  <option value="approved">通过</option>
+                  <option value="rejected">驳回</option>
+                </select>
+              </div>
+            </>
+          )}
+
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label>备注</label>
             <input
@@ -207,6 +245,17 @@ export default function BatchPage() {
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               placeholder="退回原因或备注"
+              style={{ minWidth: 160 }}
+            />
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>补正原因</label>
+            <input
+              className="form-control"
+              value={correctionReason}
+              onChange={(e) => setCorrectionReason(e.target.value)}
+              placeholder="退回时的补正原因"
               style={{ minWidth: 160 }}
             />
           </div>

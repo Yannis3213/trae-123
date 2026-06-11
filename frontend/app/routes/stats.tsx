@@ -22,9 +22,14 @@ interface TimelineStat {
 
 interface AuditLog {
   id: string;
+  record_id: string;
   action: string;
-  user: { id: string; name: string };
+  handler: { id: string; name: string };
   record_no: string;
+  comment?: string;
+  review_opinion?: string;
+  review_result?: string;
+  correction_reason?: string;
   created_at: string;
   details?: string;
 }
@@ -51,6 +56,15 @@ const EXPIRY_COLORS: Record<string, string> = {
   normal: "#16a34a",
   near_expiry: "#d97706",
   overdue: "#dc2626",
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  assign: "分派",
+  transfer: "转办",
+  review: "复核",
+  return: "退回",
+  correction: "补正",
+  created: "创建",
 };
 
 export default function StatsPage() {
@@ -311,7 +325,9 @@ export default function StatsPage() {
                 <th>操作人</th>
                 <th>记录编号</th>
                 <th>操作</th>
-                <th>详情</th>
+                <th>备注</th>
+                <th>复核意见</th>
+                <th>补正原因</th>
               </tr>
             </thead>
             <tbody>
@@ -320,15 +336,36 @@ export default function StatsPage() {
                   <td className="text-sm text-muted">
                     {log.created_at ? new Date(log.created_at).toLocaleString("zh-CN") : ""}
                   </td>
-                  <td>{log.user?.name || "—"}</td>
+                  <td>{log.handler?.name || "—"}</td>
                   <td
                     style={{ fontWeight: 500, color: "var(--primary)", cursor: "pointer" }}
-                    onClick={() => navigate(`/records/${log.record_no}`)}
+                    onClick={() => navigate(`/records/${log.record_id}`)}
                   >
                     {log.record_no}
                   </td>
-                  <td>{log.action}</td>
-                  <td className="text-sm text-muted">{log.details || "—"}</td>
+                  <td>
+                    <span className="badge badge-blue">
+                      {ACTION_LABELS[log.action] || log.action}
+                    </span>
+                  </td>
+                  <td className="text-sm" style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {log.comment || "—"}
+                  </td>
+                  <td className="text-sm" style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {log.review_opinion ? (
+                      <span>
+                        {log.review_opinion}
+                        {log.review_result && (
+                          <span className={log.review_result === "approved" ? "badge badge-green" : "badge badge-red"} style={{ marginLeft: 4 }}>
+                            {log.review_result === "approved" ? "通过" : "驳回"}
+                          </span>
+                        )}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td className="text-sm" style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: log.correction_reason ? "var(--warning)" : undefined }}>
+                    {log.correction_reason || "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>

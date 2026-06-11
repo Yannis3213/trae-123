@@ -42,8 +42,8 @@ export class RecordsController {
   }
 
   @Put(':id/correction')
-  submitCorrection(@Param('id') id: string, @Req() req: any, @Body() body?: { comment?: string }) {
-    return this.recordsService.submitCorrection(parseInt(id, 10), req.user, body?.comment);
+  submitCorrection(@Param('id') id: string, @Req() req: any, @Body() body?: { comment?: string; correction_reason?: string }) {
+    return this.recordsService.submitCorrection(parseInt(id, 10), req.user, body?.comment, body?.correction_reason);
   }
 
   @Post(':id/attachments')

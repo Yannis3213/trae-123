@@ -16,6 +16,9 @@ export class BatchService {
           assigned_to: dto.assigned_to,
           comment: dto.comment,
           version: -1,
+          review_opinion: dto.review_opinion,
+          review_result: dto.review_result,
+          correction_reason: dto.correction_reason,
         };
 
         const db = this.dbService.getDb();
@@ -74,6 +77,8 @@ export class BatchService {
           assigned_to: this.getNextHandler(record),
           comment: dto.comment || '逾期批量推进处理',
           version: record.version,
+          review_opinion: action === 'review' ? (dto.comment || '逾期批量推进审核通过') : undefined,
+          review_result: action === 'review' ? 'approved' : undefined,
         };
 
         this.processSingleRecord(recordId, statusDto, user, record);
@@ -141,16 +146,29 @@ export class BatchService {
       }
 
       db.prepare(`
-        UPDATE suitability_records SET status = ?, assigned_to = ?, current_handler = ?, version = version + 1, updated_at = datetime('now')
+        UPDATE suitability_records SET status = ?, assigned_to = ?, current_handler = ?, version = version + 1, updated_at = datetime('now'),
+        review_opinion = ?, review_result = ?, correction_reason = ?
         WHERE id = ?
-      `).run(newStatus, newAssignedTo, newCurrentHandler, id);
+      `).run(newStatus, newAssignedTo, newCurrentHandler,
+        dto.review_opinion || record.review_opinion,
+        dto.review_result || record.review_result,
+        dto.correction_reason || record.correction_reason,
+        id);
 
       this.dbService.recalcExpiryStatus(id);
 
       db.prepare(`
-        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(id, dto.action, record.status, newStatus, user.id, user.role, dto.comment || null);
+        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, correction_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, dto.action, record.status, newStatus, user.id, user.role, dto.comment || null,
+        dto.review_opinion || null,
+        dto.review_result || null,
+        dto.correction_reason || null);
+
+      if (dto.action === 'return' && dto.correction_reason) {
+        db.prepare('INSERT INTO exception_reasons (record_id, reason_type, description, created_by) VALUES (?, ?, ?, ?)')
+          .run(id, 'return_correction', dto.correction_reason, user.id);
+      }
     });
 
     txn();
@@ -206,6 +224,12 @@ export class BatchService {
         if (record.current_handler !== user.id) {
           throw new Error('NOT_ASSIGNED_HANDLER: 您不是该记录的当前处理人');
         }
+        if (!dto.review_opinion) {
+          throw new Error('MISSING_EVIDENCE: 审核必须填写复核意见');
+        }
+        if (!dto.review_result) {
+          throw new Error('MISSING_EVIDENCE: 审核必须选择复核结果');
+        }
         break;
 
       case 'return':
@@ -217,6 +241,9 @@ export class BatchService {
         }
         if (!dto.comment) {
           throw new Error('MISSING_EVIDENCE: 退回必须填写原因');
+        }
+        if (!dto.correction_reason) {
+          throw new Error('MISSING_EVIDENCE: 退回必须填写补正原因');
         }
         if (record.status !== 'transferred' && record.status !== 'visited') {
           throw new Error('INVALID_STATUS: 只有已转办或已回访状态的记录可以退回');
