@@ -23,10 +23,11 @@ router.get('/', async (ctx) => {
 
 router.get('/:id', async (ctx) => {
   const userId = ctx.state.user.id;
-  const record = SideRecordService.getDetail(ctx.params.id, userId);
-  if (!record) {
-    ctx.status = 404;
-    ctx.body = { success: false, message: '旁站记录单不存在' };
+  const userRole = ctx.state.user.role;
+  const record = SideRecordService.getDetail(ctx.params.id, userId, userRole);
+  if (!record || record.__unauthorized) {
+    ctx.status = !record ? 404 : 403;
+    ctx.body = { success: false, message: !record ? '旁站记录单不存在' : '无权查看此旁站记录单' };
     return;
   }
   ctx.body = { success: true, data: record };
@@ -68,19 +69,38 @@ router.post('/batch', authMiddleware, async (ctx) => {
     return;
   }
 
-  if (action === 'submit' && userRole !== ROLES.REGISTRAR) {
+  const registrarActions = ['submit'];
+  const supervisorActions = ['pass', 'return', 'missing', 'overdue', 'conflict'];
+  const reviewerActions = ['sync', 'return', 'missing', 'overdue'];
+
+  if (registrarActions.includes(action) && userRole !== ROLES.REGISTRAR) {
     ctx.status = 403;
     ctx.body = { success: false, message: '越权：只有旁站记录登记员可以执行批量提交' };
     return;
   }
-  if (['pass', 'return', 'missing', 'overdue', 'conflict'].includes(action) && userRole !== ROLES.SUPERVISOR) {
+  if (supervisorActions.includes(action) && userRole === ROLES.REGISTRAR) {
     ctx.status = 403;
-    ctx.body = { success: false, message: '越权：只有旁站记录审核主管可以执行批量审核' };
+    ctx.body = { success: false, message: '越权：登记员无权执行此审核类操作' };
     return;
   }
-  if (['sync'].includes(action) && userRole !== ROLES.REVIEWER) {
+  if (reviewerActions.includes(action) && userRole === ROLES.REGISTRAR) {
+    ctx.status = 403;
+    ctx.body = { success: false, message: '越权：登记员无权执行此归档类操作' };
+    return;
+  }
+  if (action === 'sync' && userRole !== ROLES.REVIEWER) {
     ctx.status = 403;
     ctx.body = { success: false, message: '越权：只有工程监理公司复核负责人可以执行批量归档' };
+    return;
+  }
+  if (action === 'pass' && userRole !== ROLES.SUPERVISOR) {
+    ctx.status = 403;
+    ctx.body = { success: false, message: '越权：只有旁站记录审核主管可以执行批量审核通过' };
+    return;
+  }
+  if (action === 'conflict' && userRole !== ROLES.SUPERVISOR) {
+    ctx.status = 403;
+    ctx.body = { success: false, message: '越权：只有旁站记录审核主管可以标记状态冲突' };
     return;
   }
 

@@ -8,14 +8,15 @@
 - **前端**：Remix + React + Tailwind CSS
 - **后端**：Node.js + Koa 2
 - **数据库**：本地 SQLite（better-sqlite3）
-- **端口**：
-  - 前端：`5173`（环境变量 `FRONTEND_PORT`）
-  - 后端：`3001`（环境变量 `BACKEND_PORT`）
-  - 所有配置均从 `backend/src/config/index.js` 中统一派生：
+- **端口**（从环境变量派生，未设置时使用默认值）：
+  - 前端：环境变量 `FRONTEND_PORT`，默认 `5173`
+  - 后端：环境变量 `BACKEND_PORT`，默认 `3001`
+  - 所有配置均从 `backend/src/config/index.js` 和 `frontend/vite.config.js` 的环境变量派生：
     - 后端监听端口
     - CORS 白名单
     - 前端 Vite 代理（`/api` → 后端端口）
     - README 启动说明
+  - ⚠ 如需修改端口，请通过设置环境变量，不要直接写死常量
 
 ---
 
@@ -57,9 +58,21 @@ npm run start:backend
 npm run start:frontend
 ```
 
-启动完成后访问：
-- 前端：http://localhost:5173
-- 后端健康检查：http://localhost:3001/api/health
+**自定义端口（可选）**：
+
+端口通过环境变量控制，无需修改代码：
+
+```bash
+# macOS / Linux
+FRONTEND_PORT=8080 BACKEND_PORT=4000 npm run dev
+
+# Windows PowerShell
+$env:FRONTEND_PORT=8080; $env:BACKEND_PORT=4000; npm run dev
+```
+
+启动完成后访问（根据端口配置调整）：
+- 前端：`http://localhost:${FRONTEND_PORT:-5173}`
+- 后端健康检查：`http://localhost:${BACKEND_PORT:-3001}/api/health`
 
 ---
 
@@ -275,12 +288,12 @@ npm run start:frontend
 trae-123-5/
 ├── backend/                    # Koa 后端
 │   ├── src/
-│   │   ├── config/index.js     # 端口、角色、状态等常量（FRONTEND_PORT=5173, BACKEND_PORT=3001）
+│   │   ├── config/index.js     # 环境变量派生：FRONTEND_PORT（默认5173）、BACKEND_PORT（默认3001），以及角色、状态常量
 │   │   ├── db/index.js         # SQLite 连接
 │   │   ├── scripts/            # 初始化 & 种子数据脚本
 │   │   ├── models/index.js     # 数据模型层
 │   │   ├── middleware/auth.js  # 认证 & 权限校验中间件（五道核心校验）
-│   │   ├── services/           # 业务逻辑层（_getNextHandler() 处理人移交）
+│   │   ├── services/           # 业务逻辑层（_getNextHandler() 处理人移交 + 事务更新）
 │   │   ├── routes/             # 路由层
 │   │   └── app.js              # 应用入口（CORS 从 config 导入，监听从 config 导入）
 │   └── data/                   # SQLite 数据目录
@@ -289,10 +302,10 @@ trae-123-5/
 │   │   ├── components/         # 公共组件（DetailModal/BatchModal 自动刷新）
 │   │   ├── constants/index.js  # 前端常量
 │   │   ├── utils/api.js        # API 封装
-│   │   ├── routes/             # 页面路由（refreshKey 刷新机制）
+│   │   ├── routes/             # 页面路由（VISIBLE_STATUSES 过滤 + refreshKey 刷新）
 │   │   ├── root.jsx            # 根布局（侧边栏 + 角色切换）
 │   │   └── tailwind.css        # 全局样式
-│   ├── vite.config.js          # Vite + 端口 5173 + /api 代理到 3001
+│   ├── vite.config.js          # 环境变量派生：FRONTEND_PORT（默认5173）、端口 + /api 代理到 BACKEND_PORT
 │   └── ...
 └── package.json                # 工作区根
 ```

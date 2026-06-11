@@ -1,7 +1,7 @@
-const BACKEND_PORT = 3001;
-const FRONTEND_PORT = 5173;
-const JWT_SECRET = 'side-record-supervision-secret-key-2024';
-const JWT_EXPIRES_IN = '24h';
+const BACKEND_PORT = parseInt(process.env.BACKEND_PORT || '3001', 10);
+const FRONTEND_PORT = parseInt(process.env.FRONTEND_PORT || '5173', 10);
+const JWT_SECRET = process.env.JWT_SECRET || 'side-record-supervision-secret-key-2024';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 
 const ROLES = {
   REGISTRAR: 'registrar',

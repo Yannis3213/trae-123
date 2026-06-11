@@ -10,6 +10,7 @@ const {
   validateEvidence, validateVersion, validateHandler,
   validateStatusTransition, canViewByRole, canOperateByRole
 } = require('../middleware/auth');
+const db = require('../db');
 
 class SideRecordService {
   static _getNextHandler(targetStatus, record, userId) {
@@ -55,7 +56,7 @@ class SideRecordService {
     });
 
     this._updateWarningGroup(record.id);
-    return this.getDetail(record.id, userId);
+    return this.getDetail(record.id, userId, ROLES.REGISTRAR);
   }
 
   static async list(filters = {}, userId, userRole) {
@@ -64,9 +65,13 @@ class SideRecordService {
     return records.map(r => this._formatForList(r));
   }
 
-  static getDetail(id, userId) {
+  static getDetail(id, userId, userRole) {
     const record = SideRecordModel.findById(id);
     if (!record) return null;
+
+    if (userRole && !canViewByRole(record, userRole, userId)) {
+      return { __unauthorized: true, record: null };
+    }
 
     const attachments = AttachmentModel.findBySideRecordId(id);
     const processRecords = ProcessRecordModel.findBySideRecordId(id);
@@ -123,20 +128,59 @@ class SideRecordService {
     const missingEvidence = validateEvidence(mergedEvidence, 'submit');
     if (missingEvidence.length > 0) {
       const nextHandler = this._getNextHandler(STATUS.MATERIAL_MISSING, record, userId);
+      const newVersion = record.version + 1;
 
-      AbnormalReasonModel.create({
-        sideRecordId: id,
-        reasonType: 'material_missing',
-        reasonDetail: `提交时缺少必填证据：${missingEvidence.join(', ')}`,
-        relatedField: missingEvidence.join(','),
-        reportedBy: userId
+      const tx = db.transaction(() => {
+        AbnormalReasonModel.create({
+          sideRecordId: id,
+          reasonType: 'material_missing',
+          reasonDetail: `提交时缺少必填证据：${missingEvidence.join(', ')}`,
+          relatedField: missingEvidence.join(','),
+          reportedBy: userId
+        });
+
+        SideRecordModel.update(id, {
+          status: STATUS.MATERIAL_MISSING,
+          abnormalReason: `缺少必填证据：${missingEvidence.join(', ')}`,
+          abnormalType: 'material_missing',
+          currentHandlerId: nextHandler,
+          version: newVersion,
+          ...updateData
+        });
+
+        ProcessRecordModel.create({
+          sideRecordId: id,
+          action: 'material_missing',
+          fromStatus: record.status,
+          toStatus: STATUS.MATERIAL_MISSING,
+          operatorId: userId,
+          handlerId: nextHandler,
+          evidenceMissing: missingEvidence,
+          abnormalReason: `缺少必填证据：${missingEvidence.join(', ')}`,
+          abnormalType: 'material_missing',
+          remark: data.remark,
+          version: newVersion
+        });
       });
 
-      const newVersion = record.version + 1;
+      try {
+        tx();
+      } catch (err) {
+        console.error('[Submit-Missing Tx Error', err);
+        return { success: false, message: `事务执行失败：${err.message}` };
+      }
+
+      return { success: false, message: `缺少必填证据：${missingEvidence.join(', ')}，已转入缺料队列`, data: this.getDetail(id, userId, userRole) };
+    }
+
+    const nextHandler = this._getNextHandler(STATUS.PENDING_REVIEW, record, userId);
+    const newVersion = record.version + 1;
+
+    const tx = db.transaction(() => {
       SideRecordModel.update(id, {
-        status: STATUS.MATERIAL_MISSING,
-        abnormalReason: `缺少必填证据：${missingEvidence.join(', ')}`,
-        abnormalType: 'material_missing',
+        status: STATUS.PENDING_REVIEW,
+        abnormalReason: null,
+        abnormalType: null,
         currentHandlerId: nextHandler,
         version: newVersion,
         ...updateData
@@ -144,46 +188,26 @@ class SideRecordService {
 
       ProcessRecordModel.create({
         sideRecordId: id,
-        action: 'material_missing',
+        action: 'submit',
         fromStatus: record.status,
-        toStatus: STATUS.MATERIAL_MISSING,
+        toStatus: STATUS.PENDING_REVIEW,
         operatorId: userId,
         handlerId: nextHandler,
-        evidenceMissing: missingEvidence,
-        abnormalReason: `缺少必填证据：${missingEvidence.join(', ')}`,
-        abnormalType: 'material_missing',
-        remark: data.remark,
+        evidenceSubmitted: REQUIRED_EVIDENCE_FIELDS,
+        remark: data.remark || '提交旁站记录单，已移交至专业监理工程师审核',
         version: newVersion
       });
+    });
 
-      return { success: false, message: `缺少必填证据：${missingEvidence.join(', ')}，已转入缺料队列`, data: this.getDetail(id, userId) };
+    try {
+      tx();
+    } catch (err) {
+      console.error('[Submit Tx Error', err);
+      return { success: false, message: `事务执行失败：${err.message}` };
     }
 
-    const nextHandler = this._getNextHandler(STATUS.PENDING_REVIEW, record, userId);
-    const newVersion = record.version + 1;
-    SideRecordModel.update(id, {
-      status: STATUS.PENDING_REVIEW,
-      abnormalReason: null,
-      abnormalType: null,
-      currentHandlerId: nextHandler,
-      version: newVersion,
-      ...updateData
-    });
-
-    ProcessRecordModel.create({
-      sideRecordId: id,
-      action: 'submit',
-      fromStatus: record.status,
-      toStatus: STATUS.PENDING_REVIEW,
-      operatorId: userId,
-      handlerId: nextHandler,
-      evidenceSubmitted: REQUIRED_EVIDENCE_FIELDS,
-      remark: data.remark || '提交旁站记录单，已移交至专业监理工程师审核',
-      version: newVersion
-    });
-
     this._updateWarningGroup(id);
-    return { success: true, message: '提交成功，已移交至专业监理工程师审核', data: this.getDetail(id, userId) };
+    return { success: true, message: '提交成功，已移交至专业监理工程师审核', data: this.getDetail(id, userId, userRole) };
   }
 
   static review(id, data, userId, userRole) {
@@ -261,53 +285,63 @@ class SideRecordService {
       }
     }
 
-    if ([STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus)) {
-      AbnormalReasonModel.create({
-        sideRecordId: id,
-        reasonType: action,
-        reasonDetail: data.abnormalReason,
-        relatedField: data.relatedField || null,
-        reportedBy: userId
-      });
-    }
-
     const nextHandler = this._getNextHandler(targetStatus, record, userId);
     const newVersion = record.version + 1;
-    SideRecordModel.update(id, {
-      status: targetStatus,
-      reviewerId: userId,
-      currentHandlerId: nextHandler,
-      abnormalReason: data.abnormalReason || null,
-      abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus) ? action : null,
-      version: newVersion,
-      problemNoticeStatus: data.problemNoticeStatus || record.problemNoticeStatus,
-      rectificationReviewStatus: data.rectificationReviewStatus || record.rectificationReviewStatus,
-      ...updateData
+
+    const tx = db.transaction(() => {
+      if ([STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus)) {
+        AbnormalReasonModel.create({
+          sideRecordId: id,
+          reasonType: action,
+          reasonDetail: data.abnormalReason,
+          relatedField: data.relatedField || null,
+          reportedBy: userId
+        });
+      }
+
+      SideRecordModel.update(id, {
+        status: targetStatus,
+        reviewerId: userId,
+        currentHandlerId: nextHandler,
+        abnormalReason: data.abnormalReason || null,
+        abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus) ? action : null,
+        version: newVersion,
+        problemNoticeStatus: data.problemNoticeStatus || record.problemNoticeStatus,
+        rectificationReviewStatus: data.rectificationReviewStatus || record.rectificationReviewStatus,
+        ...updateData
+      });
+
+      ProcessRecordModel.create({
+        sideRecordId: id,
+        action: action,
+        fromStatus: record.status,
+        toStatus: targetStatus,
+        operatorId: userId,
+        handlerId: nextHandler,
+        evidenceSubmitted: action === 'pass' ? REQUIRED_EVIDENCE_FIELDS : null,
+        evidenceMissing: action === 'missing' ? missingEvidence : null,
+        abnormalReason: data.abnormalReason || null,
+        abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus) ? action : null,
+        remark: data.remark || `${actionName}，移交至${
+          targetStatus === STATUS.RETURNED || targetStatus === STATUS.MATERIAL_MISSING 
+            ? '登记人补正' 
+            : targetStatus === STATUS.REVIEW_PASSED 
+              ? '总监代表复核' 
+              : '当前处理人'
+        }`,
+        version: newVersion
+      });
     });
 
-    ProcessRecordModel.create({
-      sideRecordId: id,
-      action: action,
-      fromStatus: record.status,
-      toStatus: targetStatus,
-      operatorId: userId,
-      handlerId: nextHandler,
-      evidenceSubmitted: action === 'pass' ? REQUIRED_EVIDENCE_FIELDS : null,
-      evidenceMissing: action === 'missing' ? missingEvidence : null,
-      abnormalReason: data.abnormalReason || null,
-      abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus) ? action : null,
-      remark: data.remark || `${actionName}，移交至${
-        targetStatus === STATUS.RETURNED || targetStatus === STATUS.MATERIAL_MISSING 
-          ? '登记人补正' 
-          : targetStatus === STATUS.REVIEW_PASSED 
-            ? '总监代表复核' 
-            : '当前处理人'
-      }`,
-      version: newVersion
-    });
+    try {
+      tx();
+    } catch (err) {
+      console.error('[Review Tx Error]', err);
+      return { success: false, message: `事务执行失败：${err.message}` };
+    }
 
     this._updateWarningGroup(id);
-    return { success: true, message: `${actionName}成功`, data: this.getDetail(id, userId) };
+    return { success: true, message: `${actionName}成功`, data: this.getDetail(id, userId, userRole) };
   }
 
   static archive(id, data, userId, userRole) {
@@ -380,52 +414,62 @@ class SideRecordService {
       }
     }
 
-    if ([STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE].includes(targetStatus) && data.abnormalReason) {
-      AbnormalReasonModel.create({
-        sideRecordId: id,
-        reasonType: action,
-        reasonDetail: data.abnormalReason,
-        relatedField: data.relatedField || null,
-        reportedBy: userId
-      });
-    }
-
     const nextHandler = this._getNextHandler(targetStatus, record, userId);
     const newVersion = record.version + 1;
-    SideRecordModel.update(id, {
-      status: targetStatus,
-      finalArchiverId: userId,
-      currentHandlerId: nextHandler,
-      abnormalReason: data.abnormalReason || null,
-      abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE].includes(targetStatus) ? action : null,
-      version: newVersion,
-      problemNoticeStatus: data.problemNoticeStatus || record.problemNoticeStatus,
-      rectificationReviewStatus: data.rectificationReviewStatus || record.rectificationReviewStatus,
-      ...updateData
+
+    const tx = db.transaction(() => {
+      if ([STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE].includes(targetStatus) && data.abnormalReason) {
+        AbnormalReasonModel.create({
+          sideRecordId: id,
+          reasonType: action,
+          reasonDetail: data.abnormalReason,
+          relatedField: data.relatedField || null,
+          reportedBy: userId
+        });
+      }
+
+      SideRecordModel.update(id, {
+        status: targetStatus,
+        finalArchiverId: userId,
+        currentHandlerId: nextHandler,
+        abnormalReason: data.abnormalReason || null,
+        abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE].includes(targetStatus) ? action : null,
+        version: newVersion,
+        problemNoticeStatus: data.problemNoticeStatus || record.problemNoticeStatus,
+        rectificationReviewStatus: data.rectificationReviewStatus || record.rectificationReviewStatus,
+        ...updateData
+      });
+
+      ProcessRecordModel.create({
+        sideRecordId: id,
+        action: action,
+        fromStatus: record.status,
+        toStatus: targetStatus,
+        operatorId: userId,
+        handlerId: nextHandler,
+        evidenceSubmitted: action === 'sync' ? REQUIRED_EVIDENCE_FIELDS : null,
+        abnormalReason: data.abnormalReason || null,
+        abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE].includes(targetStatus) ? action : null,
+        remark: data.remark || `${actionName}，${
+          targetStatus === STATUS.SYNCED 
+            ? '已完成归档' 
+            : targetStatus === STATUS.RETURNED || targetStatus === STATUS.MATERIAL_MISSING 
+              ? '移交至登记人补正' 
+              : '移交至当前处理人'
+        }`,
+        version: newVersion
+      });
     });
 
-    ProcessRecordModel.create({
-      sideRecordId: id,
-      action: action,
-      fromStatus: record.status,
-      toStatus: targetStatus,
-      operatorId: userId,
-      handlerId: nextHandler,
-      evidenceSubmitted: action === 'sync' ? REQUIRED_EVIDENCE_FIELDS : null,
-      abnormalReason: data.abnormalReason || null,
-      abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE].includes(targetStatus) ? action : null,
-      remark: data.remark || `${actionName}，${
-        targetStatus === STATUS.SYNCED 
-          ? '已完成归档' 
-          : targetStatus === STATUS.RETURNED || targetStatus === STATUS.MATERIAL_MISSING 
-            ? '移交至登记人补正' 
-            : '移交至当前处理人'
-      }`,
-      version: newVersion
-    });
+    try {
+      tx();
+    } catch (err) {
+      console.error('[Archive Tx Error]', err);
+      return { success: false, message: `事务执行失败：${err.message}` };
+    }
 
     this._updateWarningGroup(id);
-    return { success: true, message: `${actionName}成功`, data: this.getDetail(id, userId) };
+    return { success: true, message: `${actionName}成功`, data: this.getDetail(id, userId, userRole) };
   }
 
   static async batchProcess(ids, action, data, userId, userRole) {
@@ -451,38 +495,44 @@ class SideRecordService {
         }
 
         let result;
-        if (action === 'submit') {
-          if (userRole !== ROLES.REGISTRAR) {
+
+        if (userRole === ROLES.REGISTRAR) {
+          if (action !== 'submit') {
             results.push({
               id, recordNo,
               success: false,
-              message: '越权：只有登记员可以执行提交操作'
+              message: '越权：登记员只能执行批量提交操作'
             });
             continue;
           }
           result = this.submit(id, { ...data, version: currentVersion }, userId, userRole);
-        } else if (['pass', 'return', 'missing', 'overdue', 'conflict'].includes(action)) {
-          if (userRole !== ROLES.SUPERVISOR) {
+
+        } else if (userRole === ROLES.SUPERVISOR) {
+          const allowedActions = ['pass', 'return', 'missing', 'overdue', 'conflict'];
+          if (!allowedActions.includes(action)) {
             results.push({
               id, recordNo,
               success: false,
-              message: '越权：只有审核主管可以执行审核操作'
+              message: `越权：审核主管只能执行 ${allowedActions.join('/')} 操作`
             });
             continue;
           }
           result = this.review(id, { ...data, action, version: currentVersion }, userId, userRole);
-        } else if (['sync', 'return', 'missing', 'overdue'].includes(action)) {
-          if (userRole !== ROLES.REVIEWER) {
+
+        } else if (userRole === ROLES.REVIEWER) {
+          const allowedActions = ['sync', 'return', 'missing', 'overdue'];
+          if (!allowedActions.includes(action)) {
             results.push({
               id, recordNo,
               success: false,
-              message: '越权：只有复核负责人可以执行归档操作'
+              message: `越权：复核负责人只能执行 ${allowedActions.join('/')} 操作`
             });
             continue;
           }
           result = this.archive(id, { ...data, action, version: currentVersion }, userId, userRole);
+
         } else {
-          result = { success: false, message: `不支持的批量操作：${action}` };
+          result = { success: false, message: `未知角色：${userRole}，无权执行批量操作` };
         }
 
         results.push({

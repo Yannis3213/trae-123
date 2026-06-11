@@ -91,7 +91,7 @@ export default function ArchivingPage() {
       <ListFilter
         filters={filters}
         setFilters={setFilters}
-        statusOptions={STATUSES}
+        statusOptions={VISIBLE_STATUSES}
         onSearch={handleSearch}
       />
 

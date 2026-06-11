@@ -89,7 +89,7 @@ export default function VerificationPage() {
       <ListFilter
         filters={filters}
         setFilters={setFilters}
-        statusOptions={STATUSES}
+        statusOptions={VISIBLE_STATUSES}
         onSearch={handleSearch}
       />
 
