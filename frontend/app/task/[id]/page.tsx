@@ -136,12 +136,37 @@ export default function TaskDetailPage() {
     if (!task) return;
     setActionError('');
 
-    if (currentAction === 'return' && !actionForm.return_reason) {
-      setActionError('请填写退回原因');
-      return;
+    if (currentAction === 'return') {
+      if (!actionForm.opinion?.trim()) {
+        setActionError('退回任务必须填写处理意见');
+        return;
+      }
+      if (!actionForm.return_reason?.trim()) {
+        setActionError('退回任务必须填写退回原因');
+        return;
+      }
+      if (!actionForm.audit_note?.trim()) {
+        setActionError('退回任务必须填写审计备注');
+        return;
+      }
     }
 
-    if ((currentAction === 'assign' || currentAction === 'reassign') && !actionForm.new_handler) {
+    if (currentAction === 'reassign') {
+      if (!actionForm.opinion?.trim()) {
+        setActionError('转办任务必须填写处理意见');
+        return;
+      }
+      if (!actionForm.audit_note?.trim()) {
+        setActionError('转办任务必须填写审计备注');
+        return;
+      }
+      if (!actionForm.new_handler) {
+        setActionError('请选择新处理人');
+        return;
+      }
+    }
+
+    if (currentAction === 'assign' && !actionForm.new_handler) {
       setActionError('请选择新处理人');
       return;
     }
@@ -554,13 +579,17 @@ export default function TaskDetailPage() {
               {actionError && <div className="alert alert-error">{actionError}</div>}
 
               <div className="form-group">
-                <label>处理意见</label>
+                <label>处理意见{(currentAction === 'return' || currentAction === 'reassign') && ' *'}</label>
                 <textarea
                   value={actionForm.opinion}
                   onChange={(e) =>
                     setActionForm({ ...actionForm, opinion: e.target.value })
                   }
-                  placeholder="请输入处理意见（可选）"
+                  placeholder={
+                    currentAction === 'return' || currentAction === 'reassign'
+                      ? '请输入处理意见（必填）'
+                      : '请输入处理意见（可选）'
+                  }
                 />
               </div>
 
@@ -572,7 +601,7 @@ export default function TaskDetailPage() {
                     onChange={(e) =>
                       setActionForm({ ...actionForm, return_reason: e.target.value })
                     }
-                    placeholder="请详细说明退回原因"
+                    placeholder="请详细说明退回原因（必填）"
                   />
                 </div>
               )}
@@ -628,13 +657,17 @@ export default function TaskDetailPage() {
               </div>
 
               <div className="form-group">
-                <label>审计备注</label>
+                <label>审计备注{(currentAction === 'return' || currentAction === 'reassign') && ' *'}</label>
                 <textarea
                   value={actionForm.audit_note}
                   onChange={(e) =>
                     setActionForm({ ...actionForm, audit_note: e.target.value })
                   }
-                  placeholder="请输入审计备注（可选，将记录到审计轨迹中）"
+                  placeholder={
+                    currentAction === 'return' || currentAction === 'reassign'
+                      ? '请输入审计备注（必填，将记录到审计轨迹中）'
+                      : '请输入审计备注（可选，将记录到审计轨迹中）'
+                  }
                 />
               </div>
 

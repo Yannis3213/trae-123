@@ -34,6 +34,14 @@ export default function TaskListPage() {
   const [batchAction, setBatchAction] = useState('');
   const [batchResults, setBatchResults] = useState<any[]>([]);
   const [showBatchResults, setShowBatchResults] = useState(false);
+  const [showBatchForm, setShowBatchForm] = useState(false);
+  const [batchForm, setBatchForm] = useState({
+    opinion: '',
+    return_reason: '',
+    audit_note: '',
+    new_handler: '',
+  });
+  const [batchError, setBatchError] = useState('');
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createForm, setCreateForm] = useState({
@@ -130,10 +138,56 @@ export default function TaskListPage() {
     return actions;
   };
 
-  const handleBatchAction = async () => {
+  const handleBatchActionClick = () => {
     if (!batchAction) {
       showAlert('warning', '请选择操作类型');
       return;
+    }
+    if (selectedIds.length === 0) {
+      showAlert('warning', '请先选择要操作的任务');
+      return;
+    }
+    setBatchForm({
+      opinion: '',
+      return_reason: '',
+      audit_note: '',
+      new_handler: '',
+    });
+    setBatchError('');
+    setShowBatchForm(true);
+  };
+
+  const handleBatchSubmit = async () => {
+    setBatchError('');
+
+    if (batchAction === 'return') {
+      if (!batchForm.opinion?.trim()) {
+        setBatchError('批量退回必须填写处理意见');
+        return;
+      }
+      if (!batchForm.return_reason?.trim()) {
+        setBatchError('批量退回必须填写退回原因');
+        return;
+      }
+      if (!batchForm.audit_note?.trim()) {
+        setBatchError('批量退回必须填写审计备注');
+        return;
+      }
+    }
+
+    if (batchAction === 'reassign') {
+      if (!batchForm.opinion?.trim()) {
+        setBatchError('批量转办必须填写处理意见');
+        return;
+      }
+      if (!batchForm.audit_note?.trim()) {
+        setBatchError('批量转办必须填写审计备注');
+        return;
+      }
+      if (!batchForm.new_handler) {
+        setBatchError('请选择新处理人');
+        return;
+      }
     }
 
     try {
@@ -149,9 +203,14 @@ export default function TaskListPage() {
         action: batchAction,
         operator_role: currentRole,
         operator_name: currentUserName,
+        opinion: batchForm.opinion || undefined,
+        return_reason: batchForm.return_reason || undefined,
+        audit_note: batchForm.audit_note || undefined,
+        new_handler: batchForm.new_handler || undefined,
         version_map: versionMap,
       });
 
+      setShowBatchForm(false);
       setBatchResults(results);
       setShowBatchResults(true);
 
@@ -166,7 +225,7 @@ export default function TaskListPage() {
       fetchStatistics();
       setSelectedIds([]);
     } catch (e: any) {
-      showAlert('error', e.message || '批量操作失败');
+      setBatchError(e.message || '批量操作失败');
     }
   };
 
@@ -280,6 +339,18 @@ export default function TaskListPage() {
               {statistics.by_status.returned}
             </div>
           </div>
+          <div className="stat-card">
+            <div className="stat-card-title">已转办</div>
+            <div className="stat-card-value" style={{ color: '#fa8c16' }}>
+              {statistics.by_status.transferred}
+            </div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-card-title">已回访</div>
+            <div className="stat-card-value" style={{ color: '#2f54eb' }}>
+              {statistics.by_status.visited}
+            </div>
+          </div>
         </div>
       )}
 
@@ -387,7 +458,7 @@ export default function TaskListPage() {
               </option>
             ))}
           </select>
-          <button className="btn btn-primary btn-sm" onClick={handleBatchAction}>
+          <button className="btn btn-primary btn-sm" onClick={handleBatchActionClick}>
             执行
           </button>
           <button className="btn btn-default btn-sm" onClick={() => setSelectedIds([])}>
@@ -633,6 +704,86 @@ export default function TaskListPage() {
               </button>
               <button className="btn btn-primary" onClick={handleCreateTask}>
                 创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBatchForm && (
+        <div className="modal-mask" onClick={() => setShowBatchForm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">批量{batchAction === 'return' ? '退回' : batchAction === 'reassign' ? '转办' : '操作'}</div>
+              <button className="modal-close" onClick={() => setShowBatchForm(false)}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              {batchError && <div className="alert alert-error">{batchError}</div>}
+
+              <div className="alert alert-info">
+                已选择 {selectedIds.length} 个任务进行批量{batchAction === 'return' ? '退回' : batchAction === 'reassign' ? '转办' : '操作'}
+              </div>
+
+              <div className="form-group">
+                <label>处理意见 *</label>
+                <textarea
+                  value={batchForm.opinion}
+                  onChange={(e) =>
+                    setBatchForm({ ...batchForm, opinion: e.target.value })
+                  }
+                  placeholder="请输入处理意见（必填）"
+                />
+              </div>
+
+              {batchAction === 'return' && (
+                <div className="form-group">
+                  <label>退回原因 *</label>
+                  <textarea
+                    value={batchForm.return_reason}
+                    onChange={(e) =>
+                      setBatchForm({ ...batchForm, return_reason: e.target.value })
+                    }
+                    placeholder="请详细说明退回原因（必填）"
+                  />
+                </div>
+              )}
+
+              {batchAction === 'reassign' && (
+                <div className="form-group">
+                  <label>新处理人 *</label>
+                  <select
+                    value={batchForm.new_handler}
+                    onChange={(e) =>
+                      setBatchForm({ ...batchForm, new_handler: e.target.value })
+                    }
+                  >
+                    <option value="">请选择</option>
+                    <option value="sampling_supervisor">打样审核主管（李主管）</option>
+                    <option value="factory_reviewer">加工厂复核负责人（王厂长）</option>
+                    <option value="sampling_registrar">打样登记员（张登记）</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>审计备注 *</label>
+                <textarea
+                  value={batchForm.audit_note}
+                  onChange={(e) =>
+                    setBatchForm({ ...batchForm, audit_note: e.target.value })
+                  }
+                  placeholder="请输入审计备注（必填，将记录到审计轨迹中）"
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-default" onClick={() => setShowBatchForm(false)}>
+                取消
+              </button>
+              <button className="btn btn-primary" onClick={handleBatchSubmit}>
+                确认提交
               </button>
             </div>
           </div>

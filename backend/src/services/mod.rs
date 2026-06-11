@@ -43,6 +43,9 @@ pub struct BatchProcessRequest {
     pub operator_role: String,
     pub operator_name: String,
     pub opinion: Option<String>,
+    pub return_reason: Option<String>,
+    pub audit_note: Option<String>,
+    pub new_handler: Option<String>,
     pub version_map: Option<std::collections::HashMap<String, i32>>,
 }
 
@@ -95,6 +98,8 @@ impl TaskService {
                     || task.status == statuses::ASSIGNED
                     || task.status == statuses::PENDING_REVIEW
                     || task.status == statuses::RETURNED
+                    || task.status == statuses::TRANSFERRED
+                    || task.status == statuses::VISITED
                     || task.current_handler == role
             }
             roles::FACTORY_REVIEWER => {
@@ -102,13 +107,15 @@ impl TaskService {
                     || task.status == statuses::REVIEWED
                     || task.status == statuses::VERIFIED
                     || task.status == statuses::ARCHIVED
+                    || task.status == statuses::TRANSFERRED
+                    || task.status == statuses::VISITED
                     || task.current_handler == role
             }
             _ => false,
         }
     }
 
-    fn can_act_on_task(role: &str, action: &str, task: &SamplingTask) -> Result<()> {
+    fn can_act_on_task(role: &str, action: &str, task: &SamplingTask, req: &ProcessTaskRequest) -> Result<()> {
         match action {
             "assign" => {
                 if role != roles::SAMPLING_SUPERVISOR {
@@ -122,7 +129,7 @@ impl TaskService {
                 if role != roles::SAMPLING_SUPERVISOR {
                     bail!("只有打样审核主管可以审核任务");
                 }
-                if task.status != statuses::ASSIGNED && task.status != statuses::PENDING_REVIEW {
+                if task.status != statuses::ASSIGNED && task.status != statuses::PENDING_REVIEW && task.status != statuses::TRANSFERRED {
                     bail!("当前状态不支持审核操作");
                 }
             }
@@ -133,12 +140,21 @@ impl TaskService {
                 if task.status == statuses::ARCHIVED {
                     bail!("已归档任务不能退回");
                 }
+                if req.return_reason.is_none() || req.return_reason.as_ref().unwrap().is_empty() {
+                    bail!("退回任务必须填写退回原因");
+                }
+                if req.audit_note.is_none() || req.audit_note.as_ref().unwrap().is_empty() {
+                    bail!("退回任务必须填写审计备注");
+                }
+                if req.opinion.is_none() || req.opinion.as_ref().unwrap().is_empty() {
+                    bail!("退回任务必须填写处理意见");
+                }
             }
             "verify" => {
                 if role != roles::FACTORY_REVIEWER {
                     bail!("只有加工厂复核负责人可以复核任务");
                 }
-                if task.status != statuses::REVIEWED && task.status != statuses::PENDING_VERIFICATION {
+                if task.status != statuses::REVIEWED && task.status != statuses::PENDING_VERIFICATION && task.status != statuses::TRANSFERRED {
                     bail!("当前状态不支持复核操作");
                 }
             }
@@ -481,7 +497,7 @@ impl TaskService {
 
         let mut task = Self::get_task(pool, &req.task_id, &req.operator_role).await?;
 
-        Self::can_act_on_task(&req.operator_role, &req.action, &task)?;
+        Self::can_act_on_task(&req.operator_role, &req.action, &task, req)?;
 
         Self::check_current_handler(&req.operator_role, &task)?;
 
@@ -557,6 +573,13 @@ impl TaskService {
             }
             "reassign" => {
                 task.current_handler = req.new_handler.clone().unwrap_or_else(|| handler_before.clone());
+                task.status = statuses::TRANSFERRED.to_string();
+                let mut tags: Vec<String> = serde_json::from_str(&task.abnormal_tags.clone().unwrap_or_else(|| "[]".to_string()))
+                    .unwrap_or_default();
+                if !tags.contains(&"转办".to_string()) {
+                    tags.push("转办".to_string());
+                }
+                task.abnormal_tags = Some(serde_json::to_string(&tags)?);
             }
             "add_evidence" => {
                 if let Some(has_evidence) = req.has_mass_production_evidence {
@@ -691,10 +714,10 @@ impl TaskService {
                 operator_name: req.operator_name.clone(),
                 opinion: req.opinion.clone(),
                 result: None,
-                return_reason: None,
-                audit_note: None,
+                return_reason: req.return_reason.clone(),
+                audit_note: req.audit_note.clone(),
                 version,
-                new_handler: None,
+                new_handler: req.new_handler.clone(),
                 new_deadline: None,
                 has_mass_production_evidence: None,
                 evidence_note: None,
@@ -920,6 +943,8 @@ impl TaskService {
         let verified = all_tasks.iter().filter(|t| t.status == statuses::VERIFIED).count();
         let archived = all_tasks.iter().filter(|t| t.status == statuses::ARCHIVED).count();
         let returned = all_tasks.iter().filter(|t| t.status == statuses::RETURNED).count();
+        let transferred = all_tasks.iter().filter(|t| t.status == statuses::TRANSFERRED).count();
+        let visited = all_tasks.iter().filter(|t| t.status == statuses::VISITED).count();
         let overdue = all_tasks.iter().filter(|t| t.is_overdue).count();
         let normal = all_tasks.iter().filter(|t| !t.is_overdue && Self::get_overdue_status(t.deadline) == "normal").count();
         let warning = all_tasks.iter().filter(|t| !t.is_overdue && Self::get_overdue_status(t.deadline) == "warning").count();
@@ -933,6 +958,8 @@ impl TaskService {
                 "verified": verified,
                 "archived": archived,
                 "returned": returned,
+                "transferred": transferred,
+                "visited": visited,
             },
             "by_overdue": {
                 "normal": normal,
