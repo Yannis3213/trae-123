@@ -553,11 +553,12 @@ def get_warnings():
 # ── Ledger ──
 
 def get_ledger(status=None, handler_role=None, keyword=None,
-               category=None, enterprise_name=None,
+               deadline_group=None, category=None, enterprise_name=None,
                page=1, page_size=20):
     offset = (page - 1) * page_size
     orders, total = repository.get_repair_orders(
         status=status, handler_role=handler_role, keyword=keyword,
+        deadline_group=deadline_group,
         category=category, enterprise_name=enterprise_name,
         offset=offset, limit=page_size,
     )

@@ -178,12 +178,14 @@ async def get_ledger(request: Request):
     status = request.query_params.get("status")
     handler_role = request.query_params.get("handler_role")
     keyword = request.query_params.get("keyword")
+    deadline_group = request.query_params.get("deadline_group")
     category = request.query_params.get("category")
     enterprise_name = request.query_params.get("enterprise_name")
     page = int(request.query_params.get("page", "1"))
     page_size = int(request.query_params.get("page_size", "20"))
     orders, total = service.get_ledger(
         status=status, handler_role=handler_role, keyword=keyword,
+        deadline_group=deadline_group,
         category=category, enterprise_name=enterprise_name,
         page=page, page_size=page_size,
     )

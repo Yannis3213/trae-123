@@ -10,7 +10,7 @@ import FilterBar from '@/components/FilterBar';
 
 export default function LedgerPage() {
   const router = useRouter();
-  const { ledgerItems, ledgerTotal, loading, fetchLedger } = useStore();
+  const { ledgerItems, ledgerTotal, loading, fetchLedger, fetchWarnings, warnings } = useStore();
   const [category, setCategory] = useState('');
   const [status, setStatus] = useState('');
   const [deadlineGroup, setDeadlineGroup] = useState('');
@@ -29,7 +29,7 @@ export default function LedgerPage() {
     fetchLedger(params);
   }, [category, status, deadlineGroup, enterpriseName, keyword, page, fetchLedger]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); fetchWarnings(); }, [load, fetchWarnings]);
 
   const totalPages = Math.ceil(ledgerTotal / pageSize);
 
@@ -47,6 +47,24 @@ export default function LedgerPage() {
           onKeywordChange={setKeyword}
           onSearch={() => { setPage(1); load(); }}
         />
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <button onClick={() => { setDeadlineGroup(deadlineGroup === 'normal' ? '' : 'normal'); setPage(1); }}
+          className={`card p-4 text-center transition-colors cursor-pointer ${deadlineGroup === 'normal' ? 'ring-2 ring-green-500' : ''}`}>
+          <div className="text-2xl font-bold text-green-600">{warnings.normal.length}</div>
+          <div className="text-sm text-gray-500 mt-1">正常</div>
+        </button>
+        <button onClick={() => { setDeadlineGroup(deadlineGroup === 'approaching' ? '' : 'approaching'); setPage(1); }}
+          className={`card p-4 text-center transition-colors cursor-pointer ${deadlineGroup === 'approaching' ? 'ring-2 ring-yellow-500' : ''}`}>
+          <div className="text-2xl font-bold text-yellow-600">{warnings.approaching.length}</div>
+          <div className="text-sm text-gray-500 mt-1">临期</div>
+        </button>
+        <button onClick={() => { setDeadlineGroup(deadlineGroup === 'overdue' ? '' : 'overdue'); setPage(1); }}
+          className={`card p-4 text-center transition-colors cursor-pointer ${deadlineGroup === 'overdue' ? 'ring-2 ring-red-500' : ''}`}>
+          <div className="text-2xl font-bold text-red-600">{warnings.overdue.length}</div>
+          <div className="text-sm text-gray-500 mt-1">逾期</div>
+        </button>
       </div>
 
       <div className="card overflow-x-auto">

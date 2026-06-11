@@ -72,11 +72,11 @@ def get_repair_orders(status=None, handler_role=None, handler_id=None,
             conditions.append("(title LIKE ? OR description LIKE ? OR order_no LIKE ? OR enterprise_name LIKE ?)")
             params.extend([f"%{keyword}%", f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"])
         if deadline_group == "normal":
-            conditions.append("datetime(deadline) > datetime('now', '+3 days')")
+            conditions.append("datetime(deadline) > datetime('now', '+3 days', 'localtime')")
         elif deadline_group == "approaching":
-            conditions.append("datetime(deadline) > datetime('now') AND datetime(deadline) <= datetime('now', '+3 days')")
+            conditions.append("datetime(deadline) > datetime('now', 'localtime') AND datetime(deadline) <= datetime('now', '+3 days', 'localtime')")
         elif deadline_group == "overdue":
-            conditions.append("datetime(deadline) <= datetime('now')")
+            conditions.append("datetime(deadline) <= datetime('now', 'localtime')")
 
         where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         count_sql = f"SELECT COUNT(*) as cnt FROM repair_orders{where_clause}"
