@@ -7,6 +7,8 @@ export interface HomeInspection {
   inspection_date: string;
   inspection_result: string;
   anomalies: string;
+  evidence_photos?: string[];
+  submitted?: boolean;
 }
 
 export interface HazardRectification {
@@ -14,12 +16,24 @@ export interface HazardRectification {
   rectification_measures: string;
   rectification_date: string;
   approved: boolean | null;
+  completed?: boolean;
+  evidence_photos?: string[];
 }
 
 export interface RecheckClosure {
   recheck_result: string;
   recheck_date: string;
   confirmed: boolean | null;
+  closed?: boolean;
+  evidence_photos?: string[];
+}
+
+export interface Attachment {
+  id: number;
+  step: string;
+  file_name: string;
+  file_type: string;
+  created_at: string;
 }
 
 export interface ProcessingRecord {
@@ -44,6 +58,7 @@ export interface SafetyOrder {
   hazard_rectification: HazardRectification | null;
   recheck_closure: RecheckClosure | null;
   processing_records: ProcessingRecord[];
+  attachments?: Attachment[];
   version: number;
   created_at: string;
   updated_at: string;
@@ -79,6 +94,7 @@ export interface ActionData {
   remark?: string;
   anomaly_reason?: string;
   version: number;
+  attachments?: Attachment[];
   home_inspection?: Partial<HomeInspection>;
   hazard_rectification?: Partial<HazardRectification>;
   recheck_closure?: Partial<RecheckClosure>;
@@ -90,6 +106,7 @@ export interface BatchActionData {
   role: string;
   handler: string;
   remark?: string;
+  attachments?: Attachment[];
 }
 
 export interface FetchOrdersParams {

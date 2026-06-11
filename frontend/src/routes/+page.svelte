@@ -13,6 +13,7 @@
   let error = $state('');
   let activeTab = $state<Status>('pending_correction');
   let expiryFilter = $state<ExpiryStatus | 'all'>('all');
+  let keyword = $state('');
   let showCreateModal = $state(false);
   let showBatchModal = $state(false);
   let batchResult = $state<BatchResult | null>(null);
@@ -22,7 +23,6 @@
 
   let newAddress = $state('');
   let newDeadline = $state('');
-  let newInspector = $state('');
 
   const STATUS_TABS: { key: Status; label: string }[] = [
     { key: 'pending_correction', label: '待补正' },
@@ -43,7 +43,13 @@
   };
 
   let filteredOrders = $derived(
-    orders.filter(o => expiryFilter === 'all' || o.expiry_status === expiryFilter)
+    orders.filter(o => {
+      const matchExpiry = expiryFilter === 'all' || o.expiry_status === expiryFilter;
+      const matchKeyword = !keyword.trim() || 
+        o.order_no.toLowerCase().includes(keyword.toLowerCase()) ||
+        o.address.toLowerCase().includes(keyword.toLowerCase());
+      return matchExpiry && matchKeyword;
+    })
   );
 
   let tabCounts = $derived({
@@ -78,8 +84,9 @@
     loading = true;
     error = '';
     try {
+      const params: { status: Status; handler?: string } = { status: activeTab };
       const [ordersData, statsData] = await Promise.all([
-        fetchOrders({ status: activeTab }),
+        fetchOrders(params),
         fetchStats()
       ]);
       orders = ordersData;
@@ -94,6 +101,7 @@
   async function handleTabChange(tab: Status) {
     activeTab = tab;
     expiryFilter = 'all';
+    keyword = '';
     clearSelection();
     await loadData();
   }
@@ -112,6 +120,7 @@
       showBatchModal = true;
       clearSelection();
       await loadData();
+      fetchStats().then(s => { stats = s; }).catch(() => {});
     } catch (e: any) {
       error = e.message || '批量操作失败';
     } finally {
@@ -130,12 +139,11 @@
       await createOrder({
         address: newAddress.trim(),
         deadline: newDeadline,
-        inspector: newInspector.trim() || '未指定'
+        inspector: currentHandler.value
       });
       showCreateModal = false;
       newAddress = '';
       newDeadline = '';
-      newInspector = '';
       await loadData();
     } catch (e: any) {
       createError = e.message || '创建工单失败';
@@ -254,7 +262,7 @@
     </div>
 
     <!-- Filter & actions bar -->
-    <div class="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-100">
+    <div class="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-100 gap-3">
       <div class="flex items-center gap-2 text-xs text-gray-500">
         <Filter class="w-3.5 h-3.5" />
         {#if expiryFilter !== 'all'}
@@ -269,6 +277,19 @@
         {/if}
         <span class="text-gray-300">|</span>
         <span>共 {filteredOrders.length} 条</span>
+      </div>
+      <div class="flex items-center gap-2 flex-1 max-w-xs">
+        <div class="relative w-full">
+          <input
+            type="text"
+            bind:value={keyword}
+            placeholder="搜索工单号、地址..."
+            class="w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-md text-xs focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none"
+          />
+          <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
       </div>
       <div class="flex items-center gap-2">
         <button
@@ -478,14 +499,8 @@
             class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none"
           />
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">安检员</label>
-          <input
-            type="text"
-            bind:value={newInspector}
-            placeholder="默认未指定"
-            class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none"
-          />
+        <div class="text-xs text-gray-500 bg-gray-50 px-3 py-2 rounded-md">
+          安检员默认设置为：<span class="font-medium text-gray-700">{currentHandler.value}</span>
         </div>
       </div>
       <div class="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">

@@ -211,6 +211,16 @@ function mapProcessingRecord(row: any) {
   }
 }
 
+function mapAttachment(row: any) {
+  return {
+    id: row.id,
+    step: row.step,
+    file_name: row.file_name,
+    file_type: row.file_type,
+    created_at: row.created_at,
+  }
+}
+
 const orderCount = db.prepare('SELECT COUNT(*) as c FROM safety_orders').get() as { c: number }
 if (orderCount.c === 0) {
   const nowStr = fmt(now)
@@ -402,7 +412,7 @@ if (orderCount.c === 0) {
   console.log('种子数据已插入')
 }
 
-function validateAction(order: any, action: string, role: string, handler: string, version: number): string | null {
+function validateAction(order: any, action: string, role: string, handler: string, version: number, body: any): string | null {
   if (!action) return '缺少必要参数: action'
 
   const requiredRole = ACTION_ROLE_MAP[action]
@@ -436,6 +446,64 @@ function validateAction(order: any, action: string, role: string, handler: strin
     if (!rc || !rc.closed) return '复查尚未关闭，无法关闭工单'
   }
 
+  const expiryStatus = getExpiryStatus(order.deadline)
+  if ((action === 'submit_inspection' || action === 'submit' || action === 'approve' || action === 'confirm') && expiryStatus === 'overdue') {
+    return '工单已逾期，需先申请延期后再操作'
+  }
+
+  if (action === 'submit_inspection' || action === 'submit') {
+    const hi = body?.home_inspection || {}
+    if (!hi.inspector || String(hi.inspector).trim() === '') return '请填写安检员'
+    if (!hi.inspection_date || String(hi.inspection_date).trim() === '') return '请填写安检日期'
+    if (!hi.inspection_result || String(hi.inspection_result).trim() === '') return '请选择安检结果'
+
+    const hasAnomalyText = hi.anomalies && String(hi.anomalies).trim() !== ''
+    const hasEvidence = body?.evidence && (
+      (Array.isArray(body.evidence.evidence_photos) && body.evidence.evidence_photos.length > 0) ||
+      (Array.isArray(body.evidence.attachments) && body.evidence.attachments.length > 0)
+    )
+    const hasAttachments = Array.isArray(body?.attachments) && body.attachments.length > 0
+    const hasHiPhotos = Array.isArray(hi?.evidence_photos) && hi.evidence_photos.length > 0
+    const hasAnomalyReason = body?.anomaly_reason && String(body.anomaly_reason).trim() !== ''
+
+    if (hi.inspection_result === 'unqualified' || hasAnomalyText) {
+      if (!hasAnomalyText && !hasEvidence && !hasAttachments && !hasHiPhotos && !hasAnomalyReason) {
+        return '发现异常时必须填写异常情况或上传证据'
+      }
+    }
+  }
+
+  if (action === 'approve') {
+    const hr = body?.hazard_rectification || {}
+    if (!hr.hazard_level || String(hr.hazard_level).trim() === '') return '请填写隐患等级'
+    if (!hr.rectification_measures || String(hr.rectification_measures).trim() === '') return '请填写整改措施'
+    if (!hr.rectification_date || String(hr.rectification_date).trim() === '') return '请填写整改日期'
+  }
+
+  if (action === 'confirm') {
+    const rc = body?.recheck_closure || {}
+    if (!rc.recheck_result || String(rc.recheck_result).trim() === '') return '请选择复查结果'
+    if (!rc.recheck_date || String(rc.recheck_date).trim() === '') return '请填写复查日期'
+
+    if (rc.recheck_result === 'fail') {
+      const hasReason = (body?.anomaly_reason && String(body.anomaly_reason).trim() !== '') ||
+        (body?.remark && String(body.remark).trim() !== '')
+      if (!hasReason) return '复查未通过请填写异常原因'
+    }
+  }
+
+  if (action === 'reject') {
+    const hasReason = (body?.anomaly_reason && String(body.anomaly_reason).trim() !== '') ||
+      (body?.remark && String(body.remark).trim() !== '')
+    if (!hasReason) return '驳回必须填写原因'
+  }
+
+  if (action === 'return') {
+    const hasReason = (body?.anomaly_reason && String(body.anomaly_reason).trim() !== '') ||
+      (body?.remark && String(body.remark).trim() !== '')
+    if (!hasReason) return '退回必须填写原因'
+  }
+
   return null
 }
 
@@ -443,6 +511,60 @@ function executeAction(order: any, action: string, handler: string, role: string
   const nowStr = fmt(new Date())
   const remark = body.remark || null
   const anomalyReason = body.anomaly_reason || body.anomalyReason || null
+
+  const insertAttachmentStmt = db.prepare(`
+    INSERT INTO attachments (order_id, step, file_name, file_type, file_data, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `)
+
+  const saveAttachments = (attachments: any[], step: string) => {
+    if (!Array.isArray(attachments)) return
+    for (const att of attachments) {
+      if (!att) continue
+      const fileName = att.file_name || att.name || `attachment_${Date.now()}`
+      const fileType = att.file_type || att.type || ''
+      const fileData = att.file_data || att.data || (typeof att === 'string' ? att : '')
+      insertAttachmentStmt.run(order.id, step, fileName, fileType, fileData, nowStr)
+    }
+  }
+
+  const saveEvidencePhotos = (photos: any[], step: string) => {
+    if (!Array.isArray(photos)) return
+    for (let i = 0; i < photos.length; i++) {
+      const p = photos[i]
+      if (!p) continue
+      const fileName = `evidence_${step}_${i + 1}_${Date.now()}.jpg`
+      const fileData = typeof p === 'string' ? p : (p.file_data || p.data || p.url || '')
+      insertAttachmentStmt.run(order.id, step, fileName, 'image/jpeg', fileData, nowStr)
+    }
+  }
+
+  const currentStep = order.current_step
+
+  if (Array.isArray(body.attachments)) {
+    saveAttachments(body.attachments, currentStep)
+  }
+
+  if (body.home_inspection && Array.isArray(body.home_inspection.evidence_photos)) {
+    saveEvidencePhotos(body.home_inspection.evidence_photos, 'home_inspection')
+  }
+
+  if (body.hazard_rectification && Array.isArray(body.hazard_rectification.evidence_photos)) {
+    saveEvidencePhotos(body.hazard_rectification.evidence_photos, 'hazard_rectification')
+  }
+
+  if (body.recheck_closure && Array.isArray(body.recheck_closure.evidence_photos)) {
+    saveEvidencePhotos(body.recheck_closure.evidence_photos, 'recheck_closure')
+  }
+
+  if (body.evidence) {
+    if (Array.isArray(body.evidence.evidence_photos)) {
+      saveEvidencePhotos(body.evidence.evidence_photos, currentStep)
+    }
+    if (Array.isArray(body.evidence.attachments)) {
+      saveAttachments(body.evidence.attachments, currentStep)
+    }
+  }
 
   if (action === 'submit_inspection' || action === 'submit') {
     const hi = body.home_inspection || {}
@@ -460,7 +582,7 @@ function executeAction(order: any, action: string, handler: string, role: string
     db.prepare(`
       UPDATE safety_orders SET status = 'under_review', current_step = 'hazard_rectification',
         current_handler = '主管-李四', current_handler_role = 'supervisor',
-        version = version + 1, updated_at = ?
+        version = order.version + 1, updated_at = ?
       WHERE id = ?
     `).run(nowStr, order.id)
   }
@@ -480,7 +602,7 @@ function executeAction(order: any, action: string, handler: string, role: string
     db.prepare(`
       UPDATE safety_orders SET current_step = 'recheck_closure',
         current_handler = '负责人-王五', current_handler_role = 'manager',
-        version = version + 1, updated_at = ?
+        version = order.version + 1, updated_at = ?
       WHERE id = ?
     `).run(nowStr, order.id)
   }
@@ -493,7 +615,7 @@ function executeAction(order: any, action: string, handler: string, role: string
     db.prepare(`
       UPDATE safety_orders SET status = 'pending_correction', current_step = 'home_inspection',
         current_handler = '坐席-张三', current_handler_role = 'agent',
-        version = version + 1, updated_at = ?
+        version = order.version + 1, updated_at = ?
       WHERE id = ?
     `).run(nowStr, order.id)
   }
@@ -512,13 +634,13 @@ function executeAction(order: any, action: string, handler: string, role: string
     if (order.current_step === 'recheck_closure') {
       db.prepare(`
         UPDATE safety_orders SET status = 'completed',
-          version = version + 1, updated_at = ?
+          version = order.version + 1, updated_at = ?
         WHERE id = ?
       `).run(nowStr, order.id)
     } else {
       db.prepare(`
         UPDATE safety_orders SET
-          version = version + 1, updated_at = ?
+          version = order.version + 1, updated_at = ?
         WHERE id = ?
       `).run(nowStr, order.id)
     }
@@ -529,14 +651,14 @@ function executeAction(order: any, action: string, handler: string, role: string
       db.prepare(`
         UPDATE safety_orders SET status = 'under_review', current_step = 'hazard_rectification',
           current_handler = '主管-李四', current_handler_role = 'supervisor',
-          version = version + 1, updated_at = ?
+          version = order.version + 1, updated_at = ?
         WHERE id = ?
       `).run(nowStr, order.id)
     } else {
       db.prepare(`
         UPDATE safety_orders SET status = 'pending_correction', current_step = 'home_inspection',
           current_handler = '坐席-张三', current_handler_role = 'agent',
-          version = version + 1, updated_at = ?
+          version = order.version + 1, updated_at = ?
         WHERE id = ?
       `).run(nowStr, order.id)
     }
@@ -545,7 +667,7 @@ function executeAction(order: any, action: string, handler: string, role: string
   if (action === 'close') {
     db.prepare(`
       UPDATE safety_orders SET status = 'completed',
-        version = version + 1, updated_at = ?
+        version = order.version + 1, updated_at = ?
       WHERE id = ?
     `).run(nowStr, order.id)
   }
@@ -564,6 +686,7 @@ function getOrderDetail(id: string) {
   const hr = db.prepare('SELECT * FROM hazard_rectifications WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(id) as any
   const rc = db.prepare('SELECT * FROM recheck_closures WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(id) as any
   const records = db.prepare('SELECT * FROM processing_records WHERE order_id = ? ORDER BY id').all(id) as any[]
+  const attachments = db.prepare('SELECT * FROM attachments WHERE order_id = ? ORDER BY id').all(id) as any[]
 
   return {
     ...mapOrderToApi(order),
@@ -571,6 +694,7 @@ function getOrderDetail(id: string) {
     hazard_rectification: hr ? mapHazardRectification(hr) : null,
     recheck_closure: rc ? mapRecheckClosure(rc) : null,
     processing_records: records.map(mapProcessingRecord),
+    attachments: attachments.map(mapAttachment),
   }
 }
 
@@ -650,7 +774,9 @@ app.get('/api/orders/:id', (c) => {
 
 app.post('/api/orders', (c) => {
   return (async () => {
-    const { address, deadline, inspector } = await c.req.json()
+    const body = await c.req.json()
+    const { address, deadline } = body
+    const inspector = body.inspector || '坐席-张三'
 
     if (!address || !deadline) {
       return c.json({ error: '缺少必要字段: address, deadline' }, 400)
@@ -661,15 +787,18 @@ app.post('/api/orders', (c) => {
     const id = `ORD-${new Date().getFullYear()}-${String(count).padStart(3, '0')}`
     const orderNo = `AQ-${nowStr.slice(0, 10).replace(/-/g, '')}-${String(count).padStart(3, '0')}`
 
+    const currentHandler = '坐席-张三'
+    const currentHandlerRole = 'agent'
+
     db.prepare(`
       INSERT INTO safety_orders (id, order_no, address, status, current_step, current_handler, current_handler_role, deadline, version)
       VALUES (?, ?, ?, 'pending_correction', 'home_inspection', ?, ?, ?, 1)
-    `).run(id, orderNo, address, inspector || '坐席-张三', inspector ? 'agent' : 'agent', deadline)
+    `).run(id, orderNo, address, currentHandler, currentHandlerRole, deadline)
 
     db.prepare(`
       INSERT INTO processing_records (order_id, step, action, handler, handler_role, remark, anomaly_reason, created_at)
       VALUES (?, 'home_inspection', 'create', ?, ?, '创建安检工单', NULL, ?)
-    `).run(id, inspector || '坐席-张三', 'agent', nowStr)
+    `).run(id, currentHandler, currentHandlerRole, nowStr)
 
     const detail = getOrderDetail(id)
     return c.json(detail, 201)
@@ -704,7 +833,7 @@ app.post('/api/orders/:id/action', (c) => {
     const role = requestRole
     const handler = requestHandler
 
-    const error = validateAction(order, action, role, handler, version)
+    const error = validateAction(order, action, role, handler, version, body)
     if (error) return c.json({ error }, 400)
 
     const tx = db.transaction(() => executeAction(order, action, handler, role, body))
@@ -745,8 +874,9 @@ app.post('/api/orders/batch', (c) => {
       }
 
       const version = order.version
+      const batchBody = { remark, anomaly_reason: null }
 
-      const error = validateAction(order, action, requestRole, requestHandler, version)
+      const error = validateAction(order, action, requestRole, requestHandler, version, batchBody)
       if (error) {
         results.push({ order_id: orderId, order_no: order.order_no, success: false, message: error })
         continue
