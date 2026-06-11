@@ -105,6 +105,15 @@ export interface BatchResult {
   orderNo: string;
   success: boolean;
   reason?: string;
+  paymentStatus?: string | null;
+  admissionStatus?: string | null;
+  exceptionReason?: string | null;
+  responsibleNode?: string | null;
+  paymentVerification?: string | null;
+  admissionConfirmation?: string | null;
+  paymentAmount?: number | null;
+  paymentMethod?: string | null;
+  auditRemark?: string | null;
 }
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {

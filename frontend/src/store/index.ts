@@ -32,8 +32,8 @@ interface AppStore {
   reviewOrder: (id: string, data: { version: number; action: string; opinion: string } & EvidenceFields) => Promise<void>;
   approveOrder: (id: string, data: { version: number; action: string; opinion: string } & EvidenceFields) => Promise<void>;
   returnOrder: (id: string, data: { version: number; returnOpinion: string } & EvidenceFields) => Promise<void>;
-  batchReview: (ids: string[], data: { action: string; opinion: string } & EvidenceFields) => Promise<void>;
-  batchApprove: (ids: string[], data: { action: string; opinion: string } & EvidenceFields) => Promise<void>;
+  batchReview: (ids: string[], data: { action: string; opinion: string; ordersWithVersions?: { id: string; version: number }[] } & EvidenceFields) => Promise<void>;
+  batchApprove: (ids: string[], data: { action: string; opinion: string; ordersWithVersions?: { id: string; version: number }[] } & EvidenceFields) => Promise<void>;
   fetchWarnings: () => Promise<void>;
   fetchAuditLogs: (filters?: { orderId?: string; operator?: string }) => Promise<void>;
   clearError: () => void;

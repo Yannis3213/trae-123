@@ -1,12 +1,26 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, CheckSquare, CreditCard, MapPin, AlertTriangle, User } from 'lucide-react';
+import { Search, CheckSquare, CreditCard, MapPin, AlertTriangle, User, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAppStore } from '@/store';
 import StatusBadge from '@/components/StatusBadge';
 import WarningBadge from '@/components/WarningBadge';
 import BatchResultModal from '@/components/BatchResultModal';
 import { USER_ROLE_LABELS } from '@/types';
 import type { VenueOrder } from '@/types';
+
+interface BatchEvidenceForm {
+  paymentAmount: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  paymentVerification: string;
+  admissionStatus: string;
+  admissionConfirmation: string;
+  exceptionReason: string;
+  responsibleNode: string;
+  auditRemark: string;
+  correctReason: string;
+  returnOpinion: string;
+}
 
 function getPaymentStatusBadge(status: string | null) {
   if (!status) return <span className="text-gray-300">-</span>;
@@ -65,6 +79,20 @@ export default function OrderList() {
   const [batchOpinion, setBatchOpinion] = useState('');
   const [batchAction, setBatchAction] = useState<'approve' | 'reject' | 'finalize' | 'return'>('approve');
   const [batchType, setBatchType] = useState<'review' | 'approve'>('review');
+  const [showEvidenceForm, setShowEvidenceForm] = useState(false);
+  const [batchEvidence, setBatchEvidence] = useState<BatchEvidenceForm>({
+    paymentAmount: '',
+    paymentMethod: '',
+    paymentStatus: '',
+    paymentVerification: '',
+    admissionStatus: '',
+    admissionConfirmation: '',
+    exceptionReason: '',
+    responsibleNode: '',
+    auditRemark: '',
+    correctReason: '',
+    returnOpinion: '',
+  });
 
   const loadOrders = useCallback(() => {
     fetchOrders({ status: statusFilter || undefined, warningLevel: warningFilter || undefined, role: currentUser?.role });
@@ -101,15 +129,60 @@ export default function OrderList() {
     setBatchType(type);
     setBatchAction(action);
     setBatchOpinion('');
+    setShowEvidenceForm(false);
+    setBatchEvidence({
+      paymentAmount: '',
+      paymentMethod: '',
+      paymentStatus: action === 'approve' || action === 'finalize' ? '已核销' : '',
+      paymentVerification: '',
+      admissionStatus: action === 'finalize' ? '已确认' : '',
+      admissionConfirmation: '',
+      exceptionReason: action === 'reject' || action === 'return' ? '材料不完整' : '',
+      responsibleNode: '',
+      auditRemark: '',
+      correctReason: '',
+      returnOpinion: action === 'reject' || action === 'return' ? '' : '',
+    });
     setShowBatchModal(true);
+  };
+
+  const handleEvidenceChange = (field: keyof BatchEvidenceForm, value: string) => {
+    setBatchEvidence((prev) => ({ ...prev, [field]: value }));
   };
 
   const submitBatch = async () => {
     const ids = Array.from(selectedIds);
+    const selectedOrders = orders.filter((o) => ids.includes(o.id));
+    const ordersWithVersions = selectedOrders.map((o) => ({ id: o.id, version: o.version }));
+
+    const evidenceData = {
+      paymentAmount: batchEvidence.paymentAmount ? Number(batchEvidence.paymentAmount) : null,
+      paymentMethod: batchEvidence.paymentMethod || null,
+      paymentStatus: batchEvidence.paymentStatus || null,
+      paymentVerification: batchEvidence.paymentVerification || null,
+      admissionStatus: batchEvidence.admissionStatus || null,
+      admissionConfirmation: batchEvidence.admissionConfirmation || null,
+      exceptionReason: batchEvidence.exceptionReason || null,
+      responsibleNode: batchEvidence.responsibleNode || null,
+      auditRemark: batchEvidence.auditRemark || null,
+      correctReason: batchEvidence.correctReason || null,
+      returnOpinion: batchEvidence.returnOpinion || null,
+    };
+
     if (batchType === 'review') {
-      await batchReview(ids, { action: batchAction, opinion: batchOpinion });
+      await batchReview(ids, {
+        action: batchAction,
+        opinion: batchOpinion,
+        ordersWithVersions,
+        ...evidenceData,
+      });
     } else {
-      await batchApprove(ids, { action: batchAction, opinion: batchOpinion });
+      await batchApprove(ids, {
+        action: batchAction,
+        opinion: batchOpinion,
+        ordersWithVersions,
+        ...evidenceData,
+      });
     }
     setShowBatchModal(false);
     setSelectedIds(new Set());
@@ -254,20 +327,199 @@ export default function OrderList() {
       )}
 
       {showBatchModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 p-6 my-auto">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               {batchType === 'review' ? '批量审核' : '批量审批'} - {batchAction === 'approve' || batchAction === 'finalize' ? '通过' : '退回'}
+              <span className="ml-2 text-sm font-normal text-gray-500">（已选择 {selectedIds.size} 项）</span>
             </h3>
-            <textarea
-              value={batchOpinion}
-              onChange={(e) => setBatchOpinion(e.target.value)}
-              placeholder="请输入处理意见"
-              className="w-full border border-gray-200 rounded-lg p-3 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none h-24"
-            />
+
+            <div className="mb-4 p-2 bg-blue-50 rounded-lg">
+              <div className="flex flex-wrap gap-2 text-xs text-blue-700">
+                {Array.from(selectedIds).map((id) => {
+                  const order = orders.find((o) => o.id === id);
+                  return order ? (
+                    <span key={id} className="bg-white px-2 py-1 rounded border border-blue-200">
+                      {order.orderNo} <span className="text-blue-500">v{order.version}</span>
+                    </span>
+                  ) : null;
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">处理意见 <span className="text-red-500">*</span></label>
+                <textarea
+                  value={batchOpinion}
+                  onChange={(e) => setBatchOpinion(e.target.value)}
+                  placeholder="请输入处理意见"
+                  className="w-full border border-gray-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none h-20"
+                />
+              </div>
+
+              {batchAction === 'reject' || batchAction === 'return' ? (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">退回意见</label>
+                  <textarea
+                    value={batchEvidence.returnOpinion}
+                    onChange={(e) => handleEvidenceChange('returnOpinion', e.target.value)}
+                    placeholder="请输入退回意见（退回原因说明）"
+                    className="w-full border border-gray-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none h-16"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">补正原因</label>
+                  <input
+                    type="text"
+                    value={batchEvidence.correctReason}
+                    onChange={(e) => handleEvidenceChange('correctReason', e.target.value)}
+                    placeholder="补正原因说明（可选）"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="mb-3">
+              <button
+                type="button"
+                onClick={() => setShowEvidenceForm(!showEvidenceForm)}
+                className="flex items-center gap-1 text-xs text-primary hover:text-primary-light font-medium"
+              >
+                {showEvidenceForm ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                {showEvidenceForm ? '收起证据字段' : '展开证据字段（支付核销/入场确认/异常原因/责任节点）'}
+              </button>
+            </div>
+
+            {showEvidenceForm && (
+              <div className="mb-4 p-4 bg-gray-50 rounded-lg space-y-3">
+                <p className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                  <CreditCard size={12} className="text-gray-500" /> 支付核销
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">支付金额（元）</label>
+                    <input
+                      type="number"
+                      value={batchEvidence.paymentAmount}
+                      onChange={(e) => handleEvidenceChange('paymentAmount', e.target.value)}
+                      placeholder="如：200"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">支付方式</label>
+                    <select
+                      value={batchEvidence.paymentMethod}
+                      onChange={(e) => handleEvidenceChange('paymentMethod', e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">请选择</option>
+                      <option value="微信支付">微信支付</option>
+                      <option value="支付宝">支付宝</option>
+                      <option value="现金">现金</option>
+                      <option value="银行转账">银行转账</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">支付状态</label>
+                    <select
+                      value={batchEvidence.paymentStatus}
+                      onChange={(e) => handleEvidenceChange('paymentStatus', e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">请选择</option>
+                      <option value="已核销">已核销</option>
+                      <option value="待核销">待核销</option>
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs text-gray-600 mb-1">支付核销凭证</label>
+                    <input
+                      type="text"
+                      value={batchEvidence.paymentVerification}
+                      onChange={(e) => handleEvidenceChange('paymentVerification', e.target.value)}
+                      placeholder="如：订单号XD20260612001 已支付 核销时间 2026-06-12 15:30 凭证号WX202606120001"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-gray-200">
+                  <p className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                    <MapPin size={12} className="text-gray-500" /> 入场确认
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">入场状态</label>
+                    <select
+                      value={batchEvidence.admissionStatus}
+                      onChange={(e) => handleEvidenceChange('admissionStatus', e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    >
+                      <option value="">请选择</option>
+                      <option value="已确认">已确认</option>
+                      <option value="待确认">待确认</option>
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs text-gray-600 mb-1">入场确认信息</label>
+                    <input
+                      type="text"
+                      value={batchEvidence.admissionConfirmation}
+                      onChange={(e) => handleEvidenceChange('admissionConfirmation', e.target.value)}
+                      placeholder="如：入场时间 2026-06-15 08:55 确认人 张伟"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-gray-200">
+                  <p className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                    <AlertTriangle size={12} className="text-gray-500" /> 异常与责任
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className="block text-xs text-gray-600 mb-1">异常原因</label>
+                    <input
+                      type="text"
+                      value={batchEvidence.exceptionReason}
+                      onChange={(e) => handleEvidenceChange('exceptionReason', e.target.value)}
+                      placeholder="如：支付凭证不全、入场确认缺失等"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">责任节点</label>
+                    <input
+                      type="text"
+                      value={batchEvidence.responsibleNode}
+                      onChange={(e) => handleEvidenceChange('responsibleNode', e.target.value)}
+                      placeholder="如：registrar_missing_payment"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">审计备注</label>
+                    <input
+                      type="text"
+                      value={batchEvidence.auditRemark}
+                      onChange={(e) => handleEvidenceChange('auditRemark', e.target.value)}
+                      placeholder="审计追踪备注（可选）"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-3">
               <button onClick={() => setShowBatchModal(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">取消</button>
-              <button onClick={submitBatch} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-light">确认</button>
+              <button onClick={submitBatch} className="flex-1 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-light">确认批量处理</button>
             </div>
           </div>
         </div>

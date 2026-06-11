@@ -87,14 +87,14 @@ export async function returnOrder(id: string, data: { version: number; returnOpi
   });
 }
 
-export async function batchReview(data: { orderIds: string[]; action: string; opinion: string } & EvidenceFields): Promise<BatchResult[]> {
+export async function batchReview(data: { orderIds: string[]; action: string; opinion: string; ordersWithVersions?: { id: string; version: number }[] } & EvidenceFields): Promise<BatchResult[]> {
   return request<BatchResult[]>('/api/orders/batch-review', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
-export async function batchApprove(data: { orderIds: string[]; action: string; opinion: string } & EvidenceFields): Promise<BatchResult[]> {
+export async function batchApprove(data: { orderIds: string[]; action: string; opinion: string; ordersWithVersions?: { id: string; version: number }[] } & EvidenceFields): Promise<BatchResult[]> {
   return request<BatchResult[]>('/api/orders/batch-approve', {
     method: 'POST',
     body: JSON.stringify(data),
