@@ -104,6 +104,7 @@ export interface BatchResult {
   orderId: string;
   orderNo: string;
   success: boolean;
+  version?: number | null;
   reason?: string;
   paymentStatus?: string | null;
   admissionStatus?: string | null;
@@ -114,6 +115,8 @@ export interface BatchResult {
   paymentAmount?: number | null;
   paymentMethod?: string | null;
   auditRemark?: string | null;
+  returnOpinion?: string | null;
+  correctReason?: string | null;
 }
 
 export const ORDER_STATUS_LABELS: Record<string, string> = {

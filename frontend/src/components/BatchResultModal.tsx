@@ -1,4 +1,4 @@
-import { X, Check, XCircle, CreditCard, MapPin, AlertTriangle, User } from 'lucide-react';
+import { X, Check, XCircle, CreditCard, MapPin, AlertTriangle, User, RotateCcw, FileText } from 'lucide-react';
 import type { BatchResult } from '@/types';
 
 interface BatchResultWithEvidence extends BatchResult {
@@ -8,6 +8,9 @@ interface BatchResultWithEvidence extends BatchResult {
   responsibleNode?: string | null;
   paymentVerification?: string | null;
   admissionConfirmation?: string | null;
+  returnOpinion?: string | null;
+  correctReason?: string | null;
+  version?: number | null;
 }
 
 export default function BatchResultModal({
@@ -55,6 +58,9 @@ export default function BatchResultModal({
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm text-primary font-medium">{r.orderNo}</span>
+                    {r.version != null && (
+                      <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">v{r.version}</span>
+                    )}
                     {r.success ? (
                       <span className="flex items-center gap-1 text-green-600 text-sm font-medium">
                         <Check size={14} /> 成功
@@ -67,9 +73,25 @@ export default function BatchResultModal({
                   </div>
                 </div>
                 {r.reason && (
-                  <div className="mb-3 p-3 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-700 font-medium mb-1">处理原因</p>
-                    <p className="text-sm text-gray-600">{r.reason}</p>
+                  <div className="mb-3 p-3 bg-red-50 border border-red-100 rounded-lg">
+                    <p className="text-sm text-red-700 font-medium mb-0.5">失败原因</p>
+                    <p className="text-sm text-red-600">{r.reason}</p>
+                  </div>
+                )}
+                {r.returnOpinion && (
+                  <div className="mb-3 p-3 bg-orange-50 border border-orange-100 rounded-lg">
+                    <p className="text-sm text-orange-700 font-medium mb-0.5 flex items-center gap-1">
+                      <RotateCcw size={12} /> 退回意见
+                    </p>
+                    <p className="text-sm text-orange-600">{r.returnOpinion}</p>
+                  </div>
+                )}
+                {r.correctReason && (
+                  <div className="mb-3 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                    <p className="text-sm text-blue-700 font-medium mb-0.5 flex items-center gap-1">
+                      <FileText size={12} /> 补正原因
+                    </p>
+                    <p className="text-sm text-blue-600">{r.correctReason}</p>
                   </div>
                 )}
                 {(r.paymentStatus || r.admissionStatus || r.exceptionReason || r.responsibleNode || r.paymentVerification || r.admissionConfirmation) && (

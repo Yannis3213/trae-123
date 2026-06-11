@@ -150,9 +150,31 @@ export default function OrderList() {
     setBatchEvidence((prev) => ({ ...prev, [field]: value }));
   };
 
+  const [batchValidationError, setBatchValidationError] = useState('');
+
   const submitBatch = async () => {
+    setBatchValidationError('');
+
+    if (!batchOpinion.trim()) {
+      setBatchValidationError('处理意见不能为空');
+      return;
+    }
+
+    const isReturnAction = batchAction === 'reject' || batchAction === 'return';
+    if (isReturnAction && !batchEvidence.returnOpinion.trim()) {
+      setBatchValidationError('退回操作必须填写退回意见');
+      return;
+    }
+
     const ids = Array.from(selectedIds);
     const selectedOrders = orders.filter((o) => ids.includes(o.id));
+
+    const missingVersionOrders = selectedOrders.filter((o) => o.version === undefined || o.version === null);
+    if (missingVersionOrders.length > 0) {
+      setBatchValidationError(`以下订单缺少版本号：${missingVersionOrders.map((o) => o.orderNo).join('、')}，请刷新后重试`);
+      return;
+    }
+
     const ordersWithVersions = selectedOrders.map((o) => ({ id: o.id, version: o.version }));
 
     const evidenceData = {
@@ -166,7 +188,7 @@ export default function OrderList() {
       responsibleNode: batchEvidence.responsibleNode || null,
       auditRemark: batchEvidence.auditRemark || null,
       correctReason: batchEvidence.correctReason || null,
-      returnOpinion: batchEvidence.returnOpinion || null,
+      returnOpinion: isReturnAction ? batchEvidence.returnOpinion : null,
     };
 
     if (batchType === 'review') {
@@ -187,6 +209,7 @@ export default function OrderList() {
     setShowBatchModal(false);
     setSelectedIds(new Set());
     loadOrders();
+    useAppStore.getState().fetchWarnings();
   };
 
   const getHandlerName = (order: VenueOrder) => {
@@ -360,22 +383,22 @@ export default function OrderList() {
 
               {batchAction === 'reject' || batchAction === 'return' ? (
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">退回意见</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">退回意见 <span className="text-red-500">*</span></label>
                   <textarea
                     value={batchEvidence.returnOpinion}
                     onChange={(e) => handleEvidenceChange('returnOpinion', e.target.value)}
-                    placeholder="请输入退回意见（退回原因说明）"
+                    placeholder="请输入退回意见（退回原因说明，必填）"
                     className="w-full border border-gray-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none h-16"
                   />
                 </div>
               ) : (
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">补正原因</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">补正原因 <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={batchEvidence.correctReason}
                     onChange={(e) => handleEvidenceChange('correctReason', e.target.value)}
-                    placeholder="补正原因说明（可选）"
+                    placeholder="补正原因说明（必填）"
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
                 </div>
@@ -514,6 +537,12 @@ export default function OrderList() {
                     />
                   </div>
                 </div>
+              </div>
+            )}
+
+            {batchValidationError && (
+              <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                {batchValidationError}
               </div>
             )}
 

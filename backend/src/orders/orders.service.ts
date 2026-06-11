@@ -625,6 +625,7 @@ export class OrdersService {
       orderId: string;
       orderNo: string;
       success: boolean;
+      version?: number | null;
       reason?: string;
       paymentStatus?: string | null;
       admissionStatus?: string | null;
@@ -635,6 +636,8 @@ export class OrdersService {
       paymentAmount?: number | null;
       paymentMethod?: string | null;
       auditRemark?: string | null;
+      returnOpinion?: string | null;
+      correctReason?: string | null;
     }[] = [];
 
     const versionMap = new Map<string, number>();
@@ -687,7 +690,10 @@ export class OrdersService {
           throw new ForbiddenException(`不是当前处理人，当前处理人：${order.currentHandler}`);
         }
 
-        if (clientVersion !== undefined && order.version !== clientVersion) {
+        if (clientVersion === undefined) {
+          throw new BadRequestException('缺少版本号，批量处理必须提交每个订单的当前版本号');
+        }
+        if (order.version !== clientVersion) {
           throw new ConflictException(`版本冲突：客户端版本v${clientVersion}，当前版本v${order.version}，订单已被其他人修改`);
         }
 
@@ -704,6 +710,12 @@ export class OrdersService {
           throw new BadRequestException('审核意见不能为空');
         }
 
+        if (body.action === 'reject') {
+          if (!evidenceFromBody.returnOpinion || (typeof evidenceFromBody.returnOpinion === 'string' && evidenceFromBody.returnOpinion.trim() === '')) {
+            throw new BadRequestException('批量退回必须填写退回意见');
+          }
+        }
+
         const lastRecord = await this.recordRepo.findOne({
           where: { orderId: order.id },
           order: { createdAt: 'DESC' },
@@ -713,6 +725,7 @@ export class OrdersService {
         }
 
         const newVersion = order.version + 1;
+        let computedException: string | undefined;
 
         if (body.action === 'approve') {
           const paymentStatus = updateFields.paymentStatus ?? order.paymentStatus;
@@ -732,6 +745,7 @@ export class OrdersService {
             currentHandlerRole: 'approver',
             warningLevel: this.calcWarningLevel(order.deadline),
             responsibleNode: updateFields.responsibleNode ?? 'reviewer_approved',
+            returnOpinion: null as unknown as string,
           });
 
           await this.addRecordAndAudit(
@@ -744,16 +758,18 @@ export class OrdersService {
             {
               ...finalEvidence,
               responsibleNode: 'reviewer_approved',
+              returnOpinion: null,
             },
           );
         } else if (body.action === 'reject') {
-          const computedException = body.opinion.includes('支付') ? '支付凭证不全' : (body.opinion.includes('入场') ? '入场确认缺失' : (updateFields.exceptionReason ?? '材料不完整'));
+          const returnOpinion = (updateFields.returnOpinion as string) || body.opinion;
+          computedException = returnOpinion.includes('支付') ? '支付凭证不全' : (returnOpinion.includes('入场') ? '入场确认缺失' : (updateFields.exceptionReason ?? '材料不完整'));
 
           await this.orderRepo.update(order.id, {
             ...updateFields,
             status: 'pending_correction',
             version: newVersion,
-            returnOpinion: body.opinion,
+            returnOpinion: returnOpinion,
             currentHandler: order.createdBy,
             currentHandlerRole: 'registrar',
             warningLevel: this.calcWarningLevel(order.deadline),
@@ -772,7 +788,7 @@ export class OrdersService {
               ...finalEvidence,
               exceptionReason: computedException,
               responsibleNode: 'reviewer_rejected',
-              returnOpinion: body.opinion,
+              returnOpinion: returnOpinion,
             },
           );
         } else {
@@ -783,15 +799,18 @@ export class OrdersService {
           orderId: order.id,
           orderNo: order.orderNo,
           success: true,
+          version: newVersion,
           paymentStatus: finalEvidence.paymentStatus,
           admissionStatus: finalEvidence.admissionStatus,
-          exceptionReason: finalEvidence.exceptionReason,
-          responsibleNode: finalEvidence.responsibleNode,
+          exceptionReason: body.action === 'reject' ? computedException : finalEvidence.exceptionReason,
+          responsibleNode: body.action === 'reject' ? 'reviewer_rejected' : finalEvidence.responsibleNode,
           paymentVerification: finalEvidence.paymentVerification,
           admissionConfirmation: finalEvidence.admissionConfirmation,
           paymentAmount: finalEvidence.paymentAmount,
           paymentMethod: finalEvidence.paymentMethod,
           auditRemark: finalEvidence.auditRemark,
+          returnOpinion: body.action === 'reject' ? (updateFields.returnOpinion || body.opinion) : null,
+          correctReason: finalEvidence.correctReason,
         });
       } catch (err: any) {
         const failReason = err.message || '批量处理失败';
@@ -830,6 +849,7 @@ export class OrdersService {
           orderId: order.id,
           orderNo: order.orderNo,
           success: false,
+          version: order.version,
           reason: failReason,
           paymentStatus: finalEvidence.paymentStatus,
           admissionStatus: finalEvidence.admissionStatus,
@@ -840,6 +860,8 @@ export class OrdersService {
           paymentAmount: finalEvidence.paymentAmount,
           paymentMethod: finalEvidence.paymentMethod,
           auditRemark: `批量处理失败：${failReason}`,
+          returnOpinion: finalEvidence.returnOpinion,
+          correctReason: finalEvidence.correctReason,
         });
       }
     }
@@ -853,6 +875,7 @@ export class OrdersService {
       orderId: string;
       orderNo: string;
       success: boolean;
+      version?: number | null;
       reason?: string;
       paymentStatus?: string | null;
       admissionStatus?: string | null;
@@ -863,6 +886,8 @@ export class OrdersService {
       paymentAmount?: number | null;
       paymentMethod?: string | null;
       auditRemark?: string | null;
+      returnOpinion?: string | null;
+      correctReason?: string | null;
     }[] = [];
 
     const versionMap = new Map<string, number>();
@@ -915,7 +940,10 @@ export class OrdersService {
           throw new ForbiddenException(`不是当前处理人，当前处理人：${order.currentHandler}`);
         }
 
-        if (clientVersion !== undefined && order.version !== clientVersion) {
+        if (clientVersion === undefined) {
+          throw new BadRequestException('缺少版本号，批量处理必须提交每个订单的当前版本号');
+        }
+        if (order.version !== clientVersion) {
           throw new ConflictException(`版本冲突：客户端版本v${clientVersion}，当前版本v${order.version}，订单已被其他人修改`);
         }
 
@@ -932,6 +960,12 @@ export class OrdersService {
           throw new BadRequestException('审批意见不能为空');
         }
 
+        if (body.action === 'return') {
+          if (!evidenceFromBody.returnOpinion || (typeof evidenceFromBody.returnOpinion === 'string' && evidenceFromBody.returnOpinion.trim() === '')) {
+            throw new BadRequestException('批量退回必须填写退回意见');
+          }
+        }
+
         const lastRecord = await this.recordRepo.findOne({
           where: { orderId: order.id },
           order: { createdAt: 'DESC' },
@@ -941,6 +975,7 @@ export class OrdersService {
         }
 
         const newVersion = order.version + 1;
+        let computedException: string | undefined;
 
         if (body.action === 'finalize') {
           const admissionStatus = updateFields.admissionStatus ?? order.admissionStatus;
@@ -962,6 +997,7 @@ export class OrdersService {
             currentHandlerRole: '',
             warningLevel: 'normal',
             responsibleNode: 'approver_finalized',
+            returnOpinion: null as unknown as string,
           });
 
           await this.addRecordAndAudit(
@@ -974,16 +1010,18 @@ export class OrdersService {
             {
               ...finalEvidence,
               responsibleNode: 'approver_finalized',
+              returnOpinion: null,
             },
           );
         } else if (body.action === 'return') {
-          const computedException = body.opinion.includes('支付') ? '复核时发现支付凭证问题' : (body.opinion.includes('入场') ? '复核时发现入场确认问题' : (updateFields.exceptionReason ?? '复核不通过'));
+          const returnOpinion = (updateFields.returnOpinion as string) || body.opinion;
+          computedException = returnOpinion.includes('支付') ? '复核时发现支付凭证问题' : (returnOpinion.includes('入场') ? '复核时发现入场确认问题' : (updateFields.exceptionReason ?? '复核不通过'));
 
           await this.orderRepo.update(order.id, {
             ...updateFields,
             status: 'pending_review',
             version: newVersion,
-            returnOpinion: body.opinion,
+            returnOpinion: returnOpinion,
             currentHandler: 'u2',
             currentHandlerRole: 'reviewer',
             warningLevel: this.calcWarningLevel(order.deadline),
@@ -1002,7 +1040,7 @@ export class OrdersService {
               ...finalEvidence,
               exceptionReason: computedException,
               responsibleNode: 'approver_returned',
-              returnOpinion: body.opinion,
+              returnOpinion: returnOpinion,
             },
           );
         } else {
@@ -1013,15 +1051,18 @@ export class OrdersService {
           orderId: order.id,
           orderNo: order.orderNo,
           success: true,
+          version: newVersion,
           paymentStatus: finalEvidence.paymentStatus,
           admissionStatus: finalEvidence.admissionStatus,
-          exceptionReason: finalEvidence.exceptionReason,
-          responsibleNode: finalEvidence.responsibleNode,
+          exceptionReason: body.action === 'return' ? computedException : finalEvidence.exceptionReason,
+          responsibleNode: body.action === 'return' ? 'approver_returned' : finalEvidence.responsibleNode,
           paymentVerification: finalEvidence.paymentVerification,
           admissionConfirmation: finalEvidence.admissionConfirmation,
           paymentAmount: finalEvidence.paymentAmount,
           paymentMethod: finalEvidence.paymentMethod,
           auditRemark: finalEvidence.auditRemark,
+          returnOpinion: body.action === 'return' ? (updateFields.returnOpinion || body.opinion) : null,
+          correctReason: finalEvidence.correctReason,
         });
       } catch (err: any) {
         const failReason = err.message || '批量处理失败';
@@ -1060,6 +1101,7 @@ export class OrdersService {
           orderId: order.id,
           orderNo: order.orderNo,
           success: false,
+          version: order.version,
           reason: failReason,
           paymentStatus: finalEvidence.paymentStatus,
           admissionStatus: finalEvidence.admissionStatus,
@@ -1070,6 +1112,8 @@ export class OrdersService {
           paymentAmount: finalEvidence.paymentAmount,
           paymentMethod: finalEvidence.paymentMethod,
           auditRemark: `批量处理失败：${failReason}`,
+          returnOpinion: finalEvidence.returnOpinion,
+          correctReason: finalEvidence.correctReason,
         });
       }
     }
@@ -1099,6 +1143,7 @@ export class OrdersService {
     };
 
     for (const order of refreshed) {
+      if (order.status === 'completed') continue;
       if (grouped[order.warningLevel as keyof typeof grouped]) {
         grouped[order.warningLevel as keyof typeof grouped].push(order);
       }
