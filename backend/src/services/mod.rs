@@ -434,21 +434,25 @@ impl TaskService {
         if role == roles::SAMPLING_REGISTRAR {
         } else if role == roles::SAMPLING_SUPERVISOR {
             conditions.push(
-                "(status IN (?, ?, ?, ?) OR current_handler = ?)".to_string()
+                "(status IN (?, ?, ?, ?, ?, ?) OR current_handler = ?)".to_string()
             );
             binds.push(statuses::PENDING_ASSIGNMENT.to_string());
             binds.push(statuses::ASSIGNED.to_string());
             binds.push(statuses::PENDING_REVIEW.to_string());
             binds.push(statuses::RETURNED.to_string());
+            binds.push(statuses::TRANSFERRED.to_string());
+            binds.push(statuses::VISITED.to_string());
             binds.push(role.to_string());
         } else if role == roles::FACTORY_REVIEWER {
             conditions.push(
-                "(status IN (?, ?, ?, ?) OR current_handler = ?)".to_string()
+                "(status IN (?, ?, ?, ?, ?, ?) OR current_handler = ?)".to_string()
             );
             binds.push(statuses::PENDING_VERIFICATION.to_string());
             binds.push(statuses::REVIEWED.to_string());
             binds.push(statuses::VERIFIED.to_string());
             binds.push(statuses::ARCHIVED.to_string());
+            binds.push(statuses::TRANSFERRED.to_string());
+            binds.push(statuses::VISITED.to_string());
             binds.push(role.to_string());
         }
 
@@ -680,6 +684,18 @@ impl TaskService {
                     &req.operator_name,
                 ).await?;
             }
+        }
+
+        if req.action == "reassign" {
+            let transfer_reason = req.opinion.clone().unwrap_or_else(|| "转办任务".to_string());
+            Self::add_abnormal_reason(
+                pool,
+                &task.id,
+                "transferred",
+                &transfer_reason,
+                &req.operator_role,
+                &req.operator_name,
+            ).await?;
         }
 
         Ok(task)

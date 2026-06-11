@@ -86,7 +86,7 @@ export default function TaskDetailPage() {
       if (task.status === 'pending_assignment' || task.status === 'returned') {
         actions.push({ value: 'assign', label: '分派任务', type: 'primary' });
       }
-      if (task.status === 'assigned' || task.status === 'pending_review') {
+      if (task.status === 'assigned' || task.status === 'pending_review' || task.status === 'transferred') {
         actions.push({ value: 'review', label: '审核通过', type: 'success' });
       }
       if (task.status !== 'archived') {
@@ -97,7 +97,7 @@ export default function TaskDetailPage() {
     }
 
     if (currentRole === 'factory_reviewer') {
-      if (task.status === 'reviewed' || task.status === 'pending_verification') {
+      if (task.status === 'reviewed' || task.status === 'pending_verification' || task.status === 'transferred') {
         actions.push({ value: 'verify', label: '复核确认', type: 'primary' });
       }
       if (task.status === 'verified' || task.status === 'pending_verification') {

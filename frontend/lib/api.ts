@@ -93,6 +93,9 @@ export const taskApi = {
     operator_role: UserRole;
     operator_name: string;
     opinion?: string;
+    return_reason?: string;
+    audit_note?: string;
+    new_handler?: string;
     version_map?: Record<string, number>;
   }) => request<BatchResultItem[]>('/tasks/batch-process', {
     method: 'POST',

@@ -127,12 +127,12 @@ export const STATUS_COLORS: Record<string, string> = {
   reviewed: '#13c2c2',
   pending_verification: '#eb2f96',
   verified: '#52c41a',
-  archived: '#389e0d',
+  archived: '#8c8c8c',
   returned: '#f5222d',
   overdue: '#ff4d4f',
   rectified: '#fa8c16',
-  transferred: '#13c2c2',
-  visited: '#52c41a',
+  transferred: '#fa8c16',
+  visited: '#2f54eb',
 };
 
 export const PRIORITY_LABELS: Record<string, string> = {

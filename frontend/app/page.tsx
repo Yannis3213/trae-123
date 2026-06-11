@@ -129,6 +129,7 @@ export default function TaskListPage() {
       actions.push({ value: 'assign', label: '批量分派' });
       actions.push({ value: 'review', label: '批量审核' });
       actions.push({ value: 'return', label: '批量退回' });
+      actions.push({ value: 'reassign', label: '批量转办' });
     }
     if (currentRole === 'factory_reviewer') {
       actions.push({ value: 'verify', label: '批量复核' });
