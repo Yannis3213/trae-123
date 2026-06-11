@@ -188,20 +188,20 @@ fn get_order(
     let mut actions: Vec<String> = Vec::new();
     if order.current_handler_role == user.role.to_str()
         && order.current_handler_id.as_deref().map(|h| h == user.id).unwrap_or(true)
+        && order.status != OrderStatus::Rechecked
     {
         match user.role {
             Role::WarehouseKeeper => {
-                if order.status == OrderStatus::Exception {
-                    actions.push("补正".to_string());
-                    actions.push("保存".to_string());
-                }
-                actions.push("提交".to_string());
                 actions.push("保存".to_string());
+                actions.push("补正".to_string());
+                actions.push("提交".to_string());
             }
             Role::WarehouseSupervisor => {
-                if order.status == OrderStatus::PendingConfirmation {
+                if order.status == OrderStatus::PendingConfirmation || order.status == OrderStatus::Exception {
                     actions.push("确认通过".to_string());
                 }
+                actions.push("补正".to_string());
+                actions.push("保存".to_string());
                 actions.push("退回补正".to_string());
             }
             Role::OperationsManager => {
@@ -216,7 +216,10 @@ fn get_order(
     actions.dedup();
 
     let can_edit_modules = order.current_handler_role == user.role.to_str()
-        && (order.status == OrderStatus::Exception || matches!(user.role, Role::WarehouseKeeper));
+        && order.status != OrderStatus::Rechecked
+        && (order.status == OrderStatus::Exception
+            || matches!(user.role, Role::WarehouseKeeper)
+            || matches!(user.role, Role::WarehouseSupervisor));
 
     let result = serde_json::json!({
         "order": {

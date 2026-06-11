@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Table, Tag, Button, Select, Space, Card, Row, Col, Checkbox, Modal, Form, Input,
   Radio, message, Tooltip, Statistic, Empty
@@ -16,6 +16,7 @@ const { Option } = Select;
 
 export default function OrderList() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [orders, setOrders] = useState<InboundOrder[]>([]);
   const [groups, setGroups] = useState<any>(null);
   const [stats, setStats] = useState<any>({});
@@ -47,7 +48,7 @@ export default function OrderList() {
     const u = localStorage.getItem('user');
     if (u) setUser(JSON.parse(u));
     loadData();
-  }, [statusFilter, urgencyFilter]);
+  }, [statusFilter, urgencyFilter, location.pathname]);
 
   const statusColor = (s: string) => {
     if (s === 'pending_confirmation') return 'processing';

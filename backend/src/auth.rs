@@ -70,7 +70,7 @@ pub fn validate_process(
     let deadline_ok = match order.deadline {
         Some(d) => {
             if Utc::now() > d {
-                req.action == "补正" || req.action == "退回" || req.action == "mark_overdue"
+                req.action == "补正" || req.action == "退回补正" || req.action == "保存"
             } else {
                 true
             }
@@ -125,8 +125,18 @@ fn validate_supervisor_action(
 ) -> Result<(), String> {
     match req.action.as_str() {
         "确认通过" => {
-            if order.status != OrderStatus::PendingConfirmation {
-                return Err("仅待确认状态可确认通过".to_string());
+            if order.status != OrderStatus::PendingConfirmation && order.status != OrderStatus::Exception {
+                return Err("仅待确认或异常(被运营退回)状态可确认通过".to_string());
+            }
+            let mut missing = Vec::new();
+            let appt_done = order.appointment_complete || req.appointment_evidence.is_some();
+            let insp_done = order.inspection_complete || req.inspection_evidence.is_some();
+            let reg_done = order.registration_complete || req.registration_evidence.is_some();
+            if !appt_done { missing.push("入库预约"); }
+            if !insp_done { missing.push("质检上架"); }
+            if !reg_done { missing.push("入库单登记"); }
+            if !missing.is_empty() {
+                return Err(format!("确认前需完成模块证据: {}", missing.join("、")));
             }
             Ok(())
         }
@@ -139,6 +149,7 @@ fn validate_supervisor_action(
             }
             Ok(())
         }
+        "补正" | "保存" => Ok(()),
         _ => Err(format!("仓储主管不支持操作: {}", req.action)),
     }
 }
@@ -153,11 +164,24 @@ fn validate_manager_action(
             if order.status != OrderStatus::PendingConfirmation {
                 return Err("仅待确认状态可最终确认".to_string());
             }
+            let mut missing = Vec::new();
+            let appt_done = order.appointment_complete || req.appointment_evidence.is_some();
+            let insp_done = order.inspection_complete || req.inspection_evidence.is_some();
+            let reg_done = order.registration_complete || req.registration_evidence.is_some();
+            if !appt_done { missing.push("入库预约"); }
+            if !insp_done { missing.push("质检上架"); }
+            if !reg_done { missing.push("入库单登记"); }
+            if !missing.is_empty() {
+                return Err(format!("最终确认前需完成模块证据: {}", missing.join("、")));
+            }
             Ok(())
         }
         "退回补正" => {
             if req.exception_reason.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
                 return Err("退回必须填写异常原因".to_string());
+            }
+            if req.exception_module.is_none() {
+                return Err("退回必须指明异常所属模块".to_string());
             }
             Ok(())
         }
@@ -198,11 +222,10 @@ pub fn apply_process(
                     to_status = OrderStatus::PendingConfirmation.to_str().to_string();
                 }
                 "保存" | "补正" => {
-                    order.status = OrderStatus::PendingConfirmation;
                     order.current_handler_role = Role::WarehouseKeeper.to_str().to_string();
                     order.current_handler_id = Some(user.id.clone());
                     order.current_handler_name = Some(user.name.clone());
-                    to_status = OrderStatus::PendingConfirmation.to_str().to_string();
+                    to_status = order.status.to_str().to_string();
                 }
                 _ => {}
             }
@@ -231,6 +254,12 @@ pub fn apply_process(
                         created_at: Utc::now(),
                     };
                     db.add_exception(&exc);
+                }
+                "保存" | "补正" => {
+                    order.current_handler_role = Role::WarehouseSupervisor.to_str().to_string();
+                    order.current_handler_id = Some(user.id.clone());
+                    order.current_handler_name = Some(user.name.clone());
+                    to_status = order.status.to_str().to_string();
                 }
                 _ => {}
             }

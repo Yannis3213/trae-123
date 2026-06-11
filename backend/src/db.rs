@@ -241,13 +241,14 @@ impl Database {
         }
 
         let audits = vec![
-            ("a1", "o1", "重点关注此批次电子元器件的质量情况，需核对质检报告编号", "u3", now - Duration::hours(1)),
-            ("a4", "o4", "已完成最终复查，流程正常归档", "u4", now - Duration::hours(72)),
+            ("a1", "o1", "重点关注此批次电子元器件的质量情况，需核对质检报告编号", "u3", now - Duration::hours(1), Role::WarehouseSupervisor),
+            ("a2", "o2", "退回补正后请库管员优先补充预约材料，避免再次逾期", "u3", now - Duration::hours(2), Role::WarehouseSupervisor),
+            ("a4", "o4", "已完成最终复查，流程正常归档", "u4", now - Duration::hours(72), Role::OperationsManager),
         ];
-        for (id, oid, note, by, at) in audits {
+        for (id, oid, note, by, at, role) in audits {
             conn.execute(
                 "INSERT INTO audit_notes VALUES (?1,?2,?3,?4,?5,?6)",
-                params![id, oid, note, by, at.to_rfc3339(), Role::OperationsManager.to_str()]
+                params![id, oid, note, by, at.to_rfc3339(), role.to_str()]
             ).unwrap();
         }
     }
