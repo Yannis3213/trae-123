@@ -465,6 +465,12 @@ async def batch_process(request: Request):
     if not data.items:
         return JSONResponse({"detail": "批量处理项不能为空"}, status_code=400)
 
+    if data.action == "退回补正" and not (data.exception_reason or "").strip():
+        return JSONResponse({"detail": "E012: 批量退回补正必须填写退回原因"}, status_code=400)
+
+    exception_type = (data.exception_type or "缺材料").strip() or "缺材料"
+    exception_reason = (data.exception_reason or "").strip()
+
     results = []
     for item in data.items:
         try:
@@ -473,7 +479,7 @@ async def batch_process(request: Request):
                 result, error, status = await _validate_and_process(
                     db, item.application_id, data.action, item.version, user,
                     data.remark or "", data.evidence or "",
-                    "", "",
+                    exception_type, exception_reason,
                 )
             finally:
                 await db.close()
@@ -505,18 +511,22 @@ async def batch_process(request: Request):
                     "new_version": None,
                     "new_status": None,
                     "new_role": None,
+                    "exception_type": None,
+                    "exception_reason": None,
                 })
             else:
                 results.append({
                     "application_id": item.application_id,
                     "application_no": app_no,
                     "success": True,
-                    "message": f"操作成功：{data.action}",
+                    "message": f"操作成功：{data.action}" + (f"（{exception_type}）" if data.action == "退回补正" else ""),
                     "error_code": None,
                     "version": item.version,
                     "new_version": result["version"] if result else None,
                     "new_status": result["status"] if result else None,
                     "new_role": result["current_role"] if result else None,
+                    "exception_type": exception_type if data.action == "退回补正" else None,
+                    "exception_reason": exception_reason if data.action == "退回补正" else None,
                 })
         except Exception as e:
             results.append({
@@ -529,6 +539,8 @@ async def batch_process(request: Request):
                 "new_version": None,
                 "new_status": None,
                 "new_role": None,
+                "exception_type": None,
+                "exception_reason": None,
             })
 
     success_count = sum(1 for r in results if r["success"])

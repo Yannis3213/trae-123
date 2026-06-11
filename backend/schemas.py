@@ -69,6 +69,8 @@ class BatchProcessRequest(BaseModel):
     items: List[BatchProcessItem]
     remark: Optional[str] = ""
     evidence: Optional[str] = ""
+    exception_type: Optional[str] = ""
+    exception_reason: Optional[str] = ""
 
 
 class BatchResultItem(BaseModel):
@@ -76,7 +78,13 @@ class BatchResultItem(BaseModel):
     application_no: str
     success: bool
     message: str
+    error_code: Optional[int] = None
+    version: int
+    new_version: Optional[int] = None
     new_status: Optional[str] = None
+    new_role: Optional[str] = None
+    exception_type: Optional[str] = None
+    exception_reason: Optional[str] = None
 
 
 class ProcessingRecord(BaseModel):

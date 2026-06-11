@@ -90,6 +90,8 @@ export interface BatchResultItem {
   new_version: number | null;
   new_status: string | null;
   new_role: string | null;
+  exception_type: string | null;
+  exception_reason: string | null;
 }
 
 export interface BatchProcessResponse {
@@ -288,11 +290,20 @@ export async function batchProcess(
   action: string,
   items: { application_id: number; version: number }[],
   remark?: string,
-  evidence?: string
+  evidence?: string,
+  exceptionType?: string,
+  exceptionReason?: string
 ): Promise<BatchProcessResponse> {
   return apiRequest<BatchProcessResponse>('/api/applications/batch', {
     method: 'POST',
-    body: JSON.stringify({ action, items, remark, evidence }),
+    body: JSON.stringify({
+      action,
+      items,
+      remark,
+      evidence,
+      exception_type: exceptionType,
+      exception_reason: exceptionReason,
+    }),
   });
 }
 

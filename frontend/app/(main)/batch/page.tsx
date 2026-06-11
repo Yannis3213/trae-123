@@ -24,6 +24,8 @@ export default function BatchPage() {
   const [action, setAction] = useState('');
   const [remark, setRemark] = useState('');
   const [evidence, setEvidence] = useState('');
+  const [exceptionType, setExceptionType] = useState('缺材料');
+  const [exceptionReason, setExceptionReason] = useState('');
   const [processing, setProcessing] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchProcessResponse | null>(null);
   const [error, setError] = useState('');
@@ -94,7 +96,7 @@ export default function BatchPage() {
         return { application_id: id, version: app?.version || 1 };
       });
 
-      const res = await batchProcess(action, items, remark, evidence);
+      const res = await batchProcess(action, items, remark, evidence, exceptionType, exceptionReason);
       setBatchResult(res);
       setCurrentIndex(items.length);
 
@@ -155,7 +157,11 @@ export default function BatchPage() {
 
         <select
           value={action}
-          onChange={(e) => setAction(e.target.value)}
+          onChange={(e) => {
+            setAction(e.target.value);
+            setBatchResult(null);
+            setExceptionReason('');
+          }}
           disabled={selected.size === 0 || processing}
         >
           <option value="">选择批量操作...</option>
@@ -184,6 +190,30 @@ export default function BatchPage() {
           />
         )}
 
+        {action === '退回补正' && (
+          <>
+            <select
+              value={exceptionType}
+              onChange={(e) => setExceptionType(e.target.value)}
+              disabled={processing}
+              style={{ width: '140px' }}
+            >
+              <option value="缺材料">缺材料</option>
+              <option value="材料有误">材料有误</option>
+              <option value="信息不符">信息不符</option>
+              <option value="其他">其他</option>
+            </select>
+            <input
+              type="text"
+              placeholder="退回原因 *（如：缺身份证复印件、住址证明无效等）"
+              value={exceptionReason}
+              onChange={(e) => setExceptionReason(e.target.value)}
+              style={{ width: '360px' }}
+              disabled={processing}
+            />
+          </>
+        )}
+
         <button
           className="btn btn-primary"
           onClick={handleBatch}
@@ -191,7 +221,8 @@ export default function BatchPage() {
             selected.size === 0 ||
             !action ||
             processing ||
-            ((action === '审核通过' || action === '复核通过') && !evidence.trim())
+            ((action === '审核通过' || action === '复核通过') && !evidence.trim()) ||
+            (action === '退回补正' && !exceptionReason.trim())
           }
         >
           {processing ? `处理中 ${currentIndex}/${selected.size}...` : `批量${action || '处理'}`}
@@ -229,7 +260,7 @@ export default function BatchPage() {
                     background: r.success ? '#f0fdf4' : '#fef2f2',
                   }}
                 >
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
                     <div>
                       <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{r.application_no}</span>
                       <span style={{ marginLeft: '8px' }}>{r.success ? '✅' : '❌'}</span>
@@ -244,12 +275,37 @@ export default function BatchPage() {
                         {parsed.whoFix && ` · 需${parsed.whoFix}处理`}
                       </div>
                     )}
+                    {r.success && r.exception_reason && (
+                      <div style={{
+                        marginTop: '6px',
+                        padding: '8px 10px',
+                        background: '#fff7ed',
+                        border: '1px solid #fed7aa',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        lineHeight: 1.6,
+                      }}>
+                        <div style={{ fontWeight: 600, color: '#9a3412', marginBottom: '2px' }}>
+                          📋 补正要求
+                        </div>
+                        <div>
+                          <span className="badge badge-red" style={{ marginRight: '6px' }}>
+                            {r.exception_type}
+                          </span>
+                          <span style={{ color: '#7c2d12' }}>{r.exception_reason}</span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#a16207', marginTop: '4px' }}>
+                          已推送至客户经理待补正队列，请客户经理尽快处理后重提
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div style={{
                     color: r.success ? '#16a34a' : '#dc2626',
                     textAlign: 'right',
-                    maxWidth: '50%',
+                    maxWidth: '45%',
                     wordBreak: 'break-word',
+                    marginLeft: '12px',
                   }}>
                     {r.message}
                     {r.new_status && (
@@ -397,6 +453,10 @@ export default function BatchPage() {
         <div className="card-title">批量处理说明</div>
         <div style={{ fontSize: '13px', color: '#475569', lineHeight: 1.8 }}>
           <p>• <strong>逐条校验</strong>：每条申请独立校验角色、处理人、状态、版本，失败不影响其他</p>
+          <p>• <strong>批量退回补正</strong>：必须选择异常类型并填写退回原因，批量将申请打回客户经理补正队列</p>
+          <p>• <strong>退回异常原因（E012）</strong>：退回补正必须填写具体原因，说明需要补正哪些材料</p>
+          <p>• <strong>退回规则</strong>：仅运营主管和支行行长可退回，退回后状态变为「异常回传」，阶段变为客户经理</p>
+          <p>• <strong>退回持久化</strong>：每条退回自动写入异常原因表、处理记录表，详情页可追溯完整补正要求</p>
           <p>• <strong>版本冲突（E002）</strong>：提交版本与当前版本不一致时，保留原值并提示刷新</p>
           <p>• <strong>阶段越权（E004）</strong>：非本阶段角色操作会被拒绝</p>
           <p>• <strong>处理人不符（E007）</strong>：非当前签收人操作会被拒绝，需先签收</p>
