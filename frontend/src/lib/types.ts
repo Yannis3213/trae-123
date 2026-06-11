@@ -81,6 +81,7 @@ export interface CreateInspectionRequest {
 	inspector: string;
 	inspector_role: string;
 	deadline: string;
+	comment?: string;
 	indicators: { name: string; value: string; unit: string; standard: string; is_qualified: boolean }[];
 	attachments: { filename: string; file_type: string; file_size: number }[];
 }
@@ -102,6 +103,7 @@ export interface BatchProcessRequest {
 	comment?: string;
 	exception_reason?: string;
 	items: { id: string; version: number }[];
+	attachments?: { filename: string; file_type: string; file_size: number }[];
 }
 
 export interface BatchResult {

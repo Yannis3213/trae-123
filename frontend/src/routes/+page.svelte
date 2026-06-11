@@ -1,6 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
-	import { currentRole } from '$lib/stores';
+	import { currentRole, refreshTrigger } from '$lib/stores';
 	import { fetchStats, fetchOverdueQueue } from '$lib/api';
 	import type { Stats, Inspection, OverdueType, OverdueItem } from '$lib/types';
 
@@ -71,7 +71,13 @@
 	$: currentRole;
 	$: if ($currentRole) loadData();
 
-	onMount(loadData);
+	onMount(() => {
+		loadData();
+		const unsubscribe = refreshTrigger.subscribe(() => {
+			loadData();
+		});
+		return unsubscribe;
+	});
 </script>
 
 {#if loading}

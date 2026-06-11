@@ -242,14 +242,51 @@ pub fn build_process_flow(inspection: &Inspection, audit_records: &[AuditRecord]
         },
     ];
 
+    let sorted_audits: Vec<&AuditRecord> = {
+        let mut v: Vec<&AuditRecord> = audit_records.iter().collect();
+        v.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        v
+    };
+
+    let has_correct = sorted_audits.iter().any(|r| r.action == "correct");
+    let last_reject = sorted_audits.iter().rev().find(|r| r.action == "reject");
+    let last_correct = sorted_audits.iter().rev().find(|r| r.action == "correct");
+    let last_approve = sorted_audits.iter().rev().find(|r| r.action == "approve");
+
+    if has_correct {
+        if let (Some(reject), Some(correct)) = (last_reject, last_correct) {
+            nodes.insert(2, ProcessNode {
+                step: 2,
+                title: "塘口管理员补正".to_string(),
+                role: "pond_admin".to_string(),
+                operator: Some(correct.operator.clone()),
+                status: if last_approve.is_some() || inspection.status == "approved" || inspection.status == "synced" {
+                    "completed".to_string()
+                } else if inspection.status == "pending_correction" {
+                    "rejected".to_string()
+                } else {
+                    "active".to_string()
+                },
+                time: Some(correct.created_at.clone()),
+            });
+            nodes[3].step = 3;
+            nodes[4].step = 4;
+        }
+    }
+
     let status = inspection.status.as_str();
+    let engineer_node_idx = if has_correct { 3 } else { 2 };
+    let director_node_idx = if has_correct { 4 } else { 3 };
+
     match status {
         "under_review" | "approved" | "pending_correction" | "synced" => {
-            let submit_record = audit_records.iter().find(|r| r.action == "submit" || r.action == "correct");
-            nodes[1].status = "active".to_string();
-            if let Some(r) = submit_record {
-                nodes[1].operator = Some(r.operator.clone());
-                nodes[1].time = Some(r.created_at.clone());
+            nodes[engineer_node_idx].status = "active".to_string();
+            if let Some(r) = last_approve {
+                nodes[engineer_node_idx].operator = Some(r.operator.clone());
+                nodes[engineer_node_idx].time = Some(r.created_at.clone());
+            } else if let Some(r) = sorted_audits.iter().find(|r| r.action == "submit") {
+                nodes[engineer_node_idx].operator = Some(r.operator.clone());
+                nodes[engineer_node_idx].time = Some(r.created_at.clone());
             }
         }
         _ => {}
@@ -257,31 +294,29 @@ pub fn build_process_flow(inspection: &Inspection, audit_records: &[AuditRecord]
 
     match status {
         "approved" | "synced" => {
-            let approve_record = audit_records.iter().find(|r| r.action == "approve");
-            nodes[1].status = "completed".to_string();
-            if let Some(r) = approve_record {
-                nodes[1].operator = Some(r.operator.clone());
-                nodes[1].time = Some(r.created_at.clone());
-            }
-            nodes[2].status = "active".to_string();
+            nodes[engineer_node_idx].status = "completed".to_string();
+            nodes[director_node_idx].status = "active".to_string();
         }
         "pending_correction" => {
-            let reject_record = audit_records.iter().rev().find(|r| r.action == "reject");
-            nodes[1].status = "rejected".to_string();
-            if let Some(r) = reject_record {
-                nodes[1].operator = Some(r.operator.clone());
-                nodes[1].time = Some(r.created_at.clone());
+            nodes[engineer_node_idx].status = "rejected".to_string();
+            if let Some(r) = last_reject {
+                nodes[engineer_node_idx].operator = Some(r.operator.clone());
+                nodes[engineer_node_idx].time = Some(r.created_at.clone());
+            }
+            if has_correct {
+                if let Some(correct_node) = nodes.get_mut(2) {
+                    correct_node.status = "rejected".to_string();
+                }
             }
         }
         _ => {}
     }
 
     if status == "synced" {
-        let sync_record = audit_records.iter().find(|r| r.action == "confirm_sync");
-        nodes[2].status = "completed".to_string();
-        if let Some(r) = sync_record {
-            nodes[2].operator = Some(r.operator.clone());
-            nodes[2].time = Some(r.created_at.clone());
+        if let Some(r) = sorted_audits.iter().find(|r| r.action == "confirm_sync") {
+            nodes[director_node_idx].status = "completed".to_string();
+            nodes[director_node_idx].operator = Some(r.operator.clone());
+            nodes[director_node_idx].time = Some(r.created_at.clone());
         }
     }
 
@@ -295,6 +330,7 @@ pub struct CreateInspectionRequest {
     pub inspector: String,
     pub inspector_role: String,
     pub deadline: String,
+    pub comment: Option<String>,
     pub indicators: Vec<TestIndicatorInput>,
     pub attachments: Vec<AttachmentInput>,
 }
@@ -340,6 +376,7 @@ pub struct BatchProcessRequest {
     pub comment: Option<String>,
     pub exception_reason: Option<String>,
     pub items: Vec<BatchItem>,
+    pub attachments: Option<Vec<AttachmentInput>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -285,15 +285,45 @@ pub async fn get_inspection(
 
 pub async fn create_inspection(
     Data(db): Data<&Db>,
+    Data(dedup): Data<&DedupState>,
     Json(req): Json<CreateInspectionRequest>,
 ) -> Result<Json<ApiResponse<Inspection>>, AppError> {
+    let action = Action::Submit;
+
+    validate_role_action(&req.inspector_role, &action)?;
+
+    if req.attachments.is_empty() {
+        return Err(AppError::Validation("登记时必须至少上传1个附件作为证据".to_string()));
+    }
+    if req.indicators.is_empty() {
+        return Err(AppError::Validation("登记时必须填写至少1个检测指标".to_string()));
+    }
+    if req.pond_id.trim().is_empty() || req.pond_name.trim().is_empty() {
+        return Err(AppError::Validation("塘口信息不能为空".to_string()));
+    }
+    if req.deadline.trim().is_empty() {
+        return Err(AppError::Validation("截止日期不能为空".to_string()));
+    }
+
+    let dedup_key = format!("create:{}:{}", req.inspector, req.pond_id);
+    check_dedup(&dedup, &dedup_key)?;
+
     let conn = db.0.lock().unwrap();
     let id = format!("ins-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap());
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let initial_version = 1;
+
+    let initial_status = "pending_review";
+    let initial_handler_name = "李工";
+    let initial_handler_role = "quality_engineer";
 
     conn.execute(
-        "INSERT INTO inspection (id, pond_id, pond_name, inspector, inspector_role, status, current_handler, current_handler_role, deadline, version, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,'pending_review',?6,?7,?8,1,?9,?10)",
-        rusqlite::params![id, req.pond_id, req.pond_name, req.inspector, req.inspector_role, req.inspector, req.inspector_role, req.deadline, now, now],
+        "INSERT INTO inspection (id, pond_id, pond_name, inspector, inspector_role, status, current_handler, current_handler_role, deadline, version, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        rusqlite::params![
+            id, req.pond_id, req.pond_name, req.inspector, req.inspector_role,
+            initial_status, initial_handler_name, initial_handler_role,
+            req.deadline, initial_version, now, now
+        ],
     )?;
 
     for ind in &req.indicators {
@@ -313,9 +343,10 @@ pub async fn create_inspection(
     }
 
     let audit_id = format!("aud-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap());
+    let audit_comment = req.comment.clone().unwrap_or_default();
     conn.execute(
-        "INSERT INTO audit_record (id, inspection_id, action, operator, operator_role, comment, created_at) VALUES (?1,?2,'submit',?3,?4,NULL,?5)",
-        rusqlite::params![audit_id, id, req.inspector, req.inspector_role, now],
+        "INSERT INTO audit_record (id, inspection_id, action, operator, operator_role, comment, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        rusqlite::params![audit_id, id, action.as_str(), req.inspector, req.inspector_role, audit_comment, now],
     )?;
 
     let ins = query_inspection(&conn, &id)?;
@@ -466,19 +497,39 @@ fn process_single_batch(db: &Db, dedup: &DedupState, item: &BatchItem, action: &
     };
 
     if matches!(action, Action::Submit | Action::Correct) {
-        let att_count: i64 = match conn.query_row(
-            "SELECT COUNT(*) FROM attachment WHERE inspection_id = ?1",
-            [&item.id],
-            |r| r.get(0),
-        ) {
-            Ok(c) => c,
-            Err(e) => return BatchResult {
-                id: item.id.clone(),
-                success: false,
-                message: Some(format!("附件校验失败: {}", e)),
-            },
+        let attachment_count = if matches!(action, Action::Correct) {
+            match &req.attachments {
+                Some(att) => att.len(),
+                None => {
+                    match conn.query_row(
+                        "SELECT COUNT(*) FROM attachment WHERE inspection_id = ?1",
+                        [&item.id],
+                        |r| r.get::<_, i64>(0),
+                    ) {
+                        Ok(c) => c as usize,
+                        Err(e) => return BatchResult {
+                            id: item.id.clone(),
+                            success: false,
+                            message: Some(format!("附件校验失败: {}", e)),
+                        },
+                    }
+                }
+            }
+        } else {
+            match conn.query_row(
+                "SELECT COUNT(*) FROM attachment WHERE inspection_id = ?1",
+                [&item.id],
+                |r| r.get::<_, i64>(0),
+            ) {
+                Ok(c) => c as usize,
+                Err(e) => return BatchResult {
+                    id: item.id.clone(),
+                    success: false,
+                    message: Some(format!("附件校验失败: {}", e)),
+                },
+            }
         };
-        if let Err(e) = validate_evidence_required(action, att_count as usize) {
+        if let Err(e) = validate_evidence_required(action, attachment_count) {
             return BatchResult {
                 id: item.id.clone(),
                 success: false,
@@ -522,6 +573,18 @@ fn process_single_batch(db: &Db, dedup: &DedupState, item: &BatchItem, action: &
                 "INSERT INTO exception_reason (id, inspection_id, audit_record_id, reason, created_at) VALUES (?1,?2,?3,?4,?5)",
                 rusqlite::params![exc_id, item.id, audit_id, reason, now],
             );
+        }
+    }
+
+    if matches!(action, Action::Correct) {
+        if let Some(ref attachments) = req.attachments {
+            for att in attachments {
+                let att_id = format!("att-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap());
+                let _ = conn.execute(
+                    "INSERT INTO attachment (id, inspection_id, filename, file_type, file_size, uploaded_by, uploaded_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                    rusqlite::params![att_id, item.id, att.filename, att.file_type, att.file_size, req.operator, now],
+                );
+            }
         }
     }
 

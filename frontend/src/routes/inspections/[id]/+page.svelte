@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { currentRole, currentUser } from '$lib/stores';
+	import { currentRole, currentUser, triggerRefresh, refreshTrigger } from '$lib/stores';
 	import { fetchInspectionDetail, processInspection, uploadAttachment } from '$lib/api';
 	import type { InspectionDetail, Action, ProcessNode } from '$lib/types';
 
@@ -14,6 +14,7 @@
 	let showRejectDialog = false;
 	let exceptionReason = '';
 	let processComment = '';
+	let correctionAttachments: File[] = [];
 
 	function showToast(msg: string) {
 		toast = msg;
@@ -44,19 +45,34 @@
 			showToast('请填写异常原因');
 			return;
 		}
+		if (action === 'correct' && correctionAttachments.length === 0 && detail.attachments.length === 0) {
+			showToast('补正时请上传补充材料作为附件证据');
+			return;
+		}
 		try {
+			const reqAttachments = action === 'correct' && correctionAttachments.length > 0
+				? correctionAttachments.map(f => ({
+					filename: f.name,
+					file_type: f.type || 'application/octet-stream',
+					file_size: f.size
+				}))
+				: undefined;
+
 			await processInspection(detail.inspection.id, {
 				action,
 				operator: $currentUser,
 				operator_role: $currentRole,
 				comment: processComment || undefined,
 				exception_reason: action === 'reject' ? exceptionReason : undefined,
-				version: detail.inspection.version
+				version: detail.inspection.version,
+				attachments: reqAttachments
 			});
 			showRejectDialog = false;
 			exceptionReason = '';
 			processComment = '';
+			correctionAttachments = [];
 			showToast('操作成功');
+			triggerRefresh();
 			loadData();
 		} catch (e: any) {
 			showToast(e.message || '操作失败');
@@ -149,7 +165,13 @@
 		return node.status === 'active' || node.status === 'rejected';
 	}
 
-	onMount(loadData);
+	onMount(() => {
+		loadData();
+		const unsubscribe = refreshTrigger.subscribe(() => {
+			loadData();
+		});
+		return unsubscribe;
+	});
 </script>
 
 {#if toast}
@@ -324,6 +346,53 @@
 		{#if getAvailableActions().length > 0}
 			<div class="bg-white rounded-xl shadow-sm p-6">
 				<h3 class="text-base font-semibold text-gray-800 mb-4">办理</h3>
+
+				{#if detail && detail.inspection.status === 'pending_correction'}
+					<div class="mb-4">
+						<div class="flex items-center justify-between mb-2">
+							<label class="text-sm text-gray-500 font-medium">补充材料 <span class="text-red-500">*</span></label>
+							<label class="cursor-pointer bg-primary text-white px-3 py-1 rounded-md text-sm hover:bg-primary/90 transition-colors">
+								+ 上传补正材料
+								<input
+									type="file"
+									multiple
+									class="hidden"
+									on:change={(e) => {
+										const target = e.target as HTMLInputElement;
+										if (target.files) {
+											correctionAttachments = [...correctionAttachments, ...Array.from(target.files)];
+										}
+										target.value = '';
+									}}
+								/>
+							</label>
+						</div>
+						{#if correctionAttachments.length === 0}
+							<div class="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
+								<p class="text-gray-400 text-xs">请上传补正材料（检测照片、化验单等）</p>
+							</div>
+						{:else}
+							<div class="space-y-2">
+								{#each correctionAttachments as file, i}
+									<div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+										<div class="flex items-center gap-2">
+											<span class="text-sm">📎</span>
+											<div>
+												<p class="text-xs font-medium">{file.name}</p>
+												<p class="text-xs text-gray-400">{(file.size / 1024).toFixed(1)} KB</p>
+											</div>
+										</div>
+										<button
+											on:click={() => correctionAttachments.splice(i, 1)}
+											class="text-gray-400 hover:text-red-500 text-xs"
+										>删除</button>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
+
 				<div class="mb-4">
 					<label class="text-sm text-gray-500 mb-1 block">办理意见</label>
 					<textarea

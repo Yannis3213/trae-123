@@ -1,6 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
-	import { currentRole, currentUser, selectedInspections, batchResults } from '$lib/stores';
+	import { currentRole, currentUser, selectedInspections, batchResults, refreshTrigger, triggerRefresh } from '$lib/stores';
 	import { fetchInspections, batchProcess } from '$lib/api';
 	import type { Inspection, Status, OverdueType } from '$lib/types';
 
@@ -19,8 +19,11 @@
 	let filterDateTo = '';
 	let showBatchModal = false;
 	let showBatchRejectDialog = false;
+	let showBatchCorrectDialog = false;
 	let batchExceptionReason = '';
+	let batchCorrectComment = '';
 	let pendingBatchAction: string | null = null;
+	let batchCorrectionAttachments: File[] = [];
 
 	function showToast(msg) {
 		toast = msg;
@@ -72,25 +75,47 @@
 			showBatchRejectDialog = true;
 			return;
 		}
+		if (action === 'correct' && !showBatchCorrectDialog) {
+			pendingBatchAction = action;
+			showBatchCorrectDialog = true;
+			return;
+		}
 		if (action === 'reject' && !batchExceptionReason.trim()) {
 			showToast('批量退回请填写异常原因');
 			return;
 		}
+		if (action === 'correct' && batchCorrectionAttachments.length === 0) {
+			showToast('批量补正请上传补充材料');
+			return;
+		}
 		try {
+			const reqAttachments = action === 'correct' && batchCorrectionAttachments.length > 0
+				? batchCorrectionAttachments.map(f => ({
+					filename: f.name,
+					file_type: f.type || 'application/octet-stream',
+					file_size: f.size
+				}))
+				: undefined;
+
 			const res = await batchProcess({
 				action,
 				operator: $currentUser,
 				operator_role: $currentRole,
-				comment: '',
+				comment: action === 'correct' ? batchCorrectComment || undefined : undefined,
 				exception_reason: action === 'reject' ? batchExceptionReason : undefined,
-				items: selected.map((i) => ({ id: i.id, version: i.version }))
+				items: selected.map((i) => ({ id: i.id, version: i.version })),
+				attachments: reqAttachments
 			});
 			$batchResults = res.data;
 			showBatchModal = true;
 			showBatchRejectDialog = false;
+			showBatchCorrectDialog = false;
 			batchExceptionReason = '';
+			batchCorrectComment = '';
+			batchCorrectionAttachments = [];
 			pendingBatchAction = null;
 			$selectedInspections = new Set();
+			triggerRefresh();
 			loadData();
 		} catch (e) {
 			showToast(e.message || '批量操作失败');
@@ -137,7 +162,13 @@
 		loadData();
 	}
 
-	onMount(loadData);
+	onMount(() => {
+		loadData();
+		const unsubscribe = refreshTrigger.subscribe(() => {
+			loadData();
+		});
+		return unsubscribe;
+	});
 </script>
 
 {#if toast}
@@ -306,6 +337,14 @@
 					批量退回
 				</button>
 			{/if}
+			{#if $currentRole === 'pond_admin'}
+				<button
+					on:click={() => handleBatch('correct')}
+					class="bg-accent text-white px-5 py-2 rounded-lg text-sm hover:bg-accent/90 transition-colors"
+				>
+					批量补正
+				</button>
+			{/if}
 			{#if $currentRole === 'base_director'}
 				<button
 					on:click={() => handleBatch('confirm_sync')}
@@ -399,6 +438,84 @@
 					on:click={() => handleBatch('reject')}
 					class="bg-status-overdue text-white px-5 py-2 rounded-lg text-sm hover:bg-status-overdue/90"
 				>确认批量退回</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if showBatchCorrectDialog}
+	<div class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+		<div class="fixed inset-0" on:click={() => { showBatchCorrectDialog = false; pendingBatchAction = null; batchCorrectionAttachments = []; batchCorrectComment = ''; }}></div>
+		<div class="bg-white rounded-xl shadow-xl w-[500px] relative z-10 animate-fade-in">
+			<div class="px-6 py-4 border-b border-gray-100">
+				<h3 class="font-semibold text-gray-800">批量补正 - 上传补充材料</h3>
+			</div>
+			<div class="p-6">
+				<p class="text-sm text-gray-500 mb-3">将对 {$selectedInspections.size} 条待补正检测单执行批量补正</p>
+
+				<div class="mb-4">
+					<div class="flex items-center justify-between mb-2">
+						<label class="text-sm text-gray-500 font-medium">补充材料 <span class="text-red-500">*</span></label>
+						<label class="cursor-pointer bg-accent text-white px-3 py-1 rounded-md text-sm hover:bg-accent/90 transition-colors">
+							+ 上传材料
+							<input
+								type="file"
+								multiple
+								class="hidden"
+								on:change={(e) => {
+									const target = e.target as HTMLInputElement;
+									if (target.files) {
+										batchCorrectionAttachments = [...batchCorrectionAttachments, ...Array.from(target.files)];
+									}
+									target.value = '';
+								}}
+							/>
+						</label>
+					</div>
+					{#if batchCorrectionAttachments.length === 0}
+						<div class="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
+							<p class="text-gray-400 text-xs">请上传补正材料（检测照片、化验单等）</p>
+						</div>
+					{:else}
+						<div class="space-y-2 max-h-[120px] overflow-y-auto">
+							{#each batchCorrectionAttachments as file, i}
+								<div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+									<div class="flex items-center gap-2">
+										<span class="text-sm">📎</span>
+										<div>
+											<p class="text-xs font-medium">{file.name}</p>
+											<p class="text-xs text-gray-400">{(file.size / 1024).toFixed(1)} KB</p>
+										</div>
+									</div>
+									<button
+										on:click={() => batchCorrectionAttachments.splice(i, 1)}
+										class="text-gray-400 hover:text-red-500 text-xs"
+									>删除</button>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				<div>
+					<label class="text-sm text-gray-500 mb-1 block">补正说明</label>
+					<textarea
+						bind:value={batchCorrectComment}
+						rows="2"
+						class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none"
+						placeholder="请输入补正说明（选填）"
+					></textarea>
+				</div>
+			</div>
+			<div class="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end">
+				<button
+					on:click={() => { showBatchCorrectDialog = false; pendingBatchAction = null; batchCorrectionAttachments = []; batchCorrectComment = ''; }}
+					class="border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+				>取消</button>
+				<button
+					on:click={() => handleBatch('correct')}
+					class="bg-accent text-white px-5 py-2 rounded-lg text-sm hover:bg-accent/90"
+				>确认批量补正</button>
 			</div>
 		</div>
 	</div>

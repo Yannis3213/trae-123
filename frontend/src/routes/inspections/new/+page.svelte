@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { currentRole, currentUser } from '$lib/stores';
+	import { currentRole, currentUser, triggerRefresh } from '$lib/stores';
 	import { createInspection, uploadAttachment } from '$lib/api';
 	import type { TestIndicator } from '$lib/types';
 
@@ -13,6 +13,7 @@
 	let pondId = '';
 	let pondName = '';
 	let deadline = '';
+	let comment = '';
 
 	let indicators: { name: string; value: string; unit: string; standard: string; is_qualified: boolean }[] = [
 		{ name: 'pH值', value: '', unit: '', standard: '6.5-8.5', is_qualified: true },
@@ -132,6 +133,7 @@
 				inspector: $currentUser,
 				inspector_role: $currentRole,
 				deadline,
+				comment: comment.trim() || undefined,
 				indicators: indicators.map((i) => ({
 					name: i.name,
 					value: i.value,
@@ -143,6 +145,7 @@
 			});
 
 			showToast('登记成功，检测单已提交至待审核');
+			triggerRefresh();
 			goto('/inspections');
 		} catch (e: any) {
 			error = e.message || '登记失败';
@@ -199,6 +202,16 @@
 			<div class="w-full bg-gray-50 border border-gray-100 rounded-lg px-3 py-2.5 text-sm text-gray-600">
 				{$currentUser}
 			</div>
+		</div>
+
+		<div>
+			<label class="text-sm text-gray-600 mb-1.5 block font-medium">登记备注</label>
+			<textarea
+				bind:value={comment}
+				rows="2"
+				class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none"
+				placeholder="请输入登记备注（选填，将作为审计记录保存）"
+			></textarea>
 		</div>
 
 		<div>

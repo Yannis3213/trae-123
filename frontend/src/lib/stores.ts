@@ -17,3 +17,9 @@ currentRole.subscribe((role) => {
 export const selectedInspections = writable<Set<string>>(new Set());
 
 export const batchResults = writable<BatchResult[]>([]);
+
+export const refreshTrigger = writable<number>(0);
+
+export function triggerRefresh() {
+	refreshTrigger.update((n) => n + 1);
+}
