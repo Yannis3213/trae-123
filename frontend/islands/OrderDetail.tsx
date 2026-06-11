@@ -13,6 +13,7 @@ import {
   getStatusColor,
   getUser,
   getRoleLabel,
+  hasEvidence,
 } from "../utils/helpers.ts";
 
 interface OrderDetailProps {
@@ -99,17 +100,23 @@ export default function OrderDetail({ id }: OrderDetailProps) {
       setAuditTrail(detailData.audit_remarks || []);
       setModuleStates({
         submission: {
-          evidence: detailData.order.submission_evidence || "",
+          evidence: hasEvidence(detailData.order.submission_evidence) 
+            ? (detailData.order.submission_evidence || "") 
+            : "",
           opinion: "",
           audit_remark: "",
         },
         sample: {
-          evidence: detailData.order.sample_evidence || "",
+          evidence: hasEvidence(detailData.order.sample_evidence) 
+            ? (detailData.order.sample_evidence || "") 
+            : "",
           opinion: "",
           audit_remark: "",
         },
         registration: {
-          evidence: detailData.order.registration_evidence || "",
+          evidence: hasEvidence(detailData.order.registration_evidence) 
+            ? (detailData.order.registration_evidence || "") 
+            : "",
           opinion: "",
           audit_remark: "",
         },
@@ -130,8 +137,8 @@ export default function OrderDetail({ id }: OrderDetailProps) {
   const getModuleStatus = (moduleKey: ModuleType): "completed" | "available" | "missing" => {
     if (!order) return "missing";
     const config = MODULE_CONFIG[moduleKey];
-    const evidence = order[config.evidenceField];
-    if (evidence) return "completed";
+    const evidence = order[config.evidenceField] as string;
+    if (hasEvidence(evidence)) return "completed";
     if (user?.role === config.role && config.allowedStatuses.includes(order.status)) {
       return "available";
     }
@@ -168,8 +175,8 @@ export default function OrderDetail({ id }: OrderDetailProps) {
 
     const state = moduleStates[moduleKey];
     if (submitNext) {
-      if (!state.evidence.trim()) {
-        showToast("请填写证据内容", "error");
+      if (!hasEvidence(state.evidence)) {
+        showToast("请填写证据材料（空数组或空内容视为缺项）", "error");
         return;
       }
       if (!state.opinion.trim()) {
@@ -551,11 +558,11 @@ function ModuleProcessPanel({
 }: ModuleProcessPanelProps) {
   const config = MODULE_CONFIG[moduleKey];
   const moduleAttachments = attachments.filter(a => a.module_type === moduleKey);
-  const hasEvidence = !!evidence;
+  const evidenceCompleted = hasEvidence(evidence);
   const canOperate = !!user && user.role === config.role && config.allowedStatuses.includes(order.status);
 
   const getStatusBadge = () => {
-    if (hasEvidence) {
+    if (evidenceCompleted) {
       return (
         <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-800">
           已完成
@@ -585,7 +592,7 @@ function ModuleProcessPanel({
           <h4 className="font-medium text-gray-900 text-lg">{moduleLabel}</h4>
           {getStatusBadge()}
         </div>
-        {!canOperate && !hasEvidence && (
+        {!canOperate && !evidenceCompleted && (
           <div className="text-xs text-gray-400 bg-gray-50 px-3 py-1 rounded">
             角色不匹配或状态不匹配，不可编辑
           </div>
@@ -717,7 +724,7 @@ function ModuleProcessPanel({
           </button>
           <button
             onClick={() => onProcess(true)}
-            disabled={processing || !evidence.trim() || !opinion.trim()}
+            disabled={processing || !hasEvidence(evidence) || !opinion.trim()}
             className="px-5 py-2.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

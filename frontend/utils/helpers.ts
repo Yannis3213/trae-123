@@ -138,3 +138,21 @@ export function clearAuth(): void {
 export function isAuthenticated(): boolean {
   return !!getToken();
 }
+
+export function hasEvidence(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed === "[]" || trimmed === "null" || trimmed === "{}") {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) return parsed.length > 0;
+    if (typeof parsed === "object" && parsed !== null) {
+      return Object.keys(parsed).length > 0;
+    }
+    return !!parsed;
+  } catch {
+    return trimmed.length > 0;
+  }
+}
