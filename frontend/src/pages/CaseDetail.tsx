@@ -10,6 +10,7 @@ import {
   Modal,
   Form,
   Input,
+  Select,
   message,
   Tabs,
   Row,
@@ -37,6 +38,7 @@ import {
   AuditOutlined,
   RollbackOutlined,
   CheckOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { caseApi } from '../services/api';
@@ -61,6 +63,7 @@ import dayjs from 'dayjs';
 const { Text, Title } = Typography;
 const { TabPane } = Tabs;
 const { confirm } = Modal;
+const { Option } = Select;
 
 interface ProcessingTimelineStep {
   stage: ProcessingStage;
@@ -82,8 +85,11 @@ const CaseDetail: React.FC = () => {
   const [currentAction, setCurrentAction] = useState<CaseStatus | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [noteModalVisible, setNoteModalVisible] = useState(false);
+  const [attachModalVisible, setAttachModalVisible] = useState(false);
+  const [attachLoading, setAttachLoading] = useState(false);
   const [noteForm] = Form.useForm();
   const [actionForm] = Form.useForm();
+  const [attachForm] = Form.useForm();
 
   const fetchData = useCallback(async () => {
     if (!id) return;
@@ -325,6 +331,28 @@ const CaseDetail: React.FC = () => {
       fetchData();
     } catch (err: any) {
       message.error(err.response?.data?.message || '添加备注失败');
+    }
+  };
+
+  const handleAddAttachment = async (values: any) => {
+    if (!id) return;
+    setAttachLoading(true);
+    try {
+      await caseApi.addAttachment({
+        case_id: id,
+        file_name: values.file_name,
+        file_type: values.file_type || 'application/pdf',
+        file_size: values.file_size || 102400,
+        category: values.category,
+      });
+      message.success('附件添加成功');
+      setAttachModalVisible(false);
+      attachForm.resetFields();
+      fetchData();
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '添加附件失败');
+    } finally {
+      setAttachLoading(false);
     }
   };
 
@@ -679,7 +707,13 @@ const CaseDetail: React.FC = () => {
 
         <Card title="处理流程（按时间顺序）">{renderProcessingTimeline()}</Card>
 
-        <Card title="案件材料">
+        <Card title="案件材料" extra={
+          caseData.status !== 'completed' && (
+            <Button size="small" icon={<PlusOutlined />} onClick={() => { attachForm.resetFields(); setAttachModalVisible(true); }}>
+              添加附件
+            </Button>
+          )
+        }>
           <Tabs defaultActiveKey="attachments">
             <TabPane tab={`附件 (${caseData.attachments.length})`} key="attachments">
               {renderAttachments()}
@@ -875,6 +909,74 @@ const CaseDetail: React.FC = () => {
               </Button>
               <Button type="primary" htmlType="submit">
                 保存
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="添加附件"
+        open={attachModalVisible}
+        onCancel={() => {
+          setAttachModalVisible(false);
+          attachForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Form form={attachForm} layout="vertical" onFinish={handleAddAttachment}>
+          <Form.Item
+            label="文件名称"
+            name="file_name"
+            rules={[{ required: true, message: '请输入文件名称' }]}
+          >
+            <Input placeholder="例如：报案笔录.pdf" />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="文件类型"
+                name="file_type"
+                initialValue="application/pdf"
+              >
+                <Select placeholder="选择类型">
+                  <Option value="application/pdf">PDF文档</Option>
+                  <Option value="image/jpeg">JPEG图片</Option>
+                  <Option value="image/png">PNG图片</Option>
+                  <Option value="audio/mpeg">MP3音频</Option>
+                  <Option value="video/mp4">MP4视频</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="附件类别"
+                name="category"
+                rules={[{ required: true, message: '请选择附件类别' }]}
+              >
+                <Select placeholder="选择类别">
+                  <Option value="registration">登记材料</Option>
+                  <Option value="evidence">证据材料</Option>
+                  <Option value="followup">回访材料</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item
+            label="文件大小（字节）"
+            name="file_size"
+            initialValue={102400}
+          >
+            <Input type="number" placeholder="文件大小" />
+          </Form.Item>
+          <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => { setAttachModalVisible(false); attachForm.resetFields(); }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit" loading={attachLoading}>
+                添加
               </Button>
             </Space>
           </Form.Item>

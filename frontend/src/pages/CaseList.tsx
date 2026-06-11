@@ -17,6 +17,7 @@ import {
   Tooltip,
   Alert,
   Typography,
+  DatePicker,
 } from 'antd';
 import {
   PlusOutlined,
@@ -47,6 +48,7 @@ import {
   ROLE_DISPLAY,
   StatisticsResponse,
   BatchProcessResult,
+  CreateCaseRequest,
 } from '../types';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -74,6 +76,9 @@ const CaseList: React.FC = () => {
   const [expiringData, setExpiringData] = useState<any>(null);
   const [form] = Form.useForm();
   const [batchForm] = Form.useForm();
+  const [createForm] = Form.useForm();
+  const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
 
   const [filters, setFilters] = useState({
     status: undefined as CaseStatus | undefined,
@@ -179,6 +184,25 @@ const CaseList: React.FC = () => {
       message.error(err.response?.data?.message || '批量处理失败');
     } finally {
       setBatchLoading(false);
+    }
+  };
+
+  const handleCreateCase = async (values: any) => {
+    setCreateLoading(true);
+    try {
+      await caseApi.createCase({
+        ...values,
+        deadline: values.deadline ? dayjs(values.deadline).toISOString() : dayjs().add(7, 'day').toISOString(),
+      });
+      message.success('警情登记创建成功');
+      setCreateModalVisible(false);
+      createForm.resetFields();
+      fetchData();
+      fetchStatistics();
+    } catch (err: any) {
+      message.error(err.response?.data?.message || '创建失败');
+    } finally {
+      setCreateLoading(false);
     }
   };
 
@@ -559,7 +583,7 @@ const CaseList: React.FC = () => {
                 </Button>
               )}
               {user?.role === 'dispatcher' && (
-                <Button type="primary" icon={<PlusOutlined />}>
+                <Button type="primary" icon={<PlusOutlined />} onClick={() => { createForm.resetFields(); setCreateModalVisible(true); }}>
                   新建登记
                 </Button>
               )}
@@ -649,6 +673,64 @@ const CaseList: React.FC = () => {
         width={800}
       >
         {renderBatchResults()}
+      </Modal>
+
+      <Modal
+        title="新建警情登记"
+        open={createModalVisible}
+        onCancel={() => setCreateModalVisible(false)}
+        footer={null}
+        width={600}
+      >
+        <Form form={createForm} layout="vertical" onFinish={handleCreateCase}>
+          <Form.Item name="title" label="案件标题" rules={[{ required: true, message: '请输入案件标题' }]}>
+            <Input placeholder="请输入案件标题" />
+          </Form.Item>
+          <Form.Item name="description" label="案情描述" rules={[{ required: true, message: '请输入案情描述' }]}>
+            <Input.TextArea rows={3} placeholder="请输入案情描述" />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="case_type" label="案件类型" rules={[{ required: true, message: '请选择案件类型' }]}>
+                <Select placeholder="请选择">
+                  <Option value="民事纠纷">民事纠纷</Option>
+                  <Option value="刑事案件">刑事案件</Option>
+                  <Option value="治安案件">治安案件</Option>
+                  <Option value="交通事故">交通事故</Option>
+                  <Option value="求助">求助</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="location" label="发生地点" rules={[{ required: true, message: '请输入发生地点' }]}>
+                <Input placeholder="请输入发生地点" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="reporter_name" label="报案人" rules={[{ required: true, message: '请输入报案人姓名' }]}>
+                <Input placeholder="请输入报案人姓名" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="reporter_phone" label="联系电话" rules={[{ required: true, message: '请输入联系电话' }]}>
+                <Input placeholder="请输入联系电话" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="deadline" label="办理截止日期" rules={[{ required: true, message: '请选择截止日期' }]}>
+            <DatePicker showTime style={{ width: '100%' }} placeholder="请选择截止日期" />
+          </Form.Item>
+          <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => setCreateModalVisible(false)}>取消</Button>
+              <Button type="primary" htmlType="submit" loading={createLoading}>
+                提交登记
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

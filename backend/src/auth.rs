@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::errors::AppError;
-use crate::models::{Claims, Role, User};
+use crate::models::{Claims, Role, User, UserRow};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use rocket::http::Status;
@@ -40,7 +40,7 @@ pub async fn verify_token(token: &str, pool: &SqlitePool) -> Result<User, AppErr
 
     let claims = token_data.claims;
 
-    let user = sqlx::query_as::<_, User>(
+    let row = sqlx::query_as::<_, UserRow>(
         r#"SELECT id, username, real_name, role, password_hash, created_at, updated_at
            FROM users WHERE id = ?"#,
     )
@@ -49,7 +49,7 @@ pub async fn verify_token(token: &str, pool: &SqlitePool) -> Result<User, AppErr
     .await
     .map_err(|_| AppError::Unauthorized("用户不存在".into()))?;
 
-    Ok(user)
+    row.try_into().map_err(|e: String| AppError::Internal(e))
 }
 
 #[rocket::async_trait]
@@ -76,22 +76,23 @@ impl<'r> FromRequest<'r> for User {
 }
 
 pub async fn verify_password(password: &str, hash: &str) -> Result<bool, AppError> {
-    use argon2::{Algorithm, Argon2, Params, Version};
     use argon2::password_hash::{PasswordHash, PasswordVerifier};
+    use argon2::{Argon2, Algorithm, Version};
 
     let parsed_hash = PasswordHash::new(hash)
         .map_err(|e| AppError::Internal(format!("密码解析错误: {}", e)))?;
 
-    Ok(Argon2::default().verify_password(password.as_bytes(), &parsed_hash).is_ok())
+    Ok(Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2::Params::default())
+        .verify_password(password.as_bytes(), &parsed_hash).is_ok())
 }
 
 pub async fn hash_password(password: &str) -> Result<String, AppError> {
-    use argon2::{Algorithm, Argon2, Params, Version};
     use argon2::password_hash::{PasswordHasher, SaltString};
+    use argon2::{Argon2, Algorithm, Version};
     use rand::rngs::OsRng;
 
     let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, Params::default());
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon2::Params::default());
 
     argon2
         .hash_password(password.as_bytes(), &salt)

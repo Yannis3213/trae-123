@@ -1,6 +1,6 @@
 use crate::auth::{generate_token, verify_password};
 use crate::errors::AppError;
-use crate::models::{LoginRequest, LoginResponse, User};
+use crate::models::{LoginRequest, LoginResponse, User, UserRow};
 use rocket::serde::json::Json;
 use rocket::State;
 use sqlx::SqlitePool;
@@ -10,7 +10,7 @@ pub async fn login(
     req: Json<LoginRequest>,
     pool: &State<SqlitePool>,
 ) -> Result<Json<LoginResponse>, AppError> {
-    let user = sqlx::query_as::<_, User>(
+    let row = sqlx::query_as::<_, UserRow>(
         r#"SELECT id, username, real_name, role, password_hash, created_at, updated_at
            FROM users WHERE username = ?"#,
     )
@@ -18,6 +18,8 @@ pub async fn login(
     .fetch_one(pool.inner())
     .await
     .map_err(|_| AppError::Unauthorized("用户名或密码错误".into()))?;
+
+    let user: User = row.try_into().map_err(|e: String| AppError::Internal(e))?;
 
     let valid = verify_password(&req.password, &user.password_hash).await?;
     if !valid {
