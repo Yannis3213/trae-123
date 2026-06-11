@@ -349,6 +349,7 @@ export default function OrderList() {
         </span>
       </div>
 
+      {viewMode === 'table' || !isManager ? (
         <Table
           size="middle"
           rowKey="id"
