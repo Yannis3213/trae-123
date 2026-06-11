@@ -75,7 +75,7 @@ export class DatabaseService implements OnModuleInit {
         id TEXT PRIMARY KEY,
         task_id TEXT NOT NULL,
         record_date TEXT NOT NULL,
-        record_type TEXT NOT NULL CHECK(record_type IN ('sowing', 'fertilizing', 'pest_control', 'harvesting', 'inspection', 'other')),
+        record_type TEXT NOT NULL CHECK(record_type IN ('sowing', 'fertilizing', 'pest_control', 'harvesting', 'inspection', 'pruning', 'other')),
         content TEXT NOT NULL,
         recorder_id TEXT NOT NULL,
         recorder_role TEXT NOT NULL,

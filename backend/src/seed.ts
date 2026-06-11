@@ -464,6 +464,130 @@ function seed() {
   insertMaterial.run(uuidv4(), t15Id, '除草剂-草甘膦', 20, '升', 'approved', 'u-field', 'field_manager', yesterday, yesterday, null);
   insertAttach.run(uuidv4(), t15Id, '果园杂草情况.jpg', 650000, 'image/jpeg', 'u-field', 'field_manager');
 
+  // ================= 到期预警专项样例 =================
+  const in1Day = new Date(now.getTime() + 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const in14Days = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const day2Ago = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const day5Ago = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  // 样例16: 临期预警 - 已分派（可推进）
+  const t16Id = 't-near-assigned';
+  insertTask.run(t16Id, 'ZZ-202606-0015',
+    '草莓育苗-温室2号棚',
+    '草莓育苗任务，明天截止，临期预警测试 - 可推进',
+    'assigned', 'u-technician', 'agricultural_technician',
+    'u-director', 'cooperative_director',
+    '2026年草莓种植计划', 2026, 6, in1Day, 2, null,
+  );
+  insertAudit.run(uuidv4(), t16Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：草莓育苗-温室2号棚');
+  insertAudit.run(uuidv4(), t16Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派给 李农技(农技员)');
+  insertProc.run(uuidv4(), t16Id, 'u-director', 'cooperative_director', 'assign', 'success', null, '分派完成');
+  insertMaterial.run(uuidv4(), t16Id, '草莓苗', 5000, '株', 'approved', 'u-technician', 'agricultural_technician', day5Ago, day3Ago, null);
+  insertField.run(uuidv4(), t16Id, yesterday, 'sowing', '草莓苗定植完成，温室温度控制在25度', 'u-technician', 'agricultural_technician', '晴', null);
+  insertAttach.run(uuidv4(), t16Id, '草莓苗定植照片.jpg', 920000, 'image/jpeg', 'u-technician', 'agricultural_technician');
+
+  // 样例17: 临期预警 - 处理中（可推进）
+  const t17Id = 't-near-processing';
+  insertTask.run(t17Id, 'ZZ-202606-0016',
+    '苹果套袋-北区果园',
+    '苹果套袋作业，还有2天截止，临期预警测试 - 可推进',
+    'processing', 'u-field', 'field_manager',
+    'u-director', 'cooperative_director',
+    '2026年苹果种植计划', 2026, 6, in2Days, 3, null,
+  );
+  insertAudit.run(uuidv4(), t17Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：苹果套袋-北区果园');
+  insertAudit.run(uuidv4(), t17Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派给 张田间(田间管理员)');
+  insertAudit.run(uuidv4(), t17Id, 'u-field', 'field_manager', 'start_processing', 'assigned', 'processing', null, '开始套袋作业');
+  insertProc.run(uuidv4(), t17Id, 'u-director', 'cooperative_director', 'assign', 'success', null, '分派完成');
+  insertProc.run(uuidv4(), t17Id, 'u-field', 'field_manager', 'start_processing', 'success', null, '开始套袋');
+  insertMaterial.run(uuidv4(), t17Id, '苹果袋', 20000, '只', 'approved', 'u-field', 'field_manager', day5Ago, day3Ago, null);
+  insertField.run(uuidv4(), t17Id, yesterday, 'other', '苹果套袋完成60%，预计2天内完成', 'u-field', 'field_manager', '多云', null);
+  insertAttach.run(uuidv4(), t17Id, '苹果套袋现场.jpg', 780000, 'image/jpeg', 'u-field', 'field_manager');
+
+  // 样例18: 正常进行 - 已回访（还有14天，主任可归档）
+  const t18Id = 't-normal-followedup';
+  insertTask.run(t18Id, 'ZZ-202606-0017',
+    '樱桃采摘-东区樱桃园',
+    '樱桃采摘任务，正常进行状态，已回访待归档',
+    'followed_up', 'u-technician', 'agricultural_technician',
+    'u-director', 'cooperative_director',
+    '2026年樱桃种植计划', 2026, 6, in14Days, 4, null,
+  );
+  insertAudit.run(uuidv4(), t18Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：樱桃采摘-东区樱桃园');
+  insertAudit.run(uuidv4(), t18Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派给 李农技');
+  insertAudit.run(uuidv4(), t18Id, 'u-technician', 'agricultural_technician', 'start_processing', 'assigned', 'processing', null, '开始采摘');
+  insertAudit.run(uuidv4(), t18Id, 'u-technician', 'agricultural_technician', 'complete_processing', 'processing', 'transferred', null, '采摘完成');
+  insertAudit.run(uuidv4(), t18Id, 'u-director', 'cooperative_director', 'follow_up', 'transferred', 'followed_up', null, '回访确认：总产量500kg，品质优良');
+  insertProc.run(uuidv4(), t18Id, 'u-technician', 'agricultural_technician', 'start_processing', 'success', null, '采摘开始');
+  insertProc.run(uuidv4(), t18Id, 'u-technician', 'agricultural_technician', 'complete_processing', 'success', null, '采摘完成');
+  insertProc.run(uuidv4(), t18Id, 'u-director', 'cooperative_director', 'follow_up', 'success', null, '回访确认');
+  insertField.run(uuidv4(), t18Id, day5Ago, 'harvesting', '樱桃采摘完成，总产量500公斤', 'u-technician', 'agricultural_technician', '晴', null);
+  insertAttach.run(uuidv4(), t18Id, '樱桃丰收照片.jpg', 1050000, 'image/jpeg', 'u-technician', 'agricultural_technician');
+  insertAttach.run(uuidv4(), t18Id, '品质检测报告.pdf', 450000, 'application/pdf', 'u-technician', 'agricultural_technician');
+
+  // 样例19: 正常进行 - 待分派（无处理人，不可批量推进）
+  const t19Id = 't-normal-pending';
+  insertTask.run(t19Id, 'ZZ-202606-0018',
+    '蓝莓种植-新区蓝莓园',
+    '蓝莓种植任务，正常进行状态，待分派 - 无处理人，不可批量推进',
+    'pending_assign', null, null,
+    'u-director', 'cooperative_director',
+    '2026年蓝莓种植计划', 2026, 6, in7Days, 1, null,
+  );
+  insertAudit.run(uuidv4(), t19Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：蓝莓种植-新区蓝莓园（待分派）');
+  // 注意：没有assignee，用于测试"待分派不可批量推进"场景
+  insertAttach.run(uuidv4(), t19Id, '蓝莓种植实施方案.pdf', 890000, 'application/pdf', 'u-director', 'cooperative_director');
+
+  // 样例20: 逾期 - 处理中（可推进：完成处理）
+  const t20Id = 't-overdue-processing';
+  insertTask.run(t20Id, 'ZZ-202606-0019',
+    '番茄病虫害防治-西区14号田',
+    '番茄病虫害防治任务，已逾期2天未完成处理 - 可推进',
+    'processing', 'u-field', 'field_manager',
+    'u-director', 'cooperative_director',
+    '2026年番茄种植计划', 2026, 6, day2Ago, 3, null,
+  );
+  insertAudit.run(uuidv4(), t20Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：番茄病虫害防治-西区14号田');
+  insertAudit.run(uuidv4(), t20Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派给 张田间(田间管理员)');
+  insertAudit.run(uuidv4(), t20Id, 'u-field', 'field_manager', 'start_processing', 'assigned', 'processing', null, '开始防治作业');
+  insertProc.run(uuidv4(), t20Id, 'u-director', 'cooperative_director', 'assign', 'success', null, '分派完成');
+  insertProc.run(uuidv4(), t20Id, 'u-field', 'field_manager', 'start_processing', 'success', null, '防治开始');
+  insertMaterial.run(uuidv4(), t20Id, '杀虫剂-氯氰菊酯', 15, '瓶', 'approved', 'u-field', 'field_manager', day5Ago, day3Ago, null);
+  insertField.run(uuidv4(), t20Id, day5Ago, 'pest_control', '第一次喷药完成，虫口密度下降60%', 'u-field', 'field_manager', '晴', null);
+  insertAttach.run(uuidv4(), t20Id, '虫害情况照片.jpg', 670000, 'image/jpeg', 'u-field', 'field_manager');
+
+  // 样例21: 逾期 - 待分派（无处理人，不可推进，核心测试样例）
+  const t21Id = 't-overdue-pending';
+  insertTask.run(t21Id, 'ZZ-202606-0020',
+    '辣椒育苗-西区15号棚',
+    '辣椒育苗任务，已逾期5天仍未分派 - 待分派不可推进核心测试样例',
+    'pending_assign', null, null,
+    'u-director', 'cooperative_director',
+    '2026年辣椒种植计划', 2026, 6, day5Ago, 1, null,
+  );
+  insertAudit.run(uuidv4(), t21Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：辣椒育苗-西区15号棚（逾期未分派，用于测试待分派拦截）');
+  // 没有assignee，用于测试批量推进时"待分派无处理人"拦截
+  insertAttach.run(uuidv4(), t21Id, '辣椒育苗方案.pdf', 320000, 'application/pdf', 'u-director', 'cooperative_director');
+
+  // 样例22: 临期 - 已转办（农技员/主任可回访推进）
+  const t22Id = 't-near-transferred';
+  insertTask.run(t22Id, 'ZZ-202606-0021',
+    '黄瓜采收-南区16号棚',
+    '黄瓜采收任务，临期已转办 - 农技员可回访推进',
+    'transferred', 'u-field', 'field_manager',
+    'u-director', 'cooperative_director',
+    '2026年黄瓜种植计划', 2026, 6, in1Day, 4, null,
+  );
+  insertAudit.run(uuidv4(), t22Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：黄瓜采收-南区16号棚');
+  insertAudit.run(uuidv4(), t22Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派给 张田间');
+  insertAudit.run(uuidv4(), t22Id, 'u-field', 'field_manager', 'start_processing', 'assigned', 'processing', null, '开始采收');
+  insertAudit.run(uuidv4(), t22Id, 'u-field', 'field_manager', 'complete_processing', 'processing', 'transferred', null, '采收完成，总产量800kg');
+  insertProc.run(uuidv4(), t22Id, 'u-field', 'field_manager', 'start_processing', 'success', null, '采收开始');
+  insertProc.run(uuidv4(), t22Id, 'u-field', 'field_manager', 'complete_processing', 'success', null, '采收完成');
+  insertField.run(uuidv4(), t22Id, yesterday, 'harvesting', '黄瓜采收完成，一级品率85%', 'u-field', 'field_manager', '晴', null);
+  insertAttach.run(uuidv4(), t22Id, '黄瓜采收现场.jpg', 560000, 'image/jpeg', 'u-field', 'field_manager');
+
   console.log('');
   console.log('========================================');
   console.log('  农业合作社 SQLite 演示数据初始化完成');
@@ -474,7 +598,7 @@ function seed() {
   console.log('  - 农技员:     technician / 123456  (处理+转办)');
   console.log('  - 田间管理员: fieldmanager / 123456 (处理+录入记录)');
   console.log('');
-  console.log('▶ 四类演示单据（共15个任务）：');
+  console.log('▶ 四类演示单据（共22个任务）：');
   console.log('  【正常流转】');
   console.log('    ZZ-202606-0001 待分派   - 小麦种植，带附件(方案+地形图)');
   console.log('    ZZ-202606-0002 已分派   - 水稻育秧，带农资审批+附件');
@@ -496,17 +620,24 @@ function seed() {
   console.log('  【已归档】');
   console.log('    ZZ-202605-0001 已归档   - 春小麦收获，4附件+完整审批');
   console.log('');
-  console.log('▶ 异常入口 (用于接口穿透测试)：');
-  console.log('  ✅ 越权归档:     用农技员账号归档 0005');
-  console.log('  ✅ 版本冲突:     用 version=1 提交 0011 (当前 v5)');
-  console.log('  ✅ 状态冲突:     对已归档 202605-0001 再次分派');
-  console.log('  ✅ 缺证据:       处理 0002 (水稻育秧) 不提供 evidence');
-  console.log('  ✅ 越权推进:     田间管理员尝试分派/回访/归档');
-  console.log('  ✅ 缺材料归档:   主任归档 0009 (有未审批钾肥)');
-  console.log('  ✅ 缺田间记录:   主任归档 0010 (已回访但无field_record)');
-  console.log('  ✅ 多项缺材料:   农技员完成处理 0013 (3项pending农资)');
-  console.log('  ✅ 田间管理员越权: 田间管理员处理 0012 (assignee_role不是field_manager)');
-  console.log('  ✅ 非处理人越权: 田间管理员处理 0002 (处理人是李农技)');
+  console.log('  【到期预警专项（ZZ-202606-0015 ~ 0021）】');
+  console.log('    ZZ-202606-0015 已分派  (临期-可推进)  草莓育苗，明天截止');
+  console.log('    ZZ-202606-0016 处理中  (临期-可推进)  苹果套袋，2天内截止');
+  console.log('    ZZ-202606-0017 已回访  (正常-可归档)  樱桃采摘，14天后截止');
+  console.log('    ZZ-202606-0018 待分派  (正常-不可推进) 蓝莓种植，无处理人');
+  console.log('    ZZ-202606-0019 处理中  (逾期-可推进)  番茄病虫害防治，已逾期2天');
+  console.log('    ZZ-202606-0020 待分派  (逾期-不可推进) 辣椒育苗，逾期5天未分派 ⭐核心拦截样例');
+  console.log('    ZZ-202606-0021 已转办  (临期-可回访)  黄瓜采收，1天内截止');
+  console.log('');
+  console.log('▶ 到期预警测试场景：');
+  console.log('  ✅ 三组视图:       已逾期 / 临期预警 / 正常进行');
+  console.log('  ✅ 责任人筛选:     按处理人分组筛选任务');
+  console.log('  ✅ 可推进判断:     每个任务标注是否可推进，显示blockReason');
+  console.log('  ✅ 待分派拦截:     0018/0020 无处理人，批量推进时逐条拦截');
+  console.log('  ✅ 批量推进结果:   0015/0016/0019/0021 可成功推进');
+  console.log('  ✅ 逾期样例:       0007(已分派逾期) / 0019(处理中逾期) / 0020(待分派逾期)');
+  console.log('  ✅ 临期样例:       0015(已分派) / 0016(处理中) / 0021(已转办)');
+  console.log('  ✅ 正常样例:       0017(已回访) / 0018(待分派)');
   console.log('');
 
   db.close();

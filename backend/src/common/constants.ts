@@ -50,6 +50,7 @@ export const FIELD_RECORD_TYPES = {
   PEST_CONTROL: 'pest_control',
   HARVESTING: 'harvesting',
   INSPECTION: 'inspection',
+  PRUNING: 'pruning',
   OTHER: 'other',
 } as const;
 
@@ -59,6 +60,7 @@ export const FIELD_RECORD_TYPE_LABELS: Record<string, string> = {
   [FIELD_RECORD_TYPES.PEST_CONTROL]: '病虫害防治',
   [FIELD_RECORD_TYPES.HARVESTING]: '收获',
   [FIELD_RECORD_TYPES.INSPECTION]: '巡检',
+  [FIELD_RECORD_TYPES.PRUNING]: '修剪',
   [FIELD_RECORD_TYPES.OTHER]: '其他',
 };
 

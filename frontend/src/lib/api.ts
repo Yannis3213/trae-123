@@ -168,6 +168,18 @@ export const OVERDUE_LABELS: Record<string, string> = {
   overdue: '逾期',
 };
 
+export const ACTION_LABELS: Record<string, string> = {
+  assign: '分派任务',
+  start_processing: '开始处理',
+  process: '开始处理',
+  complete_processing: '完成处理',
+  transfer: '转办',
+  follow_up: '回访',
+  archive: '归档',
+  return_for_correction: '退回补正',
+  overdue_advance: '逾期批量推进',
+};
+
 export const FIELD_RECORD_TYPE_LABELS: Record<string, string> = {
   sowing: '播种',
   fertilizing: '施肥',
