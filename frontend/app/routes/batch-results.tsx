@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link, useOutletContext } from "@remix-run/react";
 import { getRequests, batchProcess, type CreativeRequestListItem, type BatchResult } from "~/utils/api";
 import type { UserRole, RequestStatus } from "~/utils/status";
-import { STATUS_LABELS } from "~/utils/status";
+import { STATUS_LABELS, USER_NUMERIC_ID, ROLE_LABELS } from "~/utils/status";
 import StatusBadge from "~/components/StatusBadge";
 import DeadlineWarning from "~/components/DeadlineWarning";
 
@@ -12,7 +12,8 @@ interface OutletContext {
 }
 
 export default function BatchResults() {
-  const { role } = useOutletContext<OutletContext>();
+  const { userId, role } = useOutletContext<OutletContext>();
+  const numericUserId = USER_NUMERIC_ID[userId] ?? 0;
 
   const [requests, setRequests] = useState<CreativeRequestListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -21,6 +22,9 @@ export default function BatchResults() {
   const [opinion, setOpinion] = useState("");
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState<BatchResult | null>(null);
+
+  const opinionRequiredActions = ["start_review", "approve", "return", "archive"];
+  const needsOpinion = opinionRequiredActions.includes(action);
 
   useEffect(() => {
     getRequests()
@@ -39,10 +43,18 @@ export default function BatchResults() {
   };
 
   const toggleAll = () => {
-    if (selected.size === requests.length) {
+    const mineIds = requests
+      .filter((r) => r.current_handler_id === numericUserId)
+      .map((r) => r.id);
+    const mineSize = mineIds.length;
+    const allMineSelected =
+      mineIds.every((id) => selected.has(id)) && mineSize > 0;
+    if (allMineSelected) {
+      // 取消选中非全部取消
       setSelected(new Set());
     } else {
-      setSelected(new Set(requests.map((r) => r.id)));
+      // 只选中分派给我的单据
+      setSelected(new Set(mineIds));
     }
   };
 
@@ -51,15 +63,22 @@ export default function BatchResults() {
       alert("请选择至少一条需求单");
       return;
     }
-    if ((action === "return") && !opinion.trim()) {
-      alert("退回操作必须填写意见");
+    if (needsOpinion && !opinion.trim()) {
+      alert("当前批量动作必须填写处理意见（开始审核/通过/退回/归档）");
       return;
     }
-    if (!confirm(`确定要对 ${selected.size} 条需求单执行批量操作吗？`)) return;
+    const selectedRequests = requests.filter((r) => selected.has(r.id));
+    const notHandlerCount = selectedRequests.filter(
+      (r) => r.current_handler_id !== numericUserId
+    ).length;
+    let confirmMsg = `确定要对 ${selected.size} 条需求单执行批量操作吗？`;
+    if (notHandlerCount > 0) {
+      confirmMsg += `\n\n⚠️ 其中 ${notHandlerCount} 条不是您当前作为处理人的单据，后端将逐条拦截并记录异常。`;
+    }
+    if (!confirm(confirmMsg)) return;
 
     setProcessing(true);
     try {
-      const selectedRequests = requests.filter((r) => selected.has(r.id));
       const effectiveAction = action === "archive" ? "approve" : action;
       const items = selectedRequests.map((r) => ({
         id: r.id,
@@ -99,19 +118,37 @@ export default function BatchResults() {
                 className="block rounded-md border-gray-300 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500"
               >
                 <option value="submit">批量提交</option>
+                <option value="start_review">批量开始审核</option>
                 <option value="approve">批量通过</option>
                 <option value="return">批量退回</option>
                 <option value="archive">批量归档</option>
               </select>
             </div>
-            {action === "return" && (
+            {needsOpinion && (
               <div className="flex-1 min-w-[200px]">
-                <label className="block text-xs font-medium text-gray-500 mb-1">退回意见 <span className="text-red-500">*</span></label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">
+                  {action === "return"
+                    ? "退回意见"
+                    : action === "start_review"
+                    ? "开始审核意见"
+                    : action === "approve"
+                    ? "通过/归档意见"
+                    : "处理意见"}
+                  <span className="text-red-500"> *</span>
+                </label>
                 <input
                   type="text"
                   value={opinion}
                   onChange={(e) => setOpinion(e.target.value)}
-                  placeholder="请输入退回意见"
+                  placeholder={
+                    action === "return"
+                      ? "请输入退回意见"
+                      : action === "start_review"
+                      ? "请输入开始审核意见（必填）"
+                      : action === "approve"
+                      ? "请输入通过/归档意见（必填）"
+                      : "请输入处理意见"
+                  }
                   className="block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-blue-500 focus:ring-blue-500"
                 />
               </div>
@@ -119,7 +156,11 @@ export default function BatchResults() {
             <div className="self-end">
               <button
                 onClick={handleProcess}
-                disabled={processing || selected.size === 0}
+                disabled={
+                  processing ||
+                  selected.size === 0 ||
+                  (needsOpinion && !opinion.trim())
+                }
                 className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {processing ? "处理中..." : `执行 (${selected.size} 项)`}
@@ -140,7 +181,10 @@ export default function BatchResults() {
                   <th className="px-6 py-3 text-left">
                     <input
                       type="checkbox"
-                      checked={selected.size === requests.length && requests.length > 0}
+                      checked={
+                        selected.size === requests.filter((r) => r.current_handler_id === numericUserId).length &&
+                        requests.some((r) => r.current_handler_id === numericUserId)
+                      }
                       onChange={toggleAll}
                       className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
@@ -149,26 +193,35 @@ export default function BatchResults() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">标题</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">客户</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">当前处理人</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">版本</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">到期预警</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {requests.map((req) => (
-                  <tr
-                    key={req.id}
-                    className={`hover:bg-gray-50 cursor-pointer ${
-                      selected.has(req.id) ? "bg-blue-50" : ""
-                    }`}
-                  >
-                    <td className="px-6 py-4">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(req.id)}
-                        onChange={() => toggleSelect(req.id)}
-                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                    </td>
+                {requests.map((req) => {
+                  const isMine = req.current_handler_id === numericUserId;
+                  return (
+                    <tr
+                      key={req.id}
+                      className={`cursor-pointer ${
+                        selected.has(req.id)
+                          ? "bg-blue-50"
+                          : isMine
+                          ? "hover:bg-gray-50"
+                          : "bg-gray-50/50 opacity-70 hover:bg-gray-100/70"
+                      }`}
+                    >
+                      <td className="px-6 py-4 align-middle">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(req.id)}
+                          onChange={() => toggleSelect(req.id)}
+                          disabled={!isMine}
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
+                          title={isMine ? undefined : "非当前分派给您处理的单据"}
+                        />
+                      </td>
                     <td className="px-6 py-4 text-sm font-mono">
                       <Link to={`/creative-requests/${req.id}`} className="text-blue-600 hover:text-blue-800 hover:underline">
                         {req.request_number}
@@ -177,10 +230,25 @@ export default function BatchResults() {
                     <td className="px-6 py-4 text-sm text-gray-900">{req.title}</td>
                     <td className="px-6 py-4 text-sm text-gray-700">{req.client_name}</td>
                     <td className="px-6 py-4"><StatusBadge status={req.status as RequestStatus} size="sm" /></td>
+                    <td className="px-6 py-4 text-sm">
+                      {isMine ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+                          </svg>
+                          我（{ROLE_LABELS[role]}）
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                          待查看（ID: {req.current_handler_id}）
+                        </span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 text-sm text-gray-500">v{req.version}</td>
                     <td className="px-6 py-4"><DeadlineWarning deadline={req.deadline} showLabel={false} /></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

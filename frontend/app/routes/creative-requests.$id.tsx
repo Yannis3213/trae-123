@@ -22,6 +22,7 @@ import {
   computeDeadlineLevel,
   canTransition,
   getActionLabel,
+  USER_NUMERIC_ID,
 } from "~/utils/status";
 import type { UserRole, RequestStatus, BriefStatus, ScheduleStatus } from "~/utils/status";
 import StatusBadge from "~/components/StatusBadge";
@@ -37,6 +38,7 @@ interface OutletContext {
 export default function RequestDetail() {
   const { id } = useParams<{ id: string }>();
   const { userId, role } = useOutletContext<OutletContext>();
+  const numericUserId = USER_NUMERIC_ID[userId] ?? 0;
 
   const [request, setRequest] = useState<CreativeRequestDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -78,8 +80,12 @@ export default function RequestDetail() {
 
   const handleReview = async (action: string) => {
     if (!request) return;
-    if ((action === "return") && !opinion.trim()) {
-      alert("退回时必须填写意见");
+    const needOpinion =
+      action === "start_review" ||
+      action === "approve" ||
+      action === "return";
+    if (needOpinion && !opinion.trim()) {
+      alert("开始审核、通过、退回、归档操作均需填写处理意见");
       return;
     }
     setActionLoading(true);
@@ -159,17 +165,27 @@ export default function RequestDetail() {
   }
 
   const deadlineLevel = computeDeadlineLevel(request.deadline);
+  const isCurrentHandler = request.current_handler_id === numericUserId;
 
-  const canSubmit = canTransition(role, request.status as RequestStatus, "submitted");
-  const canStartReview = canTransition(role, request.status as RequestStatus, "under_review");
-  const canApprove = canTransition(role, request.status as RequestStatus, "reviewed");
-  const canReturn = canTransition(role, request.status as RequestStatus, "returned");
-  const canArchive = canTransition(role, request.status as RequestStatus, "archived");
-  const canResubmit = canTransition(role, request.status as RequestStatus, "resubmitted");
+  const canSubmit =
+    canTransition(role, request.status as RequestStatus, "submitted") && isCurrentHandler;
+  const canStartReview =
+    canTransition(role, request.status as RequestStatus, "under_review") && isCurrentHandler;
+  const canApprove =
+    canTransition(role, request.status as RequestStatus, "reviewed") && isCurrentHandler;
+  const canReturn =
+    canTransition(role, request.status as RequestStatus, "returned") && isCurrentHandler;
+  const canArchive =
+    canTransition(role, request.status as RequestStatus, "archived") && isCurrentHandler;
+  const canResubmit =
+    canTransition(role, request.status as RequestStatus, "resubmitted") && isCurrentHandler;
   const canSupplement =
     role === "creative_registrar" &&
     request.status === "returned" &&
-    (request.brief_status === "missing" || request.schedule_status === "missing");
+    (request.brief_status === "missing" || request.schedule_status === "missing") &&
+    isCurrentHandler;
+
+  const opinionRequiredForReview = canStartReview || canApprove || canArchive || canReturn;
 
   const previousOpinions = request.processing_records
     .filter((r) => r.opinion)
@@ -467,7 +483,10 @@ export default function RequestDetail() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     审核意见
-                    {canReturn && <span className="text-red-500 ml-1">*</span>}
+                    {opinionRequiredForReview && <span className="text-red-500 ml-1">*</span>}
+                    <span className="ml-2 text-xs text-gray-400">
+                      （开始审核/通过/退回/归档必填）
+                    </span>
                   </label>
                   <textarea
                     value={opinion}
@@ -496,7 +515,7 @@ export default function RequestDetail() {
                 {canStartReview && (
                   <button
                     onClick={() => handleReview("start_review")}
-                    disabled={actionLoading}
+                    disabled={actionLoading || !opinion.trim()}
                     className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"
                   >
                     <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -510,7 +529,7 @@ export default function RequestDetail() {
                 {canApprove && (
                   <button
                     onClick={() => handleReview("approve")}
-                    disabled={actionLoading}
+                    disabled={actionLoading || !opinion.trim()}
                     className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                   >
                     <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -523,7 +542,7 @@ export default function RequestDetail() {
                 {canArchive && (
                   <button
                     onClick={() => handleReview("approve")}
-                    disabled={actionLoading}
+                    disabled={actionLoading || !opinion.trim()}
                     className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-gray-600 hover:bg-gray-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
                   >
                     <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -160,6 +160,12 @@ export function getActionLabel(fromStatus: RequestStatus, toStatus: RequestStatu
   return map[`${fromStatus}->${toStatus}`] || toStatus;
 }
 
+export const USER_NUMERIC_ID: Record<string, number> = {
+  zhangsan: 1,
+  lisi: 2,
+  wangwu: 3,
+};
+
 export const ATTACHMENT_CATEGORY_LABELS: Record<string, string> = {
   brief: "Brief",
   schedule: "排期",

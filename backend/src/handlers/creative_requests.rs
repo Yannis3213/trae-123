@@ -4,6 +4,38 @@ use crate::error::AppError;
 use crate::middleware::AuthUser;
 use crate::models::*;
 
+fn log_exception(
+    conn: &rusqlite::Connection,
+    request_id: i64,
+    reported_by: i64,
+    reason_type: &str,
+    description: &str,
+    now: &str,
+) {
+    let _ = conn.execute(
+        "INSERT INTO exception_reasons (request_id, reason_type, description, reported_by, resolved, created_at) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+        rusqlite::params![request_id, reason_type, description, reported_by, now],
+    );
+}
+
+fn log_audit_note(
+    conn: &rusqlite::Connection,
+    request_id: i64,
+    author_id: i64,
+    note_type: &str,
+    content: &str,
+    now: &str,
+) {
+    let _ = conn.execute(
+        "INSERT INTO audit_notes (request_id, author_id, content, note_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![request_id, author_id, content, note_type, now],
+    );
+}
+
+fn is_overdue(deadline_str: &str) -> bool {
+    matches!(compute_deadline_warning(deadline_str), DeadlineWarning::Overdue)
+}
+
 pub async fn list(
     State(pool): State<DbPool>,
     user: AuthUser,
@@ -366,28 +398,99 @@ pub async fn update(
 
     let current = conn
         .query_row(
-            "SELECT status, version FROM creative_requests WHERE id = ?1",
+            "SELECT status, version, current_handler_id FROM creative_requests WHERE id = ?1",
             rusqlite::params![id],
             |row| {
-                let status: String = row.get(0)?;
-                let version: i64 = row.get(1)?;
-                Ok((status, version))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
             },
         )
         .map_err(|_| AppError::NotFound(format!("Creative request {} not found", id)))?;
 
-    let allowed_statuses = ["draft", "pending_submit", "returned"];
-    if !allowed_statuses.contains(&current.0.as_str()) {
+    let (current_status, current_version, handler_id) = current;
+
+    if current_version != payload.version {
+        let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "version_conflict",
+            &format!(
+                "更新版本冲突：期望 v{}，收到 v{}，需求单状态 '{}' 下被拒绝",
+                current_version, payload.version, current_status
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!("版本冲突拦截：用户 {} 尝试更新", user.display_name),
+            &now,
+        );
         return Err(AppError::Conflict(format!(
-            "Cannot update request in status '{}'. Only draft, pending_submit, or returned can be edited.",
-            current.0
+            "Version mismatch: expected {} but got {}. The request has been modified by another user.",
+            current_version, payload.version
         )));
     }
 
-    if current.1 != payload.version {
+    if handler_id != user.id {
+        let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "handler_mismatch",
+            &format!(
+                "越权更新：当前处理人 ID={}，操作者 ID={} ({})",
+                handler_id, user.id, user.display_name
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!("非当前处理人 {} 试图更新单据，被拦截", user.display_name),
+            &now,
+        );
+        return Err(AppError::Forbidden(format!(
+            "You are not the current handler of request {}. Only handler ID={} can update.",
+            id, handler_id
+        )));
+    }
+
+    let allowed_statuses = ["draft", "pending_submit", "returned"];
+    if !allowed_statuses.contains(&current_status.as_str()) {
+        let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "status_conflict",
+            &format!(
+                "状态冲突：不允许从 '{}' 更新，允许状态 = {:?}",
+                current_status, allowed_statuses
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!("状态冲突：当前状态 {} 下无法执行更新", current_status),
+            &now,
+        );
         return Err(AppError::Conflict(format!(
-            "Version mismatch: expected {} but got {}. The request has been modified by another user.",
-            current.1, payload.version
+            "Cannot update request in status '{}'. Only draft, pending_submit, or returned can be edited.",
+            current_status
         )));
     }
 
@@ -400,7 +503,7 @@ pub async fn update(
     ];
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
         Box::new(new_version),
-        Box::new(now),
+        Box::new(now.clone()),
     ];
     let mut idx = 3;
 
@@ -496,6 +599,8 @@ pub async fn submit(
     Path(id): Path<i64>,
     Json(payload): Json<SubmitRequestPayload>,
 ) -> Result<Json<CreativeRequest>, AppError> {
+    let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+
     if user.role != "creative_registrar" {
         return Err(AppError::Forbidden(
             "Only creative_registrar can submit requests".into(),
@@ -506,24 +611,71 @@ pub async fn submit(
 
     let current = conn
         .query_row(
-            "SELECT status, version, brief_status FROM creative_requests WHERE id = ?1",
+            "SELECT status, version, brief_status, current_handler_id, deadline FROM creative_requests WHERE id = ?1",
             rusqlite::params![id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             },
         )
         .map_err(|_| AppError::NotFound(format!("Creative request {} not found", id)))?;
 
-    let (current_status, current_version, brief_st) = current;
+    let (current_status, current_version, brief_st, handler_id, deadline_str) = current;
 
     if current_version != payload.version {
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "version_conflict",
+            &format!(
+                "提交版本冲突：期望 v{}，收到 v{}",
+                current_version, payload.version
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!("提交被拦截：版本冲突 (v{} vs v{})", current_version, payload.version),
+            &now,
+        );
         return Err(AppError::Conflict(format!(
             "Version mismatch: expected {} but got {}",
             current_version, payload.version
+        )));
+    }
+
+    if handler_id != user.id {
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "handler_mismatch",
+            &format!(
+                "越权提交：当前处理人 ID={}，操作者 ID={} ({})",
+                handler_id, user.id, user.display_name
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!("非当前处理人 {} 试图提交，被拦截", user.display_name),
+            &now,
+        );
+        return Err(AppError::Forbidden(format!(
+            "You are not the current handler (ID={}) of request {}.",
+            handler_id, id
         )));
     }
 
@@ -532,6 +684,25 @@ pub async fn submit(
         "pending_submit" => ("pending_submit", "submitted"),
         "returned" => ("returned", "resubmitted"),
         _ => {
+            log_exception(
+                &conn,
+                id,
+                user.id,
+                "status_conflict",
+                &format!(
+                    "提交状态冲突：'{}' 不可提交，仅允许 draft/pending_submit/returned",
+                    current_status
+                ),
+                &now,
+            );
+            log_audit_note(
+                &conn,
+                id,
+                user.id,
+                "exception",
+                &format!("提交被拦截：当前状态 {} 不允许提交", current_status),
+                &now,
+            );
             return Err(AppError::Validation(format!(
                 "Cannot submit from status '{}'. Only draft, pending_submit, or returned can be submitted.",
                 current_status
@@ -540,12 +711,53 @@ pub async fn submit(
     };
 
     if brief_st == "missing" {
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "brief_missing",
+            "提交被拦截：Brief缺失 (brief_status=missing)",
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            "提交被拦截：Brief 缺失，请先补正后再提交",
+            &now,
+        );
         return Err(AppError::Validation(
             "Cannot submit: brief_status is 'missing'. Please supplement the brief first.".into(),
         ));
     }
 
-    let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+    if is_overdue(&deadline_str) {
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "overdue_blocked",
+            &format!(
+                "提交被拦截：需求单已逾期（截止日期 {}），仅允许补正或退回",
+                deadline_str
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!("逾期拦截：{} 已过截止日期 {}，无法提交推进", user.display_name, deadline_str),
+            &now,
+        );
+        return Err(AppError::Validation(format!(
+            "Cannot submit: request is overdue (deadline={}). Only supplement or return is allowed.",
+            deadline_str
+        )));
+    }
+
     let new_version = current_version + 1;
 
     conn.execute(
@@ -554,10 +766,15 @@ pub async fn submit(
     )?;
 
     let action_label = if to_status == "resubmitted" { "resubmit" } else { "submit" };
+    let default_opinion = if to_status == "resubmitted" {
+        "补正后重新提交审核"
+    } else {
+        "提交审核"
+    };
 
     conn.execute(
         "INSERT INTO processing_records (request_id, handler_id, handler_role, action, opinion, from_status, to_status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![id, user.id, user.role, action_label, format!("{}需求单", to_status), from_status, to_status, now],
+        rusqlite::params![id, user.id, user.role, action_label, default_opinion, from_status, to_status, now],
     )?;
 
     let req = conn
@@ -600,11 +817,12 @@ pub async fn review(
     Path(id): Path<i64>,
     Json(payload): Json<ReviewRequestPayload>,
 ) -> Result<Json<CreativeRequest>, AppError> {
+    let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
     let conn = pool.lock().await;
 
     let current = conn
         .query_row(
-            "SELECT status, version, schedule_status, brief_status FROM creative_requests WHERE id = ?1",
+            "SELECT status, version, schedule_status, brief_status, current_handler_id, deadline FROM creative_requests WHERE id = ?1",
             rusqlite::params![id],
             |row| {
                 Ok((
@@ -612,39 +830,173 @@ pub async fn review(
                     row.get::<_, i64>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             },
         )
         .map_err(|_| AppError::NotFound(format!("Creative request {} not found", id)))?;
 
-    let (current_status, current_version, schedule_st, brief_st) = current;
+    let (current_status, current_version, schedule_st, brief_st, handler_id, deadline_str) = current;
 
     if current_version != payload.version {
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "version_conflict",
+            &format!(
+                "审核版本冲突：期望 v{}，收到 v{}，动作={}",
+                current_version, payload.version, payload.action
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!(
+                "审核被拦截：{} 操作版本冲突 (v{} vs v{})",
+                payload.action, current_version, payload.version
+            ),
+            &now,
+        );
         return Err(AppError::Conflict(format!(
             "Version mismatch: expected {} but got {}",
             current_version, payload.version
         )));
     }
 
-    if payload.opinion.trim().is_empty() {
-        return Err(AppError::Validation("Opinion text is required for review".into()));
+    if handler_id != user.id {
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "handler_mismatch",
+            &format!(
+                "越权审核：当前处理人 ID={}，操作者 ID={} ({})，动作={}",
+                handler_id, user.id, user.display_name, payload.action
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!(
+                "非当前处理人 {} 试图执行 {}，被拦截",
+                user.display_name, payload.action
+            ),
+            &now,
+        );
+        return Err(AppError::Forbidden(format!(
+            "You are not the current handler (ID={}) of request {}. Cannot perform '{}'.",
+            handler_id, id, payload.action
+        )));
     }
 
-    let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+    if payload.opinion.trim().is_empty() {
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "opinion_required",
+            &format!(
+                "审核意见缺失：动作 {} 必须填写处理意见",
+                payload.action
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!("{} 被拦截：审核意见不能为空", payload.action),
+            &now,
+        );
+        return Err(AppError::Validation(
+            "Opinion text is required for review actions (start_review / approve / return)".into(),
+        ));
+    }
+
+    let overdue = is_overdue(&deadline_str);
+    let is_return_action = payload.action == "return";
+    if overdue && !is_return_action {
+        log_exception(
+            &conn,
+            id,
+            user.id,
+            "overdue_blocked",
+            &format!(
+                "逾期拦截：{} 操作被拒绝，截止日期 {} 已过，仅允许退回或补正",
+                payload.action, deadline_str
+            ),
+            &now,
+        );
+        log_audit_note(
+            &conn,
+            id,
+            user.id,
+            "exception",
+            &format!(
+                "逾期阻止 {}：单据 {} 已过 {}，仅退回或补正可执行",
+                payload.action, id, deadline_str
+            ),
+            &now,
+        );
+        return Err(AppError::Validation(format!(
+            "Cannot perform '{}': request is overdue (deadline={}). Only return or supplement is allowed.",
+            payload.action, deadline_str
+        )));
+    }
+
     let new_version = current_version + 1;
 
     match payload.action.as_str() {
         "start_review" => {
             if user.role != "review_supervisor" {
+                log_exception(
+                    &conn, id, user.id, "role_mismatch",
+                    &format!("开始审核角色不匹配：期望 review_supervisor，当前={}", user.role),
+                    &now,
+                );
+                log_audit_note(&conn, id, user.id, "exception", "越权：非审核主管试图开始审核", &now);
                 return Err(AppError::Forbidden(
                     "Only review_supervisor can start reviewing".into(),
                 ));
             }
             if current_status != "submitted" && current_status != "resubmitted" {
+                log_exception(
+                    &conn, id, user.id, "status_conflict",
+                    &format!("开始审核状态冲突：期望 submitted/resubmitted，当前={}", current_status),
+                    &now,
+                );
+                log_audit_note(&conn, id, user.id, "exception",
+                    &format!("开始审核被拦截：{} 状态不匹配", current_status), &now);
                 return Err(AppError::Validation(format!(
                     "Cannot start review from status '{}'. Expected 'submitted' or 'resubmitted'.",
                     current_status
                 )));
+            }
+            if brief_st == "missing" {
+                log_exception(
+                    &conn, id, user.id, "brief_missing",
+                    "开始审核被拦截：Brief 缺失 (brief_status=missing)", &now,
+                );
+                log_audit_note(&conn, id, user.id, "exception",
+                    "开始审核不通过：Brief 缺失，退回登记员补正", &now);
+                return Err(AppError::Validation(
+                    "Cannot start review: brief_status is 'missing'. Return to registrar to supplement.".into(),
+                ));
+            }
+            if schedule_st == "missing" {
+                log_exception(
+                    &conn, id, user.id, "schedule_missing",
+                    "开始审核提醒：排期状态为 missing，建议退回补正", &now,
+                );
             }
             conn.execute(
                 "UPDATE creative_requests SET status = 'under_review', version = ?1, updated_at = ?2 WHERE id = ?3",
@@ -658,8 +1010,22 @@ pub async fn review(
         "approve" => {
             if current_status == "under_review" {
                 if user.role != "review_supervisor" {
+                    log_exception(
+                        &conn, id, user.id, "role_mismatch",
+                        &format!("通过审核角色不匹配：期望 review_supervisor，当前={}", user.role), &now,
+                    );
+                    log_audit_note(&conn, id, user.id, "exception", "越权：非审核主管试图通过审核", &now);
                     return Err(AppError::Forbidden(
                         "Only review_supervisor can approve from under_review".into(),
+                    ));
+                }
+                if brief_st == "missing" {
+                    log_exception(&conn, id, user.id, "brief_missing",
+                        "审核通过被拦截：Brief 仍为 missing", &now);
+                    log_audit_note(&conn, id, user.id, "exception",
+                        "审核通过失败：Brief 缺失，请先退回补正", &now);
+                    return Err(AppError::Validation(
+                        "Cannot approve: brief_status is 'missing'. Return to supplement first.".into(),
                     ));
                 }
                 conn.execute(
@@ -672,13 +1038,31 @@ pub async fn review(
                 )?;
             } else if current_status == "reviewed" {
                 if user.role != "review_manager" {
+                    log_exception(
+                        &conn, id, user.id, "role_mismatch",
+                        &format!("归档角色不匹配：期望 review_manager，当前={}", user.role), &now,
+                    );
+                    log_audit_note(&conn, id, user.id, "exception", "越权：非复核负责人试图归档", &now);
                     return Err(AppError::Forbidden(
                         "Only review_manager can archive from reviewed".into(),
                     ));
                 }
                 if schedule_st == "missing" {
+                    log_exception(&conn, id, user.id, "schedule_missing",
+                        "归档被拦截：排期缺失 (schedule_status=missing)", &now);
+                    log_audit_note(&conn, id, user.id, "exception",
+                        "归档失败：创意排期缺失，请退回补正", &now);
                     return Err(AppError::Validation(
                         "Cannot archive: schedule_status is 'missing'. Resolve schedule first.".into(),
+                    ));
+                }
+                if brief_st == "missing" {
+                    log_exception(&conn, id, user.id, "brief_missing",
+                        "归档被拦截：Brief 缺失 (brief_status=missing)", &now);
+                    log_audit_note(&conn, id, user.id, "exception",
+                        "归档失败：Brief 缺失，请退回补正", &now);
+                    return Err(AppError::Validation(
+                        "Cannot archive: brief_status is 'missing'. Resolve brief first.".into(),
                     ));
                 }
                 conn.execute(
@@ -690,6 +1074,12 @@ pub async fn review(
                     rusqlite::params![id, user.id, user.role, "archive", payload.opinion, "reviewed", "archived", now],
                 )?;
             } else {
+                log_exception(
+                    &conn, id, user.id, "status_conflict",
+                    &format!("approve 状态冲突：期望 under_review/reviewed，当前={}", current_status), &now,
+                );
+                log_audit_note(&conn, id, user.id, "exception",
+                    &format!("approve 被拦截：{} 状态不可执行通过/归档", current_status), &now);
                 return Err(AppError::Validation(format!(
                     "Cannot approve from status '{}'. Expected 'under_review' or 'reviewed'.",
                     current_status
@@ -698,12 +1088,23 @@ pub async fn review(
         }
         "return" => {
             if user.role != "review_supervisor" && user.role != "review_manager" {
+                log_exception(
+                    &conn, id, user.id, "role_mismatch",
+                    &format!("退回角色不匹配：期望 review_supervisor/review_manager，当前={}", user.role), &now,
+                );
+                log_audit_note(&conn, id, user.id, "exception", "越权：非审核/复核角色试图退回", &now);
                 return Err(AppError::Forbidden(
                     "Only review_supervisor or review_manager can return requests".into(),
                 ));
             }
             let allowed = ["submitted", "resubmitted", "under_review", "reviewed"];
             if !allowed.contains(&current_status.as_str()) {
+                log_exception(
+                    &conn, id, user.id, "status_conflict",
+                    &format!("退回状态冲突：当前={}，允许={:?}", current_status, allowed), &now,
+                );
+                log_audit_note(&conn, id, user.id, "exception",
+                    &format!("退回被拦截：{} 状态不允许退回", current_status), &now);
                 return Err(AppError::Validation(format!(
                     "Cannot return from status '{}'. Expected 'submitted', 'resubmitted', 'under_review', or 'reviewed'.",
                     current_status
@@ -715,16 +1116,29 @@ pub async fn review(
             )?;
             conn.execute(
                 "INSERT INTO processing_records (request_id, handler_id, handler_role, action, opinion, from_status, to_status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                rusqlite::params![id, user.id, user.role, "return", payload.opinion, current_status, "returned", now],
+                rusqlite::params![id, user.id, user.role, "return", payload.opinion.clone(), current_status.clone(), "returned", now.clone()],
             )?;
             if brief_st == "missing" || schedule_st == "missing" {
                 conn.execute(
                     "INSERT INTO exception_reasons (request_id, reason_type, description, reported_by, resolved, created_at) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
                     rusqlite::params![id, "return_deficiency", payload.opinion, user.id, now],
                 )?;
+            } else {
+                log_exception(
+                    &conn, id, user.id, "return_with_other_reason",
+                    &payload.opinion, &now,
+                );
             }
+            log_audit_note(
+                &conn, id, user.id, "audit",
+                &format!("退回登记员：{}", payload.opinion), &now,
+            );
         }
         _ => {
+            log_exception(
+                &conn, id, user.id, "unknown_action",
+                &format!("未知审核动作：'{}'", payload.action), &now,
+            );
             return Err(AppError::BadRequest(format!(
                 "Unknown review action '{}'. Valid actions: start_review, approve, return.",
                 payload.action
@@ -772,6 +1186,8 @@ pub async fn supplement(
     Path(id): Path<i64>,
     Json(payload): Json<SupplementRequestPayload>,
 ) -> Result<Json<CreativeRequest>, AppError> {
+    let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+
     if user.role != "creative_registrar" {
         return Err(AppError::Forbidden(
             "Only creative_registrar can supplement requests".into(),
@@ -782,7 +1198,7 @@ pub async fn supplement(
 
     let current = conn
         .query_row(
-            "SELECT status, version, brief_status, schedule_status FROM creative_requests WHERE id = ?1",
+            "SELECT status, version, brief_status, schedule_status, current_handler_id FROM creative_requests WHERE id = ?1",
             rusqlite::params![id],
             |row| {
                 Ok((
@@ -790,21 +1206,47 @@ pub async fn supplement(
                     row.get::<_, i64>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
                 ))
             },
         )
         .map_err(|_| AppError::NotFound(format!("Creative request {} not found", id)))?;
 
-    let (current_status, current_version, brief_st, schedule_st) = current;
+    let (current_status, current_version, brief_st, schedule_st, handler_id) = current;
 
     if current_version != payload.version {
+        log_exception(
+            &conn, id, user.id, "version_conflict",
+            &format!("补正版本冲突：期望 v{}，收到 v{}", current_version, payload.version), &now,
+        );
+        log_audit_note(&conn, id, user.id, "exception",
+            &format!("补正被拦截：版本冲突 (v{} vs v{})", current_version, payload.version), &now);
         return Err(AppError::Conflict(format!(
             "Version mismatch: expected {} but got {}",
             current_version, payload.version
         )));
     }
 
+    if handler_id != user.id {
+        log_exception(
+            &conn, id, user.id, "handler_mismatch",
+            &format!("越权补正：当前处理人 ID={}，操作者 ID={} ({})", handler_id, user.id, user.display_name), &now,
+        );
+        log_audit_note(&conn, id, user.id, "exception",
+            &format!("非当前处理人 {} 试图补正，被拦截", user.display_name), &now);
+        return Err(AppError::Forbidden(format!(
+            "You are not the current handler (ID={}) of request {}. Only handler can supplement.",
+            handler_id, id
+        )));
+    }
+
     if current_status != "returned" {
+        log_exception(
+            &conn, id, user.id, "status_conflict",
+            &format!("补正状态冲突：期望 returned，当前={}", current_status), &now,
+        );
+        log_audit_note(&conn, id, user.id, "exception",
+            &format!("补正被拦截：只有 returned 状态可以补正，当前={}", current_status), &now);
         return Err(AppError::Validation(format!(
             "Cannot supplement from status '{}'. Only returned requests can be supplemented.",
             current_status
@@ -812,12 +1254,48 @@ pub async fn supplement(
     }
 
     if brief_st != "missing" && schedule_st != "missing" {
+        log_exception(
+            &conn, id, user.id, "supplement_not_needed",
+            format!(
+                "补正条件不满足：brief={}, schedule={}，两者都不为 missing，无需补正",
+                brief_st, schedule_st
+            ).as_str(),
+            &now,
+        );
+        log_audit_note(&conn, id, user.id, "exception",
+            "补正被拦截：Brief 和排期都不是 missing 状态", &now);
         return Err(AppError::Validation(
             "Supplement is only allowed when brief_status=missing or schedule_status=missing".into(),
         ));
     }
 
-    let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+    let has_brief_supplement = payload.brief_status.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+    let has_schedule_supplement = payload.schedule_status.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+    let has_description = payload.description.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+
+    if brief_st == "missing" && !has_brief_supplement && !has_description {
+        log_exception(
+            &conn, id, user.id, "insufficient_supplement",
+            "补正失败：Brief 为 missing，但未提供 brief_status 补正或补充说明", &now,
+        );
+        log_audit_note(&conn, id, user.id, "exception",
+            "补正拦截：Brief 缺失时必须提供 brief_status 或补充说明", &now);
+        return Err(AppError::Validation(
+            "Brief is missing: must provide brief_status supplement or description".into(),
+        ));
+    }
+    if schedule_st == "missing" && !has_schedule_supplement && !has_description {
+        log_exception(
+            &conn, id, user.id, "insufficient_supplement",
+            "补正失败：排期为 missing，但未提供 schedule_status 补正或补充说明", &now,
+        );
+        log_audit_note(&conn, id, user.id, "exception",
+            "补正拦截：排期缺失时必须提供 schedule_status 或补充说明", &now);
+        return Err(AppError::Validation(
+            "Schedule is missing: must provide schedule_status supplement or description".into(),
+        ));
+    }
+
     let new_version = current_version + 1;
 
     let mut updates = vec![
@@ -831,7 +1309,7 @@ pub async fn supplement(
     let mut idx = 3;
 
     if let Some(ref new_brief) = payload.brief_status {
-        if brief_st == "missing" {
+        if brief_st == "missing" && !new_brief.is_empty() {
             updates.push(format!("brief_status = ?{}", idx));
             param_values.push(Box::new(new_brief.clone()));
             idx += 1;
@@ -839,7 +1317,7 @@ pub async fn supplement(
     }
 
     if let Some(ref new_schedule) = payload.schedule_status {
-        if schedule_st == "missing" {
+        if schedule_st == "missing" && !new_schedule.is_empty() {
             updates.push(format!("schedule_status = ?{}", idx));
             param_values.push(Box::new(new_schedule.clone()));
             idx += 1;
@@ -847,9 +1325,11 @@ pub async fn supplement(
     }
 
     if let Some(ref desc) = payload.description {
-        updates.push(format!("description = ?{}", idx));
-        param_values.push(Box::new(desc.clone()));
-        idx += 1;
+        if !desc.trim().is_empty() {
+            updates.push(format!("description = ?{}", idx));
+            param_values.push(Box::new(desc.clone()));
+            idx += 1;
+        }
     }
 
     param_values.push(Box::new(id));
@@ -863,15 +1343,31 @@ pub async fn supplement(
     let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
     conn.execute(&sql, params_refs.as_slice())?;
 
+    let supplement_summary = match (has_brief_supplement, has_schedule_supplement) {
+        (true, true) => "补正了 Brief 和排期",
+        (true, false) => "补正了 Brief",
+        (false, true) => "补正了排期",
+        (false, false) => "补充了描述说明",
+    };
+
     conn.execute(
         "INSERT INTO processing_records (request_id, handler_id, handler_role, action, opinion, from_status, to_status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        rusqlite::params![id, user.id, user.role, "supplement", payload.description.clone().unwrap_or_else(|| "补正材料".to_string()), "returned", "returned", now],
+        rusqlite::params![
+            id, user.id, user.role, "supplement",
+            format!("{}：{}", supplement_summary, payload.description.clone().unwrap_or_default()),
+            "returned", "returned", now.clone()
+        ],
     )?;
 
     conn.execute(
         "UPDATE exception_reasons SET resolved = 1, resolved_at = ?1 WHERE request_id = ?2 AND resolved = 0",
         rusqlite::params![now, id],
     )?;
+
+    log_audit_note(
+        &conn, id, user.id, "supplement",
+        &format!("补正动作完成：{}", supplement_summary), &now,
+    );
 
     let req = conn
         .query_row(
@@ -924,9 +1420,10 @@ pub async fn batch(
 
 async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) -> BatchItemResult {
     let conn = pool.lock().await;
+    let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
 
     let current = match conn.query_row(
-        "SELECT status, version, brief_status, schedule_status FROM creative_requests WHERE id = ?1",
+        "SELECT status, version, brief_status, schedule_status, current_handler_id, deadline FROM creative_requests WHERE id = ?1",
         rusqlite::params![item.id],
         |row| {
             Ok((
@@ -934,6 +1431,8 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
             ))
         },
     ) {
@@ -948,47 +1447,105 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
         }
     };
 
-    let (current_status, current_version, brief_st, schedule_st) = current;
+    let (current_status, current_version, brief_st, schedule_st, handler_id, deadline_str) = current;
 
     if current_version != item.version {
+        let err = format!(
+            "Version mismatch: expected {} but got {}",
+            current_version, item.version
+        );
+        log_exception(&conn, item.id, user.id, "version_conflict", &format!("批量{}：{}", item.action, err), &now);
+        log_audit_note(&conn, item.id, user.id, "exception",
+            &format!("批量 {} 被拦截：版本冲突", item.action), &now);
         return BatchItemResult {
             id: item.id,
             success: false,
-            error: Some(format!(
-                "Version mismatch: expected {} but got {}",
-                current_version, item.version
-            )),
+            error: Some(err),
             new_status: None,
         };
     }
 
-    let now = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
-    let new_version = current_version + 1;
+    if handler_id != user.id {
+        let err = format!(
+            "Not the current handler (ID={}) for request {}",
+            handler_id, item.id
+        );
+        log_exception(&conn, item.id, user.id, "handler_mismatch",
+            &format!("批量{}越权：操作者={} (ID={})，处理人ID={}",
+                item.action, user.display_name, user.id, handler_id), &now);
+        log_audit_note(&conn, item.id, user.id, "exception",
+            &format!("批量 {} 被拦截：非当前处理人", item.action), &now);
+        return BatchItemResult {
+            id: item.id,
+            success: false,
+            error: Some(err),
+            new_status: None,
+        };
+    }
+
     let opinion = item.opinion.clone().unwrap_or_default();
+    let overdue = is_overdue(&deadline_str);
+    let is_return = item.action == "return";
+    let is_supplement_like = false;
+
+    if overdue && !is_return && !is_supplement_like {
+        let err = format!(
+            "Overdue request (deadline={}). Only return or supplement allowed.",
+            deadline_str
+        );
+        log_exception(&conn, item.id, user.id, "overdue_blocked",
+            &format!("批量 {} 逾期拦截：{}，截止 {}，仅允许退回补正",
+                item.action, user.display_name, deadline_str), &now);
+        log_audit_note(&conn, item.id, user.id, "exception",
+            &format!("批量 {} 被逾期拦截：截止 {} 已过", item.action, deadline_str), &now);
+        return BatchItemResult {
+            id: item.id,
+            success: false,
+            error: Some(err),
+            new_status: None,
+        };
+    }
+
+    let new_version = current_version + 1;
 
     match item.action.as_str() {
         "submit" => {
             if user.role != "creative_registrar" {
+                let err = "Only creative_registrar can submit".to_string();
+                log_exception(&conn, item.id, user.id, "role_mismatch",
+                    &format!("批量提交：角色 {} 不匹配 creative_registrar", user.role), &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    "批量提交被拦截：角色不匹配", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
-                    error: Some("Only creative_registrar can submit".into()),
+                    error: Some(err),
                     new_status: None,
                 };
             }
             if current_status != "draft" && current_status != "pending_submit" && current_status != "returned" {
+                let err = format!("Cannot submit from status '{}'", current_status);
+                log_exception(&conn, item.id, user.id, "status_conflict",
+                    &format!("批量提交状态冲突：{}", err), &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    &format!("批量提交被拦截：{}", err), &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
-                    error: Some(format!("Cannot submit from status '{}'", current_status)),
+                    error: Some(err),
                     new_status: None,
                 };
             }
             if brief_st == "missing" {
+                let err = "Cannot submit: brief_status is 'missing'".to_string();
+                log_exception(&conn, item.id, user.id, "brief_missing",
+                    "批量提交拦截：Brief 缺失", &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    "批量提交被拦截：Brief 缺失", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
-                    error: Some("Cannot submit: brief_status is 'missing'".into()),
+                    error: Some(err),
                     new_status: None,
                 };
             }
@@ -1002,9 +1559,15 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                 rusqlite::params![to_status, new_version, now, item.id],
             ) {
                 Ok(_) => {
+                    let default_opinion = if to_status == "resubmitted" {
+                        if opinion.is_empty() { "批量补正后重新提交".to_string() } else { opinion.clone() }
+                    } else {
+                        if opinion.is_empty() { "批量提交审核".to_string() } else { opinion.clone() }
+                    };
+                    let action_label = if to_status == "resubmitted" { "resubmit" } else { "submit" };
                     let _ = conn.execute(
                         "INSERT INTO processing_records (request_id, handler_id, handler_role, action, opinion, from_status, to_status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        rusqlite::params![item.id, user.id, user.role, "submit", opinion, current_status, to_status, now],
+                        rusqlite::params![item.id, user.id, user.role, action_label, default_opinion, current_status, to_status, now],
                     );
                     BatchItemResult {
                         id: item.id,
@@ -1013,16 +1576,127 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                         new_status: Some(to_status.to_string()),
                     }
                 }
-                Err(e) => BatchItemResult {
+                Err(e) => {
+                    log_exception(&conn, item.id, user.id, "db_error",
+                        &format!("批量提交数据库错误：{}", e), &now);
+                    BatchItemResult {
+                        id: item.id,
+                        success: false,
+                        error: Some(e.to_string()),
+                        new_status: None,
+                    }
+                }
+            }
+        }
+        "start_review" => {
+            if opinion.trim().is_empty() {
+                let err = "Opinion is required for batch start_review".to_string();
+                log_exception(&conn, item.id, user.id, "opinion_required",
+                    "批量开始审核：意见为空", &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    "批量开始审核被拦截：审核意见必填", &now);
+                return BatchItemResult {
                     id: item.id,
                     success: false,
-                    error: Some(e.to_string()),
+                    error: Some(err),
                     new_status: None,
-                },
+                };
+            }
+            if user.role != "review_supervisor" {
+                let err = format!("Only review_supervisor can start_review, got role '{}'", user.role);
+                log_exception(&conn, item.id, user.id, "role_mismatch",
+                    &format!("批量开始审核：{}", err), &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    "批量开始审核被拦截：角色不匹配", &now);
+                return BatchItemResult {
+                    id: item.id,
+                    success: false,
+                    error: Some(err),
+                    new_status: None,
+                };
+            }
+            if current_status != "submitted" && current_status != "resubmitted" {
+                let err = format!("Cannot start_review from status '{}'", current_status);
+                log_exception(&conn, item.id, user.id, "status_conflict",
+                    &format!("批量开始审核状态冲突：{}", err), &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    &format!("批量开始审核被拦截：{}", err), &now);
+                return BatchItemResult {
+                    id: item.id,
+                    success: false,
+                    error: Some(err),
+                    new_status: None,
+                };
+            }
+            if brief_st == "missing" {
+                let err = "Cannot start_review: brief_status is 'missing'".to_string();
+                log_exception(&conn, item.id, user.id, "brief_missing",
+                    "批量开始审核拦截：Brief 缺失", &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    "批量开始审核被拦截：Brief 缺失", &now);
+                return BatchItemResult {
+                    id: item.id,
+                    success: false,
+                    error: Some(err),
+                    new_status: None,
+                };
+            }
+            match conn.execute(
+                "UPDATE creative_requests SET status = 'under_review', version = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![new_version, now, item.id],
+            ) {
+                Ok(_) => {
+                    let _ = conn.execute(
+                        "INSERT INTO processing_records (request_id, handler_id, handler_role, action, opinion, from_status, to_status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        rusqlite::params![item.id, user.id, user.role, "start_review", opinion, current_status, "under_review", now],
+                    );
+                    BatchItemResult {
+                        id: item.id,
+                        success: true,
+                        error: None,
+                        new_status: Some("under_review".to_string()),
+                    }
+                }
+                Err(e) => {
+                    log_exception(&conn, item.id, user.id, "db_error",
+                        &format!("批量开始审核数据库错误：{}", e), &now);
+                    BatchItemResult {
+                        id: item.id,
+                        success: false,
+                        error: Some(e.to_string()),
+                        new_status: None,
+                    }
+                }
             }
         }
         "approve" => {
+            if opinion.trim().is_empty() {
+                let err = "Opinion is required for batch approve".to_string();
+                log_exception(&conn, item.id, user.id, "opinion_required",
+                    "批量通过/归档：意见为空", &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    "批量 approve 被拦截：审核意见必填", &now);
+                return BatchItemResult {
+                    id: item.id,
+                    success: false,
+                    error: Some(err),
+                    new_status: None,
+                };
+            }
             if current_status == "under_review" && user.role == "review_supervisor" {
+                if brief_st == "missing" {
+                    let err = "Cannot approve: brief_status is 'missing'".to_string();
+                    log_exception(&conn, item.id, user.id, "brief_missing",
+                        "批量审核通过拦截：Brief 缺失", &now);
+                    log_audit_note(&conn, item.id, user.id, "exception",
+                        "批量 approve 被拦截：Brief 缺失", &now);
+                    return BatchItemResult {
+                        id: item.id,
+                        success: false,
+                        error: Some(err),
+                        new_status: None,
+                    };
+                }
                 match conn.execute(
                     "UPDATE creative_requests SET status = 'reviewed', current_handler_role = 'review_manager', current_handler_id = (SELECT id FROM users WHERE role = 'review_manager' LIMIT 1), version = ?1, updated_at = ?2 WHERE id = ?3",
                     rusqlite::params![new_version, now, item.id],
@@ -1039,34 +1713,41 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                             new_status: Some("reviewed".to_string()),
                         }
                     }
-                    Err(e) => BatchItemResult {
-                        id: item.id,
-                        success: false,
-                        error: Some(e.to_string()),
-                        new_status: None,
-                    },
+                    Err(e) => {
+                        log_exception(&conn, item.id, user.id, "db_error",
+                            &format!("批量审核通过数据库错误：{}", e), &now);
+                        BatchItemResult {
+                            id: item.id,
+                            success: false,
+                            error: Some(e.to_string()),
+                            new_status: None,
+                        }
+                    }
                 }
             } else if current_status == "reviewed" && user.role == "review_manager" {
                 if schedule_st == "missing" {
+                    let err = "Cannot archive: schedule_status is 'missing'".to_string();
+                    log_exception(&conn, item.id, user.id, "schedule_missing",
+                        "批量归档拦截：排期缺失", &now);
+                    log_audit_note(&conn, item.id, user.id, "exception",
+                        "批量归档被拦截：排期缺失", &now);
                     return BatchItemResult {
                         id: item.id,
                         success: false,
-                        error: Some("Cannot archive: schedule_status is 'missing'".into()),
+                        error: Some(err),
                         new_status: None,
                     };
                 }
-                let warning = compute_deadline_warning(
-                    &conn.query_row(
-                        "SELECT deadline FROM creative_requests WHERE id = ?1",
-                        rusqlite::params![item.id],
-                        |row| row.get::<_, String>(0),
-                    ).unwrap_or_default(),
-                );
-                if warning == DeadlineWarning::Overdue {
+                if brief_st == "missing" {
+                    let err = "Cannot archive: brief_status is 'missing'".to_string();
+                    log_exception(&conn, item.id, user.id, "brief_missing",
+                        "批量归档拦截：Brief 缺失", &now);
+                    log_audit_note(&conn, item.id, user.id, "exception",
+                        "批量归档被拦截：Brief 缺失", &now);
                     return BatchItemResult {
                         id: item.id,
                         success: false,
-                        error: Some("Cannot archive overdue items".into()),
+                        error: Some(err),
                         new_status: None,
                     };
                 }
@@ -1086,48 +1767,75 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                             new_status: Some("archived".to_string()),
                         }
                     }
-                    Err(e) => BatchItemResult {
-                        id: item.id,
-                        success: false,
-                        error: Some(e.to_string()),
-                        new_status: None,
-                    },
+                    Err(e) => {
+                        log_exception(&conn, item.id, user.id, "db_error",
+                            &format!("批量归档数据库错误：{}", e), &now);
+                        BatchItemResult {
+                            id: item.id,
+                            success: false,
+                            error: Some(e.to_string()),
+                            new_status: None,
+                        }
+                    }
                 }
             } else {
+                let err = format!(
+                    "Cannot approve from status '{}' with role '{}'",
+                    current_status, user.role
+                );
+                log_exception(&conn, item.id, user.id, "status_conflict",
+                    &format!("批量 approve：{}", err), &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    &format!("批量 approve 被拦截：{}", err), &now);
                 BatchItemResult {
                     id: item.id,
                     success: false,
-                    error: Some(format!(
-                        "Cannot approve from status '{}' with role '{}'",
-                        current_status, user.role
-                    )),
+                    error: Some(err),
                     new_status: None,
                 }
             }
         }
         "return" => {
-            if user.role != "review_supervisor" && user.role != "review_manager" {
+            if opinion.trim().is_empty() {
+                let err = "Opinion is required when returning".to_string();
+                log_exception(&conn, item.id, user.id, "opinion_required",
+                    "批量退回：意见为空", &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    "批量退回被拦截：退回意见必填", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
-                    error: Some("Only review_supervisor or review_manager can return".into()),
+                    error: Some(err),
+                    new_status: None,
+                };
+            }
+            if user.role != "review_supervisor" && user.role != "review_manager" {
+                let err = format!(
+                    "Only review_supervisor or review_manager can return, got '{}'",
+                    user.role
+                );
+                log_exception(&conn, item.id, user.id, "role_mismatch",
+                    &format!("批量退回：{}", err), &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    "批量退回被拦截：角色不匹配", &now);
+                return BatchItemResult {
+                    id: item.id,
+                    success: false,
+                    error: Some(err),
                     new_status: None,
                 };
             }
             let allowed = ["submitted", "resubmitted", "under_review", "reviewed"];
             if !allowed.contains(&current_status.as_str()) {
+                let err = format!("Cannot return from status '{}'", current_status);
+                log_exception(&conn, item.id, user.id, "status_conflict",
+                    &format!("批量退回状态冲突：{}", err), &now);
+                log_audit_note(&conn, item.id, user.id, "exception",
+                    &format!("批量退回被拦截：{}", err), &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
-                    error: Some(format!("Cannot return from status '{}'", current_status)),
-                    new_status: None,
-                };
-            }
-            if opinion.trim().is_empty() {
-                return BatchItemResult {
-                    id: item.id,
-                    success: false,
-                    error: Some("Opinion is required when returning".into()),
+                    error: Some(err),
                     new_status: None,
                 };
             }
@@ -1138,8 +1846,18 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                 Ok(_) => {
                     let _ = conn.execute(
                         "INSERT INTO processing_records (request_id, handler_id, handler_role, action, opinion, from_status, to_status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        rusqlite::params![item.id, user.id, user.role, "return", opinion, current_status, "returned", now],
+                        rusqlite::params![item.id, user.id, user.role, "return", opinion.clone(), current_status, "returned", now.clone()],
                     );
+                    if brief_st == "missing" || schedule_st == "missing" {
+                        let _ = conn.execute(
+                            "INSERT INTO exception_reasons (request_id, reason_type, description, reported_by, resolved, created_at) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+                            rusqlite::params![item.id, "return_deficiency", opinion, user.id, now],
+                        );
+                    } else {
+                        log_exception(&conn, item.id, user.id, "return_with_other_reason", &opinion, &now);
+                    }
+                    log_audit_note(&conn, item.id, user.id, "audit",
+                        &format!("批量退回登记员：{}", opinion), &now);
                     BatchItemResult {
                         id: item.id,
                         success: true,
@@ -1147,19 +1865,27 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                         new_status: Some("returned".to_string()),
                     }
                 }
-                Err(e) => BatchItemResult {
-                    id: item.id,
-                    success: false,
-                    error: Some(e.to_string()),
-                    new_status: None,
-                },
+                Err(e) => {
+                    log_exception(&conn, item.id, user.id, "db_error",
+                        &format!("批量退回数据库错误：{}", e), &now);
+                    BatchItemResult {
+                        id: item.id,
+                        success: false,
+                        error: Some(e.to_string()),
+                        new_status: None,
+                    }
+                }
             }
         }
-        _ => BatchItemResult {
-            id: item.id,
-            success: false,
-            error: Some(format!("Unknown action '{}'", item.action)),
-            new_status: None,
-        },
+        _ => {
+            let err = format!("Unknown action '{}'", item.action);
+            log_exception(&conn, item.id, user.id, "unknown_action", &err, &now);
+            BatchItemResult {
+                id: item.id,
+                success: false,
+                error: Some(err),
+                new_status: None,
+            }
+        }
     }
 }
