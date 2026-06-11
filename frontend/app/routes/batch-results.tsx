@@ -52,18 +52,22 @@ export default function BatchResults() {
   };
 
   const toggleAll = () => {
-    const mineIds = requests
-      .filter((r) => r.current_handler_id === numericUserId)
+    const actionableIds = requests
+      .filter((r) => {
+        const isMine = r.current_handler_id === numericUserId;
+        const isOverdue = computeDeadlineLevel(r.deadline) === "overdue";
+        const isBriefMissing = r.brief_status === "missing";
+        const isScheduleMissing = r.schedule_status === "missing";
+        return isMine && !isOverdue && !isBriefMissing && !isScheduleMissing;
+      })
       .map((r) => r.id);
-    const mineSize = mineIds.length;
-    const allMineSelected =
-      mineIds.every((id) => selected.has(id)) && mineSize > 0;
-    if (allMineSelected) {
-      // 取消选中非全部取消
+    const actionableSize = actionableIds.length;
+    const allActionableSelected =
+      actionableIds.every((id) => selected.has(id)) && actionableSize > 0;
+    if (allActionableSelected) {
       setSelected(new Set());
     } else {
-      // 只选中分派给我的单据
-      setSelected(new Set(mineIds));
+      setSelected(new Set(actionableIds));
     }
   };
 
@@ -191,8 +195,20 @@ export default function BatchResults() {
                     <input
                       type="checkbox"
                       checked={
-                        selected.size === requests.filter((r) => r.current_handler_id === numericUserId).length &&
-                        requests.some((r) => r.current_handler_id === numericUserId)
+                        selected.size === requests.filter((r) => {
+                          const isMine = r.current_handler_id === numericUserId;
+                          const isOverdue = computeDeadlineLevel(r.deadline) === "overdue";
+                          const isBriefMissing = r.brief_status === "missing";
+                          const isScheduleMissing = r.schedule_status === "missing";
+                          return isMine && !isOverdue && !isBriefMissing && !isScheduleMissing;
+                        }).length &&
+                        requests.some((r) => {
+                          const isMine = r.current_handler_id === numericUserId;
+                          const isOverdue = computeDeadlineLevel(r.deadline) === "overdue";
+                          const isBriefMissing = r.brief_status === "missing";
+                          const isScheduleMissing = r.schedule_status === "missing";
+                          return isMine && !isOverdue && !isBriefMissing && !isScheduleMissing;
+                        })
                       }
                       onChange={toggleAll}
                       className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -238,13 +254,17 @@ export default function BatchResults() {
                           type="checkbox"
                           checked={selected.has(req.id)}
                           onChange={() => toggleSelect(req.id)}
-                          disabled={!isMine || isOverdue}
+                          disabled={!isMine || isOverdue || isBriefMissing || isScheduleMissing}
                           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
                           title={
                             !isMine
                               ? "非当前分派给您处理的单据"
                               : isOverdue
                               ? "逾期单据不可批量推进，请逐单处理"
+                              : isBriefMissing
+                              ? "Brief 缺失，不可批量推进，请逐单补正或退回"
+                              : isScheduleMissing
+                              ? "排期缺失，不可批量推进，请逐单补正或退回"
                               : undefined
                           }
                         />

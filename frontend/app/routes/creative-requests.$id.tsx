@@ -181,7 +181,7 @@ export default function RequestDetail() {
   const isReviewApproveBlocked =
     isBriefMissing || (isScheduleMissing && request.status === "reviewed") || isOverdue;
   const isStartReviewBlocked =
-    isBriefMissing || isOverdue;
+    isBriefMissing || isScheduleMissing || isOverdue;
   const isApproveUnderReviewBlocked =
     isBriefMissing || isScheduleMissing || isOverdue;
   const isArchiveBlocked =
@@ -590,7 +590,8 @@ export default function RequestDetail() {
                       </svg>
                     </button>
                     <p className="mt-1 text-xs text-red-500">
-                      {isBriefMissing && "Brief缺失 "}{" "}
+                      {isBriefMissing && "Brief缺失 "}
+                      {isScheduleMissing && "排期缺失 "}
                       {isOverdue && "已逾期"} — 无法开始审核
                     </p>
                   </div>

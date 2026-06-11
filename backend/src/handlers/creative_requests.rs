@@ -891,8 +891,11 @@ pub async fn review(
                 log_blocked_action(
                     &conn, id, user.id, &user.role, "start_review", &current_status,
                     "schedule_missing",
-                    "开始审核提醒：排期状态为 missing，建议退回补正", &now,
+                    "开始审核被拦截：排期缺失 (schedule_status=missing)", &now,
                 );
+                return Err(AppError::Validation(
+                    "Cannot start review: schedule_status is 'missing'. Return to registrar to supplement.".into(),
+                ));
             }
             conn.execute(
                 "UPDATE creative_requests SET status = 'under_review', version = ?1, updated_at = ?2 WHERE id = ?3",
@@ -1519,6 +1522,17 @@ async fn process_batch_item(pool: &DbPool, user: &AuthUser, item: &BatchItem) ->
                 let err = "Cannot start_review: brief_status is 'missing'".to_string();
                 log_blocked_action(&conn, item.id, user.id, &user.role, "start_review", &current_status,
                     "brief_missing", "批量开始审核拦截：Brief 缺失", &now);
+                return BatchItemResult {
+                    id: item.id,
+                    success: false,
+                    error: Some(err),
+                    new_status: None,
+                };
+            }
+            if schedule_st == "missing" {
+                let err = "Cannot start_review: schedule_status is 'missing'".to_string();
+                log_blocked_action(&conn, item.id, user.id, &user.role, "start_review", &current_status,
+                    "schedule_missing", "批量开始审核拦截：排期缺失", &now);
                 return BatchItemResult {
                     id: item.id,
                     success: false,
