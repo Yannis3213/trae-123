@@ -100,6 +100,136 @@ def check_required_attachments(db, app_id, node):
     return len(missing) == 0, missing
 
 
+def validate_application_action(db, app, user, action_type, version=None):
+    """
+    统一业务校验：角色权限、状态、版本、当前处理人、必填证据
+    返回 (ok: bool, error_msg: str, error_type: str, missing: list)
+    """
+    if not user:
+        return False, '未登录', 'AUTH', []
+
+    if not app:
+        return False, '申请单不存在', 'NOT_FOUND', []
+
+    if version is not None and app['version'] != version:
+        add_exception(db, app['id'], 'VERSION_CONFLICT', '版本冲突',
+                      f'提交版本 {version}，当前版本 {app["version"]}', user['username'])
+        return False, '版本冲突，请刷新后重试', 'VERSION_CONFLICT', []
+
+    role = user['role']
+    username = user['username']
+    status = app['status']
+    current_handler = app['current_handler']
+    created_by = app['created_by']
+
+    if action_type == 'SUBMIT':
+        if role != 'CREDIT_OFFICER':
+            return False, '只有信贷员可以提交申请', 'ROLE', []
+        if status not in ['DRAFT', 'CORRECTION_REQUIRED']:
+            return False, f'当前状态 {STATUSES.get(status, status)} 不允许提交', 'STATUS', []
+        if status == 'CORRECTION_REQUIRED' and created_by != username:
+            return False, '只有创建人可以补正后重新提交', 'HANDLER', []
+        ok, missing = check_required_attachments(db, app['id'], 'APPLICATION')
+        if not ok:
+            missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing]
+            add_exception(db, app['id'], 'MISSING_EVIDENCE', '申请材料不全',
+                          f'缺少: {", ".join(missing_names)}', user['username'])
+            return False, '申请材料不全', 'MISSING_EVIDENCE', missing_names
+        return True, '', '', []
+
+    if action_type == 'VERIFY_PASS':
+        if role != 'RISK_AUDITOR':
+            return False, '只有风控审核员可以核验通过', 'ROLE', []
+        if status != 'PENDING_VERIFICATION':
+            return False, f'当前状态 {STATUSES.get(status, status)} 不允许核验通过', 'STATUS', []
+        if current_handler and current_handler != username:
+            return False, f'当前处理人为 {current_handler}，您无权操作', 'HANDLER', []
+        ver_due = parse_date(app['verification_due_date'])
+        if ver_due and datetime.now() > ver_due:
+            add_exception(db, app['id'], 'TIMEOUT', '核验超时',
+                          f'核验时限 {app["verification_due_date"]}，已超时', user['username'])
+            return False, '核验已超时，不允许通过，请退回补正', 'TIMEOUT', []
+        ok, missing = check_required_attachments(db, app['id'], 'VERIFICATION')
+        if not ok:
+            missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing]
+            add_exception(db, app['id'], 'MISSING_EVIDENCE', '核验证据不全',
+                          f'缺少: {", ".join(missing_names)}', user['username'])
+            return False, '核验证据不全', 'MISSING_EVIDENCE', missing_names
+        ok2, missing2 = check_required_attachments(db, app['id'], 'APPLICATION')
+        if not ok2:
+            missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing2]
+            return False, f'申请材料不齐全: {", ".join(missing_names)}', 'MISSING_EVIDENCE', missing_names
+        return True, '', '', []
+
+    if action_type == 'VERIFY_FAIL':
+        if role != 'RISK_AUDITOR':
+            return False, '只有风控审核员可以执行核验失败操作', 'ROLE', []
+        if status != 'PENDING_VERIFICATION':
+            return False, f'当前状态 {STATUSES.get(status, status)} 不允许核验操作', 'STATUS', []
+        if current_handler and current_handler != username:
+            return False, f'当前处理人为 {current_handler}，您无权操作', 'HANDLER', []
+        return True, '', '', []
+
+    if action_type == 'VERIFY_RETURN':
+        if role != 'RISK_AUDITOR':
+            return False, '只有风控审核员可以退回补正', 'ROLE', []
+        if status != 'PENDING_VERIFICATION':
+            return False, f'当前状态 {STATUSES.get(status, status)} 不允许退回操作', 'STATUS', []
+        if current_handler and current_handler != username:
+            return False, f'当前处理人为 {current_handler}，您无权操作', 'HANDLER', []
+        return True, '', '', []
+
+    if action_type == 'APPROVE':
+        if role != 'LOAN_SUPERVISOR':
+            return False, '只有贷后主管可以审批通过', 'ROLE', []
+        if status != 'VERIFICATION_PASSED':
+            return False, f'当前状态 {STATUSES.get(status, status)} 不允许审批通过', 'STATUS', []
+        if current_handler and current_handler != username:
+            return False, f'当前处理人为 {current_handler}，您无权操作', 'HANDLER', []
+        ok, missing = check_required_attachments(db, app['id'], 'APPROVAL')
+        if not ok:
+            missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing]
+            add_exception(db, app['id'], 'MISSING_EVIDENCE', '审批证据不全',
+                          f'缺少: {", ".join(missing_names)}', user['username'])
+            return False, '审批证据不全', 'MISSING_EVIDENCE', missing_names
+        ok2, missing2 = check_required_attachments(db, app['id'], 'VERIFICATION')
+        if not ok2:
+            missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing2]
+            return False, f'核验证据不齐全: {", ".join(missing_names)}', 'MISSING_EVIDENCE', missing_names
+        ok3, missing3 = check_required_attachments(db, app['id'], 'APPLICATION')
+        if not ok3:
+            missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing3]
+            return False, f'申请材料不齐全: {", ".join(missing_names)}', 'MISSING_EVIDENCE', missing_names
+        return True, '', '', []
+
+    if action_type == 'REJECT':
+        if role != 'LOAN_SUPERVISOR':
+            return False, '只有贷后主管可以审批拒绝', 'ROLE', []
+        if status != 'VERIFICATION_PASSED':
+            return False, f'当前状态 {STATUSES.get(status, status)} 不允许审批操作', 'STATUS', []
+        if current_handler and current_handler != username:
+            return False, f'当前处理人为 {current_handler}，您无权操作', 'HANDLER', []
+        return True, '', '', []
+
+    if action_type == 'APPROVE_RETURN':
+        if role != 'LOAN_SUPERVISOR':
+            return False, '只有贷后主管可以退回补正', 'ROLE', []
+        if status != 'VERIFICATION_PASSED':
+            return False, f'当前状态 {STATUSES.get(status, status)} 不允许退回操作', 'STATUS', []
+        if current_handler and current_handler != username:
+            return False, f'当前处理人为 {current_handler}，您无权操作', 'HANDLER', []
+        return True, '', '', []
+
+    if action_type == 'COMPLETE':
+        if role != 'LOAN_SUPERVISOR':
+            return False, '只有贷后主管可以完成放款', 'ROLE', []
+        if status != 'APPROVED':
+            return False, f'当前状态 {STATUSES.get(status, status)} 不允许完成操作', 'STATUS', []
+        return True, '', '', []
+
+    return False, '未知操作类型', 'UNKNOWN', []
+
+
 def record_process(db, app_id, action, from_status, to_status, handler, handler_role, node, remark=None):
     db.execute(
         '''INSERT INTO processing_records
@@ -340,39 +470,27 @@ def submit_application(app_id):
     user = get_current_user()
     if not user:
         return jsonify({'error': '未登录'}), 401
-    if user['role'] != 'CREDIT_OFFICER':
-        return jsonify({'error': '只有信贷员可以提交申请'}), 403
 
     data = request.get_json() or {}
     version = data.get('version')
 
     db = get_db()
     app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
-    if not app:
-        return jsonify({'error': '申请单不存在'}), 404
 
-    if app['status'] not in ['DRAFT', 'CORRECTION_REQUIRED']:
-        return jsonify({'error': f'当前状态 {app["status"]} 不允许提交'}), 400
-
-    if version is not None and app['version'] != version:
-        add_exception(db, app_id, 'VERSION_CONFLICT', '版本冲突',
-                      f'提交版本 {version}，当前版本 {app["version"]}', user['username'])
-        db.commit()
-        return jsonify({'error': '版本冲突，请刷新后重试'}), 409
-
-    ok, missing = check_required_attachments(db, app_id, 'APPLICATION')
+    ok, err_msg, err_type, missing = validate_application_action(db, app, user, 'SUBMIT', version)
     if not ok:
-        missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing]
-        add_exception(db, app_id, 'MISSING_EVIDENCE', '申请材料不全',
-                      f'缺少: {", ".join(missing_names)}', user['username'])
         db.commit()
-        return jsonify({'error': '申请材料不全', 'missing': missing_names}), 400
+        status_code = 409 if err_type == 'VERSION_CONFLICT' else 400
+        resp = {'error': err_msg}
+        if missing:
+            resp['missing'] = missing
+        return jsonify(resp), status_code
 
     if app['status'] == 'DRAFT':
-        action = 'SUBMIT'
+        action_name = 'SUBMIT'
         from_status = 'DRAFT'
     else:
-        action = 'RESUBMIT'
+        action_name = 'RESUBMIT'
         from_status = 'CORRECTION_REQUIRED'
 
     success = update_application_status(
@@ -383,7 +501,7 @@ def submit_application(app_id):
         db.rollback()
         return jsonify({'error': '更新失败，请刷新重试'}), 409
 
-    record_process(db, app_id, action, from_status, 'PENDING_VERIFICATION',
+    record_process(db, app_id, action_name, from_status, 'PENDING_VERIFICATION',
                    user['username'], user['role'], 'VERIFICATION', data.get('remark'))
     db.commit()
 
@@ -395,8 +513,6 @@ def verify_application(app_id):
     user = get_current_user()
     if not user:
         return jsonify({'error': '未登录'}), 401
-    if user['role'] != 'RISK_AUDITOR':
-        return jsonify({'error': '只有风控审核员可以核验'}), 403
 
     data = request.get_json() or {}
     action = data.get('action', 'PASS')
@@ -405,35 +521,22 @@ def verify_application(app_id):
 
     db = get_db()
     app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
-    if not app:
-        return jsonify({'error': '申请单不存在'}), 404
 
-    if app['status'] != 'PENDING_VERIFICATION':
-        return jsonify({'error': f'当前状态 {app["status"]} 不允许核验操作'}), 400
+    action_map = {'PASS': 'VERIFY_PASS', 'FAIL': 'VERIFY_FAIL', 'RETURN': 'VERIFY_RETURN'}
+    action_type = action_map.get(action)
+    if not action_type:
+        return jsonify({'error': '无效的操作'}), 400
 
-    if version is not None and app['version'] != version:
-        add_exception(db, app_id, 'VERSION_CONFLICT', '版本冲突',
-                      f'提交版本 {version}，当前版本 {app["version"]}', user['username'])
+    ok, err_msg, err_type, missing = validate_application_action(db, app, user, action_type, version)
+    if not ok:
         db.commit()
-        return jsonify({'error': '版本冲突，请刷新后重试'}), 409
-
-    ver_due = parse_date(app['verification_due_date'])
-    if ver_due and datetime.now() > ver_due:
-        add_exception(db, app_id, 'TIMEOUT', '核验超时',
-                      f'核验时限 {app["verification_due_date"]}，当前时间已超时', user['username'])
-        if action == 'PASS':
-            db.commit()
-            return jsonify({'error': '核验已超时，不允许通过，请退回补正'}), 400
+        status_code = 409 if err_type == 'VERSION_CONFLICT' else 400
+        resp = {'error': err_msg}
+        if missing:
+            resp['missing'] = missing
+        return jsonify(resp), status_code
 
     if action == 'PASS':
-        ok, missing = check_required_attachments(db, app_id, 'VERIFICATION')
-        if not ok:
-            missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing]
-            add_exception(db, app_id, 'MISSING_EVIDENCE', '核验证据不全',
-                          f'缺少: {", ".join(missing_names)}', user['username'])
-            db.commit()
-            return jsonify({'error': '核验证据不全', 'missing': missing_names}), 400
-
         success = update_application_status(
             db, app_id, 'VERIFICATION_PASSED', new_node='APPROVAL',
             new_handler='supervisor_01', version=version
@@ -441,10 +544,10 @@ def verify_application(app_id):
         if not success:
             db.rollback()
             return jsonify({'error': '更新失败，请刷新重试'}), 409
-
         record_process(db, app_id, 'VERIFY_PASS', 'PENDING_VERIFICATION',
                        'VERIFICATION_PASSED', user['username'], user['role'],
                        'APPROVAL', remark)
+
     elif action == 'FAIL':
         success = update_application_status(
             db, app_id, 'VERIFICATION_FAILED', new_node='VERIFICATION',
@@ -453,11 +556,11 @@ def verify_application(app_id):
         if not success:
             db.rollback()
             return jsonify({'error': '更新失败，请刷新重试'}), 409
-
         add_exception(db, app_id, 'VERIFICATION_FAILED', '核验失败', remark, user['username'])
         record_process(db, app_id, 'VERIFY_FAIL', 'PENDING_VERIFICATION',
                        'VERIFICATION_FAILED', user['username'], user['role'],
                        'VERIFICATION', remark)
+
     elif action == 'RETURN':
         success = update_application_status(
             db, app_id, 'CORRECTION_REQUIRED', new_node='APPLICATION',
@@ -466,13 +569,10 @@ def verify_application(app_id):
         if not success:
             db.rollback()
             return jsonify({'error': '更新失败，请刷新重试'}), 409
-
         add_exception(db, app_id, 'RETURNED', '退回补正', remark, user['username'])
         record_process(db, app_id, 'RETURN_CORRECTION', 'PENDING_VERIFICATION',
                        'CORRECTION_REQUIRED', user['username'], user['role'],
                        'APPLICATION', remark)
-    else:
-        return jsonify({'error': '无效的操作'}), 400
 
     db.commit()
     return jsonify({'success': True, 'id': app_id})
@@ -483,8 +583,6 @@ def approve_application(app_id):
     user = get_current_user()
     if not user:
         return jsonify({'error': '未登录'}), 401
-    if user['role'] != 'LOAN_SUPERVISOR':
-        return jsonify({'error': '只有贷后主管可以审批'}), 403
 
     data = request.get_json() or {}
     action = data.get('action', 'APPROVE')
@@ -493,27 +591,22 @@ def approve_application(app_id):
 
     db = get_db()
     app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
-    if not app:
-        return jsonify({'error': '申请单不存在'}), 404
 
-    if app['status'] != 'VERIFICATION_PASSED':
-        return jsonify({'error': f'当前状态 {app["status"]} 不允许审批操作'}), 400
+    action_map = {'APPROVE': 'APPROVE', 'REJECT': 'REJECT', 'RETURN': 'APPROVE_RETURN'}
+    action_type = action_map.get(action)
+    if not action_type:
+        return jsonify({'error': '无效的操作'}), 400
 
-    if version is not None and app['version'] != version:
-        add_exception(db, app_id, 'VERSION_CONFLICT', '版本冲突',
-                      f'提交版本 {version}，当前版本 {app["version"]}', user['username'])
+    ok, err_msg, err_type, missing = validate_application_action(db, app, user, action_type, version)
+    if not ok:
         db.commit()
-        return jsonify({'error': '版本冲突，请刷新后重试'}), 409
+        status_code = 409 if err_type == 'VERSION_CONFLICT' else 400
+        resp = {'error': err_msg}
+        if missing:
+            resp['missing'] = missing
+        return jsonify(resp), status_code
 
     if action == 'APPROVE':
-        ok, missing = check_required_attachments(db, app_id, 'APPROVAL')
-        if not ok:
-            missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing]
-            add_exception(db, app_id, 'MISSING_EVIDENCE', '审批证据不全',
-                          f'缺少: {", ".join(missing_names)}', user['username'])
-            db.commit()
-            return jsonify({'error': '审批证据不全', 'missing': missing_names}), 400
-
         success = update_application_status(
             db, app_id, 'APPROVED', new_node='APPROVAL',
             new_handler=user['username'], version=version
@@ -521,10 +614,10 @@ def approve_application(app_id):
         if not success:
             db.rollback()
             return jsonify({'error': '更新失败，请刷新重试'}), 409
-
         record_process(db, app_id, 'APPROVE', 'VERIFICATION_PASSED',
                        'APPROVED', user['username'], user['role'],
                        'APPROVAL', remark)
+
     elif action == 'REJECT':
         success = update_application_status(
             db, app_id, 'REJECTED', new_node='APPROVAL',
@@ -533,11 +626,11 @@ def approve_application(app_id):
         if not success:
             db.rollback()
             return jsonify({'error': '更新失败，请刷新重试'}), 409
-
         add_exception(db, app_id, 'REJECTED', '审批拒绝', remark, user['username'])
         record_process(db, app_id, 'REJECT', 'VERIFICATION_PASSED',
                        'REJECTED', user['username'], user['role'],
                        'APPROVAL', remark)
+
     elif action == 'RETURN':
         success = update_application_status(
             db, app_id, 'CORRECTION_REQUIRED', new_node='VERIFICATION',
@@ -546,13 +639,10 @@ def approve_application(app_id):
         if not success:
             db.rollback()
             return jsonify({'error': '更新失败，请刷新重试'}), 409
-
         add_exception(db, app_id, 'RETURNED', '退回补正', remark, user['username'])
         record_process(db, app_id, 'RETURN_CORRECTION', 'VERIFICATION_PASSED',
                        'CORRECTION_REQUIRED', user['username'], user['role'],
                        'VERIFICATION', remark)
-    else:
-        return jsonify({'error': '无效的操作'}), 400
 
     db.commit()
     return jsonify({'success': True, 'id': app_id})
@@ -563,19 +653,21 @@ def complete_application(app_id):
     user = get_current_user()
     if not user:
         return jsonify({'error': '未登录'}), 401
-    if user['role'] != 'LOAN_SUPERVISOR':
-        return jsonify({'error': '只有贷后主管可以完成放款'}), 403
 
     data = request.get_json() or {}
     version = data.get('version')
 
     db = get_db()
     app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
-    if not app:
-        return jsonify({'error': '申请单不存在'}), 404
 
-    if app['status'] != 'APPROVED':
-        return jsonify({'error': f'当前状态 {app["status"]} 不允许完成操作'}), 400
+    ok, err_msg, err_type, missing = validate_application_action(db, app, user, 'COMPLETE', version)
+    if not ok:
+        db.commit()
+        status_code = 409 if err_type == 'VERSION_CONFLICT' else 400
+        resp = {'error': err_msg}
+        if missing:
+            resp['missing'] = missing
+        return jsonify(resp), status_code
 
     success = update_application_status(
         db, app_id, 'COMPLETED', new_node='APPROVAL',
@@ -605,43 +697,24 @@ def batch_verify():
     action = data.get('action', 'PASS')
     remark = data.get('remark', '')
 
+    action_map = {'PASS': 'VERIFY_PASS', 'FAIL': 'VERIFY_FAIL', 'RETURN': 'VERIFY_RETURN'}
+    action_type = action_map.get(action)
+    if not action_type:
+        return jsonify({'error': '无效的操作'}), 400
+
     results = []
     for app_id in ids:
         try:
             db = get_db()
             app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
-            if not app:
-                results.append({'id': app_id, 'success': False, 'reason': '申请单不存在'})
-                continue
 
-            if app['status'] != 'PENDING_VERIFICATION':
-                results.append({
-                    'id': app_id,
-                    'success': False,
-                    'reason': f'状态冲突：当前状态为{STATUSES.get(app["status"], app["status"])}，不能执行核验'
-                })
-                continue
-
-            ver_due = parse_date(app['verification_due_date'])
-            if ver_due and datetime.now() > ver_due and action == 'PASS':
-                results.append({
-                    'id': app_id,
-                    'success': False,
-                    'reason': '核验已超时，不允许通过'
-                })
+            ok, err_msg, err_type, _ = validate_application_action(db, app, user, action_type)
+            if not ok:
+                results.append({'id': app_id, 'success': False, 'reason': err_msg})
+                db.commit()
                 continue
 
             if action == 'PASS':
-                ok, missing = check_required_attachments(db, app_id, 'VERIFICATION')
-                if not ok:
-                    missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing]
-                    results.append({
-                        'id': app_id,
-                        'success': False,
-                        'reason': f'证据不全：缺少{", ".join(missing_names)}'
-                    })
-                    continue
-
                 success = update_application_status(
                     db, app_id, 'VERIFICATION_PASSED', new_node='APPROVAL',
                     new_handler='supervisor_01'
@@ -649,7 +722,6 @@ def batch_verify():
                 if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
                     continue
-
                 record_process(db, app_id, 'BATCH_VERIFY_PASS', 'PENDING_VERIFICATION',
                                'VERIFICATION_PASSED', user['username'], user['role'],
                                'APPROVAL', remark + ' (批量处理)')
@@ -660,28 +732,28 @@ def batch_verify():
                     db, app_id, 'VERIFICATION_FAILED', new_node='VERIFICATION',
                     new_handler=None
                 )
-                if success:
-                    add_exception(db, app_id, 'VERIFICATION_FAILED', '核验失败(批量)', remark, user['username'])
-                    record_process(db, app_id, 'BATCH_VERIFY_FAIL', 'PENDING_VERIFICATION',
-                                   'VERIFICATION_FAILED', user['username'], user['role'],
-                                   'VERIFICATION', remark + ' (批量处理)')
-                    results.append({'id': app_id, 'success': True, 'status': 'VERIFICATION_FAILED'})
-                else:
+                if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
+                    continue
+                add_exception(db, app_id, 'VERIFICATION_FAILED', '核验失败(批量)', remark, user['username'])
+                record_process(db, app_id, 'BATCH_VERIFY_FAIL', 'PENDING_VERIFICATION',
+                               'VERIFICATION_FAILED', user['username'], user['role'],
+                               'VERIFICATION', remark + ' (批量处理)')
+                results.append({'id': app_id, 'success': True, 'status': 'VERIFICATION_FAILED'})
 
             elif action == 'RETURN':
                 success = update_application_status(
                     db, app_id, 'CORRECTION_REQUIRED', new_node='APPLICATION',
                     new_handler=app['created_by']
                 )
-                if success:
-                    add_exception(db, app_id, 'RETURNED', '退回补正(批量)', remark, user['username'])
-                    record_process(db, app_id, 'BATCH_RETURN', 'PENDING_VERIFICATION',
-                                   'CORRECTION_REQUIRED', user['username'], user['role'],
-                                   'APPLICATION', remark + ' (批量处理)')
-                    results.append({'id': app_id, 'success': True, 'status': 'CORRECTION_REQUIRED'})
-                else:
+                if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
+                    continue
+                add_exception(db, app_id, 'RETURNED', '退回补正(批量)', remark, user['username'])
+                record_process(db, app_id, 'BATCH_RETURN', 'PENDING_VERIFICATION',
+                               'CORRECTION_REQUIRED', user['username'], user['role'],
+                               'APPLICATION', remark + ' (批量处理)')
+                results.append({'id': app_id, 'success': True, 'status': 'CORRECTION_REQUIRED'})
 
             db.commit()
         except Exception as e:
@@ -708,34 +780,24 @@ def batch_approve():
     action = data.get('action', 'APPROVE')
     remark = data.get('remark', '')
 
+    action_map = {'APPROVE': 'APPROVE', 'REJECT': 'REJECT', 'RETURN': 'APPROVE_RETURN'}
+    action_type = action_map.get(action)
+    if not action_type:
+        return jsonify({'error': '无效的操作'}), 400
+
     results = []
     for app_id in ids:
         try:
             db = get_db()
             app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
-            if not app:
-                results.append({'id': app_id, 'success': False, 'reason': '申请单不存在'})
-                continue
 
-            if app['status'] != 'VERIFICATION_PASSED':
-                results.append({
-                    'id': app_id,
-                    'success': False,
-                    'reason': f'状态冲突：当前状态为{STATUSES.get(app["status"], app["status"])}，不能执行审批'
-                })
+            ok, err_msg, err_type, _ = validate_application_action(db, app, user, action_type)
+            if not ok:
+                results.append({'id': app_id, 'success': False, 'reason': err_msg})
+                db.commit()
                 continue
 
             if action == 'APPROVE':
-                ok, missing = check_required_attachments(db, app_id, 'APPROVAL')
-                if not ok:
-                    missing_names = [ATTACHMENT_NAMES.get(m, m) for m in missing]
-                    results.append({
-                        'id': app_id,
-                        'success': False,
-                        'reason': f'证据不全：缺少{", ".join(missing_names)}'
-                    })
-                    continue
-
                 success = update_application_status(
                     db, app_id, 'APPROVED', new_node='APPROVAL',
                     new_handler=user['username']
@@ -743,7 +805,6 @@ def batch_approve():
                 if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
                     continue
-
                 record_process(db, app_id, 'BATCH_APPROVE', 'VERIFICATION_PASSED',
                                'APPROVED', user['username'], user['role'],
                                'APPROVAL', remark + ' (批量处理)')
@@ -754,28 +815,28 @@ def batch_approve():
                     db, app_id, 'REJECTED', new_node='APPROVAL',
                     new_handler=None
                 )
-                if success:
-                    add_exception(db, app_id, 'REJECTED', '审批拒绝(批量)', remark, user['username'])
-                    record_process(db, app_id, 'BATCH_REJECT', 'VERIFICATION_PASSED',
-                                   'REJECTED', user['username'], user['role'],
-                                   'APPROVAL', remark + ' (批量处理)')
-                    results.append({'id': app_id, 'success': True, 'status': 'REJECTED'})
-                else:
+                if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
+                    continue
+                add_exception(db, app_id, 'REJECTED', '审批拒绝(批量)', remark, user['username'])
+                record_process(db, app_id, 'BATCH_REJECT', 'VERIFICATION_PASSED',
+                               'REJECTED', user['username'], user['role'],
+                               'APPROVAL', remark + ' (批量处理)')
+                results.append({'id': app_id, 'success': True, 'status': 'REJECTED'})
 
             elif action == 'RETURN':
                 success = update_application_status(
                     db, app_id, 'CORRECTION_REQUIRED', new_node='VERIFICATION',
                     new_handler='risk_auditor_01'
                 )
-                if success:
-                    add_exception(db, app_id, 'RETURNED', '退回补正(批量)', remark, user['username'])
-                    record_process(db, app_id, 'BATCH_RETURN', 'VERIFICATION_PASSED',
-                                   'CORRECTION_REQUIRED', user['username'], user['role'],
-                                   'VERIFICATION', remark + ' (批量处理)')
-                    results.append({'id': app_id, 'success': True, 'status': 'CORRECTION_REQUIRED'})
-                else:
+                if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
+                    continue
+                add_exception(db, app_id, 'RETURNED', '退回补正(批量)', remark, user['username'])
+                record_process(db, app_id, 'BATCH_RETURN', 'VERIFICATION_PASSED',
+                               'CORRECTION_REQUIRED', user['username'], user['role'],
+                               'VERIFICATION', remark + ' (批量处理)')
+                results.append({'id': app_id, 'success': True, 'status': 'CORRECTION_REQUIRED'})
 
             db.commit()
         except Exception as e:

@@ -203,21 +203,73 @@ const ROLE_NAMES: { [key: string]: string } = {
             </div>
           </div>
 
-          <div class="card" *ngIf="isCreditOfficer && (status === 'DRAFT' || status === 'CORRECTION_REQUIRED')">
+          <div class="card" *ngIf="canUploadAttachments">
             <div class="card-title">
-              上传资料
-              <span class="card-subtitle">（申请单处于草稿或退回补正时可上传）</span>
+              证据上传
+              <span class="card-subtitle">（按当前节点和角色上传对应证据）</span>
             </div>
-            <div class="attach-form">
-              <select [(ngModel)]="newAttach.type">
-                <option value="">选择资料类型</option>
-                <option value="ID_CARD">身份证</option>
-                <option value="INCOME_PROOF">收入证明</option>
-                <option value="CREDIT_REPORT">征信报告</option>
-                <option value="VERIFICATION_RECORD">核验记录</option>
-              </select>
-              <input type="text" [(ngModel)]="newAttach.name" placeholder="资料名称">
-              <button class="btn-secondary" (click)="addAttachment()">添加</button>
+
+            <div class="upload-section" *ngIf="canUploadApplication">
+              <div class="upload-section-title">📋 借款申请证据 <span class="required-tag">信贷员上传</span></div>
+              <div class="upload-tip">
+                <span *ngIf="!evidenceSummary?.APPLICATION?.complete" class="text-danger">
+                  ⚠️ 必填证据不齐全：{{ evidenceSummary?.APPLICATION?.missing?.map((m:any)=>m.name).join('、') }}
+                </span>
+                <span *ngIf="evidenceSummary?.APPLICATION?.complete" class="text-success">
+                  ✓ 借款申请证据已齐全
+                </span>
+              </div>
+              <div class="attach-form">
+                <select [(ngModel)]="newAttach.type">
+                  <option value="">选择证据类型</option>
+                  <option value="ID_CARD">身份证</option>
+                  <option value="INCOME_PROOF">收入证明</option>
+                </select>
+                <input type="text" [(ngModel)]="newAttach.name" placeholder="证据名称（可选）">
+                <button class="btn-secondary" (click)="addAttachment('APPLICATION')">上传申请证据</button>
+              </div>
+            </div>
+
+            <div class="upload-section" *ngIf="canUploadVerification">
+              <div class="upload-section-title">🔍 资料核验证据 <span class="required-tag">风控上传</span></div>
+              <div class="upload-tip">
+                <span *ngIf="!evidenceSummary?.VERIFICATION?.complete" class="text-danger">
+                  ⚠️ 必填证据不齐全：{{ evidenceSummary?.VERIFICATION?.missing?.map((m:any)=>m.name).join('、') }}
+                </span>
+                <span *ngIf="evidenceSummary?.VERIFICATION?.complete" class="text-success">
+                  ✓ 资料核验证据已齐全
+                </span>
+              </div>
+              <div class="attach-form">
+                <select [(ngModel)]="newAttach.type">
+                  <option value="">选择证据类型</option>
+                  <option value="CREDIT_REPORT">征信报告</option>
+                  <option value="VERIFICATION_RECORD">核验记录</option>
+                </select>
+                <input type="text" [(ngModel)]="newAttach.name" placeholder="证据名称（可选）">
+                <button class="btn-secondary" (click)="addAttachment('VERIFICATION')">上传核验证据</button>
+              </div>
+            </div>
+
+            <div class="upload-section" *ngIf="canUploadApproval">
+              <div class="upload-section-title">✅ 审批放款证据 <span class="required-tag">主管上传</span></div>
+              <div class="upload-tip">
+                <span *ngIf="!evidenceSummary?.APPROVAL?.complete" class="text-danger">
+                  ⚠️ 必填证据不齐全：{{ evidenceSummary?.APPROVAL?.missing?.map((m:any)=>m.name).join('、') }}
+                </span>
+                <span *ngIf="evidenceSummary?.APPROVAL?.complete" class="text-success">
+                  ✓ 审批放款证据已齐全
+                </span>
+              </div>
+              <div class="attach-form">
+                <select [(ngModel)]="newAttach.type">
+                  <option value="">选择证据类型</option>
+                  <option value="APPROVAL_OPINION">审批意见</option>
+                  <option value="DISBURSEMENT_VOUCHER">放款凭证</option>
+                </select>
+                <input type="text" [(ngModel)]="newAttach.name" placeholder="证据名称（可选）">
+                <button class="btn-secondary" (click)="addAttachment('APPROVAL')">上传审批证据</button>
+              </div>
             </div>
           </div>
 
@@ -568,6 +620,23 @@ const ROLE_NAMES: { [key: string]: string } = {
     }
     .attach-form input { flex: 1; min-width: 120px; }
 
+    .upload-section {
+      padding: 12px; background: #f7fafc; border-radius: 6px;
+      margin-bottom: 12px; border: 1px solid #e2e8f0;
+    }
+    .upload-section:last-child { margin-bottom: 0; }
+    .upload-section-title {
+      font-size: 13px; font-weight: 600; color: #2d3748;
+      margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
+    }
+    .upload-tip { font-size: 12px; margin-bottom: 8px; }
+    .text-success { color: #38a169; }
+    .text-danger { color: #e53e3e; }
+    .required-tag {
+      background: #fed7d7; color: #c53030; padding: 1px 6px;
+      border-radius: 3px; font-size: 10px; font-weight: normal;
+    }
+
     .audit-notes { display: flex; flex-direction: column; gap: 10px; }
     .audit-note {
       padding: 10px 12px; background: #f7fafc; border-radius: 6px;
@@ -629,6 +698,31 @@ export class ApplicationDetailComponent implements OnInit {
   get latestReturnException(): ExceptionReason | null {
     const returns = this.exceptions.filter(e => e.exception_type === 'RETURNED');
     return returns.length > 0 ? returns[0] : null;
+  }
+
+  get canUploadAttachments(): boolean {
+    if (!this.application) return false;
+    return this.canUploadApplication || this.canUploadVerification || this.canUploadApproval;
+  }
+
+  get canUploadApplication(): boolean {
+    if (!this.application || !this.isCreditOfficer) return false;
+    const s = this.status;
+    if (this.application.created_by !== this.currentUser?.username && s !== 'CORRECTION_REQUIRED') return false;
+    return s === 'DRAFT' || s === 'CORRECTION_REQUIRED';
+  }
+
+  get canUploadVerification(): boolean {
+    if (!this.application || !this.isRiskAuditor) return false;
+    const s = this.status;
+    return s === 'PENDING_VERIFICATION' || s === 'CORRECTION_REQUIRED'
+      || s === 'VERIFICATION_PASSED';
+  }
+
+  get canUploadApproval(): boolean {
+    if (!this.application || !this.isSupervisor) return false;
+    const s = this.status;
+    return s === 'VERIFICATION_PASSED' || s === 'APPROVED';
   }
 
   ngOnInit(): void {
@@ -755,21 +849,24 @@ export class ApplicationDetailComponent implements OnInit {
     });
   }
 
-  addAttachment(): void {
+  addAttachment(node: string): void {
     if (!this.newAttach.type) {
-      alert('请选择资料类型');
+      alert('请选择证据类型');
       return;
     }
     const nodeMap: { [key: string]: string } = {
       ID_CARD: 'APPLICATION',
       INCOME_PROOF: 'APPLICATION',
       CREDIT_REPORT: 'VERIFICATION',
-      VERIFICATION_RECORD: 'VERIFICATION'
+      VERIFICATION_RECORD: 'VERIFICATION',
+      APPROVAL_OPINION: 'APPROVAL',
+      DISBURSEMENT_VOUCHER: 'APPROVAL'
     };
+    const actualNode = node || nodeMap[this.newAttach.type] || 'APPLICATION';
     this.loanService.addAttachment(this.application.id, {
       attach_type: this.newAttach.type,
       attach_name: this.newAttach.name || ATTACHMENT_NAMES[this.newAttach.type],
-      node: nodeMap[this.newAttach.type] || 'APPLICATION',
+      node: actualNode,
       is_required: 1
     }).subscribe({
       next: () => {

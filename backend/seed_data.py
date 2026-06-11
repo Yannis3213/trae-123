@@ -233,6 +233,10 @@ def seed_data():
                 ('VERIFY_PASS', 'PENDING_VERIFICATION', 'VERIFICATION_PASSED', 'risk_auditor_01', 'RISK_AUDITOR', 'APPROVAL', '核验通过'),
                 ('APPROVE', 'VERIFICATION_PASSED', 'APPROVED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '审批通过'),
                 ('COMPLETE', 'APPROVED', 'COMPLETED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '放款完成'),
+            ],
+            'audit_notes': [
+                ('全流程正常，资料完整，可作为月底复核标准样板', 'supervisor_01'),
+                ('三节点证据齐全，状态流转与处理记录一致', 'supervisor_01'),
             ]
         },
         {
@@ -258,6 +262,41 @@ def seed_data():
             'records': [
                 ('CREATE', None, 'DRAFT', 'credit_officer_02', 'CREDIT_OFFICER', 'APPLICATION', '创建申请单'),
                 ('SUBMIT', 'DRAFT', 'PENDING_VERIFICATION', 'credit_officer_02', 'CREDIT_OFFICER', 'VERIFICATION', '提交核验'),
+            ]
+        },
+        {
+            'no': 'LA' + (now - timedelta(days=4)).strftime('%Y%m%d') + '0009',
+            'name': '沈待批',
+            'id_card': '110101199809099012',
+            'phone': '13800000009',
+            'amount': 90000,
+            'purpose': '小微企业经营',
+            'term': 12,
+            'status': 'VERIFICATION_PASSED',
+            'node': 'APPROVAL',
+            'handler': 'supervisor_01',
+            'created_by': 'credit_officer_02',
+            'created_at': (now - timedelta(days=4)).strftime('%Y-%m-%d %H:%M:%S'),
+            'ver_due': (now + timedelta(days=3)).strftime('%Y-%m-%d'),
+            'due': (now + timedelta(days=26)).strftime('%Y-%m-%d'),
+            'remark': '审批缺料案例：核验已通过，但缺少审批意见，主管审批时应被证据校验拦截',
+            'attachments': [
+                ('ID_CARD', '身份证', 1, 'APPLICATION', 'credit_officer_02'),
+                ('INCOME_PROOF', '营业执照+经营流水', 1, 'APPLICATION', 'credit_officer_02'),
+                ('CREDIT_REPORT', '企业征信报告', 1, 'VERIFICATION', 'risk_auditor_01'),
+                ('VERIFICATION_RECORD', '核验记录表', 1, 'VERIFICATION', 'risk_auditor_01'),
+                ('DISBURSEMENT_VOUCHER', '放款凭证草稿(待审批后补充)', 0, 'APPROVAL', 'supervisor_01'),
+            ],
+            'records': [
+                ('CREATE', None, 'DRAFT', 'credit_officer_02', 'CREDIT_OFFICER', 'APPLICATION', '创建申请单'),
+                ('SUBMIT', 'DRAFT', 'PENDING_VERIFICATION', 'credit_officer_02', 'CREDIT_OFFICER', 'VERIFICATION', '提交核验'),
+                ('VERIFY_PASS', 'PENDING_VERIFICATION', 'VERIFICATION_PASSED', 'risk_auditor_01', 'RISK_AUDITOR', 'APPROVAL', '核验通过，材料齐全'),
+            ],
+            'exceptions': [
+                ('MISSING_EVIDENCE', '审批证据不全', '缺少审批意见(APPROVAL_OPINION)，主管需上传后才能审批通过', 'supervisor_01', (now - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')),
+            ],
+            'audit_notes': [
+                ('月底复核重点：核验通过后，审批证据不齐不能推进，防止越权放款', 'supervisor_01'),
             ]
         },
     ]
@@ -300,8 +339,17 @@ def seed_data():
                 (app_id, exc[0], exc[1], exc[2], exc[3], exc[4])
             )
 
+        for note in app.get('audit_notes', []):
+            c.execute(
+                '''INSERT INTO audit_notes
+                   (loan_application_id, note, created_by)
+                   VALUES (?, ?, ?)''',
+                (app_id, note[0], note[1])
+            )
+
     audit_notes = [
         (1, '月底复核时注意核对该笔贷款用途真实性', 'supervisor_01'),
+        (1, '三节点证据齐全，核验后可正常流转审批与放款', 'supervisor_01'),
         (4, '逾期严重，需重点关注责任人', 'supervisor_01'),
         (5, '退回补正后请尽快重新提交，避免月底积压', 'supervisor_01'),
     ]
@@ -323,16 +371,20 @@ def seed_data():
     print('  主管:   supervisor_01 (陈主管)')
     print()
     print('四类演示数据:')
-    print('  1. 正常流转: LA...0001（刘正常）- 核验完成待审批')
-    print('  2. 缺材料:   LA...0003（孙缺料）- 缺少收入证明')
-    print('  3. 超时逾期: LA...0004（周超时）- 核验已逾期8天')
-    print('  4. 退回补正: LA...0005（吴补正）- 已退回信贷员补正')
+    print('  1. 正常流转(核验完成待审批): LA...0001（刘正常）- 三节点证据齐全，可继续审批→放款完成')
+    print('  2. 缺材料(核验缺证据):       LA...0003（孙缺料）- 缺少征信报告和核验记录')
+    print('  3. 超时逾期:                 LA...0004（周超时）- 核验已逾期8天')
+    print('  4. 退回补正:                 LA...0005（吴补正）- 已退回信贷员补正')
+    print()
+    print('审批放款链路演示:')
+    print('  - 核验完成待审批(证据齐全): LA...0001（刘正常）- 主管登录后可审批→完成放款')
+    print('  - 核验完成待审批(缺审批意见): LA...0009（沈待批）- 演示审批阶段证据拦截')
+    print('  - 已完成(全链路走完):        LA...0007（冯完成）- 含三节点完整证据与处理记录')
     print()
     print('附加案例:')
-    print('  - 待核验: LA...0002（钱待核）')
-    print('  - 核验失败: LA...0006（郑失败）')
-    print('  - 已完成: LA...0007（冯完成）')
-    print('  - 临期预警: LA...0008（蒋临期）')
+    print('  - 待核验(齐全):      LA...0002（钱待核）')
+    print('  - 核验失败:          LA...0006（郑失败）')
+    print('  - 临期预警(1天到期): LA...0008（蒋临期）')
 
 
 if __name__ == '__main__':
