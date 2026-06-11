@@ -14,7 +14,7 @@ const roleOptions = Object.entries(ROLE_KEYS).map(([key, value]) => ({
   label: ROLE_LABELS[value]
 }))
 
-export default function OrderList({ onRefresh }) {
+export default function OrderList({ onRefresh, onBatchSuccess }) {
   const navigate = useNavigate()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
@@ -288,6 +288,7 @@ export default function OrderList({ onRefresh }) {
           setSelectedRowKeys([])
           setSelectedOrders([])
           fetchData()
+          onBatchSuccess?.()
         }}
       />
     </div>

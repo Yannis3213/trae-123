@@ -517,11 +517,31 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
                 # 拦截失败也要留痕
                 from_status = order.status
                 module_type = get_exception_module_type(order) if order.status == OrderStatusChoices.VERIFY_FAILED else ModuleTypeChoices.REQUIREMENT
+                # 同步模块异常状态
+                if order.status != OrderStatusChoices.VERIFY_FAILED:
+                    if from_status == OrderStatusChoices.PENDING_VERIFY:
+                        order.requirement_status = RequirementStatusChoices.EXCEPTION
+                else:
+                    if module_type == ModuleTypeChoices.REQUIREMENT:
+                        order.requirement_status = RequirementStatusChoices.EXCEPTION
+                    elif module_type == ModuleTypeChoices.SCHEDULE:
+                        order.schedule_status = RequirementStatusChoices.EXCEPTION
+                    elif module_type == ModuleTypeChoices.DELIVERY:
+                        order.delivery_status = RequirementStatusChoices.EXCEPTION
                 # 状态变更：如果不是核验失败，改为核验失败
                 if order.status != OrderStatusChoices.VERIFY_FAILED:
                     order.status = OrderStatusChoices.VERIFY_FAILED
                     order.version += 1
-                    order.save()
+                # 拦截时也要维护 current_handler，落到异常模块责任角色
+                from api.utils import get_handler_by_role
+                handler_role_map = {
+                    ModuleTypeChoices.REQUIREMENT: RoleChoices.DELIVERY_REGISTRAR,
+                    ModuleTypeChoices.SCHEDULE: RoleChoices.DEV_LEAD,
+                    ModuleTypeChoices.DELIVERY: RoleChoices.PROJECT_ASSISTANT,
+                }
+                handler_role = handler_role_map.get(module_type, RoleChoices.DELIVERY_REGISTRAR)
+                order.current_handler = get_handler_by_role(handler_role)
+                order.save()
                 
                 # 1. 写处理记录
                 ProcessingRecord.objects.create(

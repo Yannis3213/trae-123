@@ -31,7 +31,9 @@ export const DEMO_ACCOUNTS = [
   { username: 'dev_lead', role: ROLE_KEYS.DEV_LEAD, label: ROLE_LABELS[ROLE_KEYS.DEV_LEAD] },
   { username: 'audit_supervisor', role: ROLE_KEYS.AUDIT_SUPERVISOR, label: ROLE_LABELS[ROLE_KEYS.AUDIT_SUPERVISOR] },
   { username: 'delivery_manager', role: ROLE_KEYS.DELIVERY_MANAGER, label: ROLE_LABELS[ROLE_KEYS.DELIVERY_MANAGER] },
-  { username: 'review_leader', role: ROLE_KEYS.REVIEW_LEADER, label: ROLE_LABELS[ROLE_KEYS.REVIEW_LEADER] }
+  { username: 'review_leader', role: ROLE_KEYS.REVIEW_LEADER, label: ROLE_LABELS[ROLE_KEYS.REVIEW_LEADER] },
+  { username: 'audit_supervisor_2', role: ROLE_KEYS.AUDIT_SUPERVISOR, label: '需求交付审核主管(二)' },
+  { username: 'delivery_manager_2', role: ROLE_KEYS.DELIVERY_MANAGER, label: '交付经理(二)' },
 ]
 
 export const ORDER_STATUS_KEYS = {

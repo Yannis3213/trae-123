@@ -9,7 +9,8 @@ from django.utils import timezone
 
 from api.models import (
     RequirementDeliveryOrder, ProcessingRecord, ExceptionReason,
-    OrderStatusChoices, RequirementStatusChoices, ActionChoices, ModuleTypeChoices, User
+    OrderStatusChoices, RequirementStatusChoices, ActionChoices, ModuleTypeChoices,
+    RoleChoices, User
 )
 
 
@@ -128,6 +129,10 @@ def generate_order_no() -> str:
     return f'{prefix}{seq:04d}'
 
 
+def get_handler_by_role(role):
+    return User.objects.filter(role=role, is_active=True).first()
+
+
 def check_all_modules_completed(order: RequirementDeliveryOrder) -> bool:
     return (
         order.requirement_status == RequirementStatusChoices.COMPLETED
@@ -167,6 +172,7 @@ def transition_status(
             order.delivery_evidence = evidence or {}
             order.delivery_status = RequirementStatusChoices.IN_PROGRESS
             order.status = OrderStatusChoices.DELIVERY_SUBMITTED
+        order.current_handler = get_handler_by_role(RoleChoices.AUDIT_SUPERVISOR)
         create_processing_record(order, ActionChoices.SUBMIT, operator, from_status, order.status, remark)
 
     elif action == 'audit':
@@ -174,10 +180,12 @@ def transition_status(
             if approved:
                 order.requirement_status = RequirementStatusChoices.COMPLETED
                 order.status = OrderStatusChoices.REQUIREMENT_AUDITED
+                order.current_handler = get_handler_by_role(RoleChoices.DEV_LEAD)
                 create_processing_record(order, ActionChoices.APPROVE, operator, from_status, order.status, remark)
             else:
                 order.requirement_status = RequirementStatusChoices.EXCEPTION
                 order.status = OrderStatusChoices.VERIFY_FAILED
+                order.current_handler = get_handler_by_role(RoleChoices.DELIVERY_REGISTRAR)
                 if exception_reason:
                     create_exception_reason(order, ModuleTypeChoices.REQUIREMENT, exception_reason, operator)
                 create_processing_record(order, ActionChoices.REJECT, operator, from_status, order.status, remark)
@@ -185,10 +193,12 @@ def transition_status(
             if approved:
                 order.schedule_status = RequirementStatusChoices.COMPLETED
                 order.status = OrderStatusChoices.SCHEDULE_AUDITED
+                order.current_handler = get_handler_by_role(RoleChoices.PROJECT_ASSISTANT)
                 create_processing_record(order, ActionChoices.APPROVE, operator, from_status, order.status, remark)
             else:
                 order.schedule_status = RequirementStatusChoices.EXCEPTION
                 order.status = OrderStatusChoices.VERIFY_FAILED
+                order.current_handler = get_handler_by_role(RoleChoices.DEV_LEAD)
                 if exception_reason:
                     create_exception_reason(order, ModuleTypeChoices.SCHEDULE, exception_reason, operator)
                 create_processing_record(order, ActionChoices.REJECT, operator, from_status, order.status, remark)
@@ -199,10 +209,12 @@ def transition_status(
                     order.status = OrderStatusChoices.REVIEW_PENDING
                 else:
                     order.status = OrderStatusChoices.DELIVERY_AUDITED
+                order.current_handler = get_handler_by_role(RoleChoices.REVIEW_LEADER)
                 create_processing_record(order, ActionChoices.APPROVE, operator, from_status, order.status, remark)
             else:
                 order.delivery_status = RequirementStatusChoices.EXCEPTION
                 order.status = OrderStatusChoices.VERIFY_FAILED
+                order.current_handler = get_handler_by_role(RoleChoices.PROJECT_ASSISTANT)
                 if exception_reason:
                     create_exception_reason(order, ModuleTypeChoices.DELIVERY, exception_reason, operator)
                 create_processing_record(order, ActionChoices.REJECT, operator, from_status, order.status, remark)
@@ -211,28 +223,41 @@ def transition_status(
         if order.status == OrderStatusChoices.PENDING_VERIFY:
             order.status = OrderStatusChoices.REQUIREMENT_AUDITED
             order.requirement_status = RequirementStatusChoices.COMPLETED
+            order.current_handler = get_handler_by_role(RoleChoices.DEV_LEAD)
         elif order.status == OrderStatusChoices.VERIFY_FAILED:
             order.requirement_status = RequirementStatusChoices.COMPLETED
             order.schedule_status = RequirementStatusChoices.COMPLETED
             order.delivery_status = RequirementStatusChoices.COMPLETED
             order.status = OrderStatusChoices.REVIEW_PENDING
+            order.current_handler = get_handler_by_role(RoleChoices.REVIEW_LEADER)
         elif order.status == OrderStatusChoices.REQUIREMENT_AUDITED:
             order.schedule_status = RequirementStatusChoices.COMPLETED
             order.status = OrderStatusChoices.SCHEDULE_AUDITED
+            order.current_handler = get_handler_by_role(RoleChoices.PROJECT_ASSISTANT)
         elif order.status == OrderStatusChoices.SCHEDULE_AUDITED:
             order.delivery_status = RequirementStatusChoices.COMPLETED
             if check_all_modules_completed(order):
                 order.status = OrderStatusChoices.REVIEW_PENDING
             else:
                 order.status = OrderStatusChoices.DELIVERY_AUDITED
+            order.current_handler = get_handler_by_role(RoleChoices.REVIEW_LEADER)
         create_processing_record(order, ActionChoices.ADVANCE, operator, from_status, order.status, remark)
 
     elif action == 'review':
         if approved:
             order.status = OrderStatusChoices.REVIEW_COMPLETED
+            order.current_handler = get_handler_by_role(RoleChoices.DELIVERY_MANAGER)
             create_processing_record(order, ActionChoices.REVIEW, operator, from_status, order.status, remark)
         else:
             order.status = OrderStatusChoices.VERIFY_FAILED
+            if order.requirement_status == RequirementStatusChoices.EXCEPTION:
+                order.current_handler = get_handler_by_role(RoleChoices.DELIVERY_REGISTRAR)
+            elif order.schedule_status == RequirementStatusChoices.EXCEPTION:
+                order.current_handler = get_handler_by_role(RoleChoices.DEV_LEAD)
+            elif order.delivery_status == RequirementStatusChoices.EXCEPTION:
+                order.current_handler = get_handler_by_role(RoleChoices.PROJECT_ASSISTANT)
+            else:
+                order.current_handler = get_handler_by_role(RoleChoices.DELIVERY_REGISTRAR)
             create_processing_record(order, ActionChoices.REJECT, operator, from_status, order.status, remark)
 
     elif action == 'archive':
@@ -260,6 +285,7 @@ def transition_status(
             order.delivery_status = RequirementStatusChoices.IN_PROGRESS
             order.status = OrderStatusChoices.DELIVERY_SUBMITTED
             resolve_exception_reason(order, ModuleTypeChoices.DELIVERY)
+        order.current_handler = get_handler_by_role(RoleChoices.AUDIT_SUPERVISOR)
         create_processing_record(order, ActionChoices.CORRECT, operator, from_status, order.status, remark)
 
     increment_version(order)

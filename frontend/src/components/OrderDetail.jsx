@@ -9,7 +9,7 @@ import {
   CloseCircleOutlined,
   InboxOutlined
 } from '@ant-design/icons'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import dayjs from 'dayjs'
 import Layout from './Layout.jsx'
 import { OrderStatusBadge, DueWarningBadge, ModuleStatusBadge, ModuleTypeBadge } from './StatusBadge.jsx'
@@ -25,6 +25,7 @@ import { MODULE_TYPE_KEYS } from '../utils/constants.js'
 export default function OrderDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const [order, setOrder] = useState(null)
   const [loading, setLoading] = useState(true)
   const [allowedActions, setAllowedActions] = useState([])
@@ -53,7 +54,7 @@ export default function OrderDetail() {
 
   useEffect(() => {
     fetchDetail()
-  }, [id, refreshKey])
+  }, [id, refreshKey, location.key])
 
   const handleRefresh = () => {
     setRefreshKey((prev) => prev + 1)

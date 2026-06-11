@@ -127,11 +127,12 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
 
   const handleClose = () => {
     if (loading) return
+    const hadResults = !!results
     setResults(null)
     setProcessing(false)
     setSelectedAction(null)
     form.resetFields()
-    if (results && (results.success_count || 0) > 0) {
+    if (hadResults) {
       onSuccess?.(results)
     } else {
       onCancel()

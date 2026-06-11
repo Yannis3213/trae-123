@@ -20,6 +20,8 @@ DEMO_USERS = [
     {'username': 'audit_supervisor', 'role': RoleChoices.AUDIT_SUPERVISOR, 'email': 'as@demo.com'},
     {'username': 'delivery_manager', 'role': RoleChoices.DELIVERY_MANAGER, 'email': 'dm@demo.com'},
     {'username': 'review_leader', 'role': RoleChoices.REVIEW_LEADER, 'email': 'rl@demo.com'},
+    {'username': 'audit_supervisor_2', 'role': RoleChoices.AUDIT_SUPERVISOR, 'email': 'as2@demo.com'},
+    {'username': 'delivery_manager_2', 'role': RoleChoices.DELIVERY_MANAGER, 'email': 'dm2@demo.com'},
 ]
 
 DEFAULT_PASSWORD = 'test123456'
@@ -69,6 +71,8 @@ def seed():
     print('=' * 60)
 
     users = create_demo_users()
+    audit_supervisor_2 = User.objects.get(username='audit_supervisor_2')
+    delivery_manager_2 = User.objects.get(username='delivery_manager_2')
     today = date.today()
 
     print()
@@ -385,7 +389,7 @@ def seed():
         project_name='会员营销系统',
         clue='市场部需求文档-2026-06-10',
         status=OrderStatusChoices.PENDING_VERIFY,
-        current_handler=users[RoleChoices.DELIVERY_REGISTRAR],
+        current_handler=audit_supervisor_2,
         version=2,
         requirement_status=RequirementStatusChoices.NOT_STARTED,
         schedule_status=RequirementStatusChoices.NOT_STARTED,

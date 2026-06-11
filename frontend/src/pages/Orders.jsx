@@ -70,7 +70,7 @@ export default function Orders() {
             )}
           </Space>
         </div>
-        <OrderList key={`${user?.id || 'guest'}-${refreshKey}`} onRefresh={refreshKey} />
+        <OrderList key={`${user?.id || 'guest'}-${refreshKey}`} onRefresh={refreshKey} onBatchSuccess={() => setRefreshKey((prev) => prev + 1)} />
       </div>
 
       <Modal
