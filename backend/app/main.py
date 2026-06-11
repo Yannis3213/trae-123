@@ -5,12 +5,13 @@ from starlette.middleware.cors import CORSMiddleware
 from .routes import routes
 from .database import init_db
 from .seed import seed_data
+from .config import CORS_ALLOW_ORIGINS
 
 
 middleware = [
     Middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:31010"],
+        allow_origins=CORS_ALLOW_ORIGINS,
         allow_methods=["*"],
         allow_headers=["*"],
         allow_credentials=True,

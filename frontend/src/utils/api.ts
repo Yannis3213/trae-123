@@ -1,4 +1,5 @@
-const BASE_URL = 'http://localhost:8101';
+const BACKEND_PORT = process.env.NEXT_PUBLIC_BACKEND_PORT || '8101';
+const BASE_URL = `http://localhost:${BACKEND_PORT}`;
 
 interface ApiResult<T = unknown> {
   success: boolean;
