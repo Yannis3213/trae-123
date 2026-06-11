@@ -231,6 +231,16 @@ export default function RequestDetail() {
 
   const hasExceptions = request.exception_reasons && request.exception_reasons.length > 0;
 
+  const latestReturnRecord = request.processing_records
+    .filter((r) => r.action === "return")
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+
+  const supplementRecords = request.processing_records
+    .filter((r) => r.action === "supplement")
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  const isReturnedStatus = request.status === "returned";
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -510,6 +520,61 @@ export default function RequestDetail() {
                 <div className="text-xs text-gray-500 mb-1">当前状态</div>
                 <StatusBadge status={request.status as RequestStatus} />
               </div>
+
+              {isReturnedStatus && (
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                    </svg>
+                    <span className="text-sm font-medium text-orange-800">退回补正中</span>
+                  </div>
+                  {latestReturnRecord && (
+                    <div className="text-xs text-orange-700">
+                      <div className="font-medium mb-1">退回原因：</div>
+                      <p className="whitespace-pre-wrap">{latestReturnRecord.opinion || "（无退回意见）"}</p>
+                      <p className="mt-1 text-orange-500">
+                        退回人：{ROLE_LABELS[latestReturnRecord.handler_role as UserRole] || latestReturnRecord.handler_role}
+                        {" · "}
+                        {new Date(latestReturnRecord.created_at).toLocaleString("zh-CN")}
+                      </p>
+                    </div>
+                  )}
+                  <div className="border-t border-orange-200 pt-2 space-y-1">
+                    <div className="text-xs font-medium text-orange-800 mb-1">材料状态：</div>
+                    <div className="flex flex-wrap gap-2">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${BRIEF_STATUS_COLORS[request.brief_status as BriefStatus] || "bg-gray-100 text-gray-600"}`}>
+                        Brief：{BRIEF_STATUS_LABELS[request.brief_status as BriefStatus] || request.brief_status}
+                      </span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${SCHEDULE_STATUS_COLORS[request.schedule_status as ScheduleStatus] || "bg-gray-100 text-gray-600"}`}>
+                        排期：{SCHEDULE_STATUS_LABELS[request.schedule_status as ScheduleStatus] || request.schedule_status}
+                      </span>
+                    </div>
+                  </div>
+                  {supplementRecords.length > 0 && (
+                    <div className="border-t border-orange-200 pt-2">
+                      <div className="text-xs font-medium text-orange-800 mb-1">补正记录：</div>
+                      <div className="space-y-1">
+                        {supplementRecords.map((rec, idx) => (
+                          <div key={idx} className="text-xs text-orange-700 bg-orange-100/50 rounded p-2">
+                            <p className="whitespace-pre-wrap">{rec.opinion}</p>
+                            <p className="text-orange-500 mt-1">
+                              {new Date(rec.created_at).toLocaleString("zh-CN")}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {canResubmit && (
+                    <div className="border-t border-orange-200 pt-2">
+                      <p className="text-xs text-green-700 font-medium">
+                        ✅ 材料已补齐，可重新提交审核
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {(canSubmit || canStartReview || canApprove || canReturn || canArchive || canResubmit) && (
                 <div>

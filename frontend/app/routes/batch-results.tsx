@@ -232,12 +232,15 @@ export default function BatchResults() {
                   const isOverdue = computeDeadlineLevel(req.deadline) === "overdue";
                   const isBriefMissing = req.brief_status === "missing";
                   const isScheduleMissing = req.schedule_status === "missing";
+                  const isReturned = req.status === "returned";
                   const blockReasons: string[] = [];
                   if (!isMine) blockReasons.push("非当前处理人");
                   if (isOverdue) blockReasons.push("逾期");
                   if (isBriefMissing) blockReasons.push("Brief缺失");
                   if (isScheduleMissing) blockReasons.push("排期缺失");
                   const isBlocked = blockReasons.length > 0;
+                  const canSupplement = isReturned && isMine && (isBriefMissing || isScheduleMissing) && !isOverdue;
+                  const canResubmit = isReturned && isMine && !isBriefMissing && !isScheduleMissing && !isOverdue;
                   return (
                     <tr
                       key={req.id}
@@ -308,13 +311,35 @@ export default function BatchResults() {
                     <td className="px-6 py-4 text-sm text-gray-500">v{req.version}</td>
                     <td className="px-6 py-4"><DeadlineWarning deadline={req.deadline} showLabel={false} /></td>
                     <td className="px-6 py-4 text-xs">
-                      {isBlocked ? (
+                      {canResubmit ? (
+                        <div className="space-y-1">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-green-100 text-green-700 font-medium">
+                            可重新提交
+                          </span>
+                          <p className="text-gray-500">材料已补齐，待提交复审</p>
+                        </div>
+                      ) : canSupplement ? (
+                        <div className="space-y-1">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-orange-100 text-orange-700 font-medium">
+                            可补正
+                          </span>
+                          <div className="space-y-0.5">
+                            {isBriefMissing && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-50 text-red-600">
+                                Brief缺失
+                              </span>
+                            )}
+                            {isScheduleMissing && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-50 text-red-600">
+                                排期缺失
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ) : isBlocked ? (
                         <div className="space-y-0.5">
                           {blockReasons.map((r, i) => (
                             <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-50 text-red-600">
-                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                              </svg>
                               {r}
                             </span>
                           ))}

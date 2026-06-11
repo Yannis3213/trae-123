@@ -723,6 +723,13 @@ pub async fn submit(
         rusqlite::params![id, user.id, user.role, action_label, default_opinion, from_status, to_status, now],
     )?;
 
+    if to_status == "resubmitted" {
+        log_audit_note(
+            &conn, id, user.id, "resubmit",
+            "补正后重新提交审核，进入复审流程", &now,
+        );
+    }
+
     let req = conn
         .query_row(
             "SELECT id, request_number, title, client_name, brand, campaign_name, \
@@ -1236,30 +1243,47 @@ pub async fn supplement(
     let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
     conn.execute(&sql, params_refs.as_slice())?;
 
-    let supplement_summary = match (has_brief_supplement, has_schedule_supplement) {
-        (true, true) => "补正了 Brief 和排期",
-        (true, false) => "补正了 Brief",
-        (false, true) => "补正了排期",
-        (false, false) => "补充了描述说明",
+    let brief_diff = if has_brief_supplement && brief_st == "missing" {
+        let new_brief = payload.brief_status.clone().unwrap_or_default();
+        format!("Brief: {} → {}", brief_st, new_brief)
+    } else {
+        String::new()
+    };
+    let schedule_diff = if has_schedule_supplement && schedule_st == "missing" {
+        let new_schedule = payload.schedule_status.clone().unwrap_or_default();
+        format!("排期: {} → {}", schedule_st, new_schedule)
+    } else {
+        String::new()
+    };
+    let desc_part = payload.description.clone().unwrap_or_default();
+    let supplement_detail = match (brief_diff.is_empty(), schedule_diff.is_empty(), desc_part.is_empty()) {
+        (false, false, false) => format!("{}，{}；补充说明：{}", brief_diff, schedule_diff, desc_part),
+        (false, false, true) => format!("{}，{}", brief_diff, schedule_diff),
+        (false, true, false) => format!("{}；补充说明：{}", brief_diff, desc_part),
+        (false, true, true) => brief_diff,
+        (true, false, false) => format!("{}；补充说明：{}", schedule_diff, desc_part),
+        (true, false, true) => schedule_diff,
+        (true, true, false) => format!("补充说明：{}", desc_part),
+        (true, true, true) => "无补正内容".to_string(),
     };
 
     conn.execute(
         "INSERT INTO processing_records (request_id, handler_id, handler_role, action, opinion, from_status, to_status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             id, user.id, user.role, "supplement",
-            format!("{}：{}", supplement_summary, payload.description.clone().unwrap_or_default()),
+            supplement_detail.clone(),
             "returned", "returned", now.clone()
         ],
     )?;
 
     conn.execute(
-        "UPDATE exception_reasons SET resolved = 1, resolved_at = ?1 WHERE request_id = ?2 AND resolved = 0",
+        "UPDATE exception_reasons SET resolved = 1, resolved_at = ?1 WHERE request_id = ?2 AND resolved = 0 AND reason_type = 'return_deficiency'",
         rusqlite::params![now, id],
     )?;
 
     log_audit_note(
         &conn, id, user.id, "supplement",
-        &format!("补正动作完成：{}", supplement_summary), &now,
+        &format!("补正完成：{}", supplement_detail), &now,
     );
 
     let req = conn
