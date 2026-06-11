@@ -124,6 +124,7 @@
                   <th>状态</th>
                   <th>到期状态</th>
                   <th>当前节点</th>
+                  <th>当前处理人</th>
                   <th>责任人</th>
                   <th>证据</th>
                   <th>操作权限</th>
@@ -173,6 +174,13 @@
                     <span v-else class="text-tertiary">-</span>
                   </td>
                   <td class="text-sm">
+                    <span v-if="item.current_handler">
+                      <span class="font-medium">{{ item.current_handler.full_name }}</span>
+                      <span class="text-xs text-tertiary ml-1">({{ ROLE_LABELS[item.current_handler.role] }})</span>
+                    </span>
+                    <span v-else class="text-tertiary">待分配</span>
+                  </td>
+                  <td class="text-sm">
                     <span v-if="item.responsible_person">{{ item.responsible_person }}</span>
                     <span v-else class="text-tertiary">-</span>
                   </td>
@@ -212,7 +220,7 @@
                   </td>
                 </tr>
                 <tr v-if="enrollments.length === 0">
-                  <td colspan="13" class="text-center text-tertiary py-8">暂无数据</td>
+                  <td colspan="14" class="text-center text-tertiary py-8">暂无数据</td>
                 </tr>
               </tbody>
             </table>
@@ -251,6 +259,9 @@
                     </div>
                     <div class="squad-meta mt-2">
                       <span v-if="item.required_role" class="tag tag-info tag-xs">{{ ROLE_LABELS[item.required_role] }}</span>
+                      <span v-if="item.current_handler" class="text-xs text-secondary">
+                        🎯 {{ item.current_handler.full_name }}
+                      </span>
                       <span v-if="item.responsible_person" class="text-xs text-secondary">👤 {{ item.responsible_person }}</span>
                       <span class="text-xs text-tertiary">{{ formatDate(item.due_at) }}</span>
                     </div>

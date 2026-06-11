@@ -1,8 +1,8 @@
 import datetime
 from typing import Any, Optional
 
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case, or_
+from sqlalchemy.orm import Session, joinedload
 
 from app.exceptions import (
     MissingMaterialsError,
@@ -87,6 +87,8 @@ def enrollment_to_response(enrollment: Enrollment, user: Optional[Any] = None) -
 def get_current_handler_role(enrollment: Enrollment) -> Optional[RoleEnum]:
     if enrollment.status == EnrollmentStatusEnum.COMPLETED:
         return None
+    if enrollment.current_handler and enrollment.current_handler.role:
+        return enrollment.current_handler.role
     if enrollment.status == EnrollmentStatusEnum.FAILED:
         return RoleEnum.REGISTRATION_CLERK
     if enrollment.status == EnrollmentStatusEnum.PENDING:
@@ -100,6 +102,8 @@ def get_current_handler_role(enrollment: Enrollment) -> Optional[RoleEnum]:
 def get_required_role(enrollment: Enrollment) -> Optional[RoleEnum]:
     if enrollment.status == EnrollmentStatusEnum.COMPLETED:
         return None
+    if enrollment.current_handler and enrollment.current_handler.role:
+        return enrollment.current_handler.role
     if enrollment.status == EnrollmentStatusEnum.FAILED:
         return RoleEnum.REGISTRATION_CLERK
     if enrollment.status == EnrollmentStatusEnum.PENDING:
@@ -125,6 +129,14 @@ def get_responsible_user_name(enrollment: Enrollment, db: Optional[Session] = No
             u = db.query(User).filter(User.id == enrollment.review_by_id).first()
             return u.full_name if u else None
         return None
+
+    if enrollment.current_handler:
+        return enrollment.current_handler.full_name
+    if db and enrollment.current_handler_id:
+        u = db.query(User).filter(User.id == enrollment.current_handler_id).first()
+        if u:
+            return u.full_name
+
     if enrollment.status == EnrollmentStatusEnum.FAILED:
         if enrollment.created_by:
             return enrollment.created_by.full_name
@@ -151,38 +163,78 @@ def check_can_operate(enrollment: Enrollment, user: Any) -> tuple[bool, Optional
     if enrollment.status == EnrollmentStatusEnum.COMPLETED:
         return False, "单据已核验完成，无法继续操作"
 
+    if enrollment.current_handler_id is not None:
+        if enrollment.current_handler_id != user['id']:
+            handler_name = enrollment.current_handler.full_name if enrollment.current_handler else "未知"
+            handler_role = ROLE_LABEL_MAP.get(
+                RoleEnum(enrollment.current_handler.role) if enrollment.current_handler else required_role,
+                required_role.value if required_role else "对应角色"
+            )
+            return False, f"非当前处理人：该单据指定由「{handler_name}（{handler_role}）」负责"
+
     if required_role and user['role'] != required_role:
-        return False, f"当前角色为「{ROLE_LABEL_MAP.get(RoleEnum(user['role']), user['role'])}」，该节点需「{ROLE_LABEL_MAP.get(required_role, required_role)}」操作"
+        return False, f"越权推进：当前角色为「{ROLE_LABEL_MAP.get(RoleEnum(user['role']), user['role'])}」，该节点需「{ROLE_LABEL_MAP.get(required_role, required_role)}」操作"
 
     if enrollment.status == EnrollmentStatusEnum.FAILED:
         if enrollment.created_by_id != user['id']:
-            return False, f"该单据由其他登记员创建，当前责任人为 {enrollment.created_by.full_name if enrollment.created_by else '未知'}"
+            creator_name = enrollment.created_by.full_name if enrollment.created_by else '未知'
+            return False, f"非当前处理人：该单据由「{creator_name}」创建，需本人补正"
         return True, None
 
     expiry = get_expiry_status(enrollment.due_at)
     if expiry == ExpiryStatusEnum.OVERDUE:
-        return False, f"单据已于 {enrollment.due_at.strftime('%Y-%m-%d %H:%M')} 逾期，请先处理逾期异常"
+        return False, f"逾期拦截：单据已于 {enrollment.due_at.strftime('%Y-%m-%d %H:%M')} 逾期，请先处理逾期异常"
 
     return True, None
 
 
-def _validate_current_handler(enrollment: Enrollment, user: Any) -> None:
+def _validate_current_handler(enrollment: Enrollment, user: Any, db: Optional[Session] = None) -> None:
     can, reason = check_can_operate(enrollment, user)
     if not can:
-        if "角色" in reason or "创建" in reason:
-            if "角色" in reason:
-                raise UnauthorizedAdvanceError(reason)
-            else:
-                raise NotCurrentHandlerError(reason)
+        exc_type = None
+        exc_detail = None
+        exc_class = None
+
+        if "越权推进" in reason:
+            exc_type = ExceptionTypeEnum.UNAUTHORIZED_ADVANCE
+            exc_detail = f"越权访问：用户「{user['full_name']}（{ROLE_LABEL_MAP.get(RoleEnum(user['role']), user['role'])}）」尝试操作不属于其角色的单据，{reason}"
+            exc_class = UnauthorizedAdvanceError
+        elif "非当前处理人" in reason:
+            exc_type = ExceptionTypeEnum.UNAUTHORIZED_ADVANCE
+            exc_detail = f"非当前处理人：用户「{user['full_name']}」尝试操作指定由其他人负责的单据，{reason}"
+            exc_class = NotCurrentHandlerError
         elif "逾期" in reason:
-            raise OverdueError(reason)
+            exc_type = ExceptionTypeEnum.OVERDUE
+            exc_detail = f"逾期拦截：{reason}"
+            exc_class = OverdueError
         elif "资料缺失" in reason:
-            raise MissingMaterialsError(reason)
+            exc_type = ExceptionTypeEnum.MISSING_MATERIALS
+            exc_detail = f"资料缺失：{reason}"
+            exc_class = MissingMaterialsError
         else:
-            raise StatusConflictError(reason)
+            exc_type = ExceptionTypeEnum.STATUS_CONFLICT
+            exc_detail = f"状态冲突：{reason}"
+            exc_class = StatusConflictError
+
+        if db and exc_type and exc_detail:
+            try:
+                exc = ExceptionLog(
+                    enrollment_id=enrollment.id,
+                    exception_type=exc_type,
+                    description=exc_detail,
+                    detected_by=user['full_name'],
+                )
+                db.add(exc)
+                db.flush()
+            except Exception:
+                pass
+
+        raise exc_class(reason)
 
 
 def get_responsible_user_id(enrollment: Enrollment) -> Optional[int]:
+    if enrollment.current_handler_id is not None:
+        return enrollment.current_handler_id
     if enrollment.status == EnrollmentStatusEnum.COMPLETED:
         return enrollment.review_by_id
     if enrollment.status == EnrollmentStatusEnum.FAILED:
@@ -262,7 +314,15 @@ def create_enrollment(db: Session, data: EnrollmentCreate, user: Any) -> Enrollm
 
 
 def get_enrollment(db: Session, enrollment_id: int, user: Any) -> Optional[Enrollment]:
-    enrollment = db.query(Enrollment).filter(Enrollment.id == enrollment_id).first()
+    enrollment = db.query(Enrollment).options(
+        joinedload(Enrollment.current_handler),
+        joinedload(Enrollment.created_by),
+        joinedload(Enrollment.audit_by),
+        joinedload(Enrollment.review_by),
+        joinedload(Enrollment.attachments),
+        joinedload(Enrollment.audit_logs).joinedload(AuditLog.user),
+        joinedload(Enrollment.exceptions),
+    ).filter(Enrollment.id == enrollment_id).first()
     if not enrollment:
         return None
     return enrollment
@@ -279,25 +339,42 @@ def list_enrollments(
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[Enrollment], int]:
-    query = db.query(Enrollment)
+    query = db.query(Enrollment).options(
+        joinedload(Enrollment.current_handler),
+        joinedload(Enrollment.created_by),
+        joinedload(Enrollment.audit_by),
+        joinedload(Enrollment.review_by),
+        joinedload(Enrollment.attachments),
+    )
 
     if my_todo:
-        if user['role'] == RoleEnum.REGISTRATION_CLERK:
-            query = query.filter(
-                Enrollment.status == EnrollmentStatusEnum.FAILED,
-                Enrollment.created_by_id == user['id'],
+        query = query.filter(
+            or_(
+                Enrollment.current_handler_id == user['id'],
+                and_(
+                    Enrollment.current_handler_id.is_(None),
+                    case(
+                        (user['role'] == RoleEnum.REGISTRATION_CLERK,
+                         and_(
+                             Enrollment.status == EnrollmentStatusEnum.FAILED,
+                             Enrollment.created_by_id == user['id'],
+                         )),
+                        (user['role'] == RoleEnum.AUDIT_SUPERVISOR,
+                         and_(
+                             Enrollment.status == EnrollmentStatusEnum.PENDING,
+                             Enrollment.audit_by_id.is_(None),
+                         )),
+                        (user['role'] == RoleEnum.REVIEW_LEAD,
+                         and_(
+                             Enrollment.status == EnrollmentStatusEnum.PENDING,
+                             Enrollment.audit_by_id.isnot(None),
+                             Enrollment.review_by_id.is_(None),
+                         )),
+                        else_=False,
+                    )
+                )
             )
-        elif user['role'] == RoleEnum.AUDIT_SUPERVISOR:
-            query = query.filter(
-                Enrollment.status == EnrollmentStatusEnum.PENDING,
-                Enrollment.audit_by_id.is_(None),
-            )
-        elif user['role'] == RoleEnum.REVIEW_LEAD:
-            query = query.filter(
-                Enrollment.status == EnrollmentStatusEnum.PENDING,
-                Enrollment.audit_by_id.isnot(None),
-                Enrollment.review_by_id.is_(None),
-            )
+        )
 
     if status:
         query = query.filter(Enrollment.status == status)
@@ -396,7 +473,7 @@ def audit_enrollment(
     if enrollment.audit_by_id and enrollment.status == EnrollmentStatusEnum.PENDING:
         raise StatusConflictError("状态冲突：单据已审核过，请勿重复审核")
 
-    _validate_current_handler(enrollment, user)
+    _validate_current_handler(enrollment, user, db)
 
     if data.passed:
         _validate_evidence_complete(enrollment)
@@ -405,6 +482,9 @@ def audit_enrollment(
         _validate_not_overdue(enrollment, block_overdue)
 
     old_status = enrollment.status
+    old_handler_name = enrollment.current_handler.full_name if enrollment.current_handler else (
+        enrollment.created_by.full_name if enrollment.status == EnrollmentStatusEnum.FAILED else "待分配"
+    )
 
     if data.passed:
         enrollment.status = EnrollmentStatusEnum.PENDING
@@ -412,20 +492,22 @@ def audit_enrollment(
         enrollment.audited_at = datetime.datetime.utcnow()
         enrollment.current_handler_id = None
         action_type = ActionTypeEnum.AUDIT_PASS
-        comment = data.comment or "审核通过，提交复核"
+        new_handler_name = "待分配复核负责人"
+        comment = data.comment or f"审核通过，责任人从「{old_handler_name}」变更为「{new_handler_name}」，提交复核"
 
         for exc in enrollment.exceptions:
             if not exc.resolved and exc.exception_type == ExceptionTypeEnum.MISSING_MATERIALS:
                 exc.resolved = True
                 exc.resolved_at = datetime.datetime.utcnow()
-                exc.resolution_note = f"审核通过时确认资料齐全，异常解决"
+                exc.resolution_note = f"审核通过时确认资料齐全，异常解决。责任人变更：{old_handler_name} → {new_handler_name}"
     else:
         enrollment.status = EnrollmentStatusEnum.FAILED
         enrollment.audit_by_id = user['id']
         enrollment.audited_at = datetime.datetime.utcnow()
         enrollment.current_handler_id = enrollment.created_by_id
         action_type = ActionTypeEnum.AUDIT_FAIL
-        comment = data.comment or "审核退回，需补正"
+        new_handler_name = enrollment.created_by.full_name if enrollment.created_by else "未知"
+        comment = data.comment or f"审核退回，责任人从「{old_handler_name}」变更为「{new_handler_name}」，需补正"
 
         has_conflict_exc = any(
             not exc.resolved and exc.exception_type == ExceptionTypeEnum.STATUS_CONFLICT
@@ -435,7 +517,7 @@ def audit_enrollment(
             exc = ExceptionLog(
                 enrollment_id=enrollment.id,
                 exception_type=ExceptionTypeEnum.STATUS_CONFLICT,
-                description=f"审核退回：{comment}",
+                description=f"审核退回：{comment}。责任人变更：{old_handler_name} → {new_handler_name}",
                 detected_by=user['full_name'],
             )
             db.add(exc)
@@ -484,7 +566,7 @@ def review_enrollment(
     if enrollment.review_by_id:
         raise StatusConflictError("状态冲突：单据已复核过，请勿重复复核")
 
-    _validate_current_handler(enrollment, user)
+    _validate_current_handler(enrollment, user, db)
 
     if data.passed:
         _validate_evidence_complete(enrollment)
@@ -493,6 +575,9 @@ def review_enrollment(
         _validate_not_overdue(enrollment, block_overdue)
 
     old_status = enrollment.status
+    old_handler_name = enrollment.current_handler.full_name if enrollment.current_handler else (
+        enrollment.audit_by.full_name if enrollment.audit_by else "待分配"
+    )
 
     if data.passed:
         enrollment.status = EnrollmentStatusEnum.COMPLETED
@@ -500,20 +585,22 @@ def review_enrollment(
         enrollment.reviewed_at = datetime.datetime.utcnow()
         enrollment.current_handler_id = None
         action_type = ActionTypeEnum.REVIEW_PASS
-        comment = data.comment or "复核通过，归档完成"
+        new_handler_name = "已完成归档"
+        comment = data.comment or f"复核通过，责任人从「{old_handler_name}」变更为「{new_handler_name}」，归档完成"
 
         for exc in enrollment.exceptions:
             if not exc.resolved:
                 exc.resolved = True
                 exc.resolved_at = datetime.datetime.utcnow()
-                exc.resolution_note = f"复核完成，归档时关闭所有异常"
+                exc.resolution_note = f"复核完成归档，异常关闭。责任人变更：{old_handler_name} → {new_handler_name}"
     else:
         enrollment.status = EnrollmentStatusEnum.FAILED
         enrollment.review_by_id = user['id']
         enrollment.reviewed_at = datetime.datetime.utcnow()
         enrollment.current_handler_id = enrollment.created_by_id
         action_type = ActionTypeEnum.REVIEW_FAIL
-        comment = data.comment or "复核退回，需补正"
+        new_handler_name = enrollment.created_by.full_name if enrollment.created_by else "未知"
+        comment = data.comment or f"复核退回，责任人从「{old_handler_name}」变更为「{new_handler_name}」，需补正"
 
         has_conflict_exc = any(
             not exc.resolved and exc.exception_type == ExceptionTypeEnum.STATUS_CONFLICT
@@ -523,7 +610,7 @@ def review_enrollment(
             exc = ExceptionLog(
                 enrollment_id=enrollment.id,
                 exception_type=ExceptionTypeEnum.STATUS_CONFLICT,
-                description=f"复核退回：{comment}",
+                description=f"复核退回：{comment}。责任人变更：{old_handler_name} → {new_handler_name}",
                 detected_by=user['full_name'],
             )
             db.add(exc)
@@ -564,9 +651,12 @@ def correct_enrollment(
             f"状态冲突：当前状态为「{enrollment.status.value}」，只有核验失败的单据可以补正"
         )
 
-    _validate_current_handler(enrollment, user)
+    _validate_current_handler(enrollment, user, db)
 
     old_status = enrollment.status
+    old_handler_name = enrollment.current_handler.full_name if enrollment.current_handler else (
+        enrollment.created_by.full_name if enrollment.created_by else "待分配"
+    )
 
     if data.update_data:
         update_dict = data.update_data.model_dump(exclude_unset=True)
@@ -594,12 +684,13 @@ def correct_enrollment(
     enrollment.audited_at = None
     enrollment.review_by_id = None
     enrollment.reviewed_at = None
+    new_handler_name = "待分配审核主管"
 
     for exc in enrollment.exceptions:
         if not exc.resolved and exc.exception_type == ExceptionTypeEnum.STATUS_CONFLICT:
             exc.resolved = True
             exc.resolved_at = datetime.datetime.utcnow()
-            exc.resolution_note = f"补正解决：{data.comment}"
+            exc.resolution_note = f"补正解决：{data.comment}。责任人变更：{old_handler_name} → {new_handler_name}"
 
     missing = get_missing_evidence(enrollment)
     if missing:
@@ -621,15 +712,17 @@ def correct_enrollment(
             if not exc.resolved and exc.exception_type == ExceptionTypeEnum.MISSING_MATERIALS:
                 exc.resolved = True
                 exc.resolved_at = datetime.datetime.utcnow()
-                exc.resolution_note = f"补正后资料齐全，异常解决"
+                exc.resolution_note = f"补正后资料齐全，异常解决。责任人变更：{old_handler_name} → {new_handler_name}"
 
+    correct_comment = data.comment or ""
+    full_comment = f"{correct_comment}。责任人变更：{old_handler_name} → {new_handler_name}" if correct_comment else f"补正提交，责任人变更：{old_handler_name} → {new_handler_name}"
     audit_log = AuditLog(
         enrollment_id=enrollment.id,
         user_id=user['id'],
         action_type=ActionTypeEnum.CORRECT,
         old_status=old_status,
         new_status=enrollment.status,
-        comment=data.comment,
+        comment=full_comment,
     )
     db.add(audit_log)
 
