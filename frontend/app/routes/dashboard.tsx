@@ -19,6 +19,8 @@ interface Record {
   suitability_check?: boolean;
   risk_assessment?: boolean;
   business_opening?: boolean;
+  needs_correction?: boolean;
+  correction_round?: number;
 }
 
 const STATUS_TABS = [
@@ -35,12 +37,19 @@ const EXPIRY_FILTERS = [
   { key: "overdue", label: "逾期" },
 ];
 
+const CORRECTION_FILTERS = [
+  { key: "all", label: "全部" },
+  { key: "true", label: "待补正" },
+  { key: "false", label: "无需补正" },
+];
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [records, setRecords] = useState<Record[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
   const [expiryFilter, setExpiryFilter] = useState("all");
+  const [correctionFilter, setCorrectionFilter] = useState("all");
   const [selectedRecord, setSelectedRecord] = useState<Record | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
@@ -60,6 +69,7 @@ export default function Dashboard() {
       const params = new URLSearchParams();
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (expiryFilter !== "all") params.set("expiry_status", expiryFilter);
+      if (correctionFilter !== "all") params.set("needs_correction", correctionFilter);
       const qs = params.toString();
       const data = await apiFetch(`/records${qs ? "?" + qs : ""}`, {}, token || undefined);
       setRecords(data.records || []);
@@ -74,7 +84,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (isAuthenticated()) loadRecords();
-  }, [statusFilter, expiryFilter]);
+  }, [statusFilter, expiryFilter, correctionFilter]);
 
   const filteredRecords = records;
 
@@ -130,7 +140,7 @@ export default function Dashboard() {
                   </button>
                 ))}
               </div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <span className="text-sm text-muted">到期筛选:</span>
                 <select
                   className="form-control"
@@ -139,6 +149,19 @@ export default function Dashboard() {
                   onChange={(e) => setExpiryFilter(e.target.value)}
                 >
                   {EXPIRY_FILTERS.map((f) => (
+                    <option key={f.key} value={f.key}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-sm text-muted" style={{ marginLeft: 8 }}>补正筛选:</span>
+                <select
+                  className="form-control"
+                  style={{ width: "auto", padding: "4px 8px", fontSize: 13 }}
+                  value={correctionFilter}
+                  onChange={(e) => setCorrectionFilter(e.target.value)}
+                >
+                  {CORRECTION_FILTERS.map((f) => (
                     <option key={f.key} value={f.key}>
                       {f.label}
                     </option>
@@ -207,6 +230,7 @@ export default function Dashboard() {
                       <th>业务类型</th>
                       <th>状态</th>
                       <th>到期状态</th>
+                      <th>补正状态</th>
                       <th>当前处理人</th>
                       <th>创建时间</th>
                     </tr>
@@ -236,6 +260,16 @@ export default function Dashboard() {
                         </td>
                         <td>
                           <ExpiryBadge status={record.expiry_status} />
+                        </td>
+                        <td>
+                          {record.needs_correction ? (
+                            <span className="badge badge-warning">
+                              待补正
+                              {record.correction_round && record.correction_round > 0 ? ` (第${record.correction_round}轮)` : ""}
+                            </span>
+                          ) : (
+                            <span className="badge badge-success">无需补正</span>
+                          )}
                         </td>
                         <td>{record.current_handler?.name || "—"}</td>
                         <td className="text-sm text-muted">
@@ -297,6 +331,17 @@ export default function Dashboard() {
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <span className="text-sm text-muted">到期状态</span>
                     <ExpiryBadge status={selectedRecord.expiry_status} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span className="text-sm text-muted">补正状态</span>
+                    {selectedRecord.needs_correction ? (
+                      <span className="badge badge-warning">
+                        待补正
+                        {selectedRecord.correction_round && selectedRecord.correction_round > 0 ? ` (第${selectedRecord.correction_round}轮)` : ""}
+                      </span>
+                    ) : (
+                      <span className="badge badge-success">无需补正</span>
+                    )}
                   </div>
                 </div>
               </div>

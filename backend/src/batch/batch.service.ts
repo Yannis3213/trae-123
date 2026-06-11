@@ -145,29 +145,36 @@ export class BatchService {
           break;
       }
 
+      const newRound = dto.action === 'return' ? (record.correction_round || 0) + 1 : record.correction_round;
+      const newCorrectionNote = dto.action === 'return' ? null : record.correction_note;
+
       db.prepare(`
         UPDATE suitability_records SET status = ?, assigned_to = ?, current_handler = ?, version = version + 1, updated_at = datetime('now'),
-        review_opinion = ?, review_result = ?, return_reason = ?
+        review_opinion = ?, review_result = ?, return_reason = ?, correction_note = ?, correction_round = ?
         WHERE id = ?
       `).run(newStatus, newAssignedTo, newCurrentHandler,
         dto.review_opinion || record.review_opinion,
         dto.review_result || record.review_result,
         dto.return_reason || record.return_reason,
+        newCorrectionNote,
+        newRound,
         id);
 
       this.dbService.recalcExpiryStatus(id);
 
       db.prepare(`
-        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, return_reason)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, return_reason, correction_note, round)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(id, dto.action, record.status, newStatus, user.id, user.role, dto.comment || null,
         dto.review_opinion || null,
         dto.review_result || null,
-        dto.return_reason || null);
+        dto.return_reason || null,
+        dto.action === 'return' ? null : record.correction_note,
+        newRound);
 
       if (dto.action === 'return' && dto.return_reason) {
-        db.prepare('INSERT INTO exception_reasons (record_id, reason_type, description, created_by) VALUES (?, ?, ?, ?)')
-          .run(id, 'return_correction', dto.return_reason, user.id);
+        db.prepare('INSERT INTO exception_reasons (record_id, reason_type, description, created_by, round) VALUES (?, ?, ?, ?, ?)')
+          .run(id, 'return_correction', dto.return_reason, user.id, newRound);
       }
     });
 

@@ -16,16 +16,19 @@ interface ProcessingRecord {
   review_result?: string;
   return_reason?: string;
   correction_note?: string;
+  round?: number;
   created_at: string;
 }
 
 interface ExceptionReason {
   id: string;
   reason: string;
+  reason_type: string;
   created_at: string;
   created_by: string;
   resolved?: number;
   resolved_at?: string;
+  round?: number;
 }
 
 interface AuditNote {
@@ -60,6 +63,8 @@ interface RecordDetail {
   review_result?: string;
   return_reason?: string;
   correction_note?: string;
+  correction_round?: number;
+  needs_correction?: boolean;
   processing_records: ProcessingRecord[];
   exception_reasons: ExceptionReason[];
   audit_notes: AuditNote[];
@@ -341,6 +346,27 @@ export default function RecordDetailPage() {
                 {record.created_at ? new Date(record.created_at).toLocaleString("zh-CN") : "—"}
               </div>
             </div>
+            <div>
+              <div className="text-xs text-muted">补正轮次</div>
+              <div className="font-medium">
+                {record.correction_round && record.correction_round > 0
+                  ? `第 ${record.correction_round} 轮`
+                  : "无"}
+              </div>
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div className="text-xs text-muted">当前待办</div>
+              <div style={{ marginTop: 2 }}>
+                {record.needs_correction ? (
+                  <span className="badge badge-warning">
+                    待补正
+                    {record.correction_round && record.correction_round > 0 ? ` · 第${record.correction_round}轮` : ""}
+                  </span>
+                ) : (
+                  <span className="badge badge-success">无待办</span>
+                )}
+              </div>
+            </div>
             {record.review_opinion && (
               <div style={{ gridColumn: "1 / -1" }}>
                 <div className="text-xs text-muted">复核意见</div>
@@ -436,6 +462,11 @@ export default function RecordDetailPage() {
               <div style={{ padding: "8px 12px", background: "var(--warning-light)", borderRadius: "var(--radius)", fontSize: 13 }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>
                   退回补正要求
+                  {record.correction_round && record.correction_round > 0 && (
+                    <span className="badge badge-warning" style={{ marginLeft: 8 }}>
+                      第{record.correction_round}轮
+                    </span>
+                  )}
                   {record.correction_note && <span className="badge badge-green" style={{ marginLeft: 8 }}>已补正</span>}
                 </div>
                 <div>{record.return_reason}</div>
@@ -502,6 +533,11 @@ export default function RecordDetailPage() {
               <div style={{ padding: "8px 12px", background: "var(--warning-light)", borderRadius: "var(--radius)", fontSize: 13 }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>
                   退回补正要求
+                  {record.correction_round && record.correction_round > 0 && (
+                    <span className="badge badge-warning" style={{ marginLeft: 8 }}>
+                      第{record.correction_round}轮
+                    </span>
+                  )}
                   {record.correction_note && <span className="badge badge-green" style={{ marginLeft: 8 }}>已补正</span>}
                 </div>
                 <div>{record.return_reason}</div>
@@ -641,6 +677,11 @@ export default function RecordDetailPage() {
                   <div className="timeline-content">
                     <div className="timeline-title">
                       {ACTION_LABELS[pr.action] || pr.action}
+                      {pr.round && pr.round > 0 && (
+                        <span className="badge badge-warning" style={{ marginLeft: 8 }}>
+                          第{pr.round}轮
+                        </span>
+                      )}
                       {pr.handler?.name && ` — ${pr.handler.name}`}
                     </div>
                     <div className="timeline-time">
@@ -696,7 +737,14 @@ export default function RecordDetailPage() {
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ fontWeight: 500, textDecoration: er.resolved ? "line-through" : "none" }}>{er.reason}</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      {er.reason_type === 'return_correction' && er.round && er.round > 0 && (
+                        <span className="badge badge-warning" style={{ fontSize: 11 }}>
+                          第{er.round}轮
+                        </span>
+                      )}
+                      <div style={{ fontWeight: 500, textDecoration: er.resolved ? "line-through" : "none" }}>{er.reason}</div>
+                    </div>
                     {er.resolved ? (
                       <span className="badge badge-green">已解决</span>
                     ) : (

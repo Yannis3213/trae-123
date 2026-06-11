@@ -52,6 +52,7 @@ export class DatabaseService implements OnModuleInit {
         review_result TEXT,
         return_reason TEXT,
         correction_note TEXT,
+        correction_round INTEGER DEFAULT 0,
         exception_reason TEXT,
         created_by INTEGER NOT NULL,
         created_at TEXT DEFAULT (datetime('now')),
@@ -86,6 +87,7 @@ export class DatabaseService implements OnModuleInit {
         review_result TEXT,
         return_reason TEXT,
         correction_note TEXT,
+        round INTEGER DEFAULT 0,
         created_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (record_id) REFERENCES suitability_records(id),
         FOREIGN KEY (handler_id) REFERENCES users(id)
@@ -110,6 +112,7 @@ export class DatabaseService implements OnModuleInit {
         created_at TEXT DEFAULT (datetime('now')),
         resolved INTEGER DEFAULT 0,
         resolved_at TEXT,
+        round INTEGER DEFAULT 0,
         FOREIGN KEY (record_id) REFERENCES suitability_records(id),
         FOREIGN KEY (created_by) REFERENCES users(id)
       );
@@ -132,10 +135,14 @@ export class DatabaseService implements OnModuleInit {
     if (!srColNames.includes('correction_note')) {
       this.db.exec('ALTER TABLE suitability_records ADD COLUMN correction_note TEXT');
     }
+    if (!srColNames.includes('correction_round')) {
+      this.db.exec('ALTER TABLE suitability_records ADD COLUMN correction_round INTEGER DEFAULT 0');
+    }
     if (srColNames.includes('correction_reason') && !srColNames.includes('return_reason_migrated')) {
       this.db.exec(`
         UPDATE suitability_records
-        SET return_reason = correction_reason
+        SET return_reason = correction_reason,
+            correction_round = CASE WHEN correction_reason IS NOT NULL AND correction_reason != '' THEN 1 ELSE 0 END
         WHERE correction_reason IS NOT NULL AND correction_reason != ''
       `);
       this.db.exec('ALTER TABLE suitability_records ADD COLUMN return_reason_migrated INTEGER DEFAULT 1');
@@ -156,18 +163,35 @@ export class DatabaseService implements OnModuleInit {
     if (!prColNames.includes('correction_note')) {
       this.db.exec('ALTER TABLE processing_records ADD COLUMN correction_note TEXT');
     }
+    if (!prColNames.includes('round')) {
+      this.db.exec('ALTER TABLE processing_records ADD COLUMN round INTEGER DEFAULT 0');
+    }
     if (prColNames.includes('correction_reason')) {
       this.db.exec(`
         UPDATE processing_records
-        SET return_reason = correction_reason
+        SET return_reason = correction_reason,
+            round = 1
         WHERE correction_reason IS NOT NULL AND correction_reason != ''
           AND (action = 'return' OR action IS NULL)
       `);
       this.db.exec(`
         UPDATE processing_records
-        SET correction_note = correction_reason
+        SET correction_note = correction_reason,
+            round = 1
         WHERE correction_reason IS NOT NULL AND correction_reason != ''
           AND action = 'correction'
+      `);
+    }
+
+    const erCols = this.db.prepare("PRAGMA table_info(exception_reasons)").all() as Array<{ name: string }>;
+    const erColNames = erCols.map(c => c.name);
+
+    if (!erColNames.includes('round')) {
+      this.db.exec('ALTER TABLE exception_reasons ADD COLUMN round INTEGER DEFAULT 0');
+      this.db.exec(`
+        UPDATE exception_reasons
+        SET round = 1
+        WHERE reason_type = 'return_correction'
       `);
     }
   }
@@ -197,39 +221,41 @@ export class DatabaseService implements OnModuleInit {
     };
 
     const insertRecord = this.db.prepare(`
-      INSERT INTO suitability_records (record_no, client_name, client_id_no, business_type, status, expiry_status, expiry_date, assigned_to, current_handler, version, has_suitability_evidence, has_risk_assessment, has_business_opening, review_opinion, review_result, return_reason, correction_note, exception_reason, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO suitability_records (record_no, client_name, client_id_no, business_type, status, expiry_status, expiry_date, assigned_to, current_handler, version, has_suitability_evidence, has_risk_assessment, has_business_opening, review_opinion, review_result, return_reason, correction_note, correction_round, exception_reason, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertProcessing = this.db.prepare(`
-      INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, round)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertException = this.db.prepare(`
-      INSERT INTO exception_reasons (record_id, reason_type, description, created_by, resolved)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO exception_reasons (record_id, reason_type, description, created_by, resolved, round)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
 
     const records = [
-      { no: 'SR-2024-001', client: '王明', idNo: '110101199001011234', biz: '创业板开通', status: 'pending_assign', expiry: addDays(now, 60), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: null, creator: 1 },
-      { no: 'SR-2024-002', client: '李华', idNo: '310101198805052345', biz: '融资融券', status: 'pending_assign', expiry: addDays(now, 45), assigned: null, handler: 1, v: 1, suit: 1, risk: 1, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: null, creator: 1 },
-      { no: 'SR-2024-003', client: '张伟', idNo: '440101199203033456', biz: '科创板开通', status: 'transferred', expiry: addDays(now, 30), assigned: 2, handler: 2, v: 2, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: null, creator: 1 },
-      { no: 'SR-2024-004', client: '赵芳', idNo: '500101199506064567', biz: '期权交易', status: 'transferred', expiry: addDays(now, 20), assigned: 2, handler: 2, v: 2, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: null, creator: 1 },
-      { no: 'SR-2024-005', client: '陈刚', idNo: '320101198707075678', biz: '北交所开通', status: 'visited', expiry: addDays(now, 50), assigned: 3, handler: 3, v: 3, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: '客户适当性匹配，风险测评结果与业务开通一致，同意办理', reviewResult: 'approved', returnReason: null, correctionNote: null, exReason: null, creator: 1 },
+      { no: 'SR-2024-001', client: '王明', idNo: '110101199001011234', biz: '创业板开通', status: 'pending_assign', expiry: addDays(now, 60), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
+      { no: 'SR-2024-002', client: '李华', idNo: '310101198805052345', biz: '融资融券', status: 'pending_assign', expiry: addDays(now, 45), assigned: null, handler: 1, v: 1, suit: 1, risk: 1, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
+      { no: 'SR-2024-003', client: '张伟', idNo: '440101199203033456', biz: '科创板开通', status: 'transferred', expiry: addDays(now, 30), assigned: 2, handler: 2, v: 2, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
+      { no: 'SR-2024-004', client: '赵芳', idNo: '500101199506064567', biz: '期权交易', status: 'transferred', expiry: addDays(now, 20), assigned: 2, handler: 2, v: 2, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
+      { no: 'SR-2024-005', client: '陈刚', idNo: '320101198707075678', biz: '北交所开通', status: 'visited', expiry: addDays(now, 50), assigned: 3, handler: 3, v: 3, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: '客户适当性匹配，风险测评结果与业务开通一致，同意办理', reviewResult: 'approved', returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
 
-      { no: 'SR-2024-006', client: '刘洋', idNo: '110101199104046789', biz: '创业板开通', status: 'pending_assign', expiry: addDays(now, 25), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: '缺少适当性评估材料', creator: 1 },
-      { no: 'SR-2024-007', client: '周敏', idNo: '330101199308087890', biz: '融资融券', status: 'transferred', expiry: addDays(now, 15), assigned: 2, handler: 2, v: 2, suit: 0, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: '缺少风险揭示书', creator: 1 },
-      { no: 'SR-2024-008', client: '吴强', idNo: '420101199209098901', biz: '科创板开通', status: 'pending_assign', expiry: addDays(now, 10), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: '三项材料均缺失', creator: 1 },
-      { no: 'SR-2024-009', client: '郑丽', idNo: '510101199410109012', biz: '期权交易', status: 'transferred', expiry: addDays(now, 18), assigned: 2, handler: 2, v: 2, suit: 1, risk: 0, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: '缺少风险评估报告', creator: 1 },
+      { no: 'SR-2024-006', client: '刘洋', idNo: '110101199104046789', biz: '创业板开通', status: 'pending_assign', expiry: addDays(now, 25), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: '缺少适当性评估材料', creator: 1 },
+      { no: 'SR-2024-007', client: '周敏', idNo: '330101199308087890', biz: '融资融券', status: 'transferred', expiry: addDays(now, 15), assigned: 2, handler: 2, v: 2, suit: 0, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: '缺少风险揭示书', creator: 1 },
+      { no: 'SR-2024-008', client: '吴强', idNo: '420101199209098901', biz: '科创板开通', status: 'pending_assign', expiry: addDays(now, 10), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: '三项材料均缺失', creator: 1 },
+      { no: 'SR-2024-009', client: '郑丽', idNo: '510101199410109012', biz: '期权交易', status: 'transferred', expiry: addDays(now, 18), assigned: 2, handler: 2, v: 2, suit: 1, risk: 0, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: '缺少风险评估报告', creator: 1 },
 
-      { no: 'SR-2024-010', client: '孙磊', idNo: '120101198811111123', biz: '北交所开通', status: 'pending_assign', expiry: addDays(now, 5), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: null, creator: 1 },
-      { no: 'SR-2024-011', client: '何静', idNo: '210101199512122234', biz: '创业板开通', status: 'transferred', expiry: addDays(now, -3), assigned: 2, handler: 2, v: 2, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: null, creator: 1 },
-      { no: 'SR-2024-012', client: '马超', idNo: '610101199003033345', biz: '融资融券', status: 'pending_assign', expiry: addDays(now, -7), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: null, creator: 1 },
+      { no: 'SR-2024-010', client: '孙磊', idNo: '120101198811111123', biz: '北交所开通', status: 'pending_assign', expiry: addDays(now, 5), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
+      { no: 'SR-2024-011', client: '何静', idNo: '210101199512122234', biz: '创业板开通', status: 'transferred', expiry: addDays(now, -3), assigned: 2, handler: 2, v: 2, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
+      { no: 'SR-2024-012', client: '马超', idNo: '610101199003033345', biz: '融资融券', status: 'pending_assign', expiry: addDays(now, -7), assigned: null, handler: 1, v: 1, suit: 0, risk: 0, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
 
-      { no: 'SR-2024-013', client: '黄英', idNo: '340101198706064456', biz: '科创板开通', status: 'pending_assign', expiry: addDays(now, 40), assigned: null, handler: 1, v: 1, suit: 1, risk: 1, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: '业务开通材料缺失，请补充客户签署的业务开通申请表', correctionNote: null, exReason: '被退回修改：业务开通材料缺失', creator: 1 },
-      { no: 'SR-2024-014', client: '许杰', idNo: '220101199408085567', biz: '期权交易', status: 'transferred', expiry: addDays(now, 22), assigned: 2, handler: 2, v: 2, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, exReason: null, creator: 1 },
-      { no: 'SR-2024-015', client: '林芳', idNo: '350101199509096678', biz: '北交所开通', status: 'visited', expiry: addDays(now, 35), assigned: 3, handler: 3, v: 3, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: '材料齐全，适当性匹配无异常，同意办理', reviewResult: 'approved', returnReason: null, correctionNote: null, exReason: null, creator: 1 },
+      { no: 'SR-2024-013', client: '黄英', idNo: '340101198706064456', biz: '科创板开通', status: 'pending_assign', expiry: addDays(now, 40), assigned: null, handler: 1, v: 3, suit: 1, risk: 1, bizOpen: 0, reviewOpinion: null, reviewResult: null, returnReason: '业务开通材料缺失，请补充客户签署的业务开通申请表', correctionNote: '已补充签署的业务开通申请表扫描件', correctionRound: 1, exReason: '被退回修改：业务开通材料缺失', creator: 1 },
+      { no: 'SR-2024-014', client: '许杰', idNo: '220101199408085567', biz: '期权交易', status: 'transferred', expiry: addDays(now, 22), assigned: 2, handler: 2, v: 2, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
+      { no: 'SR-2024-015', client: '林芳', idNo: '350101199509096678', biz: '北交所开通', status: 'visited', expiry: addDays(now, 35), assigned: 3, handler: 3, v: 3, suit: 1, risk: 1, bizOpen: 1, reviewOpinion: '材料齐全，适当性匹配无异常，同意办理', reviewResult: 'approved', returnReason: null, correctionNote: null, correctionRound: 0, exReason: null, creator: 1 },
+
+      { no: 'SR-2024-016', client: '钱建军', idNo: '310101198610108899', biz: '融资融券', status: 'pending_assign', expiry: addDays(now, 28), assigned: null, handler: 1, v: 5, suit: 1, risk: 0, bizOpen: 1, reviewOpinion: null, reviewResult: null, returnReason: '风险测评过期，请重新测评并提交最新报告', correctionNote: null, correctionRound: 2, exReason: '多次退回补正', creator: 1 },
     ];
 
     const txn = this.db.transaction(() => {
@@ -238,30 +264,42 @@ export class DatabaseService implements OnModuleInit {
         insertRecord.run(
           r.no, r.client, r.idNo, r.biz, r.status, expStatus, fmt(r.expiry),
           r.assigned, r.handler, r.v, r.suit, r.risk, r.bizOpen,
-          r.reviewOpinion, r.reviewResult, r.returnReason, r.correctionNote, r.exReason, r.creator
+          r.reviewOpinion, r.reviewResult, r.returnReason, r.correctionNote, r.correctionRound, r.exReason, r.creator
         );
       }
 
-      insertProcessing.run(3, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四');
-      insertProcessing.run(3, 'transfer', 'transferred', 'visited', 2, 'compliance_officer', '材料齐全，转办给营业部经理');
-      insertProcessing.run(4, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四');
-      insertProcessing.run(5, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四');
-      insertProcessing.run(5, 'transfer', 'transferred', 'visited', 2, 'compliance_officer', '材料齐全，转办');
-      insertProcessing.run(7, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四');
-      insertProcessing.run(9, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四');
-      insertProcessing.run(11, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四');
-      insertProcessing.run(14, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四');
-      insertProcessing.run(15, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四');
-      insertProcessing.run(15, 'transfer', 'transferred', 'visited', 2, 'compliance_officer', '材料齐全，转办');
+      insertProcessing.run(3, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 0);
+      insertProcessing.run(3, 'transfer', 'transferred', 'visited', 2, 'compliance_officer', '材料齐全，转办给营业部经理', 0);
+      insertProcessing.run(4, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 0);
+      insertProcessing.run(5, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 0);
+      insertProcessing.run(5, 'transfer', 'transferred', 'visited', 2, 'compliance_officer', '材料齐全，转办', 0);
+      insertProcessing.run(7, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 0);
+      insertProcessing.run(9, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 0);
+      insertProcessing.run(11, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 0);
+      insertProcessing.run(14, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 0);
+      insertProcessing.run(15, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 0);
+      insertProcessing.run(15, 'transfer', 'transferred', 'visited', 2, 'compliance_officer', '材料齐全，转办', 0);
 
-      insertException.run(6, 'missing_material', '缺少适当性评估材料，需补充', 1, 0);
-      insertException.run(7, 'missing_material', '缺少风险揭示书，需补充后重新审核', 2, 0);
-      insertException.run(8, 'missing_material', '三项材料均缺失，需全部补充', 1, 0);
-      insertException.run(9, 'missing_material', '缺少风险评估报告', 2, 0);
-      insertException.run(10, 'timeout', '即将到期，请尽快处理', 1, 0);
-      insertException.run(11, 'timeout', '已超过到期日，需紧急处理', 2, 0);
-      insertException.run(12, 'timeout', '已逾期，需紧急处理', 1, 0);
-      insertException.run(13, 'return_correction', '被退回修改：业务开通材料缺失', 1, 0);
+      insertProcessing.run(13, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 1);
+      insertProcessing.run(13, 'return', 'transferred', 'pending_assign', 2, 'compliance_officer', '退回修改：业务开通材料缺失', 1);
+      insertProcessing.run(13, 'correction', 'pending_assign', 'pending_assign', 1, 'financial_advisor', '已补充签署的业务开通申请表扫描件', 1);
+
+      insertProcessing.run(16, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '分派给合规专员李四', 1);
+      insertProcessing.run(16, 'return', 'transferred', 'pending_assign', 2, 'compliance_officer', '退回：风险测评报告过期，需重新测评', 1);
+      insertProcessing.run(16, 'correction', 'pending_assign', 'pending_assign', 1, 'financial_advisor', '已提交新的风险测评报告', 1);
+      insertProcessing.run(16, 'assign', 'pending_assign', 'transferred', 1, 'financial_advisor', '再次分派给合规专员李四', 2);
+      insertProcessing.run(16, 'return', 'transferred', 'pending_assign', 2, 'compliance_officer', '二次退回：风险测评等级不足C4，需重新测评', 2);
+
+      insertException.run(6, 'missing_material', '缺少适当性评估材料，需补充', 1, 0, 0);
+      insertException.run(7, 'missing_material', '缺少风险揭示书，需补充后重新审核', 2, 0, 0);
+      insertException.run(8, 'missing_material', '三项材料均缺失，需全部补充', 1, 0, 0);
+      insertException.run(9, 'missing_material', '缺少风险评估报告', 2, 0, 0);
+      insertException.run(10, 'timeout', '即将到期，请尽快处理', 1, 0, 0);
+      insertException.run(11, 'timeout', '已超过到期日，需紧急处理', 2, 0, 0);
+      insertException.run(12, 'timeout', '已逾期，需紧急处理', 1, 0, 0);
+      insertException.run(13, 'return_correction', '被退回修改：业务开通材料缺失', 1, 1, 1);
+      insertException.run(16, 'return_correction', '第一次退回：风险测评报告过期，需重新测评', 1, 1, 1);
+      insertException.run(16, 'return_correction', '第二次退回：风险测评等级不足C4，需重新测评', 1, 0, 2);
     });
 
     txn();

@@ -13,6 +13,8 @@ interface Record {
   business_type: string;
   status: string;
   current_handler: { id: string; name: string } | null;
+  needs_correction?: boolean;
+  correction_round?: number;
 }
 
 interface UserOption {
@@ -40,12 +42,19 @@ const STATUS_TABS = [
   { key: "visited", label: "已回访" },
 ];
 
+const CORRECTION_FILTERS = [
+  { key: "all", label: "全部" },
+  { key: "true", label: "待补正" },
+  { key: "false", label: "无需补正" },
+];
+
 export default function BatchPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [records, setRecords] = useState<Record[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("pending_assign");
+  const [correctionFilter, setCorrectionFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [action, setAction] = useState("assign");
   const [handlerId, setHandlerId] = useState("");
@@ -73,6 +82,10 @@ export default function BatchPage() {
   }, []);
 
   useEffect(() => {
+    loadRecords();
+  }, [statusFilter, correctionFilter]);
+
+  useEffect(() => {
     const match = ACTION_OPTIONS.find((a) => a.key === action);
     if (match) setStatusFilter(match.status);
   }, [action]);
@@ -81,7 +94,11 @@ export default function BatchPage() {
     try {
       setLoading(true);
       const token = getToken();
-      const data = await apiFetch("/records", {}, token || undefined);
+      const params = new URLSearchParams();
+      params.set("status", statusFilter);
+      if (correctionFilter !== "all") params.set("needs_correction", correctionFilter);
+      const qs = params.toString();
+      const data = await apiFetch(`/records${qs ? "?" + qs : ""}`, {}, token || undefined);
       setRecords(data.records || data || []);
     } catch (err: any) {
       setError(err.message || "加载记录失败");
@@ -276,13 +293,24 @@ export default function BatchPage() {
       </div>
 
       <div className="card">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
           <div className="tabs" style={{ marginBottom: 0, borderBottom: "none" }}>
             {STATUS_TABS.map((tab) => (
               <button
                 key={tab.key}
                 className={`tab ${statusFilter === tab.key ? "active" : ""}`}
                 onClick={() => setStatusFilter(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="tabs" style={{ marginBottom: 0, borderBottom: "none" }}>
+            {CORRECTION_FILTERS.map((tab) => (
+              <button
+                key={tab.key}
+                className={`tab ${correctionFilter === tab.key ? "active" : ""}`}
+                onClick={() => setCorrectionFilter(tab.key)}
               >
                 {tab.label}
               </button>
@@ -318,6 +346,7 @@ export default function BatchPage() {
                 <th>客户姓名</th>
                 <th>业务类型</th>
                 <th>状态</th>
+                <th>补正状态</th>
                 <th>当前处理人</th>
               </tr>
             </thead>
@@ -344,6 +373,16 @@ export default function BatchPage() {
                   <td>{record.business_type}</td>
                   <td>
                     <StatusBadge status={record.status} />
+                  </td>
+                  <td>
+                    {record.needs_correction ? (
+                      <span className="badge badge-warning">
+                        待补正
+                        {record.correction_round && record.correction_round > 0 ? ` (第${record.correction_round}轮)` : ""}
+                      </span>
+                    ) : (
+                      <span className="badge badge-success">无需补正</span>
+                    )}
                   </td>
                   <td>{record.current_handler?.name || "—"}</td>
                 </tr>

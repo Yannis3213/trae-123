@@ -31,6 +31,7 @@ interface AuditLog {
   review_result?: string;
   return_reason?: string;
   correction_note?: string;
+  round?: number;
   created_at: string;
   details?: string;
 }
@@ -325,6 +326,7 @@ export default function StatsPage() {
                 <th>时间</th>
                 <th>操作人</th>
                 <th>记录编号</th>
+                <th>轮次</th>
                 <th>操作</th>
                 <th>备注</th>
                 <th>复核意见</th>
@@ -344,6 +346,13 @@ export default function StatsPage() {
                     onClick={() => navigate(`/records/${log.record_id}`)}
                   >
                     {log.record_no}
+                  </td>
+                  <td>
+                    {log.round && log.round > 0 ? (
+                      <span className="badge badge-warning">第{log.round}轮</span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
                   </td>
                   <td>
                     <span className="badge badge-blue">

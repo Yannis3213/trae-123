@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 export class RecordsService {
   constructor(private dbService: DatabaseService) {}
 
-  list(filters: { status?: string; role?: string; handler?: string; expiry_status?: string }, user: any) {
+  list(filters: { status?: string; role?: string; handler?: string; expiry_status?: string; needs_correction?: string }, user: any) {
     this.dbService.recalcAllExpiryStatuses();
     const db = this.dbService.getDb();
     let sql = `
@@ -50,17 +50,34 @@ export class RecordsService {
       params.push(filters.expiry_status);
     }
 
+    if (filters.needs_correction === 'true') {
+      sql += ' AND EXISTS (SELECT 1 FROM exception_reasons er WHERE er.record_id = sr.id AND er.reason_type = ? AND er.resolved = 0)';
+      params.push('return_correction');
+    } else if (filters.needs_correction === 'false') {
+      sql += ' AND NOT EXISTS (SELECT 1 FROM exception_reasons er WHERE er.record_id = sr.id AND er.reason_type = ? AND er.resolved = 0)';
+      params.push('return_correction');
+    }
+
     sql += ' ORDER BY sr.updated_at DESC';
     const rows = db.prepare(sql).all(...params);
-    return rows.map((r: any) => ({
-      ...r,
-      current_handler: r.current_handler ? { id: r.current_handler, name: r.current_handler_name } : null,
-      assigned_to: r.assigned_to ? { id: r.assigned_to, name: r.assigned_to_name } : null,
-      created_by: r.created_by ? { id: r.created_by, name: r.created_by_name } : null,
-      suitability_check: !!r.has_suitability_evidence,
-      risk_assessment: !!r.has_risk_assessment,
-      business_opening: !!r.has_business_opening,
-    }));
+
+    const needsCorrectionStmt = db.prepare(
+      "SELECT COUNT(*) as cnt FROM exception_reasons WHERE record_id = ? AND reason_type = 'return_correction' AND resolved = 0"
+    );
+
+    return rows.map((r: any) => {
+      const nc = needsCorrectionStmt.get(r.id) as { cnt: number };
+      return {
+        ...r,
+        current_handler: r.current_handler ? { id: r.current_handler, name: r.current_handler_name } : null,
+        assigned_to: r.assigned_to ? { id: r.assigned_to, name: r.assigned_to_name } : null,
+        created_by: r.created_by ? { id: r.created_by, name: r.created_by_name } : null,
+        suitability_check: !!r.has_suitability_evidence,
+        risk_assessment: !!r.has_risk_assessment,
+        business_opening: !!r.has_business_opening,
+        needs_correction: nc.cnt > 0,
+      };
+    });
   }
 
   getDetail(id: number) {
@@ -81,6 +98,10 @@ export class RecordsService {
     const auditNotes = db.prepare('SELECT an.*, u.name as author_name FROM audit_notes an LEFT JOIN users u ON an.author_id = u.id WHERE an.record_id = ? ORDER BY created_at DESC').all(id);
     const exceptionReasons = db.prepare('SELECT er.*, u.name as created_by_name FROM exception_reasons er LEFT JOIN users u ON er.created_by = u.id WHERE er.record_id = ? ORDER BY created_at DESC').all(id);
 
+    const needsCorrection = db.prepare(
+      "SELECT COUNT(*) as cnt FROM exception_reasons WHERE record_id = ? AND reason_type = 'return_correction' AND resolved = 0"
+    ).get(id) as { cnt: number };
+
     return {
       ...record,
       current_handler: record.current_handler ? { id: record.current_handler, name: record.current_handler_name } : null,
@@ -89,6 +110,7 @@ export class RecordsService {
       suitability_check: !!record.has_suitability_evidence,
       risk_assessment: !!record.has_risk_assessment,
       business_opening: !!record.has_business_opening,
+      needs_correction: needsCorrection.cnt > 0,
       attachments: attachments.map((a: any) => ({ ...a, filename: a.file_name })),
       processing_records: processingRecords.map((pr: any) => ({ ...pr, handler: pr.handler_id ? { id: pr.handler_id, name: pr.handler_name } : null })),
       audit_notes: auditNotes.map((n: any) => ({ ...n, created_by: n.author_id ? { id: n.author_id, name: n.author_name } : null })),
@@ -162,29 +184,36 @@ export class RecordsService {
           break;
       }
 
+      const newRound = dto.action === 'return' ? (record.correction_round || 0) + 1 : record.correction_round;
+      const newCorrectionNote = dto.action === 'return' ? null : record.correction_note;
+
       db.prepare(`
         UPDATE suitability_records SET status = ?, assigned_to = ?, current_handler = ?, version = version + 1, updated_at = datetime('now'),
-        review_opinion = ?, review_result = ?, return_reason = ?
+        review_opinion = ?, review_result = ?, return_reason = ?, correction_note = ?, correction_round = ?
         WHERE id = ?
       `).run(newStatus, newAssignedTo, newCurrentHandler,
         dto.review_opinion || record.review_opinion,
         dto.review_result || record.review_result,
         dto.return_reason || record.return_reason,
+        newCorrectionNote,
+        newRound,
         id);
 
       this.dbService.recalcExpiryStatus(id);
 
       db.prepare(`
-        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, return_reason)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, review_opinion, review_result, return_reason, correction_note, round)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(id, dto.action, record.status, newStatus, user.id, user.role, dto.comment || null,
         dto.review_opinion || null,
         dto.review_result || null,
-        dto.return_reason || null);
+        dto.return_reason || null,
+        dto.action === 'return' ? null : record.correction_note,
+        newRound);
 
       if (dto.action === 'return' && dto.return_reason) {
-        db.prepare('INSERT INTO exception_reasons (record_id, reason_type, description, created_by) VALUES (?, ?, ?, ?)')
-          .run(id, 'return_correction', dto.return_reason, user.id);
+        db.prepare('INSERT INTO exception_reasons (record_id, reason_type, description, created_by, round) VALUES (?, ?, ?, ?, ?)')
+          .run(id, 'return_correction', dto.return_reason, user.id, newRound);
       }
     });
 
@@ -320,13 +349,14 @@ export class RecordsService {
       `).run(correctionNote, id);
 
       db.prepare(`
-        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, correction_note)
-        VALUES (?, 'correction', ?, ?, ?, ?, ?, ?)
-      `).run(id, record.status, record.status, user.id, user.role, comment || null, correctionNote);
+        INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, correction_note, round)
+        VALUES (?, 'correction', ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, record.status, record.status, user.id, user.role, comment || null, correctionNote, record.correction_round);
 
+      const currentRound = record.correction_round || 0;
       const unresolvedCorrections = db.prepare(
-        "SELECT id FROM exception_reasons WHERE record_id = ? AND reason_type = 'return_correction' AND resolved = 0"
-      ).all(id) as Array<{ id: number }>;
+        "SELECT id FROM exception_reasons WHERE record_id = ? AND reason_type = 'return_correction' AND resolved = 0 AND round = ?"
+      ).all(id, currentRound) as Array<{ id: number }>;
 
       const resolveStmt = db.prepare('UPDATE exception_reasons SET resolved = 1, resolved_at = datetime(\'now\') WHERE id = ?');
       for (const exc of unresolvedCorrections) {

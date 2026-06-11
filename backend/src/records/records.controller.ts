@@ -16,9 +16,10 @@ export class RecordsController {
     @Query('role') role: string,
     @Query('handler') handler: string,
     @Query('expiry_status') expiryStatus: string,
+    @Query('needs_correction') needsCorrection: string,
     @Req() req: any,
   ) {
-    return { records: this.recordsService.list({ status, role, handler, expiry_status: expiryStatus }, req.user) };
+    return { records: this.recordsService.list({ status, role, handler, expiry_status: expiryStatus, needs_correction: needsCorrection }, req.user) };
   }
 
   @Get(':id')
