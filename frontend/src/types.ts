@@ -87,8 +87,11 @@ export interface Statistics {
 
 export interface BatchResult {
   order_id: number
+  order_no: string
   success: boolean
   message: string
+  from_status: string
+  to_status: string
 }
 
 export interface APIResponse<T> {

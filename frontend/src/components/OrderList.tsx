@@ -63,7 +63,7 @@ function calcExpiryStatus(deadline: string, status: string): string {
 }
 
 interface OrderListProps {
-  onBatchNavigate: (ids: number[]) => void
+  onBatchNavigate: (orders: RepairOrder[]) => void
 }
 
 function OrderList(props: OrderListProps) {
@@ -133,7 +133,8 @@ function OrderList(props: OrderListProps) {
   }
 
   const handleBatchNavigate = () => {
-    props.onBatchNavigate(Array.from(selected()))
+    const selectedList = orders().filter(o => selected().has(o.id))
+    props.onBatchNavigate(selectedList)
   }
 
   const formatDate = (d: string) => {

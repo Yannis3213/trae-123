@@ -288,83 +288,296 @@ func CreateOrder(c *fiber.Ctx) error {
 	return GetOrder(c)
 }
 
-type statusTransition struct {
-	allowedRole  string
-	fromStatus   string
-	requireOwner bool
-	ownerField   string
+type transitionRule struct {
+	allowedRole      string
+	fromStatus       string
+	requireOwner     bool
+	ownerField       string
+	requiredEvidence string
+	requireException bool
 }
 
-func getStatusTransitions() map[string]statusTransition {
-	return map[string]statusTransition{
+func getTransitionRules() map[string]transitionRule {
+	return map[string]transitionRule{
 		"已接单_待接单":  {allowedRole: "师傅调度", fromStatus: "待接单", requireOwner: false},
 		"施工中":      {allowedRole: "师傅调度", fromStatus: "已接单", requireOwner: true, ownerField: "technician_id"},
-		"待验收":      {allowedRole: "师傅调度", fromStatus: "施工中", requireOwner: true, ownerField: "technician_id"},
-		"验收通过":     {allowedRole: "服务经理", fromStatus: "待验收", requireOwner: false},
-		"退回补正":     {allowedRole: "服务经理", fromStatus: "待验收", requireOwner: false},
+		"待验收":      {allowedRole: "师傅调度", fromStatus: "施工中", requireOwner: true, ownerField: "technician_id", requiredEvidence: "施工证据"},
+		"验收通过":     {allowedRole: "服务经理", fromStatus: "待验收", requireOwner: false, requiredEvidence: "验收证据"},
+		"退回补正":     {allowedRole: "服务经理", fromStatus: "待验收", requireOwner: false, requireException: true},
 		"已接单_退回补正": {allowedRole: "师傅调度", fromStatus: "退回补正", requireOwner: true, ownerField: "technician_id"},
 		"已归档":      {allowedRole: "服务经理", fromStatus: "验收通过", requireOwner: false},
 	}
 }
 
-func validateStatusTransition(currentRole, fromStatus, toStatus string, userID int) (bool, string) {
-	transitions := getStatusTransitions()
-
-	key := toStatus
-	if toStatus == "已接单" && fromStatus == "待接单" {
-		key = "已接单_待接单"
-	} else if toStatus == "已接单" && fromStatus == "退回补正" {
-		key = "已接单_退回补正"
-	}
-
-	t, ok := transitions[key]
-	if !ok {
-		return false, "不支持的状态变更"
-	}
-
-	if t.fromStatus != fromStatus {
-		roleHint := ""
-		switch fromStatus {
-		case "待接单":
-			roleHint = "需师傅调度接单"
-		case "已接单":
-			roleHint = "需师傅调度开工"
-		case "施工中":
-			roleHint = "需师傅调度完工"
-		case "待验收":
-			roleHint = "需服务经理验收或退回"
-		case "退回补正":
-			roleHint = "需师傅调度重新接单"
-		case "验收通过":
-			roleHint = "需服务经理归档"
-		case "已归档":
-			roleHint = "工单已归档，无法变更"
+func getTransitionKey(toStatus, fromStatus string) string {
+	if toStatus == "已接单" {
+		if fromStatus == "待接单" {
+			return "已接单_待接单"
 		}
-		return false, fmt.Sprintf("状态冲突：当前状态为%s，无法变更为%s。%s", fromStatus, toStatus, roleHint)
-	}
-
-	if currentRole != t.allowedRole {
-		return false, fmt.Sprintf("仅%s可执行此操作，当前角色为%s", t.allowedRole, currentRole)
-	}
-
-	if t.requireOwner {
-		ownerRole := ""
-		switch t.ownerField {
-		case "technician_id":
-			ownerRole = "师傅调度"
+		if fromStatus == "退回补正" {
+			return "已接单_退回补正"
 		}
-		var currentOwnerID int
-		DB.QueryRow(fmt.Sprintf("SELECT %s FROM repair_orders WHERE id = ?", t.ownerField), 0).Scan(&currentOwnerID)
-		_ = ownerRole
 	}
-
-	return true, ""
+	return toStatus
 }
 
 func hasAttachmentInDB(orderID int, category string) bool {
 	var cnt int
 	DB.QueryRow("SELECT COUNT(*) FROM attachments WHERE order_id = ? AND category = ?", orderID, category).Scan(&cnt)
 	return cnt > 0
+}
+
+func hasExceptionReasonInDB(orderID int) bool {
+	var cnt int
+	DB.QueryRow("SELECT COUNT(*) FROM exception_reasons WHERE order_id = ?", orderID).Scan(&cnt)
+	return cnt > 0
+}
+
+func getActionLabel(toStatus, fromStatus string) string {
+	switch toStatus {
+	case "已接单":
+		if fromStatus == "退回补正" {
+			return "重新接单"
+		}
+		return "接单"
+	case "施工中":
+		return "开工"
+	case "待验收":
+		return "完工"
+	case "验收通过":
+		return "验收通过"
+	case "退回补正":
+		return "退回补正"
+	case "已归档":
+		return "归档"
+	default:
+		return toStatus
+	}
+}
+
+func getStatusHint(status string) string {
+	switch status {
+	case "待接单":
+		return "需师傅调度接单"
+	case "已接单":
+		return "需师傅调度开工"
+	case "施工中":
+		return "需师傅调度完工"
+	case "待验收":
+		return "需服务经理验收或退回"
+	case "退回补正":
+		return "需师傅调度重新接单处理"
+	case "验收通过":
+		return "需服务经理归档"
+	case "已归档":
+		return "工单已归档，无法变更"
+	default:
+		return ""
+	}
+}
+
+type orderSnapshot struct {
+	ID            int
+	OrderNo       string
+	Status        string
+	Version       int
+	TechnicianID  int
+	ManagerID     int
+	ExceptionType string
+}
+
+func getOrderSnapshot(orderID int) (orderSnapshot, error) {
+	var s orderSnapshot
+	err := DB.QueryRow(
+		"SELECT id, order_no, status, version, technician_id, manager_id, exception_type FROM repair_orders WHERE id = ?",
+		orderID,
+	).Scan(&s.ID, &s.OrderNo, &s.Status, &s.Version, &s.TechnicianID, &s.ManagerID, &s.ExceptionType)
+	return s, err
+}
+
+type transitionInput struct {
+	OrderID          int
+	ToStatus         string
+	Version          int
+	UserID           int
+	Role             string
+	Remark           string
+	ExceptionReason  string
+	Attachments      []Attachment
+	SkipVersionCheck bool
+}
+
+func validateTransition(input transitionInput) (bool, string, orderSnapshot) {
+	snap, err := getOrderSnapshot(input.OrderID)
+	if err != nil {
+		return false, "工单不存在", snap
+	}
+
+	if !input.SkipVersionCheck && input.Version != snap.Version {
+		return false, fmt.Sprintf("版本冲突：当前版本为v%d，提交版本为v%d，请刷新后重试", snap.Version, input.Version), snap
+	}
+
+	key := getTransitionKey(input.ToStatus, snap.Status)
+	rules := getTransitionRules()
+	rule, ok := rules[key]
+	if !ok {
+		return false, fmt.Sprintf("不支持从%s变更到%s", snap.Status, input.ToStatus), snap
+	}
+
+	if rule.fromStatus != snap.Status {
+		return false, fmt.Sprintf("状态冲突：当前状态为%s，无法变更为%s。%s", snap.Status, input.ToStatus, getStatusHint(snap.Status)), snap
+	}
+
+	if input.Role != rule.allowedRole {
+		return false, fmt.Sprintf("越权：仅%s可执行此操作，当前角色为%s", rule.allowedRole, input.Role), snap
+	}
+
+	if rule.requireOwner {
+		var ownerID int
+		switch rule.ownerField {
+		case "technician_id":
+			ownerID = snap.TechnicianID
+		case "manager_id":
+			ownerID = snap.ManagerID
+		}
+		if ownerID == 0 {
+			return false, "越权：当前工单未分配处理人", snap
+		}
+		if ownerID != input.UserID {
+			ownerLabel := ""
+			switch rule.ownerField {
+			case "technician_id":
+				ownerLabel = fmt.Sprintf("师傅(ID:%d)", ownerID)
+			case "manager_id":
+				ownerLabel = fmt.Sprintf("经理(ID:%d)", ownerID)
+			}
+			return false, fmt.Sprintf("越权：当前处理人为%s，仅该处理人可操作", ownerLabel), snap
+		}
+	}
+
+	if rule.requiredEvidence != "" {
+		hasInReq := false
+		for _, att := range input.Attachments {
+			if att.Category == rule.requiredEvidence {
+				hasInReq = true
+				break
+			}
+		}
+		if !hasInReq && !hasAttachmentInDB(input.OrderID, rule.requiredEvidence) {
+			return false, fmt.Sprintf("缺少必填证据：%s", rule.requiredEvidence), snap
+		}
+	}
+
+	if rule.requireException && input.ExceptionReason == "" && !hasExceptionReasonInDB(input.OrderID) {
+		return false, "退回补正需要填写异常原因", snap
+	}
+
+	return true, "", snap
+}
+
+func executeStatusTransition(input transitionInput) (bool, string, orderSnapshot) {
+	ok, msg, snap := validateTransition(input)
+	if !ok {
+		return false, msg, snap
+	}
+
+	now := time.Now().Format("2006-01-02 15:04:05")
+	newVersion := snap.Version + 1
+
+	tx, err := DB.Begin()
+	if err != nil {
+		return false, "启动事务失败", snap
+	}
+
+	updateSQL := "UPDATE repair_orders SET status = ?, version = ?, updated_at = ?"
+	updateArgs := []interface{}{input.ToStatus, newVersion, now}
+
+	if input.ToStatus == "已接单" && (snap.Status == "待接单" || snap.Status == "退回补正") {
+		updateSQL += ", technician_id = ?"
+		updateArgs = append(updateArgs, input.UserID)
+	}
+	if input.ToStatus == "验收通过" || input.ToStatus == "退回补正" {
+		updateSQL += ", manager_id = ?"
+		updateArgs = append(updateArgs, input.UserID)
+	}
+	if input.ToStatus == "已归档" {
+		updateSQL += ", exception_type = ''"
+	}
+
+	updateSQL += " WHERE id = ? AND version = ?"
+	updateArgs = append(updateArgs, input.OrderID, snap.Version)
+
+	res, err := tx.Exec(updateSQL, updateArgs...)
+	if err != nil {
+		tx.Rollback()
+		return false, "更新状态失败", snap
+	}
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		tx.Rollback()
+		return false, fmt.Sprintf("版本冲突：当前版本已变更，请刷新后重试"), snap
+	}
+
+	action := getActionLabel(input.ToStatus, snap.Status)
+	_, err = tx.Exec(
+		`INSERT INTO process_records (order_id, action, from_status, to_status, operator_id, operator_role, remark, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		input.OrderID, action, snap.Status, input.ToStatus, input.UserID, input.Role, input.Remark, now,
+	)
+	if err != nil {
+		tx.Rollback()
+		return false, "写入状态历史失败", snap
+	}
+
+	for _, att := range input.Attachments {
+		_, err = tx.Exec(
+			`INSERT INTO attachments (order_id, file_name, category, uploaded_by, upload_role, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			input.OrderID, att.FileName, att.Category, input.UserID, input.Role, now,
+		)
+		if err != nil {
+			tx.Rollback()
+			return false, "写入附件失败", snap
+		}
+	}
+
+	if input.ToStatus == "退回补正" && input.ExceptionReason != "" {
+		_, err = tx.Exec(
+			`INSERT INTO exception_reasons (order_id, reason_type, description, created_by, created_at)
+			VALUES (?, '退回补正', ?, ?, ?)`,
+			input.OrderID, input.ExceptionReason, input.UserID, now,
+		)
+		if err != nil {
+			tx.Rollback()
+			return false, "写入异常原因失败", snap
+		}
+		_, err = tx.Exec("UPDATE repair_orders SET exception_type = '退回补正', updated_at = ? WHERE id = ?", now, input.OrderID)
+		if err != nil {
+			tx.Rollback()
+			return false, "更新异常类型失败", snap
+		}
+	}
+
+	if input.ToStatus == "退回补正" && input.Remark != "" {
+		_, err = tx.Exec(
+			`INSERT INTO audit_notes (order_id, note, author_id, author_role, created_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			input.OrderID, fmt.Sprintf("退回补正：%s", input.Remark), input.UserID, input.Role, now,
+		)
+		if err != nil {
+			tx.Rollback()
+			return false, "写入审计备注失败", snap
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		return false, "提交事务失败", snap
+	}
+
+	snap.Status = input.ToStatus
+	snap.Version = newVersion
+	return true, "操作成功", snap
 }
 
 func UpdateOrderStatus(c *fiber.Ctx) error {
@@ -375,157 +588,32 @@ func UpdateOrderStatus(c *fiber.Ctx) error {
 		return c.Status(400).JSON(APIResponse{Code: -1, Message: "请求参数错误"})
 	}
 
-	var currentStatus string
-	var currentVersion int
-	var currentTechID int
-	var currentManagerID int
-	err := DB.QueryRow("SELECT status, version, technician_id, manager_id FROM repair_orders WHERE id = ?", id).Scan(&currentStatus, &currentVersion, &currentTechID, &currentManagerID)
-	if err != nil {
-		return c.Status(404).JSON(APIResponse{Code: -1, Message: "工单不存在"})
-	}
-
-	if req.Version != currentVersion {
-		return c.Status(409).JSON(APIResponse{
-			Code:    -1,
-			Message: fmt.Sprintf("版本冲突，当前版本为%d，请刷新后重试", currentVersion),
-		})
-	}
-
 	role := c.Locals("role").(string)
 	userID := c.Locals("userId").(int)
 
-	ok, msg := validateStatusTransition(role, currentStatus, req.Status, userID)
+	attachments := []Attachment{}
+	for _, att := range req.Attachments {
+		attachments = append(attachments, Attachment{
+			FileName: att.FileName,
+			Category: att.Category,
+		})
+	}
+
+	input := transitionInput{
+		OrderID:          id,
+		ToStatus:         req.Status,
+		Version:          req.Version,
+		UserID:           userID,
+		Role:             role,
+		Remark:           req.Remark,
+		ExceptionReason:  req.ExceptionReason,
+		Attachments:      attachments,
+		SkipVersionCheck: false,
+	}
+
+	ok, msg, _ := executeStatusTransition(input)
 	if !ok {
 		return c.Status(409).JSON(APIResponse{Code: -1, Message: msg})
-	}
-
-	if req.Status == "施工中" && currentStatus == "已接单" {
-		if currentTechID != userID {
-			return c.Status(409).JSON(APIResponse{Code: -1, Message: fmt.Sprintf("当前处理人为其他师傅（ID:%d），仅该师傅可操作", currentTechID)})
-		}
-	}
-
-	if req.Status == "待验收" && currentStatus == "施工中" {
-		if currentTechID != userID {
-			return c.Status(409).JSON(APIResponse{Code: -1, Message: fmt.Sprintf("当前处理人为其他师傅（ID:%d），仅该师傅可操作", currentTechID)})
-		}
-		hasInReq := false
-		for _, att := range req.Attachments {
-			if att.Category == "施工证据" {
-				hasInReq = true
-				break
-			}
-		}
-		if !hasInReq && !hasAttachmentInDB(id, "施工证据") {
-			return c.Status(400).JSON(APIResponse{Code: -1, Message: "完工需要上传施工证据"})
-		}
-	}
-
-	if req.Status == "验收通过" {
-		hasInReq := false
-		for _, att := range req.Attachments {
-			if att.Category == "验收证据" {
-				hasInReq = true
-				break
-			}
-		}
-		if !hasInReq && !hasAttachmentInDB(id, "验收证据") {
-			return c.Status(400).JSON(APIResponse{Code: -1, Message: "验收通过需要上传验收证据"})
-		}
-	}
-
-	if req.Status == "退回补正" {
-		if req.ExceptionReason == "" {
-			hasExisting := false
-			var cnt int
-			DB.QueryRow("SELECT COUNT(*) FROM exception_reasons WHERE order_id = ? AND reason_type != ''", id).Scan(&cnt)
-			if cnt > 0 {
-				hasExisting = true
-			}
-			if !hasExisting {
-				return c.Status(400).JSON(APIResponse{Code: -1, Message: "退回补正需要填写异常原因"})
-			}
-		}
-	}
-
-	now := time.Now().Format("2006-01-02 15:04:05")
-	newVersion := currentVersion + 1
-
-	updateSQL := "UPDATE repair_orders SET status = ?, version = ?, updated_at = ?"
-	updateArgs := []interface{}{req.Status, newVersion, now}
-
-	if req.Status == "已接单" && currentStatus == "待接单" {
-		updateSQL += ", technician_id = ?"
-		updateArgs = append(updateArgs, userID)
-	}
-	if req.Status == "已接单" && currentStatus == "退回补正" {
-		updateSQL += ", technician_id = ?"
-		updateArgs = append(updateArgs, userID)
-	}
-	if req.Status == "验收通过" || req.Status == "退回补正" {
-		updateSQL += ", manager_id = ?"
-		updateArgs = append(updateArgs, userID)
-	}
-	if req.Status == "已归档" {
-		updateSQL += ", exception_type = ''"
-	}
-
-	updateSQL += " WHERE id = ?"
-	updateArgs = append(updateArgs, id)
-
-	_, err = DB.Exec(updateSQL, updateArgs...)
-	if err != nil {
-		return c.Status(500).JSON(APIResponse{Code: -1, Message: "更新状态失败"})
-	}
-
-	action := req.Status
-	if req.Status == "已接单" {
-		if currentStatus == "退回补正" {
-			action = "重新接单"
-		} else {
-			action = "接单"
-		}
-	} else if req.Status == "施工中" {
-		action = "开工"
-	} else if req.Status == "待验收" {
-		action = "完工"
-	} else if req.Status == "验收通过" {
-		action = "验收通过"
-	} else if req.Status == "退回补正" {
-		action = "退回补正"
-	} else if req.Status == "已归档" {
-		action = "归档"
-	}
-
-	DB.Exec(
-		`INSERT INTO process_records (order_id, action, from_status, to_status, operator_id, operator_role, remark, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, action, currentStatus, req.Status, userID, role, req.Remark, now,
-	)
-
-	for _, att := range req.Attachments {
-		DB.Exec(
-			`INSERT INTO attachments (order_id, file_name, category, uploaded_by, upload_role, created_at)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			id, att.FileName, att.Category, userID, role, now,
-		)
-	}
-
-	if req.Status == "退回补正" && req.ExceptionReason != "" {
-		DB.Exec(
-			`INSERT INTO exception_reasons (order_id, reason_type, description, created_by, created_at)
-			VALUES (?, '退回补正', ?, ?, ?)`,
-			id, req.ExceptionReason, userID, now,
-		)
-		DB.Exec("UPDATE repair_orders SET exception_type = '退回补正', updated_at = ? WHERE id = ?", now, id)
-	}
-
-	if req.Status == "退回补正" && req.Remark != "" {
-		DB.Exec(
-			`INSERT INTO audit_notes (order_id, note, author_id, author_role, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			id, fmt.Sprintf("退回补正：%s", req.Remark), userID, role, now,
-		)
 	}
 
 	return GetOrder(c)
@@ -537,88 +625,33 @@ func BatchUpdateStatus(c *fiber.Ctx) error {
 		return c.Status(400).JSON(APIResponse{Code: -1, Message: "请求参数错误"})
 	}
 
+	role := c.Locals("role").(string)
+	userID := c.Locals("userId").(int)
+
 	results := []BatchResultItem{}
 
 	for _, orderID := range req.OrderIDs {
-		var currentStatus string
-		var currentVersion int
-		err := DB.QueryRow("SELECT status, version FROM repair_orders WHERE id = ?", orderID).Scan(&currentStatus, &currentVersion)
-		if err != nil {
-			results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "工单不存在"})
-			continue
+		input := transitionInput{
+			OrderID:          orderID,
+			ToStatus:         req.Status,
+			Version:          0,
+			UserID:           userID,
+			Role:             role,
+			Remark:           req.Remark,
+			ExceptionReason:  "",
+			Attachments:      []Attachment{},
+			SkipVersionCheck: true,
 		}
 
-		role := c.Locals("role").(string)
-		userID := c.Locals("userId").(int)
-
-		ok, msg := validateStatusTransition(role, currentStatus, req.Status, userID)
-		if !ok {
-			results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: msg})
-			continue
-		}
-
-		if req.Status == "待验收" && currentStatus == "施工中" {
-			if !hasAttachmentInDB(orderID, "施工证据") {
-				results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "完工需要上传施工证据"})
-				continue
-			}
-		}
-		if req.Status == "验收通过" {
-			if !hasAttachmentInDB(orderID, "验收证据") {
-				results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "验收通过需要上传验收证据"})
-				continue
-			}
-		}
-		if req.Status == "退回补正" {
-			results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "退回补正需在详情页操作，需填写异常原因"})
-			continue
-		}
-
-		now := time.Now().Format("2006-01-02 15:04:05")
-		newVersion := currentVersion + 1
-
-		updateSQL := "UPDATE repair_orders SET status = ?, version = ?, updated_at = ?"
-		updateArgs := []interface{}{req.Status, newVersion, now}
-
-		if req.Status == "已接单" {
-			updateSQL += ", technician_id = ?"
-			updateArgs = append(updateArgs, userID)
-		}
-		if req.Status == "已归档" {
-			updateSQL += ", exception_type = ''"
-		}
-
-		updateSQL += " WHERE id = ? AND version = ?"
-		updateArgs = append(updateArgs, orderID, currentVersion)
-
-		res, err := DB.Exec(updateSQL, updateArgs...)
-		if err != nil {
-			results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "更新失败"})
-			continue
-		}
-
-		rowsAffected, _ := res.RowsAffected()
-		if rowsAffected == 0 {
-			results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "版本冲突，请刷新后重试"})
-			continue
-		}
-
-		action := req.Status
-		if req.Status == "已接单" {
-			action = "接单"
-		} else if req.Status == "施工中" {
-			action = "开工"
-		} else if req.Status == "已归档" {
-			action = "归档"
-		}
-
-		DB.Exec(
-			`INSERT INTO process_records (order_id, action, from_status, to_status, operator_id, operator_role, remark, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			orderID, action, currentStatus, req.Status, userID, role, req.Remark, now,
-		)
-
-		results = append(results, BatchResultItem{OrderID: orderID, Success: true, Message: "操作成功"})
+		ok, msg, snap := executeStatusTransition(input)
+		results = append(results, BatchResultItem{
+			OrderID:    orderID,
+			OrderNo:    snap.OrderNo,
+			Success:    ok,
+			Message:    msg,
+			FromStatus: snap.Status,
+			ToStatus:   req.Status,
+		})
 	}
 
 	return c.JSON(APIResponse{

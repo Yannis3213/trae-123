@@ -5,11 +5,12 @@ import Header from './components/Header'
 import OrderList from './components/OrderList'
 import OrderDetail from './components/OrderDetail'
 import BatchProcess from './components/BatchProcess'
+import type { RepairOrder } from './types'
 
 function App() {
   const [route, setRoute] = createSignal(window.location.hash || '#/')
   const [routeOrderId, setRouteOrderId] = createSignal<number | null>(null)
-  const [selectedIds, setSelectedIds] = createSignal<number[]>([])
+  const [selectedOrders, setSelectedOrders] = createSignal<RepairOrder[]>([])
 
   createEffect(() => {
     if (isLoggedIn()) {
@@ -47,8 +48,8 @@ function App() {
       <div class="main-content">
         <Show when={route() === '#/'}>
           <OrderList
-            onBatchNavigate={(ids) => {
-              setSelectedIds(ids)
+            onBatchNavigate={(orders) => {
+              setSelectedOrders(orders)
               window.location.hash = '#/batch'
             }}
           />
@@ -57,7 +58,7 @@ function App() {
           <OrderDetail orderId={routeOrderId()!} />
         </Show>
         <Show when={route() === '#/batch'}>
-          <BatchProcess selectedIds={selectedIds()} />
+          <BatchProcess selectedOrders={selectedOrders()} />
         </Show>
       </div>
     </Show>

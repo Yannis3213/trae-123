@@ -100,9 +100,12 @@ type BatchUpdateRequest struct {
 }
 
 type BatchResultItem struct {
-	OrderID int    `json:"order_id"`
-	Success bool   `json:"success"`
-	Message string `json:"message"`
+	OrderID    int    `json:"order_id"`
+	OrderNo    string `json:"order_no"`
+	Success    bool   `json:"success"`
+	Message    string `json:"message"`
+	FromStatus string `json:"from_status"`
+	ToStatus   string `json:"to_status"`
 }
 
 type OrderDetailResponse struct {
