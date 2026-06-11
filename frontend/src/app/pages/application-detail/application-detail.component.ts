@@ -213,7 +213,7 @@ const ROLE_NAMES: { [key: string]: string } = {
               <div class="upload-section-title">📋 借款申请证据 <span class="required-tag">信贷员上传</span></div>
               <div class="upload-tip">
                 <span *ngIf="!evidenceSummary?.APPLICATION?.complete" class="text-danger">
-                  ⚠️ 必填证据不齐全：{{ evidenceSummary?.APPLICATION?.missing?.map((m:any)=>m.name).join('、') }}
+                  ⚠️ 必填证据不齐全：{{ getMissingNames('APPLICATION') }}
                 </span>
                 <span *ngIf="evidenceSummary?.APPLICATION?.complete" class="text-success">
                   ✓ 借款申请证据已齐全
@@ -234,7 +234,7 @@ const ROLE_NAMES: { [key: string]: string } = {
               <div class="upload-section-title">🔍 资料核验证据 <span class="required-tag">风控上传</span></div>
               <div class="upload-tip">
                 <span *ngIf="!evidenceSummary?.VERIFICATION?.complete" class="text-danger">
-                  ⚠️ 必填证据不齐全：{{ evidenceSummary?.VERIFICATION?.missing?.map((m:any)=>m.name).join('、') }}
+                  ⚠️ 必填证据不齐全：{{ getMissingNames('VERIFICATION') }}
                 </span>
                 <span *ngIf="evidenceSummary?.VERIFICATION?.complete" class="text-success">
                   ✓ 资料核验证据已齐全
@@ -255,7 +255,7 @@ const ROLE_NAMES: { [key: string]: string } = {
               <div class="upload-section-title">✅ 审批放款证据 <span class="required-tag">主管上传</span></div>
               <div class="upload-tip">
                 <span *ngIf="!evidenceSummary?.APPROVAL?.complete" class="text-danger">
-                  ⚠️ 必填证据不齐全：{{ evidenceSummary?.APPROVAL?.missing?.map((m:any)=>m.name).join('、') }}
+                  ⚠️ 必填证据不齐全：{{ getMissingNames('APPROVAL') }}
                 </span>
                 <span *ngIf="evidenceSummary?.APPROVAL?.complete" class="text-success">
                   ✓ 审批放款证据已齐全
@@ -752,6 +752,12 @@ export class ApplicationDetailComponent implements OnInit {
     return map[status] || status;
   }
 
+  getMissingNames(node: string): string {
+    const missing = this.evidenceSummary?.[node]?.missing;
+    if (!missing || !missing.length) return '';
+    return missing.map((m: any) => m.name).join('、');
+  }
+
   isOverdue(dateStr: string): boolean {
     if (!dateStr) return false;
     const due = new Date(dateStr);
@@ -844,7 +850,13 @@ export class ApplicationDetailComponent implements OnInit {
         this.loadDetail(this.application.id);
       },
       error: (err) => {
-        alert(err.error?.error || '操作失败');
+        const msg = err.error?.error || '操作失败';
+        const missing = err.error?.missing;
+        if (missing) {
+          alert(`${msg}\n缺少：${missing.join('、')}`);
+        } else {
+          alert(msg);
+        }
       }
     });
   }

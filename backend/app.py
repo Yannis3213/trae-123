@@ -100,16 +100,20 @@ def check_required_attachments(db, app_id, node):
     return len(missing) == 0, missing
 
 
-def validate_application_action(db, app, user, action_type, version=None):
+def validate_application_action(db, app, user, action_type, version=None, allow_no_version=False):
     """
     统一业务校验：角色权限、状态、版本、当前处理人、必填证据
     返回 (ok: bool, error_msg: str, error_type: str, missing: list)
+    allow_no_version: 批量操作时不强制要求 version（逐条校验场景）
     """
     if not user:
         return False, '未登录', 'AUTH', []
 
     if not app:
         return False, '申请单不存在', 'NOT_FOUND', []
+
+    if version is None and not allow_no_version:
+        return False, '缺少版本号，请刷新页面后重试', 'VERSION_CONFLICT', []
 
     if version is not None and app['version'] != version:
         add_exception(db, app['id'], 'VERSION_CONFLICT', '版本冲突',
@@ -708,7 +712,8 @@ def batch_verify():
             db = get_db()
             app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
 
-            ok, err_msg, err_type, _ = validate_application_action(db, app, user, action_type)
+            ok, err_msg, err_type, _ = validate_application_action(
+                db, app, user, action_type, allow_no_version=True)
             if not ok:
                 results.append({'id': app_id, 'success': False, 'reason': err_msg})
                 db.commit()
@@ -717,7 +722,7 @@ def batch_verify():
             if action == 'PASS':
                 success = update_application_status(
                     db, app_id, 'VERIFICATION_PASSED', new_node='APPROVAL',
-                    new_handler='supervisor_01'
+                    new_handler='supervisor_01', version=app['version']
                 )
                 if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
@@ -730,7 +735,7 @@ def batch_verify():
             elif action == 'FAIL':
                 success = update_application_status(
                     db, app_id, 'VERIFICATION_FAILED', new_node='VERIFICATION',
-                    new_handler=None
+                    new_handler=None, version=app['version']
                 )
                 if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
@@ -744,7 +749,7 @@ def batch_verify():
             elif action == 'RETURN':
                 success = update_application_status(
                     db, app_id, 'CORRECTION_REQUIRED', new_node='APPLICATION',
-                    new_handler=app['created_by']
+                    new_handler=app['created_by'], version=app['version']
                 )
                 if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
@@ -791,7 +796,8 @@ def batch_approve():
             db = get_db()
             app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
 
-            ok, err_msg, err_type, _ = validate_application_action(db, app, user, action_type)
+            ok, err_msg, err_type, _ = validate_application_action(
+                db, app, user, action_type, allow_no_version=True)
             if not ok:
                 results.append({'id': app_id, 'success': False, 'reason': err_msg})
                 db.commit()
@@ -800,7 +806,7 @@ def batch_approve():
             if action == 'APPROVE':
                 success = update_application_status(
                     db, app_id, 'APPROVED', new_node='APPROVAL',
-                    new_handler=user['username']
+                    new_handler=user['username'], version=app['version']
                 )
                 if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
@@ -813,7 +819,7 @@ def batch_approve():
             elif action == 'REJECT':
                 success = update_application_status(
                     db, app_id, 'REJECTED', new_node='APPROVAL',
-                    new_handler=None
+                    new_handler=None, version=app['version']
                 )
                 if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
@@ -827,7 +833,7 @@ def batch_approve():
             elif action == 'RETURN':
                 success = update_application_status(
                     db, app_id, 'CORRECTION_REQUIRED', new_node='VERIFICATION',
-                    new_handler='risk_auditor_01'
+                    new_handler='risk_auditor_01', version=app['version']
                 )
                 if not success:
                     results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
@@ -864,6 +870,26 @@ def list_attachments(app_id):
     return jsonify([dict(r) for r in rows])
 
 
+NODE_ATTACHMENT_RULES = {
+    'APPLICATION': {
+        'allowed_roles': ['CREDIT_OFFICER'],
+        'allowed_statuses': ['DRAFT', 'CORRECTION_REQUIRED'],
+        'allowed_types': ['ID_CARD', 'INCOME_PROOF'],
+    },
+    'VERIFICATION': {
+        'allowed_roles': ['RISK_AUDITOR'],
+        'allowed_statuses': ['PENDING_VERIFICATION', 'CORRECTION_REQUIRED',
+                             'VERIFICATION_PASSED', 'VERIFICATION_FAILED'],
+        'allowed_types': ['CREDIT_REPORT', 'VERIFICATION_RECORD'],
+    },
+    'APPROVAL': {
+        'allowed_roles': ['LOAN_SUPERVISOR'],
+        'allowed_statuses': ['VERIFICATION_PASSED', 'APPROVED'],
+        'allowed_types': ['APPROVAL_OPINION', 'DISBURSEMENT_VOUCHER'],
+    },
+}
+
+
 @app.route('/api/applications/<int:app_id>/attachments', methods=['POST'])
 def add_attachment(app_id):
     user = get_current_user()
@@ -871,18 +897,50 @@ def add_attachment(app_id):
         return jsonify({'error': '未登录'}), 401
 
     data = request.get_json() or {}
+    node = data.get('node', 'APPLICATION')
+    attach_type = data.get('attach_type', '')
     db = get_db()
 
     app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
     if not app:
         return jsonify({'error': '申请单不存在'}), 404
 
+    rules = NODE_ATTACHMENT_RULES.get(node)
+    if not rules:
+        return jsonify({'error': f'无效的证据节点: {node}'}), 400
+
+    if user['role'] not in rules['allowed_roles']:
+        node_label = NODES.get(node, node)
+        return jsonify({'error': f'当前角色无权上传{node_label}证据'}), 403
+
+    if app['status'] not in rules['allowed_statuses']:
+        return jsonify({
+            'error': f'当前状态 {STATUSES.get(app["status"], app["status"])} 不允许上传该节点证据'
+        }), 400
+
+    if node == 'APPLICATION' and user['role'] == 'CREDIT_OFFICER':
+        if app['created_by'] != user['username']:
+            return jsonify({'error': '只有单据创建人可以上传申请证据'}), 403
+        if app['status'] == 'CORRECTION_REQUIRED' and app['current_handler'] != user['username']:
+            return jsonify({'error': '当前处理人不是您，无法上传'}), 403
+
+    if node in ['VERIFICATION', 'APPROVAL']:
+        if app['current_handler'] and app['current_handler'] != user['username']:
+            return jsonify({'error': f'当前处理人为 {app["current_handler"]}，您无权上传'}), 403
+
+    if attach_type and attach_type not in rules['allowed_types']:
+        node_label = NODES.get(node, node)
+        type_label = ATTACHMENT_NAMES.get(attach_type, attach_type)
+        return jsonify({
+            'error': f'{type_label}不属于{node_label}节点的证据类型'
+        }), 400
+
     cursor = db.execute(
         '''INSERT INTO attachments
            (loan_application_id, attach_type, attach_name, is_required, node, uploaded_by)
            VALUES (?, ?, ?, ?, ?, ?)''',
-        (app_id, data.get('attach_type', ''), data.get('attach_name', ''),
-         data.get('is_required', 0), data.get('node', 'APPLICATION'), user['username'])
+        (app_id, attach_type, data.get('attach_name', ''),
+         data.get('is_required', 0), node, user['username'])
     )
     db.commit()
 
