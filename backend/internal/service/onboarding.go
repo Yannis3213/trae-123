@@ -48,6 +48,14 @@ func ValidateProcess(order *models.OnboardingOrder, user *models.User, req *mode
 		}
 	}
 
+	if user.Role == models.RoleRegistrar && order.RegistrarID != user.ID {
+		return ProcessValidation{
+			Valid:  false,
+			Reason: fmt.Sprintf("跨登记员越权：该单据由 %s 登记，您无权提交处理", order.RegistrarName),
+			Code:   403,
+		}
+	}
+
 	switch action {
 	case "claim":
 		if order.HandlerID != "" && order.HandlerID != user.ID {

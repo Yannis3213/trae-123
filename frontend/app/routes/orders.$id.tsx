@@ -28,9 +28,12 @@ function OrderDetailPage() {
   const [uploadName, setUploadName] = useState("");
   const [uploading, setUploading] = useState(false);
 
+  const [forbiddenData, setForbiddenData] = useState(null);
+
   const loadDetail = async () => {
     setLoading(true);
     setError("");
+    setForbiddenData(null);
     try {
       const data = await api.getOrder(id);
       setOrder(data.order);
@@ -38,7 +41,11 @@ function OrderDetailPage() {
       setRecords(data.records || []);
       setAuditNotes(data.audit_notes || []);
     } catch (e) {
-      setError(e.message || "加载失败");
+      if (e.status === 403) {
+        setForbiddenData({ message: e.message, detail: e.detail });
+      } else {
+        setError(e.message || "加载失败");
+      }
     } finally {
       setLoading(false);
     }
@@ -134,15 +141,20 @@ function OrderDetailPage() {
 
   const getAvailableActions = () => {
     if (!user || !order) return [];
-    if (order.current_role !== user.role) return [];
     if (order.status === "completed" || order.status === "closed") return [];
 
-    const actions = [];
     if (user.role === "registrar") {
+      if (order.registrar_id !== user.id) return [];
+      if (order.current_role !== "registrar") return [];
       if (order.status === "returned" || order.status === "pending") {
-        actions.push({ id: "submit", name: "提交" });
+        return [{ id: "submit", name: "提交" }];
       }
+      return [];
     }
+
+    if (order.current_role !== user.role) return [];
+
+    const actions = [];
     if (user.role === "auditor" || user.role === "reviewer") {
       if (!order.handler_id) {
         actions.push({ id: "claim", name: "认领" });
@@ -157,9 +169,23 @@ function OrderDetailPage() {
     return actions;
   };
 
+  const canViewDetail = () => {
+    if (!user || !order) return false;
+    if (user.role === "reviewer") return true;
+    if (user.role === "auditor") {
+      return order.current_role === "auditor";
+    }
+    if (user.role === "registrar") {
+      return order.registrar_id === user.id;
+    }
+    return false;
+  };
+
   const canUploadAttachment = (nodeId) => {
     if (!user || !order) return false;
     if (user.role !== "registrar") return false;
+    if (order.registrar_id !== user.id) return false;
+    if (order.current_role !== "registrar") return false;
     if (order.current_node !== nodeId) return false;
     return order.status === "pending" || order.status === "returned";
   };
@@ -224,6 +250,25 @@ function OrderDetailPage() {
   }
 
   if (!order) {
+    if (forbiddenData) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 max-w-md text-center">
+            <div className="w-16 h-16 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
+              <span className="text-2xl">🔒</span>
+            </div>
+            <h2 className="text-lg font-bold text-gray-800 mb-2">{forbiddenData.message || "无权访问"}</h2>
+            <p className="text-sm text-gray-600 mb-6">{forbiddenData.detail || "您没有权限访问此入职办理单"}</p>
+            <button
+              onClick={() => navigate({ to: "/orders" })}
+              className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition"
+            >
+              返回我的列表
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -233,6 +278,40 @@ function OrderDetailPage() {
             className="text-blue-600 hover:underline"
           >
             返回列表
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canViewDetail()) {
+    let reason = "您无权访问此入职办理单";
+    if (user.role === "registrar" && order.registrar_id !== user.id) {
+      reason = `该单据由 ${order.registrar_name} 登记，您作为${roleNames[user.role]}只能查看自己发起的单据`;
+    } else if (user.role === "auditor" && order.current_role !== "auditor") {
+      reason = `该单据当前由 ${roleNames[order.current_role]} 处理，您作为${roleNames[user.role]}仅可查看分配给您的待办`;
+    }
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 max-w-md text-center">
+          <div className="w-16 h-16 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
+            <span className="text-2xl">🔒</span>
+          </div>
+          <h2 className="text-lg font-bold text-gray-800 mb-2">无权访问</h2>
+          <p className="text-sm text-gray-600 mb-6">{reason}</p>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-6 text-left text-sm">
+            <div className="grid grid-cols-2 gap-2 text-gray-600">
+              <span>单据编号：</span><span className="text-gray-800 font-mono">{order.id.slice(0, 8)}...</span>
+              <span>候选人：</span><span className="text-gray-800">{order.candidate_name}</span>
+              <span>当前状态：</span><span className="text-gray-800">{statusNames[order.status]}</span>
+              <span>登记人：</span><span className="text-gray-800">{order.registrar_name}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate({ to: "/orders" })}
+            className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition"
+          >
+            返回我的列表
           </button>
         </div>
       </div>

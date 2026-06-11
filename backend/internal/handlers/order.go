@@ -152,6 +152,11 @@ func (h *orderHandler) AddAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Node != order.CurrentNode {
+		writeError(w, 409, "跨节点越权", fmt.Sprintf("当前办理节点为 %s，仅可补正当前节点附件", service.NodeName(order.CurrentNode)))
+		return
+	}
+
 	if req.URL == "" {
 		req.URL = fmt.Sprintf("/uploads/%s/%s_%s", id, req.Type, req.Name)
 	}
@@ -240,11 +245,24 @@ func (h *orderHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *orderHandler) Get(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetCurrentUser(r)
 	id := getURLParam(r, "id")
+
 	order, err := database.GetOrderByID(id)
 	if err != nil {
 		writeError(w, 404, "单据不存在", "入职办理单 "+id+" 不存在")
 		return
+	}
+
+	if user.Role != models.RoleReviewer {
+		if user.Role == models.RoleRegistrar && order.RegistrarID != user.ID {
+			writeError(w, 403, "跨登记员越权", fmt.Sprintf("该单据由 %s 登记，您无权访问", order.RegistrarName))
+			return
+		}
+		if user.Role == models.RoleAuditor && order.CurrentRole != models.RoleAuditor {
+			writeError(w, 403, "角色越权", fmt.Sprintf("该单据当前由 %s 处理，您作为审核主管仅可查看分配给您的待办", service.RoleName(order.CurrentRole)))
+			return
+		}
 	}
 
 	order.WarningLevel = service.CalcWarningLevel(order.DueDate)
@@ -406,6 +424,23 @@ func (h *orderHandler) AddAuditNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.Role != models.RoleReviewer {
+		if user.Role == models.RoleRegistrar && order.RegistrarID != user.ID {
+			writeError(w, 403, "跨登记员越权", fmt.Sprintf("该单据由 %s 登记，您无权添加审计备注", order.RegistrarName))
+			return
+		}
+		if user.Role == models.RoleAuditor && order.CurrentRole != models.RoleAuditor && order.HandlerID != user.ID {
+			writeError(w, 403, "角色越权", "仅当前处理角色或单据处理人可添加审计备注")
+			return
+		}
+	}
+
+	validLabels := map[string]bool{"待派发": true, "处理中": true, "已关闭": true}
+	if body.StatusLabel != "" && !validLabels[body.StatusLabel] {
+		writeError(w, 400, "请求参数错误", "状态标签仅允许：待派发、处理中、已关闭")
+		return
+	}
+
 	note := &models.AuditNote{
 		OrderID:       order.ID,
 		StatusLabel:   body.StatusLabel,
@@ -422,6 +457,18 @@ func (h *orderHandler) AddAuditNote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "添加失败", err.Error())
 		return
 	}
+
+	record := &models.ProcessRecord{
+		OrderID:       id,
+		Node:          order.CurrentNode,
+		Action:        "add_audit_note",
+		OperatorID:    user.ID,
+		OperatorName:  user.Name,
+		OperatorRole:  user.Role,
+		Remark:        fmt.Sprintf("添加审计备注[%s]：%s", note.StatusLabel, body.Content),
+		ExceptionType: "",
+	}
+	_ = database.CreateProcessRecord(record)
 
 	writeJSON(w, 200, map[string]interface{}{
 		"message": "添加成功",
