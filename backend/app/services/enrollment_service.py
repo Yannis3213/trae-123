@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.exceptions import (
     MissingMaterialsError,
+    NotCurrentHandlerError,
     OverdueError,
     StatusConflictError,
     UnauthorizedAdvanceError,
@@ -66,11 +67,20 @@ def get_missing_evidence(enrollment: Enrollment) -> list[str]:
     return [k for k, v in summary.items() if not v]
 
 
-def enrollment_to_response(enrollment: Enrollment) -> EnrollmentResponse:
+def enrollment_to_response(enrollment: Enrollment, user: Optional[Any] = None) -> EnrollmentResponse:
     resp = EnrollmentResponse.model_validate(enrollment)
     resp.expiry_status = get_expiry_status(enrollment.due_at)
     resp.has_exception = has_exception(enrollment)
     resp.evidence_summary = get_evidence_summary(enrollment)
+
+    resp.required_role = get_required_role(enrollment)
+    resp.responsible_person = get_responsible_user_name(enrollment)
+
+    if user:
+        can, reason = check_can_operate(enrollment, user)
+        resp.can_operate = can
+        resp.operate_reason = reason
+
     return resp
 
 
@@ -85,6 +95,91 @@ def get_current_handler_role(enrollment: Enrollment) -> Optional[RoleEnum]:
         if not enrollment.review_by_id:
             return RoleEnum.REVIEW_LEAD
     return None
+
+
+def get_required_role(enrollment: Enrollment) -> Optional[RoleEnum]:
+    if enrollment.status == EnrollmentStatusEnum.COMPLETED:
+        return None
+    if enrollment.status == EnrollmentStatusEnum.FAILED:
+        return RoleEnum.REGISTRATION_CLERK
+    if enrollment.status == EnrollmentStatusEnum.PENDING:
+        if not enrollment.audit_by_id:
+            return RoleEnum.AUDIT_SUPERVISOR
+        if not enrollment.review_by_id:
+            return RoleEnum.REVIEW_LEAD
+    return None
+
+
+ROLE_LABEL_MAP = {
+    RoleEnum.REGISTRATION_CLERK: "登记员",
+    RoleEnum.AUDIT_SUPERVISOR: "审核主管",
+    RoleEnum.REVIEW_LEAD: "复核负责人",
+}
+
+
+def get_responsible_user_name(enrollment: Enrollment, db: Optional[Session] = None) -> Optional[str]:
+    if enrollment.status == EnrollmentStatusEnum.COMPLETED:
+        if enrollment.review_by:
+            return enrollment.review_by.full_name
+        if db and enrollment.review_by_id:
+            u = db.query(User).filter(User.id == enrollment.review_by_id).first()
+            return u.full_name if u else None
+        return None
+    if enrollment.status == EnrollmentStatusEnum.FAILED:
+        if enrollment.created_by:
+            return enrollment.created_by.full_name
+        if db and enrollment.created_by_id:
+            u = db.query(User).filter(User.id == enrollment.created_by_id).first()
+            return u.full_name if u else None
+        return None
+    if enrollment.status == EnrollmentStatusEnum.PENDING:
+        if not enrollment.audit_by_id:
+            return "待分配审核主管"
+        if not enrollment.review_by_id:
+            if enrollment.audit_by:
+                return enrollment.audit_by.full_name
+            if db and enrollment.audit_by_id:
+                u = db.query(User).filter(User.id == enrollment.audit_by_id).first()
+                return u.full_name if u else None
+            return None
+    return None
+
+
+def check_can_operate(enrollment: Enrollment, user: Any) -> tuple[bool, Optional[str]]:
+    required_role = get_required_role(enrollment)
+
+    if enrollment.status == EnrollmentStatusEnum.COMPLETED:
+        return False, "单据已核验完成，无法继续操作"
+
+    if required_role and user['role'] != required_role:
+        return False, f"当前角色为「{ROLE_LABEL_MAP.get(RoleEnum(user['role']), user['role'])}」，该节点需「{ROLE_LABEL_MAP.get(required_role, required_role)}」操作"
+
+    if enrollment.status == EnrollmentStatusEnum.FAILED:
+        if enrollment.created_by_id != user['id']:
+            return False, f"该单据由其他登记员创建，当前责任人为 {enrollment.created_by.full_name if enrollment.created_by else '未知'}"
+        return True, None
+
+    expiry = get_expiry_status(enrollment.due_at)
+    if expiry == ExpiryStatusEnum.OVERDUE:
+        return False, f"单据已于 {enrollment.due_at.strftime('%Y-%m-%d %H:%M')} 逾期，请先处理逾期异常"
+
+    return True, None
+
+
+def _validate_current_handler(enrollment: Enrollment, user: Any) -> None:
+    can, reason = check_can_operate(enrollment, user)
+    if not can:
+        if "角色" in reason or "创建" in reason:
+            if "角色" in reason:
+                raise UnauthorizedAdvanceError(reason)
+            else:
+                raise NotCurrentHandlerError(reason)
+        elif "逾期" in reason:
+            raise OverdueError(reason)
+        elif "资料缺失" in reason:
+            raise MissingMaterialsError(reason)
+        else:
+            raise StatusConflictError(reason)
 
 
 def get_responsible_user_id(enrollment: Enrollment) -> Optional[int]:
@@ -301,10 +396,13 @@ def audit_enrollment(
     if enrollment.audit_by_id and enrollment.status == EnrollmentStatusEnum.PENDING:
         raise StatusConflictError("状态冲突：单据已审核过，请勿重复审核")
 
+    _validate_current_handler(enrollment, user)
+
     if data.passed:
         _validate_evidence_complete(enrollment)
 
-    _validate_not_overdue(enrollment, block_overdue)
+    if block_overdue:
+        _validate_not_overdue(enrollment, block_overdue)
 
     old_status = enrollment.status
 
@@ -386,10 +484,13 @@ def review_enrollment(
     if enrollment.review_by_id:
         raise StatusConflictError("状态冲突：单据已复核过，请勿重复复核")
 
+    _validate_current_handler(enrollment, user)
+
     if data.passed:
         _validate_evidence_complete(enrollment)
 
-    _validate_not_overdue(enrollment, block_overdue)
+    if block_overdue:
+        _validate_not_overdue(enrollment, block_overdue)
 
     old_status = enrollment.status
 
@@ -463,8 +564,7 @@ def correct_enrollment(
             f"状态冲突：当前状态为「{enrollment.status.value}」，只有核验失败的单据可以补正"
         )
 
-    if enrollment.created_by_id != user['id']:
-        raise UnauthorizedAdvanceError("越权推进：只能补正自己创建的单据")
+    _validate_current_handler(enrollment, user)
 
     old_status = enrollment.status
 

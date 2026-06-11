@@ -171,7 +171,7 @@
       <div class="detail-sidebar">
         <div class="card mb-4 role-card">
           <div class="card-header">
-            <span>当前角色</span>
+            <span>角色与权责</span>
           </div>
           <div class="card-body">
             <div class="role-info">
@@ -185,17 +185,52 @@
             </div>
             <div class="role-divider"></div>
             <div class="handler-section">
-              <div class="handler-label text-sm text-secondary">当前处理人</div>
-              <div class="handler-value">
-                <span v-if="enrollment.current_handler">
-                  {{ enrollment.current_handler.full_name }}
-                  <span class="text-sm text-tertiary">
-                    ({{ ROLE_LABELS[enrollment.current_handler.role as RoleEnum] }})
+              <div class="handler-row">
+                <span class="handler-label text-sm text-secondary">当前节点</span>
+                <span class="handler-value">
+                  <span v-if="enrollment.required_role" class="tag tag-info">
+                    {{ ROLE_LABELS[enrollment.required_role as RoleEnum] }}
+                  </span>
+                  <span v-else class="text-tertiary">
+                    {{ enrollment.status === 'completed' ? '已完成' : '-' }}
                   </span>
                 </span>
-                <span v-else class="text-tertiary">
-                  {{ enrollment.status === 'completed' ? '已完成' : '待分配' }}
+              </div>
+              <div class="handler-row">
+                <span class="handler-label text-sm text-secondary">责任人</span>
+                <span class="handler-value">
+                  <span v-if="enrollment.responsible_person">{{ enrollment.responsible_person }}</span>
+                  <span v-else class="text-tertiary">-</span>
                 </span>
+              </div>
+              <div class="handler-row">
+                <span class="handler-label text-sm text-secondary">当前处理人</span>
+                <span class="handler-value">
+                  <span v-if="enrollment.current_handler">
+                    {{ enrollment.current_handler.full_name }}
+                    <span class="text-sm text-tertiary">
+                      ({{ ROLE_LABELS[enrollment.current_handler.role as RoleEnum] }})
+                    </span>
+                  </span>
+                  <span v-else class="text-tertiary">
+                    {{ enrollment.status === 'completed' ? '已完成' : '待分配' }}
+                  </span>
+                </span>
+              </div>
+              <div class="handler-row">
+                <span class="handler-label text-sm text-secondary">操作权限</span>
+                <span class="handler-value">
+                  <span v-if="enrollment.can_operate" class="tag tag-success">
+                    可操作
+                  </span>
+                  <span v-else class="tag tag-disabled">
+                    不可操作
+                  </span>
+                </span>
+              </div>
+              <div v-if="!enrollment.can_operate && enrollment.operate_reason" class="operate-reason mt-2">
+                <span class="reason-icon">🔒</span>
+                <span class="reason-text">{{ enrollment.operate_reason }}</span>
               </div>
             </div>
           </div>
@@ -292,7 +327,7 @@
             <span>办理操作</span>
           </div>
           <div class="card-body">
-            <div v-if="canAudit" class="action-section">
+            <div v-if="canAuditFinal" class="action-section">
               <div class="action-hint mb-2 text-sm text-success">
                 ✓ 您可以审核此单据
               </div>
@@ -304,7 +339,7 @@
               </button>
             </div>
 
-            <div v-if="canReview" class="action-section">
+            <div v-else-if="canReviewFinal" class="action-section">
               <div class="action-hint mb-2 text-sm text-success">
                 ✓ 您可以复核此单据
               </div>
@@ -316,7 +351,7 @@
               </button>
             </div>
 
-            <div v-if="canCorrect" class="action-section">
+            <div v-else-if="canCorrectFinal" class="action-section">
               <div class="action-hint mb-2 text-sm text-warning">
                 ⚡ 您需要补正此单据
               </div>
@@ -325,14 +360,14 @@
               </button>
             </div>
 
-            <div v-if="!canAudit && !canReview && !canCorrect" class="action-section">
+            <div v-else class="action-section">
               <div class="no-permission">
                 <div class="no-perm-icon">🔒</div>
                 <div class="no-perm-text text-sm text-secondary">
-                  当前角色无此单据的操作权限
+                  无此单据的操作权限
                 </div>
-                <div class="no-perm-reason text-xs text-tertiary mt-1">
-                  {{ noPermissionReason }}
+                <div class="no-perm-reason text-xs mt-1">
+                  {{ enrollment.operate_reason || '当前状态不支持操作' }}
                 </div>
               </div>
             </div>
@@ -473,6 +508,18 @@ const canCorrect = computed(() => {
     enrollment.value.status === 'failed' &&
     enrollment.value.created_by_id === auth.currentUser.value?.id
   )
+})
+
+const canAuditFinal = computed(() => {
+  return enrollment.value?.can_operate && canAudit.value
+})
+
+const canReviewFinal = computed(() => {
+  return enrollment.value?.can_operate && canReview.value
+})
+
+const canCorrectFinal = computed(() => {
+  return enrollment.value?.can_operate && canCorrect.value
 })
 
 const noPermissionReason = computed(() => {
@@ -958,18 +1005,70 @@ onMounted(() => {
 
 .handler-section {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.handler-row {
+  display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
 }
 
 .handler-label {
   color: var(--text-tertiary);
+  flex-shrink: 0;
 }
 
 .handler-value {
   font-weight: 500;
   font-size: 13px;
   text-align: right;
+}
+
+.operate-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #fff2e8;
+  border: 1px solid #ffd591;
+  border-radius: 6px;
+}
+
+.reason-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.reason-text {
+  font-size: 12px;
+  color: #d4380d;
+  line-height: 1.5;
+}
+
+.tag-info {
+  background: #e6f7ff;
+  color: #1890ff;
+  border: 1px solid #91d5ff;
+}
+
+.tag-success {
+  background: #f6ffed;
+  color: #52c41a;
+  border: 1px solid #b7eb8f;
+}
+
+.tag-disabled {
+  background: #f5f5f5;
+  color: #8c8c8c;
+  border: 1px solid #d9d9d9;
+}
+
+.no-perm-reason {
+  color: #d4380d;
 }
 
 .progress-step {

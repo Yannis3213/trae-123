@@ -609,6 +609,259 @@ def seed_database():
             resolved=False,
         ))
 
+        # 9. 刘二宝 - 待核验（明确指定审核主管为责任人），资料齐全，等王审核处理
+        e9 = Enrollment(
+            member_name="刘二宝",
+            member_phone="13800138009",
+            member_id_card="110101199009090009",
+            membership_type="半年卡",
+            card_level="银卡",
+            amount=1599,
+            contract_no="HT202506009",
+            salesperson="会籍顾问-林销售",
+            private_trainer=None,
+            store="朝阳店",
+            remark="明确指定王审核为责任人，用于测试非当前处理人拦截",
+            status=EnrollmentStatusEnum.PENDING,
+            version=1,
+            created_by_id=clerk2.id,
+            current_handler_id=supervisor1.id,
+            audit_by_id=None,
+            review_by_id=None,
+            created_at=now - datetime.timedelta(hours=8),
+            submitted_at=now - datetime.timedelta(hours=8),
+            audited_at=None,
+            reviewed_at=None,
+            due_at=now + datetime.timedelta(days=2),
+        )
+        db.add(e9)
+        db.flush()
+
+        for et in evidence_types_all:
+            db.add(Attachment(
+                enrollment_id=e9.id,
+                evidence_type=et,
+                file_name=f"liuerbao_{et.value}.pdf",
+                file_url=f"/uploads/liuerbao_{et.value}.pdf",
+                uploaded_by_id=clerk2.id,
+                is_valid=True,
+            ))
+        db.add(AuditLog(
+            enrollment_id=e9.id,
+            user_id=clerk2.id,
+            action_type=ActionTypeEnum.CREATE,
+            old_status=None,
+            new_status=EnrollmentStatusEnum.PENDING,
+            comment="创建入会单并提交，明确转派王审核为责任人",
+            created_at=now - datetime.timedelta(hours=8),
+        ))
+        db.add(AuditLog(
+            enrollment_id=e9.id,
+            user_id=supervisor1.id,
+            action_type=ActionTypeEnum.REASSIGN,
+            old_status=EnrollmentStatusEnum.PENDING,
+            new_status=EnrollmentStatusEnum.PENDING,
+            comment="系统确认当前处理人为王审核",
+            created_at=now - datetime.timedelta(hours=7),
+        ))
+
+        # 10. 钱三多 - 待核验（待复核，明确指定复核负责人为责任人），资料齐全，已审核，等赵复核
+        e10 = Enrollment(
+            member_name="钱三多",
+            member_phone="13800138010",
+            member_id_card="110101199010100010",
+            membership_type="年卡",
+            card_level="金卡",
+            amount=2999,
+            contract_no="HT202506010",
+            salesperson="会籍顾问-张销售",
+            private_trainer="私教主管-李教练",
+            store="海淀店",
+            remark="明确指定赵复核为责任人，用于测试越权和非当前处理人样例",
+            status=EnrollmentStatusEnum.PENDING,
+            version=2,
+            created_by_id=clerk1.id,
+            current_handler_id=lead1.id,
+            audit_by_id=supervisor1.id,
+            review_by_id=None,
+            created_at=now - datetime.timedelta(days=3),
+            submitted_at=now - datetime.timedelta(days=3),
+            audited_at=now - datetime.timedelta(days=1),
+            reviewed_at=None,
+            due_at=now + datetime.timedelta(days=1),
+        )
+        db.add(e10)
+        db.flush()
+
+        for et in evidence_types_all:
+            db.add(Attachment(
+                enrollment_id=e10.id,
+                evidence_type=et,
+                file_name=f"qiansanduo_{et.value}.pdf",
+                file_url=f"/uploads/qiansanduo_{et.value}.pdf",
+                uploaded_by_id=clerk1.id,
+                is_valid=True,
+            ))
+
+        db.add(AuditLog(
+            enrollment_id=e10.id,
+            user_id=clerk1.id,
+            action_type=ActionTypeEnum.CREATE,
+            old_status=None,
+            new_status=EnrollmentStatusEnum.PENDING,
+            comment="创建入会单并提交，年卡金卡，会籍张销售，私教李教练",
+            created_at=now - datetime.timedelta(days=3),
+        ))
+        db.add(AuditLog(
+            enrollment_id=e10.id,
+            user_id=supervisor1.id,
+            action_type=ActionTypeEnum.AUDIT_PASS,
+            old_status=EnrollmentStatusEnum.PENDING,
+            new_status=EnrollmentStatusEnum.PENDING,
+            comment="审核通过，明确指定赵复核为当前责任人",
+            created_at=now - datetime.timedelta(days=1),
+        ))
+        db.add(AuditLog(
+            enrollment_id=e10.id,
+            user_id=lead1.id,
+            action_type=ActionTypeEnum.REASSIGN,
+            old_status=EnrollmentStatusEnum.PENDING,
+            new_status=EnrollmentStatusEnum.PENDING,
+            comment="系统确认当前处理人为赵复核",
+            created_at=now - datetime.timedelta(days=1),
+        ))
+
+        # 11. 孙四四 - 核验完成（状态冲突样例），已归档完成，不能再操作
+        e11 = Enrollment(
+            member_name="孙四四",
+            member_phone="13800138011",
+            member_id_card="110101199011110011",
+            membership_type="季卡",
+            card_level="普通",
+            amount=899,
+            contract_no="HT202506011",
+            salesperson="会籍顾问-王销售",
+            private_trainer=None,
+            store="朝阳店",
+            remark="已完全归档，用于测试状态冲突（COMPLETED 不能再操作）",
+            status=EnrollmentStatusEnum.COMPLETED,
+            version=3,
+            created_by_id=clerk2.id,
+            current_handler_id=None,
+            audit_by_id=supervisor1.id,
+            review_by_id=lead1.id,
+            created_at=now - datetime.timedelta(days=14),
+            submitted_at=now - datetime.timedelta(days=14),
+            audited_at=now - datetime.timedelta(days=12),
+            reviewed_at=now - datetime.timedelta(days=10),
+            due_at=now - datetime.timedelta(days=8),
+        )
+        db.add(e11)
+        db.flush()
+
+        for et in evidence_types_all:
+            db.add(Attachment(
+                enrollment_id=e11.id,
+                evidence_type=et,
+                file_name=f"sunsisi_{et.value}.pdf",
+                file_url=f"/uploads/sunsisi_{et.value}.pdf",
+                uploaded_by_id=clerk2.id,
+                is_valid=True,
+            ))
+
+        db.add(AuditLog(
+            enrollment_id=e11.id,
+            user_id=clerk2.id,
+            action_type=ActionTypeEnum.CREATE,
+            old_status=None,
+            new_status=EnrollmentStatusEnum.PENDING,
+            comment="创建入会单并提交，季卡普通会员",
+            created_at=now - datetime.timedelta(days=14),
+        ))
+        db.add(AuditLog(
+            enrollment_id=e11.id,
+            user_id=supervisor1.id,
+            action_type=ActionTypeEnum.AUDIT_PASS,
+            old_status=EnrollmentStatusEnum.PENDING,
+            new_status=EnrollmentStatusEnum.PENDING,
+            comment="审核通过：资料齐全",
+            created_at=now - datetime.timedelta(days=12),
+        ))
+        db.add(AuditLog(
+            enrollment_id=e11.id,
+            user_id=lead1.id,
+            action_type=ActionTypeEnum.REVIEW_PASS,
+            old_status=EnrollmentStatusEnum.PENDING,
+            new_status=EnrollmentStatusEnum.COMPLETED,
+            comment="复核通过，已完全归档",
+            created_at=now - datetime.timedelta(days=10),
+        ))
+
+        # 12. 周五福 - 核验失败（非当前处理人样例），由 clerk1 创建，当前责任人为 clerk1，clerk2 不能补正
+        e12 = Enrollment(
+            member_name="周五福",
+            member_phone="13800138012",
+            member_id_card="110101199012120012",
+            membership_type="月卡",
+            card_level="普通",
+            amount=299,
+            contract_no="HT202506012",
+            salesperson="会籍顾问-林销售",
+            private_trainer=None,
+            store="海淀店",
+            remark="clerk1 创建的失败单据，clerk2 不能补正（用于测试非当前处理人拦截）",
+            status=EnrollmentStatusEnum.FAILED,
+            version=2,
+            created_by_id=clerk1.id,
+            current_handler_id=clerk1.id,
+            audit_by_id=supervisor1.id,
+            review_by_id=None,
+            created_at=now - datetime.timedelta(days=4),
+            submitted_at=now - datetime.timedelta(days=4),
+            audited_at=now - datetime.timedelta(days=2),
+            reviewed_at=None,
+            due_at=now + datetime.timedelta(days=3),
+        )
+        db.add(e12)
+        db.flush()
+
+        for et in evidence_types_all:
+            db.add(Attachment(
+                enrollment_id=e12.id,
+                evidence_type=et,
+                file_name=f"zhouwufu_{et.value}.pdf",
+                file_url=f"/uploads/zhouwufu_{et.value}.pdf",
+                uploaded_by_id=clerk1.id,
+                is_valid=True,
+            ))
+
+        db.add(AuditLog(
+            enrollment_id=e12.id,
+            user_id=clerk1.id,
+            action_type=ActionTypeEnum.CREATE,
+            old_status=None,
+            new_status=EnrollmentStatusEnum.PENDING,
+            comment="创建入会单并提交",
+            created_at=now - datetime.timedelta(days=4),
+        ))
+        db.add(AuditLog(
+            enrollment_id=e12.id,
+            user_id=supervisor1.id,
+            action_type=ActionTypeEnum.AUDIT_FAIL,
+            old_status=EnrollmentStatusEnum.PENDING,
+            new_status=EnrollmentStatusEnum.FAILED,
+            comment="审核退回：联系电话有误，请核对后补正（非当前处理人样例）",
+            created_at=now - datetime.timedelta(days=2),
+        ))
+        db.add(ExceptionLog(
+            enrollment_id=e12.id,
+            exception_type=ExceptionTypeEnum.STATUS_CONFLICT,
+            description="状态冲突：审核退回，联系电话有误需补正（clerk2 不能处理此单）",
+            detected_by="王审核",
+            detected_at=now - datetime.timedelta(days=2),
+            resolved=False,
+        ))
+
         db.commit()
 
         print("\n===== 数据库初始化完成 =====")
@@ -617,21 +870,29 @@ def seed_database():
         print("  登记员：clerk2 / 123456  （李文员）")
         print("  审核主管：supervisor1 / 123456  （王审核）")
         print("  复核负责人：lead1 / 123456  （赵复核）")
-        print("\n样例数据（8条）：")
-        print("  1. 陈小明 - 待核验（正常）- 资料齐全 - 等审核")
-        print("  2. 李小红 - 待核验（临期）- 资料齐全 - 剩12小时")
-        print("  3. 王小强 - 待核验（逾期）- 资料齐全 - 逾期2天")
+        print("\n样例数据（12条）：")
+        print("  1. 陈小明 - 待核验（待复核）- 资料齐全 - 已审核")
+        print("  2. 李小红 - 待核验（待复核/临期）- 资料齐全 - 剩12小时")
+        print("  3. 王小强 - 待核验（待审核/逾期）- 资料齐全 - 逾期2天")
         print("  4. 赵小美 - 核验失败（资料缺失）- 2次退回 - 有补正记录")
         print("  5. 孙大壮 - 核验失败（逾期）- 资料齐全 - 补正逾期")
         print("  6. 周小丽 - 待核验（待复核）- 已审核 - 等复核")
         print("  7. 吴大勇 - 核验完成 - 已归档 - 有历史异常")
-        print("  8. 郑小芳 - 待核验（资料缺失）- 刚创建 - 缺两类证据")
-        print("\n四类异常样例：")
-        print("  1. 资料缺失 - 赵小美、郑小芳")
-        print("  2. 状态冲突 - 赵小美（2次退回）、孙大壮")
-        print("  3. 越权推进 - 需登录非对应角色操作触发")
-        print("  4. 超期未处理 - 王小强、孙大壮")
+        print("  8. 郑小芳 - 待核验（待审核/资料缺失）- 刚创建 - 缺两类证据")
+        print("  9. 刘二宝 - 待核验（待审核）- 明确责任人=王审核 - 资料齐全")
+        print("  10. 钱三多 - 待核验（待复核）- 明确责任人=赵复核 - 资料齐全")
+        print("  11. 孙四四 - 核验完成 - 状态冲突样例 - COMPLETED 不能再操作")
+        print("  12. 周五福 - 核验失败 - 责任人=张登记 - clerk2 不能补正")
+        print("\n越权/状态冲突/非当前处理人样例：")
+        print("  - 越权推进：任意角色操作其它节点的单据（如登记员操作审核）")
+        print("  - 非当前处理人：clerk2 操作 #4赵小美、#12周五福（责任人为 clerk1）")
+        print("  - 非当前处理人：审核员操作 #10钱三多（责任人=赵复核）")
+        print("  - 状态冲突：任意操作 #11孙四四（已 COMPLETED 归档）")
+        print("  - 旧版本：提交 version != 当前 version")
+        print("  - 资料缺失：#8郑小芳、#4赵小美审核通过时拦截")
+        print("  - 逾期拦截：#3王小强、#5孙大壮推进时拦截")
         print("\n月底重点：")
+        print("  ✅ 列表/详情按角色显示 can_operate、operate_reason、responsible_person、required_role")
         print("  ✅ 正常/临期/逾期三队分列")
         print("  ✅ 节点超时算责任人")
         print("  ✅ 逾期批量推进逐条拦截")

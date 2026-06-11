@@ -28,8 +28,6 @@ from app.services.enrollment_service import (
     audit_enrollment,
     enrollment_to_response,
     get_enrollment,
-    get_evidence_summary,
-    get_expiry_status,
     get_stats,
     list_enrollments,
     create_enrollment,
@@ -70,7 +68,7 @@ class EnrollmentController(Controller):
             page=page,
             page_size=page_size,
         )
-        response_items = [enrollment_to_response(item) for item in items]
+        response_items = [enrollment_to_response(item, user) for item in items]
         return EnrollmentListResponse(
             total=total,
             items=response_items,
@@ -86,10 +84,8 @@ class EnrollmentController(Controller):
             from litestar.exceptions import HTTPException
             raise HTTPException(status_code=404, detail="入会单不存在")
 
-        resp = EnrollmentDetailResponse.model_validate(enrollment)
-        resp.expiry_status = get_expiry_status(enrollment.due_at)
-        resp.has_exception = any(not exc.resolved for exc in enrollment.exceptions)
-        resp.evidence_summary = get_evidence_summary(enrollment)
+        resp_base = enrollment_to_response(enrollment, user)
+        resp = EnrollmentDetailResponse(**resp_base.model_dump())
         return resp
 
     @post()

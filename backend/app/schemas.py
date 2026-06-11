@@ -129,6 +129,11 @@ class EnrollmentResponse(BaseModel):
     has_exception: bool = False
     evidence_summary: dict[str, bool] = {}
 
+    can_operate: bool = False
+    operate_reason: Optional[str] = None
+    responsible_person: Optional[str] = None
+    required_role: Optional[RoleEnum] = None
+
     class Config:
         from_attributes = True
 

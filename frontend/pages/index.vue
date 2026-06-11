@@ -120,13 +120,13 @@
                   <th>会员姓名</th>
                   <th>电话</th>
                   <th>会籍类型</th>
-                  <th>金额</th>
                   <th>门店</th>
                   <th>状态</th>
                   <th>到期状态</th>
-                  <th>异常</th>
+                  <th>当前节点</th>
+                  <th>责任人</th>
                   <th>证据</th>
-                  <th>处理时限</th>
+                  <th>操作权限</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -143,6 +143,7 @@
                       type="checkbox"
                       class="checkbox"
                       :checked="selectedIds.includes(item.id)"
+                      :disabled="!item.can_operate"
                       @change="toggleSelect(item.id)"
                     />
                   </td>
@@ -150,7 +151,6 @@
                   <td>{{ item.member_name }}</td>
                   <td>{{ item.member_phone }}</td>
                   <td>{{ item.membership_type }}</td>
-                  <td>¥{{ item.amount }}</td>
                   <td>{{ item.store }}</td>
                   <td>
                     <span class="tag" :class="'tag-' + item.status">
@@ -167,7 +167,13 @@
                     </span>
                   </td>
                   <td>
-                    <span v-if="item.has_exception" class="tag tag-overdue">有异常</span>
+                    <span v-if="item.required_role" class="tag tag-info">
+                      {{ ROLE_LABELS[item.required_role] }}
+                    </span>
+                    <span v-else class="text-tertiary">-</span>
+                  </td>
+                  <td class="text-sm">
+                    <span v-if="item.responsible_person">{{ item.responsible_person }}</span>
                     <span v-else class="text-tertiary">-</span>
                   </td>
                   <td>
@@ -183,8 +189,21 @@
                       </span>
                     </div>
                   </td>
-                  <td class="text-sm text-secondary">
-                    {{ formatDate(item.due_at) }}
+                  <td>
+                    <span
+                      v-if="item.can_operate"
+                      class="tag tag-success"
+                      title="当前角色可操作此单据"
+                    >
+                      可操作
+                    </span>
+                    <span
+                      v-else
+                      class="tag tag-disabled"
+                      :title="item.operate_reason || ''"
+                    >
+                      {{ item.operate_reason?.slice(0, 12) }}{{ item.operate_reason && item.operate_reason.length > 12 ? '...' : '' }}
+                    </span>
                   </td>
                   <td>
                     <button class="btn btn-sm" @click.stop="goToDetail(item.id)">
@@ -210,7 +229,7 @@
                   v-for="item in normalSquad"
                   :key="item.id"
                   class="squad-card"
-                  :class="{ selected: selectedIds.includes(item.id) }"
+                  :class="{ selected: selectedIds.includes(item.id), 'squad-card-disabled': !item.can_operate }"
                   @click="selectAndShowDetail(item)"
                 >
                   <div class="squad-card-header">
@@ -230,10 +249,17 @@
                         {{ item.evidence_summary[key as string] ? '✓' : '○' }}
                       </span>
                     </div>
-                    <div class="text-xs text-tertiary mt-2">{{ formatDate(item.due_at) }}</div>
+                    <div class="squad-meta mt-2">
+                      <span v-if="item.required_role" class="tag tag-info tag-xs">{{ ROLE_LABELS[item.required_role] }}</span>
+                      <span v-if="item.responsible_person" class="text-xs text-secondary">👤 {{ item.responsible_person }}</span>
+                      <span class="text-xs text-tertiary">{{ formatDate(item.due_at) }}</span>
+                    </div>
+                    <div v-if="!item.can_operate && item.operate_reason" class="squad-reason mt-1" :title="item.operate_reason">
+                      {{ item.operate_reason }}
+                    </div>
                   </div>
-                  <div v-if="item.has_exception" class="squad-card-badge">
-                    <span class="tag tag-overdue tag-sm">有异常</span>
+                  <div v-if="!item.can_operate" class="squad-card-badge">
+                    <span class="tag tag-disabled tag-sm">不可操作</span>
                   </div>
                 </div>
                 <div v-if="normalSquad.length === 0" class="squad-empty">暂无数据</div>
@@ -250,7 +276,7 @@
                   v-for="item in approachingSquad"
                   :key="item.id"
                   class="squad-card"
-                  :class="{ selected: selectedIds.includes(item.id) }"
+                  :class="{ selected: selectedIds.includes(item.id), 'squad-card-disabled': !item.can_operate }"
                   @click="selectAndShowDetail(item)"
                 >
                   <div class="squad-card-header">
@@ -270,10 +296,17 @@
                         {{ item.evidence_summary[key as string] ? '✓' : '○' }}
                       </span>
                     </div>
-                    <div class="text-xs text-approaching mt-2 font-medium">{{ formatDate(item.due_at) }}</div>
+                    <div class="squad-meta mt-2">
+                      <span v-if="item.required_role" class="tag tag-info tag-xs">{{ ROLE_LABELS[item.required_role] }}</span>
+                      <span v-if="item.responsible_person" class="text-xs text-secondary">👤 {{ item.responsible_person }}</span>
+                      <span class="text-xs text-approaching font-medium">{{ formatDate(item.due_at) }}</span>
+                    </div>
+                    <div v-if="!item.can_operate && item.operate_reason" class="squad-reason mt-1" :title="item.operate_reason">
+                      {{ item.operate_reason }}
+                    </div>
                   </div>
-                  <div v-if="item.has_exception" class="squad-card-badge">
-                    <span class="tag tag-overdue tag-sm">有异常</span>
+                  <div v-if="!item.can_operate" class="squad-card-badge">
+                    <span class="tag tag-disabled tag-sm">不可操作</span>
                   </div>
                 </div>
                 <div v-if="approachingSquad.length === 0" class="squad-empty">暂无数据</div>
@@ -290,7 +323,7 @@
                   v-for="item in overdueSquad"
                   :key="item.id"
                   class="squad-card"
-                  :class="{ selected: selectedIds.includes(item.id) }"
+                  :class="{ selected: selectedIds.includes(item.id), 'squad-card-disabled': !item.can_operate }"
                   @click="selectAndShowDetail(item)"
                 >
                   <div class="squad-card-header">
@@ -310,10 +343,17 @@
                         {{ item.evidence_summary[key as string] ? '✓' : '○' }}
                       </span>
                     </div>
-                    <div class="text-xs text-overdue mt-2 font-medium">{{ formatDate(item.due_at) }}</div>
+                    <div class="squad-meta mt-2">
+                      <span v-if="item.required_role" class="tag tag-info tag-xs">{{ ROLE_LABELS[item.required_role] }}</span>
+                      <span v-if="item.responsible_person" class="text-xs text-secondary">👤 {{ item.responsible_person }}</span>
+                      <span class="text-xs text-overdue font-medium">{{ formatDate(item.due_at) }}</span>
+                    </div>
+                    <div v-if="!item.can_operate && item.operate_reason" class="squad-reason mt-1" :title="item.operate_reason">
+                      {{ item.operate_reason }}
+                    </div>
                   </div>
-                  <div v-if="item.has_exception" class="squad-card-badge">
-                    <span class="tag tag-overdue tag-sm">有异常</span>
+                  <div v-if="!item.can_operate" class="squad-card-badge">
+                    <span class="tag tag-disabled tag-sm">不可操作</span>
                   </div>
                 </div>
                 <div v-if="overdueSquad.length === 0" class="squad-empty">暂无数据</div>
@@ -943,6 +983,59 @@ onMounted(() => {
   position: absolute;
   top: 8px;
   right: 8px;
+}
+
+.squad-card-disabled {
+  opacity: 0.7;
+  background: #fafafa;
+  border-color: #eee;
+}
+
+.squad-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.squad-reason {
+  font-size: 11px;
+  color: #d4380d;
+  background: #fff2e8;
+  padding: 4px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+  max-height: 40px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.tag-info {
+  background: #e6f7ff;
+  color: #1890ff;
+  border: 1px solid #91d5ff;
+}
+
+.tag-success {
+  background: #f6ffed;
+  color: #52c41a;
+  border: 1px solid #b7eb8f;
+}
+
+.tag-disabled {
+  background: #f5f5f5;
+  color: #8c8c8c;
+  border: 1px solid #d9d9d9;
+}
+
+.tag-xs {
+  font-size: 10px;
+  padding: 0 4px;
+  line-height: 16px;
+  height: 16px;
 }
 
 .squad-empty {

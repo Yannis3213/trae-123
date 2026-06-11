@@ -64,3 +64,12 @@ class OverdueError(BusinessException):
             status_code=409,
             error_code="overdue",
         )
+
+
+class NotCurrentHandlerError(BusinessException):
+    def __init__(self, detail: str = "非当前处理人：该单据当前不由您处理"):
+        super().__init__(
+            detail=detail,
+            status_code=403,
+            error_code="not_current_handler",
+        )

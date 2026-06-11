@@ -104,6 +104,11 @@ export interface Enrollment {
   expiry_status?: ExpiryStatusEnum
   has_exception: boolean
   evidence_summary: Record<string, boolean>
+
+  can_operate: boolean
+  operate_reason?: string | null
+  responsible_person?: string | null
+  required_role?: RoleEnum | null
 }
 
 export interface EnrollmentDetail extends Enrollment {
@@ -190,6 +195,7 @@ export const EXCEPTION_LABELS: Record<ExceptionTypeEnum, string> = {
 
 export const ERROR_CODE_LABELS: Record<string, string> = {
   unauthorized_advance: '越权推进',
+  not_current_handler: '非当前处理人',
   status_conflict: '状态冲突',
   version_conflict: '版本冲突',
   missing_materials: '资料缺失',
