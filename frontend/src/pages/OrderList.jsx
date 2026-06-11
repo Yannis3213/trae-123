@@ -117,7 +117,9 @@ export default function OrderList({ mode }) {
 
   const handleBatch = (action) => {
     if (selectedIds.length === 0) return alert('请先勾选记录')
-    setActionModal({ type: 'batch', action, ids: selectedIds, versions: list.reduce((m, o) => { if (selected[o.id]) m[o.id] = o.version; return m }, {}) })
+    const orders = list.filter(o => selected[o.id])
+    const versions = orders.reduce((m, o) => { m[o.id] = o.version; return m }, {})
+    setActionModal({ type: 'batch', action, ids: selectedIds, versions, orders })
   }
 
   const handleSingleAction = (order, action) => {

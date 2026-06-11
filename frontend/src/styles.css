@@ -300,6 +300,13 @@ a { color: inherit; text-decoration: none; }
   position: relative;
 }
 .history-item:last-child { border-bottom: none; }
+.history-item.history-fail {
+  background: #fff7f7;
+  margin: 0 -8px;
+  padding: 12px 8px;
+  border-radius: 6px;
+  border-bottom: 1px dashed #ffd0d0;
+}
 .history-time { color: #9ca3af; font-size: 12px; width: 140px; flex-shrink: 0; padding-top: 2px; }
 .history-content { flex: 1; }
 .history-action { font-weight: 600; color: #1f2937; margin-bottom: 4px; }
@@ -496,6 +503,7 @@ a { color: inherit; text-decoration: none; }
 }
 .audit-note.reject { border-left-color: #ff4d4f; }
 .audit-note.supplement { border-left-color: #faad14; }
+.audit-note.校验失败, .audit-note.abnormal { border-left-color: #ff4d4f; background: #fff7f7; }
 .audit-note-header {
   display: flex;
   justify-content: space-between;

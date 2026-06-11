@@ -891,10 +891,13 @@ type BatchActionRequest struct {
 }
 
 type BatchResultItem struct {
-	ID      uint   `json:"id"`
-	Success bool   `json:"success"`
-	Message string `json:"message,omitempty"`
-	Status  string `json:"status,omitempty"`
+	ID              uint     `json:"id"`
+	OrderNo         string   `json:"order_no,omitempty"`
+	Success         bool     `json:"success"`
+	Message         string   `json:"message,omitempty"`
+	Status          string   `json:"status,omitempty"`
+	MissingEvidence []string `json:"missing_evidence,omitempty"`
+	ErrorType       string   `json:"error_type,omitempty"`
 }
 
 func BatchActionPatrolOrders(c *gin.Context) {
@@ -949,9 +952,13 @@ func BatchActionPatrolOrders(c *gin.Context) {
 		if err := database.DB.Preload("Attachments").First(&order, id).Error; err != nil {
 			item.Success = false
 			item.Message = "记录不存在"
+			item.ErrorType = "not_found"
 			results = append(results, item)
 			continue
 		}
+
+		item.OrderNo = order.OrderNo
+		item.Status = order.Status
 
 		expectVersion, hasVer := req.Version[id]
 		if hasVer && expectVersion != order.Version {
@@ -959,6 +966,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 			batchWriteFailAudit(order, req.Action, msg)
 			item.Success = false
 			item.Message = msg
+			item.ErrorType = "version_conflict"
 			results = append(results, item)
 			continue
 		}
@@ -974,6 +982,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 				batchWriteFailAudit(order, req.Action, msg)
 				item.Success = false
 				item.Message = msg
+				item.ErrorType = "handler_mismatch"
 				results = append(results, item)
 				continue
 			}
@@ -984,6 +993,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 			batchWriteFailAudit(order, req.Action, flowErr.Error())
 			item.Success = false
 			item.Message = flowErr.Error()
+			item.ErrorType = "status_flow"
 			results = append(results, item)
 			continue
 		}
@@ -998,9 +1008,11 @@ func BatchActionPatrolOrders(c *gin.Context) {
 					}
 				}
 				var missing []string
+				var missingKeys []string
 				for _, cat := range requiredCats {
 					if !existingCats[cat] {
 						missing = append(missing, config.EvidenceCategoryNames[cat])
+						missingKeys = append(missingKeys, cat)
 					}
 				}
 				if len(missing) > 0 {
@@ -1008,6 +1020,8 @@ func BatchActionPatrolOrders(c *gin.Context) {
 					batchWriteFailAudit(order, req.Action, msg)
 					item.Success = false
 					item.Message = msg
+					item.MissingEvidence = missingKeys
+					item.ErrorType = "missing_evidence"
 					results = append(results, item)
 					continue
 				}
@@ -1019,6 +1033,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 			batchWriteFailAudit(order, req.Action, msg)
 			item.Success = false
 			item.Message = msg
+			item.ErrorType = "overdue"
 			results = append(results, item)
 			continue
 		}

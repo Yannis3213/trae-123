@@ -254,9 +254,15 @@ export default function OrderDetail() {
           {(o.histories || []).length === 0 ? <div className="empty-state">暂无历史记录</div> : (
             <div>
               {(o.histories || []).map((h, i) => (
-                <div key={h.id} className="history-item">
+                <div key={h.id} className={'history-item' + (h.success === false ? ' history-fail' : '')}>
                   <div className="history-time">
                     {dayjs(h.created_at).format('MM-DD HH:mm')}
+                    {h.success === false && (
+                      <span style={{ marginLeft: 8, color: '#cf1322', fontSize: 12, fontWeight: 600 }}>❌ 失败</span>
+                    )}
+                    {h.success !== false && (
+                      <span style={{ marginLeft: 8, color: '#389e0d', fontSize: 12, fontWeight: 600 }}>✅ 成功</span>
+                    )}
                   </div>
                   <div className="history-content">
                     <div className="history-action">
@@ -299,7 +305,7 @@ export default function OrderDetail() {
             (o.audit_notes || []).map(n => (
               <div key={n.id} className={'audit-note ' + (n.note_type || '')}>
                 <div className="audit-note-header">
-                  <span>📌 {({ reject: '退回意见', supplement: '补正记录', abnormal: '异常记录', remark: '备注' })[n.note_type] || '备注'}</span>
+                  <span>📌 {({ reject: '退回意见', supplement: '补正记录', abnormal: '异常记录', remark: '备注', '校验失败': '校验失败' })[n.note_type] || '备注'}</span>
                   <span>{n.operator_name} · {dayjs(n.created_at).format('YYYY-MM-DD HH:mm')}</span>
                 </div>
                 <div>{n.content}</div>

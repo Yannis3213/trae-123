@@ -63,10 +63,11 @@ export default function Warnings() {
 
   const handleBatch = (action) => {
     if (selectedCount === 0) return alert('请先勾选记录')
-    const selIds = Object.keys(selected).filter(k => selected[k]).map(Number)
     const allOrders = [...data.overdue, ...data.approaching, ...data.normal]
-    const versions = allOrders.reduce((m, o) => { if (selected[o.id]) m[o.id] = o.version; return m }, {})
-    setActionModal({ type: 'batch', action, ids: selIds, versions })
+    const selOrders = allOrders.filter(o => selected[o.id])
+    const selIds = selOrders.map(o => o.id)
+    const versions = selOrders.reduce((m, o) => { m[o.id] = o.version; return m }, {})
+    setActionModal({ type: 'batch', action, ids: selIds, versions, orders: selOrders })
   }
 
   const confirmAction = async (payload) => {
