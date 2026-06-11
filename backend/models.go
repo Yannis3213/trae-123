@@ -83,10 +83,11 @@ type CreateOrderRequest struct {
 }
 
 type UpdateStatusRequest struct {
-	Status      string `json:"status"`
-	Version     int    `json:"version"`
-	Remark      string `json:"remark"`
-	Attachments []struct {
+	Status          string `json:"status"`
+	Version         int    `json:"version"`
+	Remark          string `json:"remark"`
+	ExceptionReason string `json:"exception_reason"`
+	Attachments     []struct {
 		FileName string `json:"file_name"`
 		Category string `json:"category"`
 	} `json:"attachments"`
@@ -146,6 +147,7 @@ type AuditTrailItem struct {
 	Note         string `json:"note,omitempty"`
 	ReasonType   string `json:"reason_type,omitempty"`
 	Description  string `json:"description,omitempty"`
+	Remark       string `json:"remark,omitempty"`
 	OperatorID   int    `json:"operator_id,omitempty"`
 	OperatorRole string `json:"operator_role,omitempty"`
 	AuthorID     int    `json:"author_id,omitempty"`

@@ -1,5 +1,6 @@
-import { createSignal, createEffect, For, Show } from 'solid-js'
+import { createSignal, createEffect, For, Show, on } from 'solid-js'
 import { getOrders } from '../api'
+import { loadStatistics } from '../store'
 import type { RepairOrder } from '../types'
 
 const statusTabs = [
@@ -89,6 +90,9 @@ function OrderList(props: OrderListProps) {
       if (res.code === 0) {
         setOrders(res.data.list || [])
         setTotal(res.data.total)
+        if (res.data.status_counts) {
+          loadStatistics()
+        }
       }
     } catch {
     } finally {
@@ -99,6 +103,16 @@ function OrderList(props: OrderListProps) {
   createEffect(() => {
     fetchOrders()
   })
+
+  createEffect(on(() => {
+    const handler = () => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders()
+      }
+    }
+    document.addEventListener('visibilitychange', handler)
+    return handler
+  }, () => {}))
 
   const toggleSelect = (id: number) => {
     const next = new Set(selected())

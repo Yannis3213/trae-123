@@ -1,6 +1,6 @@
 import { createSignal, createEffect, Show, For } from 'solid-js'
 import { getOrder, updateStatus, addAttachment, addAuditNote } from '../api'
-import { isKefu, isShifu, isJingli } from '../store'
+import { isKefu, isShifu, isJingli, loadStatistics } from '../store'
 import type { OrderDetail as OrderDetailType } from '../types'
 import AuditTrail from './AuditTrail'
 
@@ -26,6 +26,7 @@ function OrderDetail(props: { orderId: number }) {
   const [remark, setRemark] = createSignal('')
   const [fileName, setFileName] = createSignal('')
   const [category, setCategory] = createSignal('施工证据')
+  const [exceptionReason, setExceptionReason] = createSignal('')
   const [error, setError] = createSignal('')
   const [success, setSuccess] = createSignal('')
 
@@ -55,6 +56,11 @@ function OrderDetail(props: { orderId: number }) {
     fetchOrder()
   })
 
+  const refreshAll = async () => {
+    await fetchOrder()
+    loadStatistics()
+  }
+
   const handleAction = async (targetStatus: string) => {
     setError('')
     setSuccess('')
@@ -67,9 +73,14 @@ function OrderDetail(props: { orderId: number }) {
       data.remark = remark()
     }
 
+    if (targetStatus === '退回补正' && exceptionReason()) {
+      data.exception_reason = exceptionReason()
+    }
+
     const attachments: { file_name: string; category: string }[] = []
-    if ((targetStatus === '待验收' || targetStatus === '验收通过') && fileName()) {
-      attachments.push({ file_name: fileName(), category: category() })
+    if (fileName()) {
+      const requiredCat = targetStatus === '验收通过' ? '验收证据' : targetStatus === '待验收' ? '施工证据' : category()
+      attachments.push({ file_name: fileName(), category: requiredCat })
     }
     if (attachments.length > 0) {
       data.attachments = attachments
@@ -78,15 +89,28 @@ function OrderDetail(props: { orderId: number }) {
     try {
       const res = await updateStatus(o.id, data)
       if (res.code === 0) {
-        setSuccess('操作成功')
+        setSuccess(getActionSuccessMessage(targetStatus))
         setRemark('')
         setFileName('')
-        fetchOrder()
+        setExceptionReason('')
+        refreshAll()
       } else {
         setError(res.message || '操作失败')
       }
     } catch (err: any) {
       setError(err.message || '操作失败')
+    }
+  }
+
+  const getActionSuccessMessage = (status: string): string => {
+    switch (status) {
+      case '已接单': return '接单成功，已分配给您处理'
+      case '施工中': return '已开始施工'
+      case '待验收': return '完工提交成功，等待服务经理验收'
+      case '验收通过': return '验收通过'
+      case '退回补正': return '已退回补正，师傅需重新处理'
+      case '已归档': return '归档完成'
+      default: return '操作成功'
     }
   }
 
@@ -99,7 +123,7 @@ function OrderDetail(props: { orderId: number }) {
       const res = await addAttachment(o.id, { file_name: fileName(), category: category() })
       if (res.code === 0) {
         setFileName('')
-        fetchOrder()
+        refreshAll()
       } else {
         setError(res.message || '添加附件失败')
       }
@@ -117,7 +141,7 @@ function OrderDetail(props: { orderId: number }) {
       const res = await addAuditNote(o.id, remark())
       if (res.code === 0) {
         setRemark('')
-        fetchOrder()
+        refreshAll()
       } else {
         setError(res.message || '添加备注失败')
       }
@@ -131,27 +155,60 @@ function OrderDetail(props: { orderId: number }) {
     return new Date(d).toLocaleString('zh-CN')
   }
 
+  const hasAttachmentCategory = (cat: string): boolean => {
+    const o = order()
+    if (!o) return false
+    return o.attachments.some(a => a.category === cat)
+  }
+
   const getAvailableActions = () => {
     const o = order()
     if (!o) return []
-    const actions: { label: string; status: string; variant: string; requireAttachment?: boolean }[] = []
+    const actions: { label: string; status: string; variant: string; requireAttachment?: boolean; attachmentCategory?: string; requireExceptionReason?: boolean }[] = []
 
     if (isShifu()) {
       if (o.status === '待接单') actions.push({ label: '接单', status: '已接单', variant: 'btn-primary' })
       if (o.status === '已接单') actions.push({ label: '开始施工', status: '施工中', variant: 'btn-primary' })
-      if (o.status === '施工中') actions.push({ label: '完工', status: '待验收', variant: 'btn-success', requireAttachment: true })
-      if (o.status === '退回补正') actions.push({ label: '重新接单', status: '已接单', variant: 'btn-warning' })
+      if (o.status === '施工中') {
+        const hasEvidence = hasAttachmentCategory('施工证据')
+        actions.push({
+          label: hasEvidence ? '完工' : '完工（需施工证据）',
+          status: '待验收',
+          variant: 'btn-success',
+          requireAttachment: !hasEvidence,
+          attachmentCategory: '施工证据'
+        })
+      }
+      if (o.status === '退回补正') {
+        actions.push({ label: '重新接单', status: '已接单', variant: 'btn-warning' })
+      }
     }
 
     if (isJingli()) {
       if (o.status === '待验收') {
-        actions.push({ label: '验收通过', status: '验收通过', variant: 'btn-success', requireAttachment: true })
-        actions.push({ label: '退回补正', status: '退回补正', variant: 'btn-danger' })
+        const hasEvidence = hasAttachmentCategory('验收证据')
+        actions.push({
+          label: hasEvidence ? '验收通过' : '验收通过（需验收证据）',
+          status: '验收通过',
+          variant: 'btn-success',
+          requireAttachment: !hasEvidence,
+          attachmentCategory: '验收证据'
+        })
+        actions.push({
+          label: '退回补正',
+          status: '退回补正',
+          variant: 'btn-danger',
+          requireExceptionReason: true
+        })
       }
       if (o.status === '验收通过') actions.push({ label: '归档', status: '已归档', variant: 'btn-primary' })
     }
 
     return actions
+  }
+
+  const needsExceptionReason = (): boolean => {
+    return getAvailableActions().some(a => a.requireExceptionReason)
   }
 
   return (
@@ -198,8 +255,16 @@ function OrderDetail(props: { orderId: number }) {
                 <span class="detail-value">{o().exception_type || '-'}</span>
               </div>
               <div class="detail-item">
+                <span class="detail-label">版本：</span>
+                <span class="detail-value">v{o().version}</span>
+              </div>
+              <div class="detail-item">
                 <span class="detail-label">创建时间：</span>
                 <span class="detail-value">{formatDate(o().created_at)}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">更新时间：</span>
+                <span class="detail-value">{formatDate(o().updated_at)}</span>
               </div>
             </div>
             <Show when={o().description}>
@@ -212,7 +277,7 @@ function OrderDetail(props: { orderId: number }) {
 
           <div class="card detail-section">
             <h3>状态流转</h3>
-            <AuditTrail orderId={o().id} records={o().process_records} />
+            <AuditTrail orderId={o().id} records={o().process_records} auditNotes={o().audit_notes} exceptionReasons={o().exception_reasons} />
           </div>
 
           <div class="card detail-section">
@@ -223,7 +288,7 @@ function OrderDetail(props: { orderId: number }) {
                   {(att) => (
                     <div class="attachment-item">
                       <span>{att.file_name}</span>
-                      <span class="badge badge-accepted">{att.category}</span>
+                      <span class={`badge ${att.category === '施工证据' ? 'badge-in-progress' : att.category === '验收证据' ? 'badge-approved' : 'badge-accepted'}`}>{att.category}</span>
                       <span style={{ color: 'var(--text-secondary)', "font-size": '12px' }}>{att.upload_role} · {formatDate(att.created_at)}</span>
                     </div>
                   )}
@@ -252,7 +317,10 @@ function OrderDetail(props: { orderId: number }) {
               <For each={o().exception_reasons}>
                 {(ex) => (
                   <div class="note-item">
-                    <div class="note-meta">{ex.reason_type} · {formatDate(ex.created_at)}</div>
+                    <div class="note-meta">
+                      <span class="badge badge-returned">{ex.reason_type}</span>
+                      <span style={{ "margin-left": '8px' }}>{formatDate(ex.created_at)}</span>
+                    </div>
                     <div>{ex.description}</div>
                   </div>
                 )}
@@ -260,10 +328,27 @@ function OrderDetail(props: { orderId: number }) {
             </div>
           </Show>
 
-          <Show when={!isKefu()}>
+          <Show when={!isKefu() || (isKefu() && o().status === '待接单')}>
             <div class="card detail-section">
               <h3>操作</h3>
+              <Show when={getAvailableActions().length === 0 && !isKefu()}>
+                <p style={{ color: 'var(--text-secondary)', "margin-bottom": '12px' }}>
+                  当前角色无可用操作
+                </p>
+              </Show>
               <div class="action-form">
+                <Show when={needsExceptionReason()}>
+                  <div class="form-group" style={{ "border-left": '3px solid var(--color-danger)', "padding-left": '12px' }}>
+                    <label style={{ color: 'var(--color-danger)', "font-weight": 600 }}>异常原因（退回补正必填）</label>
+                    <input
+                      type="text"
+                      value={exceptionReason()}
+                      onInput={(e) => setExceptionReason(e.currentTarget.value)}
+                      placeholder="输入退回补正原因，如：缺材料、质量不达标"
+                    />
+                  </div>
+                </Show>
+
                 <div class="form-group">
                   <label>备注</label>
                   <textarea
@@ -292,19 +377,21 @@ function OrderDetail(props: { orderId: number }) {
                   </select>
                 </div>
 
-                <div style={{ display: 'flex', gap: '8px', "flex-wrap": 'wrap' }}>
-                  <For each={getAvailableActions()}>
-                    {(act) => (
-                      <button
-                        class={`btn ${act.variant}`}
-                        onClick={() => handleAction(act.status)}
-                      >
-                        {act.label}
-                        <Show when={act.requireAttachment && !fileName()}>{' (需附件)'}</Show>
-                      </button>
-                    )}
-                  </For>
-                </div>
+                <Show when={getAvailableActions().length > 0}>
+                  <div style={{ display: 'flex', gap: '8px', "flex-wrap": 'wrap', "margin-bottom": '12px' }}>
+                    <For each={getAvailableActions()}>
+                      {(act) => (
+                        <button
+                          class={`btn ${act.variant}`}
+                          onClick={() => handleAction(act.status)}
+                          disabled={act.requireExceptionReason && !exceptionReason()}
+                        >
+                          {act.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
 
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button class="btn btn-ghost" onClick={handleAddNote} disabled={!remark()}>

@@ -49,8 +49,6 @@ func Login(c *fiber.Ctx) error {
 
 func GetCurrentUser(c *fiber.Ctx) error {
 	userID := c.Locals("userId").(int)
-	username := c.Locals("username").(string)
-	role := c.Locals("role").(string)
 
 	var user User
 	err := DB.QueryRow(
@@ -61,9 +59,6 @@ func GetCurrentUser(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(404).JSON(APIResponse{Code: -1, Message: "用户不存在"})
 	}
-
-	_ = username
-	_ = role
 
 	return c.JSON(APIResponse{
 		Code:    0,
@@ -99,12 +94,12 @@ func GetOrders(c *fiber.Ctx) error {
 		where += " AND customer_id = ?"
 		args = append(args, userID)
 	} else if role == "师傅调度" {
-		where += " AND (technician_id = ? OR status = '待接单')"
 		userID := c.Locals("userId").(int)
+		where += " AND (technician_id = ? OR status = '待接单')"
 		args = append(args, userID)
 	} else if role == "服务经理" {
-		where += " AND (manager_id = ? OR status IN ('待验收', '验收通过'))"
 		userID := c.Locals("userId").(int)
+		where += " AND (manager_id = ? OR status IN ('待验收', '验收通过'))"
 		args = append(args, userID)
 	}
 
@@ -293,23 +288,33 @@ func CreateOrder(c *fiber.Ctx) error {
 	return GetOrder(c)
 }
 
-func validateStatusTransition(currentRole, fromStatus, toStatus string) (bool, string) {
-	transitions := map[string]struct {
-		allowedRole string
-		fromStatus  string
-	}{
-		"已接单":    {allowedRole: "师傅调度", fromStatus: "待接单"},
-		"施工中":    {allowedRole: "师傅调度", fromStatus: "已接单"},
-		"待验收":    {allowedRole: "师傅调度", fromStatus: "施工中"},
-		"验收通过":   {allowedRole: "服务经理", fromStatus: "待验收"},
-		"退回补正":   {allowedRole: "服务经理", fromStatus: "待验收"},
-		"已接单_退回": {allowedRole: "师傅调度", fromStatus: "退回补正"},
-		"已归档":    {allowedRole: "服务经理", fromStatus: "验收通过"},
+type statusTransition struct {
+	allowedRole  string
+	fromStatus   string
+	requireOwner bool
+	ownerField   string
+}
+
+func getStatusTransitions() map[string]statusTransition {
+	return map[string]statusTransition{
+		"已接单_待接单":  {allowedRole: "师傅调度", fromStatus: "待接单", requireOwner: false},
+		"施工中":      {allowedRole: "师傅调度", fromStatus: "已接单", requireOwner: true, ownerField: "technician_id"},
+		"待验收":      {allowedRole: "师傅调度", fromStatus: "施工中", requireOwner: true, ownerField: "technician_id"},
+		"验收通过":     {allowedRole: "服务经理", fromStatus: "待验收", requireOwner: false},
+		"退回补正":     {allowedRole: "服务经理", fromStatus: "待验收", requireOwner: false},
+		"已接单_退回补正": {allowedRole: "师傅调度", fromStatus: "退回补正", requireOwner: true, ownerField: "technician_id"},
+		"已归档":      {allowedRole: "服务经理", fromStatus: "验收通过", requireOwner: false},
 	}
+}
+
+func validateStatusTransition(currentRole, fromStatus, toStatus string, userID int) (bool, string) {
+	transitions := getStatusTransitions()
 
 	key := toStatus
-	if toStatus == "已接单" && fromStatus == "退回补正" {
-		key = "已接单_退回"
+	if toStatus == "已接单" && fromStatus == "待接单" {
+		key = "已接单_待接单"
+	} else if toStatus == "已接单" && fromStatus == "退回补正" {
+		key = "已接单_退回补正"
 	}
 
 	t, ok := transitions[key]
@@ -318,14 +323,48 @@ func validateStatusTransition(currentRole, fromStatus, toStatus string) (bool, s
 	}
 
 	if t.fromStatus != fromStatus {
-		return false, fmt.Sprintf("当前状态为%s，无法变更为%s", fromStatus, toStatus)
+		roleHint := ""
+		switch fromStatus {
+		case "待接单":
+			roleHint = "需师傅调度接单"
+		case "已接单":
+			roleHint = "需师傅调度开工"
+		case "施工中":
+			roleHint = "需师傅调度完工"
+		case "待验收":
+			roleHint = "需服务经理验收或退回"
+		case "退回补正":
+			roleHint = "需师傅调度重新接单"
+		case "验收通过":
+			roleHint = "需服务经理归档"
+		case "已归档":
+			roleHint = "工单已归档，无法变更"
+		}
+		return false, fmt.Sprintf("状态冲突：当前状态为%s，无法变更为%s。%s", fromStatus, toStatus, roleHint)
 	}
 
 	if currentRole != t.allowedRole {
-		return false, fmt.Sprintf("仅%s可执行此操作", t.allowedRole)
+		return false, fmt.Sprintf("仅%s可执行此操作，当前角色为%s", t.allowedRole, currentRole)
+	}
+
+	if t.requireOwner {
+		ownerRole := ""
+		switch t.ownerField {
+		case "technician_id":
+			ownerRole = "师傅调度"
+		}
+		var currentOwnerID int
+		DB.QueryRow(fmt.Sprintf("SELECT %s FROM repair_orders WHERE id = ?", t.ownerField), 0).Scan(&currentOwnerID)
+		_ = ownerRole
 	}
 
 	return true, ""
+}
+
+func hasAttachmentInDB(orderID int, category string) bool {
+	var cnt int
+	DB.QueryRow("SELECT COUNT(*) FROM attachments WHERE order_id = ? AND category = ?", orderID, category).Scan(&cnt)
+	return cnt > 0
 }
 
 func UpdateOrderStatus(c *fiber.Ctx) error {
@@ -338,7 +377,9 @@ func UpdateOrderStatus(c *fiber.Ctx) error {
 
 	var currentStatus string
 	var currentVersion int
-	err := DB.QueryRow("SELECT status, version FROM repair_orders WHERE id = ?", id).Scan(&currentStatus, &currentVersion)
+	var currentTechID int
+	var currentManagerID int
+	err := DB.QueryRow("SELECT status, version, technician_id, manager_id FROM repair_orders WHERE id = ?", id).Scan(&currentStatus, &currentVersion, &currentTechID, &currentManagerID)
 	if err != nil {
 		return c.Status(404).JSON(APIResponse{Code: -1, Message: "工单不存在"})
 	}
@@ -353,34 +394,57 @@ func UpdateOrderStatus(c *fiber.Ctx) error {
 	role := c.Locals("role").(string)
 	userID := c.Locals("userId").(int)
 
-	ok, msg := validateStatusTransition(role, currentStatus, req.Status)
+	ok, msg := validateStatusTransition(role, currentStatus, req.Status, userID)
 	if !ok {
 		return c.Status(409).JSON(APIResponse{Code: -1, Message: msg})
 	}
 
+	if req.Status == "施工中" && currentStatus == "已接单" {
+		if currentTechID != userID {
+			return c.Status(409).JSON(APIResponse{Code: -1, Message: fmt.Sprintf("当前处理人为其他师傅（ID:%d），仅该师傅可操作", currentTechID)})
+		}
+	}
+
 	if req.Status == "待验收" && currentStatus == "施工中" {
-		hasEvidence := false
+		if currentTechID != userID {
+			return c.Status(409).JSON(APIResponse{Code: -1, Message: fmt.Sprintf("当前处理人为其他师傅（ID:%d），仅该师傅可操作", currentTechID)})
+		}
+		hasInReq := false
 		for _, att := range req.Attachments {
 			if att.Category == "施工证据" {
-				hasEvidence = true
+				hasInReq = true
 				break
 			}
 		}
-		if !hasEvidence {
+		if !hasInReq && !hasAttachmentInDB(id, "施工证据") {
 			return c.Status(400).JSON(APIResponse{Code: -1, Message: "完工需要上传施工证据"})
 		}
 	}
 
 	if req.Status == "验收通过" {
-		hasEvidence := false
+		hasInReq := false
 		for _, att := range req.Attachments {
 			if att.Category == "验收证据" {
-				hasEvidence = true
+				hasInReq = true
 				break
 			}
 		}
-		if !hasEvidence {
+		if !hasInReq && !hasAttachmentInDB(id, "验收证据") {
 			return c.Status(400).JSON(APIResponse{Code: -1, Message: "验收通过需要上传验收证据"})
+		}
+	}
+
+	if req.Status == "退回补正" {
+		if req.ExceptionReason == "" {
+			hasExisting := false
+			var cnt int
+			DB.QueryRow("SELECT COUNT(*) FROM exception_reasons WHERE order_id = ? AND reason_type != ''", id).Scan(&cnt)
+			if cnt > 0 {
+				hasExisting = true
+			}
+			if !hasExisting {
+				return c.Status(400).JSON(APIResponse{Code: -1, Message: "退回补正需要填写异常原因"})
+			}
 		}
 	}
 
@@ -402,6 +466,9 @@ func UpdateOrderStatus(c *fiber.Ctx) error {
 		updateSQL += ", manager_id = ?"
 		updateArgs = append(updateArgs, userID)
 	}
+	if req.Status == "已归档" {
+		updateSQL += ", exception_type = ''"
+	}
 
 	updateSQL += " WHERE id = ?"
 	updateArgs = append(updateArgs, id)
@@ -413,7 +480,11 @@ func UpdateOrderStatus(c *fiber.Ctx) error {
 
 	action := req.Status
 	if req.Status == "已接单" {
-		action = "接单"
+		if currentStatus == "退回补正" {
+			action = "重新接单"
+		} else {
+			action = "接单"
+		}
 	} else if req.Status == "施工中" {
 		action = "开工"
 	} else if req.Status == "待验收" {
@@ -440,6 +511,23 @@ func UpdateOrderStatus(c *fiber.Ctx) error {
 		)
 	}
 
+	if req.Status == "退回补正" && req.ExceptionReason != "" {
+		DB.Exec(
+			`INSERT INTO exception_reasons (order_id, reason_type, description, created_by, created_at)
+			VALUES (?, '退回补正', ?, ?, ?)`,
+			id, req.ExceptionReason, userID, now,
+		)
+		DB.Exec("UPDATE repair_orders SET exception_type = '退回补正', updated_at = ? WHERE id = ?", now, id)
+	}
+
+	if req.Status == "退回补正" && req.Remark != "" {
+		DB.Exec(
+			`INSERT INTO audit_notes (order_id, note, author_id, author_role, created_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			id, fmt.Sprintf("退回补正：%s", req.Remark), userID, role, now,
+		)
+	}
+
 	return GetOrder(c)
 }
 
@@ -463,18 +551,26 @@ func BatchUpdateStatus(c *fiber.Ctx) error {
 		role := c.Locals("role").(string)
 		userID := c.Locals("userId").(int)
 
-		ok, msg := validateStatusTransition(role, currentStatus, req.Status)
+		ok, msg := validateStatusTransition(role, currentStatus, req.Status, userID)
 		if !ok {
 			results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: msg})
 			continue
 		}
 
 		if req.Status == "待验收" && currentStatus == "施工中" {
-			results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "完工需要上传施工证据"})
-			continue
+			if !hasAttachmentInDB(orderID, "施工证据") {
+				results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "完工需要上传施工证据"})
+				continue
+			}
 		}
 		if req.Status == "验收通过" {
-			results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "验收通过需要上传验收证据"})
+			if !hasAttachmentInDB(orderID, "验收证据") {
+				results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "验收通过需要上传验收证据"})
+				continue
+			}
+		}
+		if req.Status == "退回补正" {
+			results = append(results, BatchResultItem{OrderID: orderID, Success: false, Message: "退回补正需在详情页操作，需填写异常原因"})
 			continue
 		}
 
@@ -488,9 +584,8 @@ func BatchUpdateStatus(c *fiber.Ctx) error {
 			updateSQL += ", technician_id = ?"
 			updateArgs = append(updateArgs, userID)
 		}
-		if req.Status == "验收通过" || req.Status == "退回补正" {
-			updateSQL += ", manager_id = ?"
-			updateArgs = append(updateArgs, userID)
+		if req.Status == "已归档" {
+			updateSQL += ", exception_type = ''"
 		}
 
 		updateSQL += " WHERE id = ? AND version = ?"
@@ -513,8 +608,6 @@ func BatchUpdateStatus(c *fiber.Ctx) error {
 			action = "接单"
 		} else if req.Status == "施工中" {
 			action = "开工"
-		} else if req.Status == "退回补正" {
-			action = "退回补正"
 		} else if req.Status == "已归档" {
 			action = "归档"
 		}
@@ -554,6 +647,7 @@ func GetAuditTrail(c *fiber.Ctx) error {
 			ToStatus:     p.ToStatus,
 			OperatorID:   p.OperatorID,
 			OperatorRole: p.OperatorRole,
+			Remark:       p.Remark,
 			CreatedAt:    p.CreatedAt,
 		})
 	}
@@ -633,6 +727,12 @@ func CreateAttachment(c *fiber.Ctx) error {
 
 	attID, _ := result.LastInsertId()
 
+	DB.Exec(
+		`INSERT INTO process_records (order_id, action, from_status, to_status, operator_id, operator_role, remark, created_at)
+		VALUES (?, '上传附件', '', '', ?, ?, ?, ?)`,
+		id, userID, role, fmt.Sprintf("上传附件：%s（%s）", body.FileName, body.Category), now,
+	)
+
 	return c.JSON(APIResponse{
 		Code:    0,
 		Message: "success",
@@ -673,6 +773,12 @@ func CreateAuditNote(c *fiber.Ctx) error {
 
 	noteID, _ := result.LastInsertId()
 
+	DB.Exec(
+		`INSERT INTO process_records (order_id, action, from_status, to_status, operator_id, operator_role, remark, created_at)
+		VALUES (?, '添加备注', '', '', ?, ?, ?, ?)`,
+		id, userID, role, body.Note, now,
+	)
+
 	return c.JSON(APIResponse{
 		Code:    0,
 		Message: "success",
@@ -699,6 +805,7 @@ func CreateExceptionReason(c *fiber.Ctx) error {
 	}
 
 	userID := c.Locals("userId").(int)
+	role := c.Locals("role").(string)
 	now := time.Now().Format("2006-01-02 15:04:05")
 
 	result, err := DB.Exec(
@@ -713,6 +820,12 @@ func CreateExceptionReason(c *fiber.Ctx) error {
 	reasonID, _ := result.LastInsertId()
 
 	DB.Exec("UPDATE repair_orders SET exception_type = ?, updated_at = ? WHERE id = ?", body.ReasonType, now, id)
+
+	DB.Exec(
+		`INSERT INTO process_records (order_id, action, from_status, to_status, operator_id, operator_role, remark, created_at)
+		VALUES (?, '记录异常', '', '', ?, ?, ?, ?)`,
+		id, userID, role, fmt.Sprintf("异常原因[%s]：%s", body.ReasonType, body.Description), now,
+	)
 
 	return c.JSON(APIResponse{
 		Code:    0,

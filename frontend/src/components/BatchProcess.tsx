@@ -1,5 +1,6 @@
 import { createSignal, Show, For } from 'solid-js'
 import { batchUpdate } from '../api'
+import { loadStatistics } from '../store'
 import type { BatchResult } from '../types'
 
 const actionOptions = [
@@ -30,6 +31,7 @@ function BatchProcess(props: { selectedIds: number[] }) {
       const res = await batchUpdate(data)
       if (res.code === 0) {
         setResults(res.data)
+        loadStatistics()
       } else {
         setError(res.message || '批量操作失败')
       }

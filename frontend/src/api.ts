@@ -59,7 +59,7 @@ export async function createOrder(data: Partial<RepairOrder>) {
   })
 }
 
-export async function updateStatus(id: number, data: { status: string; remark?: string; version: number; attachments?: { file_name: string; category: string }[] }) {
+export async function updateStatus(id: number, data: { status: string; remark?: string; version: number; exception_reason?: string; attachments?: { file_name: string; category: string }[] }) {
   return request<OrderDetail>(`/api/orders/${id}/status`, {
     method: 'PUT',
     body: JSON.stringify(data)
