@@ -1,0 +1,27 @@
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vinxi dev --port 3002",
+    "build": "vinxi build",
+    "start": "vinxi start --port 3002",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solidjs/meta": "^0.29.4",
+    "@solidjs/router": "^0.14.1",
+    "@solidjs/start": "^1.0.6",
+    "axios": "^1.7.2",
+    "classnames": "^2.5.1",
+    "dayjs": "^1.11.11",
+    "solid-js": "^1.8.18",
+    "vinxi": "^0.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.3"
+  }
+}
