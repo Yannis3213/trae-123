@@ -23,6 +23,11 @@ function createSharedState<T>(initial: T) {
 export const currentRole = createSharedState<Role>('agent');
 export const currentHandler = createSharedState<string>('坐席-张三');
 export const selectedOrders = createSharedState<Set<string>>(new Set());
+export const listRefreshSignal = createSharedState<number>(0);
+
+export function triggerListRefresh() {
+  listRefreshSignal.value = listRefreshSignal.value + 1;
+}
 
 export function setRole(role: Role) {
   currentRole.value = role;

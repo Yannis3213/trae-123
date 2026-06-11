@@ -1,6 +1,6 @@
 <script lang="ts">
   import { fetchOrder, submitAction, fetchStats } from '$lib/api';
-  import { currentRole, currentHandler } from '$lib/stores.svelte';
+  import { currentRole, currentHandler, triggerListRefresh, listRefreshSignal } from '$lib/stores.svelte';
   import type { SafetyOrder, Step, ActionData } from '$lib/types';
   import { page } from '$app/state';
   import {
@@ -183,11 +183,12 @@
       remark = '';
       anomalyReason = '';
 
-      successToast = '操作成功！';
+      successToast = '操作成功！数据已同步刷新。';
       showSuccess = true;
       setTimeout(() => { showSuccess = false; }, 3000);
 
-      fetchStats().catch(() => {});
+      triggerListRefresh();
+      await fetchStats().catch(() => {});
 
       const refreshedOrder = await fetchOrder(order.id);
       order = refreshedOrder;
@@ -230,14 +231,28 @@
     return order.attachments.filter(a => a.step === step);
   }
 
-  const STEP_LABEL_MAP: Record<string, string> = {
-    home_inspection: '入户安检',
-    hazard_rectification: '隐患整改',
-    recheck_closure: '复查关闭'
-  };
+  function getErrorType(err: string): 'auth' | 'version' | 'expiry' | 'validation' | 'other' {
+    if (!err) return 'other';
+    if (err.includes('越权') || err.includes('不匹配')) return 'auth';
+    if (err.includes('版本冲突') || err.includes('已被他人处理')) return 'version';
+    if (err.includes('逾期') || err.includes('延期')) return 'expiry';
+    if (err.includes('请填写') || err.includes('请选择') || err.includes('必须填写') || err.includes('尚未提交') || err.includes('尚未完成')) return 'validation';
+    return 'other';
+  }
+
+  const actionErrorType = $derived(() => getErrorType(actionError));
+
+  let lastId = $state<string>('');
+  let lastListSig = $state(0);
 
   $effect(() => {
-    loadOrder();
+    const id = page.params.id;
+    const sig = listRefreshSignal.value;
+    if (id !== lastId || sig !== lastListSig) {
+      lastId = id || '';
+      lastListSig = sig;
+      loadOrder();
+    }
   });
 </script>
 
@@ -708,8 +723,26 @@
 
             <!-- Action error -->
             {#if actionError}
-              <div class="mt-4 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-md border border-red-200">
-                {actionError}
+              <div class="mt-4 rounded-md border p-3 text-sm {
+                actionErrorType() === 'auth' ? 'bg-purple-50 border-purple-200 text-purple-700' :
+                actionErrorType() === 'version' ? 'bg-amber-50 border-amber-200 text-amber-700' :
+                actionErrorType() === 'expiry' ? 'bg-red-50 border-red-200 text-red-700' :
+                actionErrorType() === 'validation' ? 'bg-blue-50 border-blue-200 text-blue-700' :
+                'bg-red-50 border-red-200 text-red-600'
+              }">
+                <div class="font-medium mb-1">
+                  {actionErrorType() === 'auth' ? '🔒 权限问题' :
+                   actionErrorType() === 'version' ? '⚠️ 版本冲突' :
+                   actionErrorType() === 'expiry' ? '⏰ 到期拦截' :
+                   actionErrorType() === 'validation' ? '📝 表单校验' :
+                   '❌ 操作失败'}
+                </div>
+                <div>{actionError}</div>
+                {#if actionErrorType() === 'version'}
+                  <button on:click={loadOrder} class="mt-2 text-xs text-amber-600 underline hover:text-amber-800">
+                    点击刷新工单后重试
+                  </button>
+                {/if}
               </div>
             {/if}
           </div>

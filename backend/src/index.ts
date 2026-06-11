@@ -511,6 +511,13 @@ function executeAction(order: any, action: string, handler: string, role: string
   const nowStr = fmt(new Date())
   const remark = body.remark || null
   const anomalyReason = body.anomaly_reason || body.anomalyReason || null
+  const expectedVersion = order.version
+
+  const checkUpdate = (result: any, actionName: string) => {
+    if (!result || result.changes === 0) {
+      throw new Error(`版本冲突或已被他人处理: ${actionName}，请刷新后重试`)
+    }
+  }
 
   const insertAttachmentStmt = db.prepare(`
     INSERT INTO attachments (order_id, step, file_name, file_type, file_data, created_at)
@@ -579,12 +586,13 @@ function executeAction(order: any, action: string, handler: string, role: string
       hi.anomalies || anomalyReason || '',
       nowStr, nowStr
     )
-    db.prepare(`
+    const r = db.prepare(`
       UPDATE safety_orders SET status = 'under_review', current_step = 'hazard_rectification',
         current_handler = '主管-李四', current_handler_role = 'supervisor',
-        version = order.version + 1, updated_at = ?
-      WHERE id = ?
-    `).run(nowStr, order.id)
+        version = version + 1, updated_at = ?
+      WHERE id = ? AND version = ?
+    `).run(nowStr, order.id, expectedVersion)
+    checkUpdate(r, '提交安检')
   }
 
   if (action === 'approve') {
@@ -599,12 +607,13 @@ function executeAction(order: any, action: string, handler: string, role: string
       hr.rectification_date || nowStr,
       nowStr, nowStr
     )
-    db.prepare(`
+    const r = db.prepare(`
       UPDATE safety_orders SET current_step = 'recheck_closure',
         current_handler = '负责人-王五', current_handler_role = 'manager',
-        version = order.version + 1, updated_at = ?
-      WHERE id = ?
-    `).run(nowStr, order.id)
+        version = version + 1, updated_at = ?
+      WHERE id = ? AND version = ?
+    `).run(nowStr, order.id, expectedVersion)
+    checkUpdate(r, '审核通过')
   }
 
   if (action === 'reject') {
@@ -612,12 +621,13 @@ function executeAction(order: any, action: string, handler: string, role: string
     if (hr) {
       db.prepare('UPDATE hazard_rectifications SET approved = 0, updated_at = ? WHERE id = ?').run(nowStr, hr.id)
     }
-    db.prepare(`
+    const r = db.prepare(`
       UPDATE safety_orders SET status = 'pending_correction', current_step = 'home_inspection',
         current_handler = '坐席-张三', current_handler_role = 'agent',
-        version = order.version + 1, updated_at = ?
-      WHERE id = ?
-    `).run(nowStr, order.id)
+        version = version + 1, updated_at = ?
+      WHERE id = ? AND version = ?
+    `).run(nowStr, order.id, expectedVersion)
+    checkUpdate(r, '驳回')
   }
 
   if (action === 'confirm') {
@@ -632,50 +642,131 @@ function executeAction(order: any, action: string, handler: string, role: string
       nowStr, nowStr
     )
     if (order.current_step === 'recheck_closure') {
-      db.prepare(`
+      const r = db.prepare(`
         UPDATE safety_orders SET status = 'completed',
-          version = order.version + 1, updated_at = ?
-        WHERE id = ?
-      `).run(nowStr, order.id)
+          version = version + 1, updated_at = ?
+        WHERE id = ? AND version = ?
+      `).run(nowStr, order.id, expectedVersion)
+      checkUpdate(r, '确认办结')
     } else {
-      db.prepare(`
+      const r = db.prepare(`
         UPDATE safety_orders SET
-          version = order.version + 1, updated_at = ?
-        WHERE id = ?
-      `).run(nowStr, order.id)
+          version = version + 1, updated_at = ?
+        WHERE id = ? AND version = ?
+      `).run(nowStr, order.id, expectedVersion)
+      checkUpdate(r, '确认')
     }
   }
 
   if (action === 'return') {
     if (order.current_step === 'recheck_closure') {
-      db.prepare(`
+      const r = db.prepare(`
         UPDATE safety_orders SET status = 'under_review', current_step = 'hazard_rectification',
           current_handler = '主管-李四', current_handler_role = 'supervisor',
-          version = order.version + 1, updated_at = ?
-        WHERE id = ?
-      `).run(nowStr, order.id)
+          version = version + 1, updated_at = ?
+        WHERE id = ? AND version = ?
+      `).run(nowStr, order.id, expectedVersion)
+      checkUpdate(r, '退回整改')
     } else {
-      db.prepare(`
+      const r = db.prepare(`
         UPDATE safety_orders SET status = 'pending_correction', current_step = 'home_inspection',
           current_handler = '坐席-张三', current_handler_role = 'agent',
-          version = order.version + 1, updated_at = ?
-        WHERE id = ?
-      `).run(nowStr, order.id)
+          version = version + 1, updated_at = ?
+        WHERE id = ? AND version = ?
+      `).run(nowStr, order.id, expectedVersion)
+      checkUpdate(r, '退回')
     }
   }
 
   if (action === 'close') {
-    db.prepare(`
+    const r = db.prepare(`
       UPDATE safety_orders SET status = 'completed',
-        version = order.version + 1, updated_at = ?
-      WHERE id = ?
-    `).run(nowStr, order.id)
+        version = version + 1, updated_at = ?
+      WHERE id = ? AND version = ?
+    `).run(nowStr, order.id, expectedVersion)
+    checkUpdate(r, '关闭工单')
   }
 
   db.prepare(`
     INSERT INTO processing_records (order_id, step, action, handler, handler_role, remark, anomaly_reason, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(order.id, order.current_step, action, handler, role, remark, anomalyReason, nowStr)
+}
+
+function processSingleOrder(order: any, action: string, role: string, handler: string, version: number, body: any): { ok: boolean; error?: string } {
+  if (!order) return { ok: false, error: '工单不存在' }
+
+  if (role !== order.current_handler_role) {
+    return { ok: false, error: `越权操作: 当前角色为${role}，工单需要${order.current_handler_role}角色处理` }
+  }
+  if (handler !== order.current_handler) {
+    return { ok: false, error: `处理人不匹配: ${handler} ≠ ${order.current_handler}` }
+  }
+
+  const mergedBody = { ...(body || {}) }
+  const nowStr = fmt(new Date())
+
+  if ((action === 'submit_inspection' || action === 'submit') && !mergedBody.home_inspection) {
+    const hi = db.prepare('SELECT * FROM home_inspections WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
+    if (hi) {
+      mergedBody.home_inspection = {
+        inspector: hi.inspector,
+        inspection_date: hi.inspection_date || nowStr,
+        inspection_result: hi.inspection_result || 'qualified',
+        anomalies: hi.anomalies || '',
+      }
+    } else {
+      mergedBody.home_inspection = {
+        inspector: handler,
+        inspection_date: nowStr,
+        inspection_result: 'qualified',
+        anomalies: '',
+      }
+    }
+  }
+
+  if (action === 'approve' && !mergedBody.hazard_rectification) {
+    const hr = db.prepare('SELECT * FROM hazard_rectifications WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
+    if (hr) {
+      mergedBody.hazard_rectification = {
+        hazard_level: hr.hazard_level || 'medium',
+        rectification_measures: hr.rectification_measures || '已审批通过',
+        rectification_date: hr.rectification_date || nowStr,
+      }
+    } else {
+      mergedBody.hazard_rectification = {
+        hazard_level: 'medium',
+        rectification_measures: '已审批通过',
+        rectification_date: nowStr,
+      }
+    }
+  }
+
+  if (action === 'confirm' && !mergedBody.recheck_closure) {
+    const rc = db.prepare('SELECT * FROM recheck_closures WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
+    if (rc) {
+      mergedBody.recheck_closure = {
+        recheck_result: rc.recheck_result || 'pass',
+        recheck_date: rc.recheck_date || nowStr,
+      }
+    } else {
+      mergedBody.recheck_closure = {
+        recheck_result: 'pass',
+        recheck_date: nowStr,
+      }
+    }
+  }
+
+  const error = validateAction(order, action, role, handler, version, mergedBody)
+  if (error) return { ok: false, error }
+
+  try {
+    const tx = db.transaction(() => executeAction(order, action, handler, role, mergedBody))
+    tx()
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e.message || '操作失败' }
+  }
 }
 
 function getOrderDetail(id: string) {
@@ -823,21 +914,11 @@ app.post('/api/orders/:id/action', (c) => {
     if (!requestRole) return c.json({ error: '缺少必要参数: role' }, 400)
     if (!requestHandler) return c.json({ error: '缺少必要参数: handler' }, 400)
 
-    if (requestRole !== order.current_handler_role) {
-      return c.json({ error: `越权操作: 当前角色为${requestRole}，工单需要${order.current_handler_role}角色处理` }, 403)
+    const result = processSingleOrder(order, action, requestRole, requestHandler, version, body)
+    if (!result.ok) {
+      const isAuth = (result.error || '').includes('越权') || (result.error || '').includes('不匹配')
+      return c.json({ error: result.error }, isAuth ? 403 : 400)
     }
-    if (requestHandler !== order.current_handler) {
-      return c.json({ error: `处理人不匹配: 当前处理人为${requestHandler}，工单指定处理人为${order.current_handler}` }, 403)
-    }
-
-    const role = requestRole
-    const handler = requestHandler
-
-    const error = validateAction(order, action, role, handler, version, body)
-    if (error) return c.json({ error }, 400)
-
-    const tx = db.transaction(() => executeAction(order, action, handler, role, body))
-    tx()
 
     const detail = getOrderDetail(id)
     return c.json(detail)
@@ -846,7 +927,7 @@ app.post('/api/orders/:id/action', (c) => {
 
 app.post('/api/orders/batch', (c) => {
   return (async () => {
-    const { order_ids, action, remark, role: requestRole, handler: requestHandler } = await c.req.json()
+    const { order_ids, action, remark, anomaly_reason, role: requestRole, handler: requestHandler } = await c.req.json()
 
     if (!order_ids || !Array.isArray(order_ids) || !action) {
       return c.json({ error: '缺少必要参数: order_ids, action' }, 400)
@@ -856,6 +937,7 @@ app.post('/api/orders/batch', (c) => {
     }
 
     const results: { order_id: string; order_no: string; success: boolean; message: string }[] = []
+    const batchBody = { remark: remark || null, anomaly_reason: anomaly_reason || null }
 
     for (const orderId of order_ids) {
       const order = db.prepare('SELECT * FROM safety_orders WHERE id = ?').get(orderId) as any
@@ -863,32 +945,14 @@ app.post('/api/orders/batch', (c) => {
         results.push({ order_id: orderId, order_no: '', success: false, message: '工单不存在' })
         continue
       }
-
-      if (requestRole !== order.current_handler_role) {
-        results.push({ order_id: orderId, order_no: order.order_no, success: false, message: `越权操作: 当前角色为${requestRole}，工单需要${order.current_handler_role}角色处理` })
-        continue
-      }
-      if (requestHandler !== order.current_handler) {
-        results.push({ order_id: orderId, order_no: order.order_no, success: false, message: `处理人不匹配: ${requestHandler} ≠ ${order.current_handler}` })
-        continue
-      }
-
       const version = order.version
-      const batchBody = { remark, anomaly_reason: null }
-
-      const error = validateAction(order, action, requestRole, requestHandler, version, batchBody)
-      if (error) {
-        results.push({ order_id: orderId, order_no: order.order_no, success: false, message: error })
-        continue
-      }
-
-      try {
-        const tx = db.transaction(() => executeAction(order, action, requestHandler, requestRole, { remark }))
-        tx()
-        results.push({ order_id: orderId, order_no: order.order_no, success: true, message: '' })
-      } catch (e: any) {
-        results.push({ order_id: orderId, order_no: order.order_no, success: false, message: e.message || '操作失败' })
-      }
+      const result = processSingleOrder(order, action, requestRole, requestHandler, version, batchBody)
+      results.push({
+        order_id: orderId,
+        order_no: order.order_no,
+        success: result.ok,
+        message: result.ok ? '' : (result.error || '操作失败')
+      })
     }
 
     const successCount = results.filter(r => r.success).length
