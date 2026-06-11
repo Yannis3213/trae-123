@@ -2,7 +2,7 @@
 
 ## 技术栈
 
-- **前端**：Vite + React + React Router + TanStack Table，端口 `3106`
+- **前端**：TanStack Start + React + TanStack Table，端口 `3106`
 - **后端**：Python Django + Django Ninja，端口 `8106`
 - **数据库**：SQLite（项目内 `backend/db.sqlite3`）
 
@@ -110,6 +110,21 @@ POST /api/listings/{id}/submit { status: "DRAFT", version: 2 }
 → 409 "车源上架单CJ...001：版本冲突：页面版本2与服务端版本3不一致，请刷新后重试"
 ```
 
+### 批量处理版本冲突
+
+批量处理时前端传入页面状态和版本号，与单条办理一致校验：
+```
+POST /api/batch/process [
+  { application_id: 1, action: "process", status: "PENDING_PROCESS", version: 2 },
+  { application_id: 2, action: "process", status: "PENDING_PROCESS", version: 1 }
+]
+→ [
+  { application_no: "CJ...001", success: true, reason: "评估处理成功，状态变更为复核中" },
+  { application_no: "CJ...002", success: false, reason: "车源上架单CJ...002：版本冲突：页面版本1与服务端版本2不一致" }
+]
+```
+失败的条目会在 ProcessingRecord 和 AuditNote 中记录失败原因。
+
 ### 缺证据请求
 
 提交时无挂牌确认证据且未填写原因：
@@ -137,6 +152,15 @@ POST /api/listings/{id}/review { action: "return", reject_reason: "" }
 ```
 POST /api/listings/{id}/submit
 → 403 "车源上架单CJ...001：只有申请人本人才能提交"
+```
+
+### 批量逾期拦截
+
+逾期批量推进时，逐条拦截并记录超时责任人：
+```
+POST /api/batch/advance-overdue
+→ 逐条成功原因："逾期自动推进至复核，原负责人XXX超时未处理"
+→ 逐条失败原因："当前状态为'复核中'，已不是待处理状态"
 ```
 
 ## 业务流程
@@ -197,6 +221,12 @@ POST /api/listings/{id}/submit
 - 备注
 - 失败原因（如有）
 
+批量操作的 ProcessingRecord 使用 `batch_` 前缀的 action 区分：
+- `batch_submit` / `batch_supplement` / `batch_process` / `batch_review`：批量成功
+- `batch_advance_overdue`：逾期自动推进
+
+批量失败的记录 `from_status` 和 `to_status` 相同（状态未变化），`failure_reason` 记录具体拦截原因。
+
 详情页「审计轨迹」Tab 可查看完整操作记录和审计备注。
 
 ## 批量处理
@@ -204,9 +234,12 @@ POST /api/listings/{id}/submit
 1. 列表页勾选多条上架单
 2. 点击「批量处理」
 3. 选择操作类型（按角色限制）
-4. 提交后逐条显示结果：
+4. 前端将每条上架单的页面状态和版本号一起提交，后端逐条与数据库比对
+5. 提交后逐条显示结果：
    - ✓ 成功 + 具体原因（如"状态变更为待处理"）
    - ✗ 失败 + 具体原因（如"缺挂牌确认证据，无法推进到待处理"）
+
+批量处理的拦截逻辑与单条办理完全一致：角色、处理人、状态、版本、必填证据。
 
 ## 导出
 
@@ -217,7 +250,7 @@ POST /api/listings/{id}/submit
 
 ## 安全机制
 
-后端在每个状态变更操作前校验：
+后端在每个状态变更操作前校验（单条和批量一致）：
 
 1. **角色权限**：只允许对应角色执行操作
 2. **当前处理人**：提交和补正只允许申请人本人
@@ -231,7 +264,7 @@ POST /api/listings/{id}/submit
 
 | 用途 | 端口 |
 |------|------|
-| 前端开发服务器 | 3106 |
+| 前端开发服务器（TanStack Start） | 3106 |
 | 后端 API 服务器 | 8106 |
 | CORS 白名单 | http://localhost:3106 |
 | API 代理 | 前端 /api → 后端 http://localhost:8106 |

@@ -29,6 +29,27 @@ def _get_status_display(status):
     return dict(ApplicationStatus.choices).get(status, status)
 
 
+def _record_batch_failure(app, operator, action, failure_reason):
+    role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
+    ProcessingRecord.objects.create(
+        application=app,
+        operator=operator,
+        operator_role=role_display,
+        action=f'batch_{action}',
+        from_status=app.status,
+        to_status=app.status,
+        remark=f'批量{action}失败',
+        failure_reason=failure_reason,
+    )
+    AuditNote.objects.create(
+        application=app,
+        operator=operator,
+        operator_role=role_display,
+        note=f'批量{action}失败',
+        failure_reason=failure_reason,
+    )
+
+
 def _process_single_item(operator, item):
     try:
         app = VehicleListingApplication.objects.select_for_update().get(id=item.application_id)
@@ -42,37 +63,60 @@ def _process_single_item(operator, item):
 
     action = item.action
 
+    if item.status and item.version:
+        if app.status != item.status or app.version != item.version:
+            reason = f"车源上架单{app.application_no}：版本冲突：页面版本{item.version}与服务端版本{app.version}不一致"
+            _record_batch_failure(app, operator, action, reason)
+            return BatchProcessResult(
+                application_id=app.id,
+                application_no=app.application_no,
+                success=False,
+                reason=reason,
+            )
+
     if action == 'submit':
         if operator.role != RoleChoices.CONSULTANT:
+            reason = f"越权操作：{ROLE_DISPLAY_MAP.get(operator.role, operator.role)}不能执行提交"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"越权操作：{ROLE_DISPLAY_MAP.get(operator.role, operator.role)}不能执行提交",
+                reason=reason,
             )
         if app.applicant_id != operator.id:
+            reason = f"车源上架单{app.application_no}：只有申请人本人才能提交"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"车源上架单{app.application_no}：只有申请人本人才能提交",
+                reason=reason,
             )
         allowed = [ApplicationStatus.DRAFT, ApplicationStatus.PENDING_SUPPLEMENT, ApplicationStatus.RETURNED]
         if app.status not in allowed:
+            reason = f"车源上架单{app.application_no}：当前状态为'{_get_status_display(app.status)}'，无法提交"
+            if app.expiry_status == 'overdue':
+                responsible = app.responsible_person
+                responsible_name = responsible.display_name if responsible else '未知'
+                reason = f"车源上架单{app.application_no}：逾期拦截——当前状态为'{_get_status_display(app.status)}'不允许提交，负责人{responsible_name}超时未处理"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"车源上架单{app.application_no}：当前状态为'{_get_status_display(app.status)}'，无法提交",
+                reason=reason,
             )
         from_status = app.status
         new_status = ApplicationStatus.PENDING_PROCESS if app.has_listing_evidence else ApplicationStatus.PENDING_SUPPLEMENT
         if new_status == ApplicationStatus.PENDING_SUPPLEMENT:
+            reason = f"车源上架单{app.application_no}：缺挂牌确认证据，无法推进到待处理"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"车源上架单{app.application_no}：缺挂牌确认证据，无法推进到待处理",
+                reason=reason,
             )
         with transaction.atomic():
             app.status = new_status
@@ -82,7 +126,7 @@ def _process_single_item(operator, item):
             role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
             ProcessingRecord.objects.create(
                 application=app, operator=operator, operator_role=role_display,
-                action='submit', from_status=from_status, to_status=new_status,
+                action='batch_submit', from_status=from_status, to_status=new_status,
                 remark=item.remark or '批量提交',
             )
             AuditNote.objects.create(
@@ -98,26 +142,45 @@ def _process_single_item(operator, item):
 
     elif action == 'supplement':
         if operator.role != RoleChoices.CONSULTANT:
+            reason = f"越权操作：{ROLE_DISPLAY_MAP.get(operator.role, operator.role)}不能执行补正"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"越权操作：{ROLE_DISPLAY_MAP.get(operator.role, operator.role)}不能执行补正",
+                reason=reason,
             )
         if app.applicant_id != operator.id:
+            reason = f"车源上架单{app.application_no}：只有申请人本人才能补正"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"车源上架单{app.application_no}：只有申请人本人才能补正",
+                reason=reason,
             )
         allowed = [ApplicationStatus.PENDING_SUPPLEMENT, ApplicationStatus.RETURNED]
         if app.status not in allowed:
+            reason = f"车源上架单{app.application_no}：当前状态为'{_get_status_display(app.status)}'，无法补正"
+            if app.expiry_status == 'overdue':
+                responsible = app.responsible_person
+                responsible_name = responsible.display_name if responsible else '未知'
+                reason = f"车源上架单{app.application_no}：逾期拦截——当前状态为'{_get_status_display(app.status)}'不允许补正，负责人{responsible_name}超时未处理"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"车源上架单{app.application_no}：当前状态为'{_get_status_display(app.status)}'，无法补正",
+                reason=reason,
+            )
+        if not app.has_listing_evidence:
+            reason = f"车源上架单{app.application_no}：缺挂牌确认证据，补正后仍无法推进到待处理"
+            _record_batch_failure(app, operator, action, reason)
+            return BatchProcessResult(
+                application_id=app.id,
+                application_no=app.application_no,
+                success=False,
+                reason=reason,
             )
         from_status = app.status
         with transaction.atomic():
@@ -130,7 +193,7 @@ def _process_single_item(operator, item):
             role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
             ProcessingRecord.objects.create(
                 application=app, operator=operator, operator_role=role_display,
-                action='supplement', from_status=from_status, to_status=ApplicationStatus.PENDING_PROCESS,
+                action='batch_supplement', from_status=from_status, to_status=ApplicationStatus.PENDING_PROCESS,
                 remark=item.remark or '批量补正',
             )
             AuditNote.objects.create(
@@ -146,19 +209,27 @@ def _process_single_item(operator, item):
 
     elif action == 'process':
         if operator.role != RoleChoices.EVALUATOR:
+            reason = f"越权操作：{ROLE_DISPLAY_MAP.get(operator.role, operator.role)}不能执行处理"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"越权操作：{ROLE_DISPLAY_MAP.get(operator.role, operator.role)}不能执行处理",
+                reason=reason,
             )
         allowed = [ApplicationStatus.PENDING_PROCESS, ApplicationStatus.PROCESSING]
         if app.status not in allowed:
+            reason = f"车源上架单{app.application_no}：当前状态为'{_get_status_display(app.status)}'，评估师无法处理"
+            if app.expiry_status == 'overdue':
+                responsible = app.responsible_person
+                responsible_name = responsible.display_name if responsible else '未知'
+                reason = f"车源上架单{app.application_no}：逾期拦截——当前状态为'{_get_status_display(app.status)}'不允许处理，负责人{responsible_name}超时未处理"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"车源上架单{app.application_no}：当前状态为'{_get_status_display(app.status)}'，评估师无法处理",
+                reason=reason,
             )
         from_status = app.status
         with transaction.atomic():
@@ -170,7 +241,7 @@ def _process_single_item(operator, item):
             role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
             ProcessingRecord.objects.create(
                 application=app, operator=operator, operator_role=role_display,
-                action='process', from_status=from_status, to_status=ApplicationStatus.UNDER_REVIEW,
+                action='batch_process', from_status=from_status, to_status=ApplicationStatus.UNDER_REVIEW,
                 remark=item.remark or '批量评估处理',
             )
             AuditNote.objects.create(
@@ -186,18 +257,26 @@ def _process_single_item(operator, item):
 
     elif action == 'review':
         if operator.role != RoleChoices.MANAGER:
+            reason = f"越权操作：{ROLE_DISPLAY_MAP.get(operator.role, operator.role)}不能执行复核"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"越权操作：{ROLE_DISPLAY_MAP.get(operator.role, operator.role)}不能执行复核",
+                reason=reason,
             )
         if app.status != ApplicationStatus.UNDER_REVIEW:
+            reason = f"车源上架单{app.application_no}：当前状态为'{_get_status_display(app.status)}'，无法复核"
+            if app.expiry_status == 'overdue':
+                responsible = app.responsible_person
+                responsible_name = responsible.display_name if responsible else '未知'
+                reason = f"车源上架单{app.application_no}：逾期拦截——当前状态为'{_get_status_display(app.status)}'不允许复核，负责人{responsible_name}超时未处理"
+            _record_batch_failure(app, operator, action, reason)
             return BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"车源上架单{app.application_no}：当前状态为'{_get_status_display(app.status)}'，无法复核",
+                reason=reason,
             )
         from_status = app.status
         with transaction.atomic():
@@ -209,7 +288,7 @@ def _process_single_item(operator, item):
             role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
             ProcessingRecord.objects.create(
                 application=app, operator=operator, operator_role=role_display,
-                action='review', from_status=from_status, to_status=ApplicationStatus.COMPLETED,
+                action='batch_review', from_status=from_status, to_status=ApplicationStatus.COMPLETED,
                 remark=item.remark or '批量复核通过',
             )
             AuditNote.objects.create(
@@ -224,11 +303,13 @@ def _process_single_item(operator, item):
         )
 
     else:
+        reason = f"不支持的操作类型: {action}"
+        _record_batch_failure(app, operator, action, reason)
         return BatchProcessResult(
             application_id=app.id,
             application_no=app.application_no,
             success=False,
-            reason=f"不支持的操作类型: {action}",
+            reason=reason,
         )
 
 
@@ -260,11 +341,15 @@ def batch_advance_overdue(request):
             with transaction.atomic():
                 app_locked = VehicleListingApplication.objects.select_for_update().get(id=app.id)
                 if app_locked.status != ApplicationStatus.PENDING_PROCESS:
+                    responsible = app_locked.responsible_person
+                    responsible_name = responsible.display_name if responsible else '未知'
+                    reason = f"车源上架单{app_locked.application_no}：逾期拦截——当前状态为'{_get_status_display(app_locked.status)}'已不是待处理状态，负责人{responsible_name}超时未处理"
+                    _record_batch_failure(app_locked, operator, 'advance_overdue', reason)
                     results.append(BatchProcessResult(
                         application_id=app_locked.id,
                         application_no=app_locked.application_no,
                         success=False,
-                        reason=f"车源上架单{app_locked.application_no}：当前状态为'{_get_status_display(app_locked.status)}'，已不是待处理状态",
+                        reason=reason,
                     ))
                     continue
 
@@ -281,7 +366,7 @@ def batch_advance_overdue(request):
                 role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
                 ProcessingRecord.objects.create(
                     application=app_locked, operator=operator, operator_role=role_display,
-                    action='process', from_status=from_status, to_status=ApplicationStatus.UNDER_REVIEW,
+                    action='batch_advance_overdue', from_status=from_status, to_status=ApplicationStatus.UNDER_REVIEW,
                     remark='逾期自动推进至复核',
                     failure_reason=f'逾期处理：负责人{responsible_name}未在截止时间内处理',
                 )
@@ -298,11 +383,16 @@ def batch_advance_overdue(request):
                     reason=f"车源上架单{app_locked.application_no}：逾期自动推进至复核，原负责人{responsible_name}超时未处理",
                 ))
         except Exception as e:
+            reason = f"车源上架单{app.application_no}：处理异常 - {str(e)}"
+            try:
+                _record_batch_failure(app, operator, 'advance_overdue', reason)
+            except Exception:
+                pass
             results.append(BatchProcessResult(
                 application_id=app.id,
                 application_no=app.application_no,
                 success=False,
-                reason=f"车源上架单{app.application_no}：处理异常 - {str(e)}",
+                reason=reason,
             ))
 
     return results

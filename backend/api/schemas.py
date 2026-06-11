@@ -93,6 +93,8 @@ class BatchProcessItem(Schema):
     application_id: int
     action: str
     remark: str = ''
+    status: str = ''
+    version: int = 0
 
 
 class BatchProcessResult(Schema):
