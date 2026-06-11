@@ -384,19 +384,7 @@ func BatchOverduePush(c echo.Context) error {
 		})
 	}
 
-	var result *model.BatchProcessResponse
-	var err error
-
-	if len(req.Items) > 0 {
-		result, err = service.BatchOverduePushWithItems(&req, user)
-	} else {
-		batchReq := &model.BatchProcessRequest{
-			Action:   "overdue_push",
-			OrderIDs: req.OrderIDs,
-			Opinion:  req.Reason,
-		}
-		result, err = service.BatchProcess(batchReq, user)
-	}
+	result, err := service.BatchOverduePushWithItems(&req, user)
 
 	if err != nil {
 		return c.JSON(http.StatusOK, model.Response{

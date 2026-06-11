@@ -156,3 +156,15 @@ export function hasEvidence(value: string | null | undefined): boolean {
     return trimmed.length > 0;
   }
 }
+
+export function summarizeBatchResults(results: { order_id: number; success: boolean; message: string }[]) {
+  const successList = results.filter(r => r.success);
+  const failedList = results.filter(r => !r.success);
+  return {
+    total: results.length,
+    successCount: successList.length,
+    failedCount: failedList.length,
+    successIds: successList.map(r => r.order_id),
+    failedItems: failedList.map(r => ({ id: r.order_id, reason: r.message })),
+  };
+}

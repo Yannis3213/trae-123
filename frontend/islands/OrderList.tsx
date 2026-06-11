@@ -15,7 +15,9 @@ export default function OrderList() {
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [batchAction, setBatchAction] = useState<"audit_pass" | "review">("audit_pass");
   const [batchOpinion, setBatchOpinion] = useState("");
-  const [batchResult, setBatchResult] = useState<{ results: { order_id: number; success: boolean; message: string }[] } | null>(null);
+  const [batchRemark, setBatchRemark] = useState("");
+  const [batchResults, setBatchResults] = useState<{ order_id: number; success: boolean; message: string }[] | null>(null);
+  const [batchLoading, setBatchLoading] = useState(false);
   const [user, setUser] = useState<{ username: string; role: string; name: string } | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
 
@@ -113,39 +115,55 @@ export default function OrderList() {
       return;
     }
     setBatchAction(action);
-    setBatchResult(null);
+    setBatchOpinion("");
+    setBatchRemark("");
+    setBatchResults(null);
     setShowBatchModal(true);
   };
 
   const handleBatchProcess = async () => {
-    try {
-      const processableOrders = selectedIds
-        .map(id => orders.find(o => o.id === id))
-        .filter((o): o is LiveSelectionOrder => o !== undefined && canBatchProcess(o, batchAction));
-      
-      if (processableOrders.length === 0) {
-        showToast("没有可处理的单据", "error");
-        return;
-      }
+    const eligible = selectedIds
+      .map(id => orders.find(o => o.id === id))
+      .filter((o): o is LiveSelectionOrder => o !== undefined && canBatchProcess(o, batchAction));
+    
+    if (eligible.length === 0) {
+      showToast("没有可处理的单据", "error");
+      return;
+    }
+    if (!batchOpinion.trim()) {
+      showToast("请填写处理意见", "error");
+      return;
+    }
 
-      const result = await api.batchProcess({
+    setBatchLoading(true);
+    try {
+      const resp = await api.batchProcess({
         action: batchAction,
-        order_ids: processableOrders.map(o => o.id),
-        opinion: batchOpinion || undefined,
+        items: eligible.map(o => ({
+          order_id: o.id,
+          version: o.version,
+          opinion: batchOpinion,
+          audit_remark: batchRemark.trim() || undefined,
+        })),
       });
-      setBatchResult(result);
-      const successCount = result.results.filter((r) => r.success).length;
-      const failedCount = result.results.filter((r) => !r.success).length;
+      
+      setBatchResults(resp.results);
+      const successCount = resp.results.filter(r => r.success).length;
+      const failedCount = resp.results.length - successCount;
+      const actionName = batchAction === "audit_pass" ? "审核" : "归档";
       showToast(
-        `批量处理完成：成功 ${successCount} 条，失败 ${failedCount} 条`,
-        failedCount === 0 ? "success" : "info"
+        `批量${actionName}完成：成功${successCount}条，失败${failedCount}条`,
+        successCount > 0 && failedCount === 0 ? "success" : failedCount === resp.results.length ? "error" : "info"
       );
+      
       if (successCount > 0) {
         loadOrders();
-        setSelectedIds([]);
+        setSelectedIds(selectedIds.filter(id => !resp.results.find(r => r.order_id === id && r.success)));
       }
     } catch (error) {
       showToast(error instanceof Error ? error.message : "批量处理失败", "error");
+    } finally {
+      setBatchLoading(false);
     }
   };
 
@@ -451,13 +469,21 @@ export default function OrderList() {
 
       {showBatchModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full">
-            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
               <h3 className="text-lg font-semibold text-gray-900">
-                {batchAction === "audit_pass" ? "批量审核" : "批量归档"}
+                {batchAction === "audit_pass" ? "批量审核" : "批量复核归档"}
+                {!batchResults && (
+                  <span className="ml-2 text-sm font-normal text-gray-500">
+                    ({getBatchProcessableCount(batchAction)} 条单据)
+                  </span>
+                )}
               </h3>
               <button
-                onClick={() => setShowBatchModal(false)}
+                onClick={() => {
+                  setShowBatchModal(false);
+                  setBatchResults(null);
+                }}
                 className="text-gray-400 hover:text-gray-600"
               >
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -466,107 +492,175 @@ export default function OrderList() {
               </button>
             </div>
             <div className="px-6 py-4 space-y-4">
-              {!batchResult ? (
+              {!batchResults ? (
                 <>
+                  {(() => {
+                    const eligibleCount = getBatchProcessableCount(batchAction);
+                    const skippedCount = selectedIds.length - eligibleCount;
+                    return (
+                      <div className={`p-3 rounded-lg border ${skippedCount > 0 ? "bg-yellow-50 border-yellow-200" : "bg-blue-50 border-blue-200"}`}>
+                        <div className={`text-sm ${skippedCount > 0 ? "text-yellow-800" : "text-blue-800"}`}>
+                          <span className="font-medium">可处理 {eligibleCount} 条</span>
+                          {skippedCount > 0 && (
+                            <span>，将跳过 {skippedCount} 条（不满足条件）</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   <div>
-                    <h4 className="font-medium text-gray-900 mb-2">待处理单据</h4>
-                    <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
-                      {selectedIds
-                        .map(id => orders.find(o => o.id === id))
-                        .filter((o): o is LiveSelectionOrder => o !== undefined && canBatchProcess(o, batchAction))
-                        .map(order => (
-                          <div key={order.id} className="flex items-center justify-between px-4 py-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50">
-                            <div className="flex items-center gap-3">
-                              <span className="text-sm font-medium text-primary-600">{order.order_no}</span>
-                              <span className="text-sm text-gray-900">{order.product_name}</span>
+                    <h4 className="font-medium text-gray-900 mb-2">📋 单据列表（含版本号）</h4>
+                    <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg">
+                      {(() => {
+                        const eligible = selectedIds
+                          .map(id => orders.find(o => o.id === id))
+                          .filter((o): o is LiveSelectionOrder => o !== undefined && canBatchProcess(o, batchAction));
+                        return eligible.length === 0 ? (
+                          <div className="p-4 text-center text-gray-500 text-sm">无可处理单据</div>
+                        ) : (
+                          eligible.map((order, idx) => (
+                            <div key={order.id} className="flex items-center justify-between px-4 py-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50">
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs text-gray-400 w-6">#{idx + 1}</span>
+                                <span className="text-sm font-medium text-primary-600">{order.order_no}</span>
+                                <span className="text-sm text-gray-900">{order.product_name}</span>
+                              </div>
+                              <span className="text-sm font-mono text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+                                v{order.version}
+                              </span>
                             </div>
-                            <span className="text-sm font-mono text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
-                              v{order.version}
-                            </span>
-                          </div>
-                        ))}
+                          ))
+                        );
+                      })()}
                     </div>
                   </div>
 
-                  {selectedIds.filter(id => {
-                    const order = orders.find(o => o.id === id);
-                    return order && !canBatchProcess(order, batchAction);
-                  }).length > 0 && (
-                    <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                      <div className="text-sm text-yellow-800">
-                        <span className="font-medium">注意：</span>
-                        有 {selectedIds.filter(id => {
-                          const order = orders.find(o => o.id === id);
-                          return order && !canBatchProcess(order, batchAction);
-                        }).length} 条单据因状态不匹配或处理人不匹配，将被跳过
-                      </div>
-                    </div>
-                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      💬 统一处理意见 <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={batchOpinion}
+                      onChange={(e) => setBatchOpinion((e.target as HTMLTextAreaElement).value)}
+                      rows={3}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                      placeholder={batchAction === "audit_pass" ? "请输入审核意见..." : "请输入复核归档意见..."}
+                    />
+                  </div>
 
-                  {batchAction === "audit_pass" && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        审核意见
-                      </label>
-                      <textarea
-                        value={batchOpinion}
-                        onChange={(e) => setBatchOpinion((e.target as HTMLTextAreaElement).value)}
-                        rows={3}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                        placeholder="请输入审核意见（可选）"
-                      />
-                    </div>
-                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      📝 审计备注（可选）
+                    </label>
+                    <textarea
+                      value={batchRemark}
+                      onChange={(e) => setBatchRemark((e.target as HTMLTextAreaElement).value)}
+                      rows={2}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                      placeholder="请输入审计备注说明（可选）"
+                    />
+                  </div>
+
                   <div className="flex justify-end gap-3 pt-4">
                     <button
-                      onClick={() => setShowBatchModal(false)}
+                      onClick={() => {
+                        setShowBatchModal(false);
+                        setBatchResults(null);
+                      }}
                       className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
                     >
                       取消
                     </button>
                     <button
                       onClick={handleBatchProcess}
-                      className={`px-4 py-2 text-white rounded-lg ${
+                      disabled={batchLoading || !batchOpinion.trim()}
+                      className={`px-4 py-2 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
                         batchAction === "audit_pass"
                           ? "bg-yellow-500 hover:bg-yellow-600"
                           : "bg-green-500 hover:bg-green-600"
                       }`}
                     >
-                      确认{batchAction === "audit_pass" ? "审核" : "归档"}
+                      {batchLoading ? (
+                        <>
+                          <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          处理中...
+                        </>
+                      ) : (
+                        <>
+                          执行批量{batchAction === "audit_pass" ? "审核" : "归档"}
+                          <span className="bg-white/20 px-2 py-0.5 rounded text-xs">
+                            {getBatchProcessableCount(batchAction)}
+                          </span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </>
               ) : (
                 <div className="space-y-4">
-                  <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-green-600">
-                        {batchResult.results.filter((r) => r.success).length}
-                      </div>
-                      <div className="text-xs text-gray-500">成功</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-red-600">
-                        {batchResult.results.filter((r) => !r.success).length}
-                      </div>
-                      <div className="text-xs text-gray-500">失败</div>
+                  <div className={`p-4 rounded-lg border ${
+                    batchResults.every(r => r.success) 
+                      ? "bg-green-50 border-green-200" 
+                      : batchResults.every(r => !r.success)
+                        ? "bg-red-50 border-red-200"
+                        : "bg-yellow-50 border-yellow-200"
+                  }`}>
+                    <div className={`text-sm font-medium ${
+                      batchResults.every(r => r.success) 
+                        ? "text-green-700" 
+                        : batchResults.every(r => !r.success)
+                          ? "text-red-700"
+                          : "text-yellow-700"
+                    }`}>
+                      ✅ 处理结果：共 {batchResults.length} 条，
+                      成功 {batchResults.filter(r => r.success).length} 条，
+                      失败 {batchResults.filter(r => !r.success).length} 条
                     </div>
                   </div>
-                  {batchResult.results.filter((r) => !r.success).length > 0 && (
-                    <div className="max-h-48 overflow-y-auto space-y-2">
-                      {batchResult.results.filter((r) => !r.success).map((item, index) => (
-                        <div key={index} className="p-3 bg-red-50 rounded-lg text-sm">
-                          <div className="font-medium text-red-800">选品单 ID: {item.order_id}</div>
-                          <div className="text-red-600 text-xs mt-1">失败原因: {item.message}</div>
+
+                  <div className="max-h-64 overflow-auto space-y-2">
+                    {batchResults.map(result => {
+                      const order = orders.find(o => o.id === result.order_id);
+                      return (
+                        <div key={result.order_id} className={`p-3 rounded-lg ${
+                          result.success ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"
+                        }`}>
+                          <div className="flex items-start gap-2 text-sm">
+                            <span className={result.success ? "text-green-600 mt-0.5" : "text-red-600 mt-0.5"}>
+                              {result.success ? "✅" : "❌"}
+                            </span>
+                            <div className="flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-medium text-primary-600">{order?.order_no || `#${result.order_id}`}</span>
+                                <span className="text-gray-700">{order?.product_name || "-"}</span>
+                                {order && (
+                                  <span className="text-xs font-mono text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                    v{order.version}
+                                  </span>
+                                )}
+                              </div>
+                              <div className={`mt-1 text-xs ${result.success ? "text-green-700" : "text-red-700"}`}>
+                                {result.success 
+                                  ? (batchAction === "audit_pass" ? "审核通过成功" : "复核归档成功")
+                                  : `失败原因：${result.message}`
+                                }
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      );
+                    })}
+                  </div>
+
                   <div className="flex justify-end">
                     <button
                       onClick={() => {
                         setShowBatchModal(false);
-                        setBatchResult(null);
+                        setBatchResults(null);
                       }}
                       className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
                     >

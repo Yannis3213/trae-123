@@ -135,16 +135,23 @@ export const api = {
 
   batchProcess: (data: {
     action: "audit_pass" | "review" | "overdue_push";
-    order_ids: number[];
-    opinion?: string;
+    items: {
+      order_id: number;
+      version: number;
+      opinion: string;
+      audit_remark?: string;
+    }[];
   }) =>
-    apiRequest<{ results: { order_id: number; success: boolean; message: string }[] }>(
-      "/orders/batch-process",
-      {
-        method: "POST",
-        body: data,
-      }
-    ),
+    apiRequest<{
+      results: {
+        order_id: number;
+        success: boolean;
+        message: string;
+      }[];
+    }>("/orders/batch-process", {
+      method: "POST",
+      body: data,
+    }),
 
   getAuditTrail: (id: number) =>
     apiRequest<AuditRemark[]>(`/orders/${id}/audit-trail`),
@@ -159,15 +166,14 @@ export const api = {
       reason?: string;
     }[];
   }) =>
-    apiRequest<{
-      results: {
-        order_id: number;
-        success: boolean;
-        message: string;
-      }[];
-    }>("/orders/batch-overdue-push", {
-      method: "POST",
-      body: data,
+    api.batchProcess({
+      action: "overdue_push",
+      items: data.items.map(item => ({
+        order_id: item.order_id,
+        version: item.version,
+        opinion: item.reason || "逾期批量推进",
+        audit_remark: item.reason || undefined,
+      })),
     }),
 
   processModule: (id: number, data: {

@@ -164,20 +164,28 @@ type SupplementOrderRequest struct {
 	ExceptionReason    string `json:"exception_reason"`
 }
 
-type BatchProcessRequest struct {
-	Action  string  `json:"action"`
-	OrderIDs []int64 `json:"order_ids"`
-	Opinion string  `json:"opinion"`
+type BatchProcessItem struct {
+	OrderID     int64  `json:"order_id"`
+	Version     int    `json:"version"`
+	Opinion     string `json:"opinion"`
+	AuditRemark string `json:"audit_remark"`
 }
 
-type BatchProcessResult struct {
+type BatchProcessRequest struct {
+	Action   string             `json:"action"`
+	Items    []BatchProcessItem `json:"items"`
+	OrderIDs []int64            `json:"order_ids,omitempty"`
+	Opinion  string             `json:"opinion,omitempty"`
+}
+
+type BatchResultItem struct {
 	OrderID int64  `json:"order_id"`
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
 type BatchProcessResponse struct {
-	Results []*BatchProcessResult `json:"results"`
+	Results []*BatchResultItem `json:"results"`
 }
 
 type ProcessModuleRequest struct {
@@ -202,16 +210,11 @@ type OverdueQueueResponse struct {
 	Groups []*OverdueQueueItem `json:"groups"`
 }
 
-type OverduePushItem struct {
-	OrderID     int64  `json:"order_id"`
-	Version     int    `json:"version"`
-	AuditRemark string `json:"audit_remark"`
-}
-
 type BatchOverduePushRequest struct {
-	OrderIDs []int64          `json:"order_ids"`
-	Reason   string           `json:"reason"`
-	Items    []*OverduePushItem `json:"items"`
+	Action   string             `json:"action"`
+	Items    []BatchProcessItem `json:"items"`
+	OrderIDs []int64            `json:"order_ids,omitempty"`
+	Reason   string             `json:"reason,omitempty"`
 }
 
 type UploadAttachmentRequest struct {
