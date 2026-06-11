@@ -28,6 +28,10 @@ import { BatchResult, BatchResultItem } from '../../models/launch-plan';
               <div class="label">✋ 未接办拦截</div>
               <div class="value" style="color:#4338ca;font-size:24px">{{result.not_accepted || 0}}</div>
             </div>
+            <div class="stat-card" style="flex:1;background:#fdf4ff">
+              <div class="label">🔀 处理人错位</div>
+              <div class="value" style="color:#9333ea;font-size:24px">{{result.handler_mismatch || 0}}</div>
+            </div>
             <div class="stat-card" style="flex:1;background:#fef2f2">
               <div class="label">🚫 逾期拦截</div>
               <div class="value" style="color:#b91c1c;font-size:24px">{{result.overdue_blocked || 0}}</div>
@@ -63,6 +67,7 @@ import { BatchResult, BatchResultItem } from '../../models/launch-plan';
                   <span *ngIf="item.result_type === 'missing_evidence'" class="tag tag-warning">📋 缺证据</span>
                   <span *ngIf="item.result_type === 'not_assigned'" class="tag" style="background:#f5f5f4;color:#57534e">📭 未指派拦截</span>
                   <span *ngIf="item.result_type === 'not_accepted'" class="tag tag-info">✋ 未接办拦截</span>
+                  <span *ngIf="item.result_type === 'handler_mismatch'" class="tag" style="background:#fdf4ff;color:#9333ea">🔀 处理人错位</span>
                   <span *ngIf="item.result_type === 'blocked'" class="tag tag-info">⛔ 批量拦截</span>
                   <span *ngIf="item.result_type === 'error'" class="tag tag-danger">❌ 失败</span>
                   <span *ngIf="!item.result_type && item.success" class="tag tag-success">✅ 成功</span>
@@ -79,8 +84,8 @@ import { BatchResult, BatchResultItem } from '../../models/launch-plan';
             </tbody>
           </table>
 
-          <div *ngIf="(result.not_assigned || 0) > 0 || (result.not_accepted || 0) > 0 || (result.overdue_blocked || 0) > 0 || (result.missing_evidence || 0) > 0" class="alert alert-warning mt-md">
-            💡 提示：被拦截（未指派/未接办/逾期/缺证据）的单据请在详情页逐项补正后重新提交，系统已在处理记录和审计备注中留下补正动作和异常原因。
+          <div *ngIf="(result.not_assigned || 0) > 0 || (result.not_accepted || 0) > 0 || (result.handler_mismatch || 0) > 0 || (result.overdue_blocked || 0) > 0 || (result.missing_evidence || 0) > 0" class="alert alert-warning mt-md">
+            💡 提示：被拦截（未指派/未接办/处理人错位/逾期/缺证据）的单据请在详情页逐项补正后重新提交，系统已在处理记录和审计备注中留下补正动作和异常原因。
           </div>
         </div>
         <div class="modal-footer">
@@ -101,6 +106,7 @@ import { BatchResult, BatchResultItem } from '../../models/launch-plan';
     tr.row-missing td { background: #fff7ed; }
     tr.row-notaccepted td { background: #eef2ff; }
     tr.row-notassigned td { background: #f5f5f4; }
+    tr.row-handlermismatch td { background: #fdf4ff; }
   `],
 })
 export class BatchResultModalComponent {
@@ -112,7 +118,8 @@ export class BatchResultModalComponent {
       - (this.result.overdue_blocked || 0)
       - (this.result.missing_evidence || 0)
       - (this.result.not_assigned || 0)
-      - (this.result.not_accepted || 0);
+      - (this.result.not_accepted || 0)
+      - (this.result.handler_mismatch || 0);
   }
 
   rowClass(item: BatchResultItem) {
@@ -120,6 +127,7 @@ export class BatchResultModalComponent {
     if (item.result_type === 'missing_evidence') return 'row-missing';
     if (item.result_type === 'not_accepted') return 'row-notaccepted';
     if (item.result_type === 'not_assigned') return 'row-notassigned';
+    if (item.result_type === 'handler_mismatch') return 'row-handlermismatch';
     return '';
   }
 }

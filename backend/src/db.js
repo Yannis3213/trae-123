@@ -205,6 +205,24 @@ function seedInitialData() {
       last_submitter: '',
       created_by: '张三',
     },
+    {
+      id: 'plan-006',
+      plan_no: 'LP-2026-0606',
+      customer_name: '成都智能科技有限公司',
+      project_name: '智能制造IoT平台上线',
+      priority: 'high',
+      deadline: dayjs().add(2, 'day').format('YYYY-MM-DD'),
+      status: 'draft',
+      owner: '张三',
+      current_handler: '王五',
+      assignee: '李四',
+      accept_status: 'accepted',
+      launch_target: 'IoT平台上线，设备接入与数据采集完成',
+      config_checklist: '1. MQTT服务配置\n2. 设备接入配置\n3. 告警规则配置',
+      acceptance_notes: '',
+      last_submitter: '',
+      created_by: '张三',
+    },
   ];
 
   const insertPlan = db.prepare(`
@@ -260,6 +278,22 @@ function seedInitialData() {
     'rec-007', 'plan-005', 'assign', 'draft', 'draft',
     '张三', 'cs_manager', '指派交付顾问李四办理', '李四', now
   );
+  insertRecord.run(
+    'rec-008', 'plan-006', 'create', '', 'draft',
+    '张三', 'cs_manager', '客户成功经理创建上线计划单', '', now
+  );
+  insertRecord.run(
+    'rec-009', 'plan-006', 'assign', 'draft', 'draft',
+    '张三', 'cs_manager', '指派交付顾问李四办理', '李四', now
+  );
+  insertRecord.run(
+    'rec-010', 'plan-006', 'accept', 'draft', 'draft',
+    '李四', 'delivery_consultant', '交付顾问李四接办', '', now
+  );
+  insertRecord.run(
+    'rec-011', 'plan-006', 'update', 'draft', 'draft',
+    '王五', 'delivery_consultant', '处理人被错误变更为王五', '处理人错位：应为李四', now
+  );
 
   insertRecord.run(
     'rec-101', 'plan-004', 'create', '', 'draft',
@@ -281,6 +315,10 @@ function seedInitialData() {
   insertAudit.run(
     'audit-001', 'plan-004', '已确认客户方验收报告签字完整，财务对账无异常',
     '王总', 'cs_lead', now
+  );
+  insertAudit.run(
+    'audit-002', 'plan-006', '【冲突样例】李四已接办该单据，但处理人被错误变更为王五，演示「处理人错位」校验场景',
+    '系统', 'admin', now
   );
 }
 

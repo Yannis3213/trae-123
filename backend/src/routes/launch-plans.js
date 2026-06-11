@@ -361,9 +361,37 @@ export default async function (fastify, opts) {
         reply.status(400);
         return { error: `该单据已指派给交付顾问${existing.assignee}但尚未接办，请先接办后再提交` };
       }
-      // ============ 拦截 3：不是已接办的交付顾问本人 ============
+      // ============ 拦截 3：处理人错位 ============
       if (existing.accept_status === ACCEPT_STATUS.ACCEPTED) {
+        // 3a. 处理人错位：current_handler 与 assignee 不一致
+        if (existing.current_handler !== existing.assignee) {
+          logException(req.params.id, 'handler_mismatch',
+            `提交拦截：处理人错位，assignee=${existing.assignee}，current_handler=${existing.current_handler}`, user.name);
+          db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(uuidv4(), req.params.id, 'handler_mismatch', existing.status, existing.status, user.name, user.role,
+              `提交被拦截：处理人错位，指派交付顾问为${existing.assignee}，但当前处理人为${existing.current_handler}`,
+              `assignee=${existing.assignee}, current_handler=${existing.current_handler}`, ts);
+          db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+            .run(uuidv4(), req.params.id,
+              `提交待复核被拦截：处理人错位。该单据已由交付顾问${existing.assignee}接办，但当前处理人被错误变更为${existing.current_handler}。`
+              + `请将当前处理人修正为${existing.assignee}，或由客户成功经理重新指派。`,
+              user.name, user.role, ts);
+          reply.status(400);
+          return { error: `处理人错位：已指派交付顾问为${existing.assignee}，但当前处理人为${existing.current_handler}，请先修正处理人或重新指派` };
+        }
+        // 3b. 不是已接办的交付顾问本人（且不是负责人）
         if (existing.assignee !== user.name && user.role !== ROLES.CS_LEAD) {
+          logException(req.params.id, 'handler_mismatch',
+            `提交拦截：非交付顾问本人操作，assignee=${existing.assignee}，operator=${user.name}`, user.name);
+          db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(uuidv4(), req.params.id, 'handler_mismatch', existing.status, existing.status, user.name, user.role,
+              `提交被拦截：非交付顾问本人操作，该单据应由${existing.assignee}提交`,
+              `assignee=${existing.assignee}, operator=${user.name}`, ts);
+          db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+            .run(uuidv4(), req.params.id,
+              `提交待复核被拦截：非交付顾问本人操作。该单据已由${existing.assignee}接办，仅${existing.assignee}本人或客户成功负责人可提交复核。`
+              + `当前操作者为${user.name}（${ROLE_NAMES[user.role] || user.role}）。`,
+              user.name, user.role, ts);
           reply.status(403);
           return { error: `该单据已由交付顾问${existing.assignee}接办，仅本人或客户成功负责人可提交复核` };
         }
@@ -516,6 +544,27 @@ export default async function (fastify, opts) {
             });
             continue;
           }
+          // ============ 拦截 1b：已接办但处理人错位 ============
+          if (plan.accept_status === ACCEPT_STATUS.ACCEPTED && plan.current_handler !== plan.assignee) {
+            logException(id, 'handler_mismatch',
+              `批量推进拦截：处理人错位，assignee=${plan.assignee}，current_handler=${plan.current_handler}`, user.name);
+            db.prepare(`INSERT INTO process_records (id, launch_plan_id, action, from_status, to_status, operator, operator_role, comment, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              .run(uuidv4(), id, 'handler_mismatch', plan.status, plan.status, user.name, user.role,
+                `批量推进拦截：处理人错位，指派交付顾问为${plan.assignee}，但当前处理人为${plan.current_handler}`,
+                `assignee=${plan.assignee}, current_handler=${plan.current_handler}`, ts);
+            db.prepare(`INSERT INTO audit_notes (id, launch_plan_id, note, author, author_role, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+              .run(uuidv4(), id,
+                `批量推进被拦截：处理人错位。该单据已由${plan.assignee}接办，但当前处理人被错误变更为${plan.current_handler}。`
+                + `请将处理人修正为${plan.assignee}，或由客户成功经理重新指派。`,
+                user.name, user.role, ts);
+            results.push({
+              id, plan_no: plan.plan_no, customer_name: plan.customer_name,
+              success: false, result_type: 'handler_mismatch',
+              reason: `处理人错位：指派交付顾问为${plan.assignee}，但当前处理人为${plan.current_handler}`,
+              correction_hint: `补正建议：由客户成功经理修正处理人为${plan.assignee}，或重新指派交付顾问`,
+            });
+            continue;
+          }
           // ============ 拦截 2：逾期 ============
           if (warning === 'overdue') {
             logException(id, 'overdue_blocked', `批量推进拦截：单据已逾期，责任人${plan.owner}，当前处理人${plan.current_handler}`, user.name);
@@ -611,6 +660,7 @@ export default async function (fastify, opts) {
         missing_evidence: results.filter(r => r.result_type === 'missing_evidence').length,
         not_assigned: results.filter(r => r.result_type === 'not_assigned').length,
         not_accepted: results.filter(r => r.result_type === 'not_accepted').length,
+        handler_mismatch: results.filter(r => r.result_type === 'handler_mismatch').length,
         items: results,
       };
     },

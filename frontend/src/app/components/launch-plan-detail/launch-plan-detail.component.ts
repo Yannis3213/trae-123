@@ -62,26 +62,39 @@ import {
                     (click)="doAccept()">
                     ✋ 接办（{{plan.accept_status_name}}）
                   </button>
-                  <button *ngIf="canSubmit"
-                    class="btn btn-warning"
-                    [disabled]="loading || submitDisabled"
-                    [title]="submitDisabled ? submitDisabledReason : ''"
-                    (click)="doSubmit()">
-                    📤 提交复核{{submitDisabled ? '（未接办）' : ''}}
+                  <ng-container *ngIf="canSubmit">
+                    <button
+                      class="btn btn-warning"
+                      [disabled]="loading || submitDisabled || handlerMismatch"
+                      [title]="submitButtonTitle"
+                      (click)="doSubmit()">
+                      📤 提交复核{{submitDisabled ? '（未接办）' : (handlerMismatch ? '（处理人错位）' : '')}}
+                    </button>
+                  </ng-container>
+                  <ng-container *ngIf="!canSubmit && plan.accept_status === 'accepted' && currentUser.role !== 'cs_lead'">
+                    <button class="btn" disabled style="opacity:.7" title="该单据已由交付顾问{{plan.assignee}}接办，仅本人可提交">
+                      📤 提交复核（仅{{plan.assignee}}可操作）
+                    </button>
+                  </ng-container>
+                </ng-container>
+                <ng-container *ngIf="plan.status === 'pending_review'">
+                  <button *ngIf="currentUser.role === 'cs_lead'"
+                    class="btn btn-danger"
+                    [disabled]="loading"
+                    (click)="showRejectModal = true">
+                    ↩️ 退回补正
+                  </button>
+                  <button *ngIf="currentUser.role === 'cs_lead'"
+                    class="btn btn-success"
+                    [disabled]="loading"
+                    (click)="showArchiveModal = true">
+                    ✅ 归档收口
+                  </button>
+                  <button *ngIf="currentUser.role !== 'cs_lead'"
+                    class="btn" disabled style="opacity:.7">
+                    🔒 待客户成功负责人审查
                   </button>
                 </ng-container>
-                <button *ngIf="plan.status === 'pending_review' && currentUser.role === 'cs_lead'"
-                  class="btn btn-danger"
-                  [disabled]="loading"
-                  (click)="showRejectModal = true">
-                  ↩️ 退回补正
-                </button>
-                <button *ngIf="plan.status === 'pending_review' && currentUser.role === 'cs_lead'"
-                  class="btn btn-success"
-                  [disabled]="loading"
-                  (click)="showArchiveModal = true">
-                  ✅ 归档收口
-                </button>
                 <button class="btn btn-primary" [disabled]="saving || loading" (click)="saveChanges()">
                   💾 {{saving ? '保存中...' : '保存修改'}}
                 </button>
@@ -191,6 +204,12 @@ import {
             <strong>⏳ 等待交付顾问接办：</strong>该单据已指派给交付顾问{{plan.assignee}}（{{plan.accept_status_name}}），
             暂不能提交待复核，请先完成接办。
           </ng-container>
+        </div>
+
+        <div *ngIf="handlerMismatch" class="alert alert-error mb-md">
+          <strong>🚨 处理人错位：</strong>
+          该单据已由交付顾问「{{plan.assignee}}」接办，但当前处理人被错误变更为「{{plan.current_handler}}」。
+          请由客户成功经理先将当前处理人修正为「{{plan.assignee}}」，或重新指派交付顾问。
         </div>
 
         <div *ngIf="plan.deadline_warning === 'overdue'" class="alert alert-error mb-md">
@@ -498,9 +517,25 @@ export class LaunchPlanDetailComponent implements OnInit, OnDestroy {
     if (!this.plan) return false;
     const u = this.currentUser;
     if (this.plan.status !== 'draft') return false;
-    if (u.role === 'cs_lead') return true;
-    if (u.role === 'delivery_consultant' && this.plan.accept_status === 'accepted' && this.plan.assignee === u.name) return true;
-    return false;
+    // 只有已接办的交付顾问本人可以提交，负责人也不能直接提交（只能退回/归档）
+    return u.role === 'delivery_consultant'
+      && this.plan.accept_status === 'accepted'
+      && this.plan.assignee === u.name
+      && this.plan.current_handler === u.name;
+  }
+
+  get handlerMismatch(): boolean {
+    if (!this.plan) return false;
+    return this.plan.accept_status === 'accepted'
+      && this.plan.assignee !== this.plan.current_handler;
+  }
+
+  get submitButtonTitle(): string {
+    if (!this.plan) return '';
+    if (this.handlerMismatch) {
+      return `处理人错位：指派交付顾问为${this.plan.assignee}，但当前处理人为${this.plan.current_handler}，请先修正处理人`;
+    }
+    return this.submitDisabledReason;
   }
 
   get canAssign(): boolean {

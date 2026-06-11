@@ -169,6 +169,7 @@ export class AuditTimelineComponent {
       missing_evidence: '📋 材料缺失',
       not_assigned: '📭 未指派拦截',
       not_accepted: '✋ 未接办拦截',
+      handler_mismatch: '🔀 处理人错位',
     };
     return map[a] || a;
   }
@@ -180,6 +181,9 @@ export class AuditTimelineComponent {
       overdue_blocked: '逾期拦截',
       auth_violation: '越权访问',
       duplicate_submit: '重复提交',
+      handler_mismatch: '处理人错位',
+      not_assigned: '未指派拦截',
+      not_accepted: '未接办拦截',
     };
     return map[t] || t;
   }

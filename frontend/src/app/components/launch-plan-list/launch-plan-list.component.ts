@@ -247,7 +247,8 @@ export class LaunchPlanListComponent implements OnInit, OnDestroy {
   }
 
   get canBatchSubmit() {
-    return ['cs_manager', 'delivery_consultant', 'cs_lead'].includes(this.currentUser.role);
+    // 只有交付顾问可以批量推进到待复核，负责人只能在详情页单条退回/归档
+    return this.currentUser.role === 'delivery_consultant';
   }
 
   get canBatchArchive() {
@@ -257,7 +258,20 @@ export class LaunchPlanListComponent implements OnInit, OnDestroy {
   get selectableIds(): string[] {
     return this.plans.filter(p => {
       if (p.status === 'archived') return false;
-      return true;
+      const u = this.currentUser;
+      // 客户成功负责人：只能选择 pending_review 状态的单据（批量归档）
+      if (u.role === 'cs_lead') {
+        return p.status === 'pending_review';
+      }
+      // 交付顾问：只能选择自己已接办的 draft 单据（批量推进）
+      if (u.role === 'delivery_consultant') {
+        return p.status === 'draft'
+          && p.accept_status === 'accepted'
+          && p.assignee === u.name
+          && p.current_handler === u.name;
+      }
+      // 客户成功经理：不能批量操作（列表页隐藏批量按钮）
+      return false;
     }).map(p => p.id);
   }
 
