@@ -108,6 +108,7 @@ db.exec(`
     exception_detail TEXT NOT NULL,
     exception_node TEXT,
     created_by TEXT NOT NULL,
+    missing_types TEXT,
     resolved INTEGER DEFAULT 0,
     resolved_by TEXT,
     resolved_at TEXT,
@@ -126,6 +127,10 @@ db.exec(`
     error_message TEXT,
     operator TEXT NOT NULL,
     operation_type TEXT NOT NULL,
+    new_node TEXT,
+    new_status TEXT,
+    new_version INTEGER,
+    new_handler TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 

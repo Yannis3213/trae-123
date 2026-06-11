@@ -398,11 +398,13 @@ async function routes(fastify) {
 
           const evidenceInfo = checkEvidence(id, fromNode);
           const missingDesc = evidenceInfo.missingLabels.length > 0 ? `，缺少证据: ${evidenceInfo.missingLabels.join('、')}` : '';
+          const missingTypesStr = evidenceInfo.missing.length > 0 ? evidenceInfo.missing.join(',') : null;
 
           recordException(db, {
             formId: id, exceptionType: EXCEPTION_TYPES.MATERIAL_MISSING,
             exceptionDetail: `退回补正: ${opinion || '材料不完整，需要补充'}${missingDesc}`,
-            exceptionNode: fromNode, createdBy: user.username
+            exceptionNode: fromNode, createdBy: user.username,
+            missingTypes: missingTypesStr
           });
           break;
         }

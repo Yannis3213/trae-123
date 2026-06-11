@@ -6,7 +6,8 @@ const {
 const {
   validateOperation, checkEvidence, checkTimeout, getDeadline,
   getNextNodeAndHandler, getNextHandler, recordProcessing,
-  recordException, resolveExceptions, updateFormStatus, OPERATION_MATRIX
+  recordException, resolveExceptions, updateFormStatus, OPERATION_MATRIX,
+  SUPPLEMENT_RETURN_MAP
 } = require('../utils/workflow');
 
 async function routes(fastify) {
@@ -48,7 +49,7 @@ async function routes(fastify) {
           return;
         }
 
-        const skipEvidenceCheck = [OPERATION_TYPES.SIGN, OPERATION_TYPES.AUDIT_REJECT, OPERATION_TYPES.FINAL_REVIEW_REJECT].includes(operation);
+        const skipEvidenceCheck = [OPERATION_TYPES.SIGN, OPERATION_TYPES.AUDIT_REJECT, OPERATION_TYPES.FINAL_REVIEW_REJECT, OPERATION_TYPES.RETURN_SUPPLEMENT, OPERATION_TYPES.SUPPLEMENT].includes(operation);
 
         try {
           const fromNode = currentForm.current_node;
@@ -62,7 +63,7 @@ async function routes(fastify) {
           if (!skipEvidenceCheck) {
             const evidenceCheck = checkEvidence(formId, currentForm.current_node);
             if (!evidenceCheck.complete) {
-              recordException(db, { formId, exceptionType: EXCEPTION_TYPES.EVIDENCE_MISSING, exceptionDetail: `批量处理缺少证据: ${evidenceCheck.missingLabels.join(', ')}`, exceptionNode: currentForm.current_node, createdBy: user.username });
+              recordException(db, { formId, exceptionType: EXCEPTION_TYPES.EVIDENCE_MISSING, exceptionDetail: `批量处理缺少证据: ${evidenceCheck.missingLabels.join(', ')}`, exceptionNode: currentForm.current_node, createdBy: user.username, missingTypes: evidenceCheck.missing.join(',') });
               results.push({ formId, formNo: currentForm.form_no, success: false, errorType: EXCEPTION_TYPES.EVIDENCE_MISSING, errorMessage: `缺少证据: ${evidenceCheck.missingLabels.join(', ')}` });
               return;
             }
@@ -118,6 +119,48 @@ async function routes(fastify) {
               newDeadline = null;
               break;
             }
+            case OPERATION_TYPES.RETURN_SUPPLEMENT: {
+              toNode = fromNode;
+              toStatus = STATUSES.SUPPLEMENT_REQUIRED;
+
+              const returnInfo = SUPPLEMENT_RETURN_MAP[fromNode];
+              if (returnInfo) {
+                newHandler = returnInfo.returnToHandler(currentForm);
+              } else {
+                newHandler = currentForm.created_by || 'registrar';
+              }
+              newDeadline = getDeadline(fromNode);
+
+              const evidenceInfo = checkEvidence(formId, fromNode);
+              const missingDesc = evidenceInfo.missingLabels.length > 0 ? `，缺少证据: ${evidenceInfo.missingLabels.join('、')}` : '';
+              const missingTypesStr = evidenceInfo.missing.length > 0 ? evidenceInfo.missing.join(',') : null;
+
+              recordException(db, {
+                formId, exceptionType: EXCEPTION_TYPES.MATERIAL_MISSING,
+                exceptionDetail: `批量退回补正: ${opinion || '材料不完整，需要补充'}${missingDesc}`,
+                exceptionNode: fromNode, createdBy: user.username,
+                missingTypes: missingTypesStr
+              });
+              break;
+            }
+            case OPERATION_TYPES.SUPPLEMENT: {
+              toNode = fromNode;
+              toStatus = matrix.resultStatus(currentForm);
+
+              const nodeRole = NODE_HANDLER_ROLES[fromNode];
+              const handlerUser = getNextHandler(db, nodeRole);
+              newHandler = handlerUser ? handlerUser.username : user.username;
+              newDeadline = getDeadline(fromNode);
+
+              recordException(db, {
+                formId, exceptionType: EXCEPTION_TYPES.EVIDENCE_MISSING,
+                exceptionDetail: `批量补正操作：原状态[${STATUS_LABELS[fromStatus]}]→新状态[${STATUS_LABELS[toStatus]}]，${opinion || '补正材料'}`,
+                exceptionNode: fromNode, createdBy: user.username
+              });
+
+              resolveExceptions(db, formId, user.username, opinion || `批量补正完成：${STATUS_LABELS[fromStatus]}→${STATUS_LABELS[toStatus]}`);
+              break;
+            }
             case OPERATION_TYPES.ARCHIVE: {
               toNode = NODES.ARCHIVED;
               toStatus = STATUSES.ARCHIVED;
@@ -165,9 +208,11 @@ async function routes(fastify) {
         db.prepare(`
           INSERT INTO batch_results (
             batch_no, form_id, form_no, success, error_type,
-            error_message, operator, operation_type
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(batchNo, r.formId, r.formNo, r.success ? 1 : 0, r.errorType, r.errorMessage, user.username, operation);
+            error_message, operator, operation_type,
+            new_node, new_status, new_version, new_handler
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(batchNo, r.formId, r.formNo, r.success ? 1 : 0, r.errorType, r.errorMessage, user.username, operation,
+          r.newNode || null, r.newStatus || null, r.newVersion || null, r.newHandler || null);
       });
     });
 

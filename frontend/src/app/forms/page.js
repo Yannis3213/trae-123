@@ -46,7 +46,8 @@ import {
   getDeadlineStatus,
   getRoleLabel,
   getBusinessTypes,
-  getExceptionTypeLabel
+  getExceptionTypeLabel,
+  OPERATION_MATRIX
 } from '../../lib/utils';
 
 const { Title, Text } = Typography;
@@ -256,18 +257,41 @@ export default function FormsPage() {
     if (!user) return [];
     const ops = [];
 
+    const selectedInNode = (node) => selectedRows.some(r => r.current_node === node);
+    const allSelectedInNode = (node) => selectedRows.length > 0 && selectedRows.every(r => r.current_node === node);
+    const selectedInStatus = (status) => selectedRows.some(r => r.status === status);
+
     if (user.role === 'merchant_registrar') {
-      ops.push({ value: 'sign', label: '批量签收' });
-      ops.push({ value: 'submit_audit', label: '批量提交审核' });
-      ops.push({ value: 'register', label: '批量完成登记' });
-      ops.push({ value: 'submit_final_review', label: '批量提交复核' });
+      if (selectedInStatus('pending_sign') || selectedInStatus('abnormal_return') || selectedInStatus('supplement_required')) {
+        ops.push({ value: 'sign', label: '批量签收' });
+      }
+      if (selectedInStatus('sign_completed')) {
+        ops.push({ value: 'submit_audit', label: '批量提交审核' });
+      }
+      if (selectedInStatus('pending_registration')) {
+        ops.push({ value: 'register', label: '批量完成登记' });
+      }
+      if (selectedInStatus('registration_completed')) {
+        ops.push({ value: 'submit_final_review', label: '批量提交复核' });
+      }
+      if (selectedInStatus('supplement_required') || selectedInStatus('abnormal_return')) {
+        ops.push({ value: 'supplement', label: '批量补正材料' });
+      }
     }
     if (user.role === 'audit_supervisor') {
-      ops.push({ value: 'audit_pass', label: '批量审核通过' });
+      if (selectedInStatus('pending_audit')) {
+        ops.push({ value: 'audit_pass', label: '批量审核通过' });
+        ops.push({ value: 'return_supplement', label: '批量退回补正' });
+      }
     }
     if (user.role === 'platform_leader') {
-      ops.push({ value: 'final_review_pass', label: '批量复核通过' });
-      ops.push({ value: 'archive', label: '批量归档' });
+      if (selectedInStatus('pending_final_review')) {
+        ops.push({ value: 'final_review_pass', label: '批量复核通过' });
+        ops.push({ value: 'return_supplement', label: '批量退回补正' });
+      }
+      if (selectedInStatus('final_review_passed')) {
+        ops.push({ value: 'archive', label: '批量归档' });
+      }
     }
 
     return ops;
@@ -835,9 +859,20 @@ export default function FormsPage() {
                 }
               >
                 {result.success ? (
-                  <Text type="secondary">
-                    新状态：{result.newStatus} | 新节点：{result.newNode}
-                  </Text>
+                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                    <div>
+                      <Text type="secondary">新节点：</Text>
+                      <Tag color="blue">{result.newNodeLabel || getNodeLabel(result.newNode)}</Tag>
+                      <Text type="secondary" style={{ marginLeft: 8 }}>新状态：</Text>
+                      <Tag color={getStatusTag(result.newStatus)?.color}>{result.newStatusLabel || getStatusTag(result.newStatus)?.label}</Tag>
+                    </div>
+                    <div>
+                      <Text type="secondary">版本：</Text>
+                      <Tag>v{result.newVersion}</Tag>
+                      <Text type="secondary" style={{ marginLeft: 8 }}>处理人：</Text>
+                      <Tag color="geekblue">{result.newHandler || '未分配'}</Tag>
+                    </div>
+                  </Space>
                 ) : (
                   <div>
                     <Tag color="orange">{getExceptionTypeLabel(result.errorType)}</Tag>
