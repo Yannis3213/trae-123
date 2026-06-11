@@ -772,7 +772,7 @@ app.post('/api/orders/:id/submit-review', authMiddleware, (req, res) => {
 });
 
 app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
-  const { ids, action, data } = req.body;
+  const { ids, action, data, snapshots } = req.body;
   
   if (!ids || ids.length === 0) {
     return res.status(400).json({ error: '请选择要处理的订单' });
@@ -785,8 +785,23 @@ app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
   
   const results = [];
 
-  const validateBatchItem = (order, actionType) => {
+  const validateBatchItem = (order, snapshot) => {
     const errors = [];
+
+    if (snapshot) {
+      if (snapshot.version !== order.version) {
+        errors.push(`版本快照不一致：加载时v${snapshot.version}，当前v${order.version}，数据已被修改`);
+      }
+      if (snapshot.status !== order.status) {
+        errors.push(`状态快照不一致：加载时${statusMap[snapshot.status]?.label || snapshot.status}，当前${statusMap[order.status]?.label || order.status}`);
+      }
+      if (snapshot.current_handler !== order.current_handler) {
+        errors.push(`处理人快照不一致：加载时${snapshot.current_handler}，当前${order.current_handler}`);
+      }
+      if (snapshot.current_role !== order.current_role) {
+        errors.push(`角色快照不一致：加载时${snapshot.current_role}，当前${order.current_role}`);
+      }
+    }
 
     if (order.current_role !== req.user.role) {
       errors.push(`角色不匹配：当前节点需${roleMap[order.current_role]?.label || order.current_role}处理，您是${roleMap[req.user.role]?.label}`);
@@ -796,10 +811,6 @@ app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
       errors.push(`处理人不匹配：当前处理人为${order.current_handler}，您的账号是${req.user.username}`);
     }
 
-    if (data?.version && order.version !== data.version) {
-      errors.push(`版本冲突：当前版本v${order.version}，提交版本v${data.version}`);
-    }
-
     if (order.status === 'completed' || order.status === 'rejected') {
       errors.push(`订单已${statusMap[order.status]?.label}，无需处理`);
     }
@@ -807,8 +818,8 @@ app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
     return errors;
   };
 
-  const handleTimeoutPush = (order) => {
-    const baseErrors = validateBatchItem(order, action);
+  const handleTimeoutPush = (order, snapshot) => {
+    const baseErrors = validateBatchItem(order, snapshot);
     if (baseErrors.length > 0) {
       return { 
         id: order.id, 
@@ -918,8 +929,8 @@ app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
     }
   };
 
-  const handleBatchMaterial = (order) => {
-    const baseErrors = validateBatchItem(order, action);
+  const handleBatchMaterial = (order, snapshot) => {
+    const baseErrors = validateBatchItem(order, snapshot);
     if (baseErrors.length > 0) {
       return { 
         id: order.id, 
@@ -1011,8 +1022,8 @@ app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
     }
   };
 
-  const handleBatchAcceptance = (order) => {
-    const baseErrors = validateBatchItem(order, action);
+  const handleBatchAcceptance = (order, snapshot) => {
+    const baseErrors = validateBatchItem(order, snapshot);
     if (baseErrors.length > 0) {
       return { 
         id: order.id, 
@@ -1130,8 +1141,8 @@ app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
     }
   };
 
-  const handleBatchReview = (order) => {
-    const baseErrors = validateBatchItem(order, action);
+  const handleBatchReview = (order, snapshot) => {
+    const baseErrors = validateBatchItem(order, snapshot);
     if (baseErrors.length > 0) {
       return { 
         id: order.id, 
@@ -1251,7 +1262,8 @@ app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
         results.push({ id, success: false, reason: '订单不存在' });
         return;
       }
-      results.push(handler(order));
+      const snapshot = snapshots?.[String(id)] || null;
+      results.push(handler(order, snapshot));
     });
   });
   

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
-import { fetchOverdueQueue, batchProcess } from '../api/client.js';
+import { fetchOverdueQueue, batchProcess, getCurrentUser } from '../api/client.js';
 import BatchResultModal from './BatchResultModal.jsx';
 
 const roleLabels = {
@@ -24,6 +24,7 @@ export default function OverdueQueue() {
   const [batchResult, setBatchResult] = useState(null);
   const [toast, setToast] = useState(null);
   const [stats, setStats] = useState({ normal: 0, near: 0, overdue: 0 });
+  const user = getCurrentUser();
 
   const showToast = (message, type = 'info') => {
     setToast({ message, type });
@@ -73,6 +74,22 @@ export default function OverdueQueue() {
     }
   };
 
+  const buildSnapshots = () => {
+    const snapshots = {};
+    selectedIds.forEach(id => {
+      const order = orders.find(o => o.id === id);
+      if (order) {
+        snapshots[id] = {
+          version: order.version,
+          status: order.status,
+          current_handler: order.current_handler,
+          current_role: order.current_role
+        };
+      }
+    });
+    return snapshots;
+  };
+
   const handleBatchTimeoutPush = async () => {
     if (selectedIds.length === 0) {
       showToast('请先选择要处理的订单', 'warning');
@@ -89,9 +106,22 @@ export default function OverdueQueue() {
       return;
     }
     
+    const snapshots = {};
+    overdueIds.forEach(id => {
+      const order = orders.find(o => o.id === id);
+      if (order) {
+        snapshots[id] = {
+          version: order.version,
+          status: order.status,
+          current_handler: order.current_handler,
+          current_role: order.current_role
+        };
+      }
+    });
+    
     setBatchLoading(true);
     try {
-      const result = await batchProcess(overdueIds, 'timeout-push');
+      const result = await batchProcess(overdueIds, 'timeout-push', {}, snapshots);
       setBatchResult(result.results);
       loadData();
       setSelectedIds([]);

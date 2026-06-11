@@ -123,11 +123,11 @@ export const submitReview = async (id, data) => {
   return handleResponse(response);
 };
 
-export const batchProcess = async (ids, action, data = {}) => {
+export const batchProcess = async (ids, action, data = {}, snapshots = {}) => {
   const response = await fetch(`${API_BASE}/orders/batch-process`, {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ ids, action, data })
+    body: JSON.stringify({ ids, action, data, snapshots })
   });
   return handleResponse(response);
 };

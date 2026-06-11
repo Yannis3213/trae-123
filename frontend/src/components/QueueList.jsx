@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import { fetchOrders, fetchOrderStats, batchProcess, createOrder, fetchStores } from '../api/client.js';
+import { getCurrentUser } from '../api/client.js';
 import BusinessModules from './BusinessModules.jsx';
 import BatchResultModal from './BatchResultModal.jsx';
 import CreateOrderModal from './CreateOrderModal.jsx';
@@ -24,6 +25,7 @@ export default function QueueList() {
   const [activeModule, setActiveModule] = useState('material');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [toast, setToast] = useState(null);
+  const user = getCurrentUser();
 
   const showToast = (message, type = 'info') => {
     setToast({ message, type });
@@ -66,6 +68,22 @@ export default function QueueList() {
     }
   };
 
+  const buildSnapshots = () => {
+    const snapshots = {};
+    selectedIds.forEach(id => {
+      const order = orders.find(o => o.id === id);
+      if (order) {
+        snapshots[id] = {
+          version: order.version,
+          status: order.status,
+          current_handler: order.current_handler,
+          current_role: order.current_role
+        };
+      }
+    });
+    return snapshots;
+  };
+
   const handleBatchTimeoutPush = async () => {
     if (selectedIds.length === 0) {
       showToast('请先选择要处理的订单', 'warning');
@@ -74,7 +92,79 @@ export default function QueueList() {
     
     setBatchLoading(true);
     try {
-      const result = await batchProcess(selectedIds, 'timeout-push');
+      const result = await batchProcess(selectedIds, 'timeout-push', {}, buildSnapshots());
+      setBatchResult(result.results);
+      setRefreshTrigger(r => r + 1);
+      setSelectedIds([]);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleBatchMaterial = async () => {
+    if (selectedIds.length === 0) {
+      showToast('请先选择要处理的订单', 'warning');
+      return;
+    }
+    
+    setBatchLoading(true);
+    try {
+      const result = await batchProcess(
+        selectedIds,
+        'batch-material',
+        { evidence: { has_invoice: true, material_complete: true } },
+        buildSnapshots()
+      );
+      setBatchResult(result.results);
+      setRefreshTrigger(r => r + 1);
+      setSelectedIds([]);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleBatchAcceptance = async () => {
+    if (selectedIds.length === 0) {
+      showToast('请先选择要处理的订单', 'warning');
+      return;
+    }
+    
+    setBatchLoading(true);
+    try {
+      const result = await batchProcess(
+        selectedIds,
+        'batch-acceptance',
+        { evidence: { acceptance_passed: true, inspector: user?.name || '' } },
+        buildSnapshots()
+      );
+      setBatchResult(result.results);
+      setRefreshTrigger(r => r + 1);
+      setSelectedIds([]);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleBatchReview = async () => {
+    if (selectedIds.length === 0) {
+      showToast('请先选择要处理的订单', 'warning');
+      return;
+    }
+    
+    setBatchLoading(true);
+    try {
+      const result = await batchProcess(
+        selectedIds,
+        'batch-review',
+        { action: 'approve', evidence: { inventory_updated: true, warehouse: '中心仓' } },
+        buildSnapshots()
+      );
       setBatchResult(result.results);
       setRefreshTrigger(r => r + 1);
       setSelectedIds([]);
@@ -182,14 +272,38 @@ export default function QueueList() {
             已选择 <strong style={{ color: '#1890ff' }}>{selectedIds.length}</strong> 条
           </span>
           <button 
-            class="btn btn-danger" 
+            class="btn btn-primary btn-sm" 
+            onClick={handleBatchMaterial}
+            disabled={batchLoading}
+            title="批量提交材料（需店长角色，仅处理待确认/异常单）"
+          >
+            {batchLoading && <span class="spinner" />}批量提交材料
+          </button>
+          <button 
+            class="btn btn-primary btn-sm" 
+            onClick={handleBatchAcceptance}
+            disabled={batchLoading}
+            title="批量验收通过（需品控角色，仅处理待验收/已复查单）"
+          >
+            {batchLoading && <span class="spinner" />}批量验收
+          </button>
+          <button 
+            class="btn btn-primary btn-sm" 
+            onClick={handleBatchReview}
+            disabled={batchLoading}
+            title="批量复核通过（需营运经理角色，仅处理待复核单）"
+          >
+            {batchLoading && <span class="spinner" />}批量复核
+          </button>
+          <button 
+            class="btn btn-danger btn-sm" 
             onClick={handleBatchTimeoutPush}
             disabled={batchLoading}
+            title="逾期批量推进（标记超时异常）"
           >
-            {batchLoading && <span class="spinner" />}
-            {batchLoading ? '处理中...' : '逾期批量推进'}
+            {batchLoading && <span class="spinner" />}逾期批量推进
           </button>
-          <button class="btn btn-default" onClick={() => setSelectedIds([])}>
+          <button class="btn btn-default btn-sm" onClick={() => setSelectedIds([])}>
             取消选择
           </button>
         </div>
