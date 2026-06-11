@@ -28,11 +28,13 @@ export function initDatabase() {
       status TEXT NOT NULL DEFAULT 'draft',
       owner TEXT NOT NULL,
       current_handler TEXT NOT NULL,
+      assignee TEXT DEFAULT '',
       launch_target TEXT DEFAULT '',
       config_checklist TEXT DEFAULT '',
       acceptance_notes TEXT DEFAULT '',
       result TEXT DEFAULT '',
       reject_reason TEXT DEFAULT '',
+      last_submitter TEXT DEFAULT '',
       version INTEGER NOT NULL DEFAULT 1,
       created_by TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -92,6 +94,13 @@ export function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_attachments_plan ON attachments(launch_plan_id);
   `);
 
+  try {
+    db.exec(`ALTER TABLE launch_plans ADD COLUMN assignee TEXT DEFAULT ''`);
+  } catch {}
+  try {
+    db.exec(`ALTER TABLE launch_plans ADD COLUMN last_submitter TEXT DEFAULT ''`);
+  } catch {}
+
   seedInitialData();
 }
 
@@ -111,9 +120,11 @@ function seedInitialData() {
       status: 'draft',
       owner: '张三',
       current_handler: '张三',
+      assignee: '',
       launch_target: '完成CRM系统部署，用户数据迁移完成',
       config_checklist: '1. 数据库配置\n2. 用户权限配置\n3. 集成配置',
       acceptance_notes: '',
+      last_submitter: '',
       created_by: '张三',
     },
     {
@@ -124,12 +135,14 @@ function seedInitialData() {
       priority: 'urgent',
       deadline: dayjs().add(1, 'day').format('YYYY-MM-DD'),
       status: 'pending_review',
-      owner: '李四',
+      owner: '张三',
       current_handler: '王总',
+      assignee: '李四',
       launch_target: '财务模块上线，发票、凭证流程打通',
       config_checklist: '1. 财务科目配置\n2. 审批流配置\n3. 报表配置',
       acceptance_notes: '客户已完成UAT测试，签字确认',
-      created_by: '李四',
+      last_submitter: '李四',
+      created_by: '张三',
     },
     {
       id: 'plan-003',
@@ -141,9 +154,11 @@ function seedInitialData() {
       status: 'draft',
       owner: '王五',
       current_handler: '王五',
+      assignee: '',
       launch_target: '生产管理模块上线，工单流程跑通',
       config_checklist: '',
       acceptance_notes: '',
+      last_submitter: '',
       created_by: '王五',
     },
     {
@@ -156,28 +171,47 @@ function seedInitialData() {
       status: 'archived',
       owner: '赵六',
       current_handler: '赵六',
+      assignee: '',
       launch_target: '会员营销系统上线，积分、优惠券功能可用',
       config_checklist: '1. 会员等级配置\n2. 积分规则配置\n3. 优惠券模板',
       acceptance_notes: '客户方负责人签字确认上线完成',
       result: '上线成功，系统运行稳定，客户满意度高',
+      last_submitter: '赵六',
       created_by: '赵六',
+    },
+    {
+      id: 'plan-005',
+      plan_no: 'LP-2026-0605',
+      customer_name: '杭州数智科技有限公司',
+      project_name: 'BI数据分析平台上线',
+      priority: 'high',
+      deadline: dayjs().add(3, 'day').format('YYYY-MM-DD'),
+      status: 'draft',
+      owner: '张三',
+      current_handler: '李四',
+      assignee: '李四',
+      launch_target: 'BI平台上线，报表和仪表盘功能交付',
+      config_checklist: '1. 数据源配置\n2. 报表模板配置\n3. 权限配置',
+      acceptance_notes: '',
+      last_submitter: '',
+      created_by: '张三',
     },
   ];
 
   const insertPlan = db.prepare(`
     INSERT INTO launch_plans (
       id, plan_no, customer_name, project_name, priority, deadline, status,
-      owner, current_handler, launch_target, config_checklist, acceptance_notes,
-      result, version, created_by, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      owner, current_handler, assignee, launch_target, config_checklist, acceptance_notes,
+      result, last_submitter, version, created_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const p of plans) {
     insertPlan.run(
       p.id, p.plan_no, p.customer_name, p.project_name, p.priority,
-      p.deadline, p.status, p.owner, p.current_handler,
+      p.deadline, p.status, p.owner, p.current_handler, p.assignee || '',
       p.launch_target, p.config_checklist, p.acceptance_notes,
-      p.result || '', 1, p.created_by, now, now
+      p.result || '', p.last_submitter || '', 1, p.created_by, now, now
     );
   }
 
@@ -189,15 +223,44 @@ function seedInitialData() {
   `);
 
   insertRecord.run(
-    'rec-001', 'plan-002', 'submit', 'draft', 'pending_review',
+    'rec-001', 'plan-001', 'create', '', 'draft',
+    '张三', 'cs_manager', '客户成功经理创建上线计划单', '', now
+  );
+  insertRecord.run(
+    'rec-002', 'plan-002', 'create', '', 'draft',
+    '张三', 'cs_manager', '客户成功经理创建上线计划单', '', now
+  );
+  insertRecord.run(
+    'rec-003', 'plan-002', 'assign', 'draft', 'draft',
+    '张三', 'cs_manager', '指派交付顾问李四办理', '李四', now
+  );
+  insertRecord.run(
+    'rec-004', 'plan-002', 'accept', 'draft', 'draft',
+    '李四', 'delivery_consultant', '交付顾问接办', '', now
+  );
+  insertRecord.run(
+    'rec-005', 'plan-002', 'submit', 'draft', 'pending_review',
     '李四', 'delivery_consultant', '配置完成，提交审核', '配置截图3张', now
   );
   insertRecord.run(
-    'rec-002', 'plan-004', 'submit', 'draft', 'pending_review',
+    'rec-006', 'plan-005', 'create', '', 'draft',
+    '张三', 'cs_manager', '客户成功经理创建上线计划单', '', now
+  );
+  insertRecord.run(
+    'rec-007', 'plan-005', 'assign', 'draft', 'draft',
+    '张三', 'cs_manager', '指派交付顾问李四办理', '李四', now
+  );
+
+  insertRecord.run(
+    'rec-101', 'plan-004', 'create', '', 'draft',
+    '赵六', 'delivery_consultant', '交付顾问创建上线计划单', '', now
+  );
+  insertRecord.run(
+    'rec-102', 'plan-004', 'submit', 'draft', 'pending_review',
     '赵六', 'delivery_consultant', '上线完成，提交复核', '验收单扫描件', now
   );
   insertRecord.run(
-    'rec-003', 'plan-004', 'archive', 'pending_review', 'archived',
+    'rec-103', 'plan-004', 'archive', 'pending_review', 'archived',
     '王总', 'cs_lead', '复核通过，归档', '验收确认书', now
   );
 

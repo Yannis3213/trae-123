@@ -51,6 +51,18 @@ import { User } from '../../models/launch-plan';
             </div>
           </div>
 
+          <div class="flex gap-md">
+            <div class="form-item" style="flex:1">
+              <label class="form-label">🔄 指派交付顾问（可选，建单后直接流转）</label>
+              <select class="select" [(ngModel)]="form.assignee">
+                <option value="">不指派（后续在详情页指派）</option>
+                <option *ngFor="let u of deliveryConsultants" [value]="u.name">
+                  {{u.name}}（{{u.role_name}}）
+                </option>
+              </select>
+            </div>
+          </div>
+
           <div class="form-item">
             <label class="form-label">🎯 上线目标</label>
             <textarea class="textarea" rows="3" [(ngModel)]="form.launch_target"
@@ -76,7 +88,9 @@ import { User } from '../../models/launch-plan';
           </div>
 
           <div class="alert alert-info">
-            👤 创建人：{{currentUser.name}}（{{currentUser.role_name}}）· 初始状态：草稿 · 提交复核后处理人将变更为客户成功负责人
+            👤 创建人：{{currentUser.name}}（{{currentUser.role_name}}）· 初始状态：草稿 ·
+            <span *ngIf="form.assignee">指派后将流转给交付顾问 {{form.assignee}} 办理</span>
+            <span *ngIf="!form.assignee">提交复核后处理人将变更为客户成功负责人</span>
           </div>
         </div>
         <div class="modal-footer">
@@ -103,6 +117,7 @@ export class CreatePlanModalComponent implements OnInit {
     priority: 'medium',
     deadline: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
     owner: '',
+    assignee: '',
     launch_target: '',
     config_checklist: '',
     acceptance_notes: '',
@@ -115,6 +130,10 @@ export class CreatePlanModalComponent implements OnInit {
   ) {}
 
   get currentUser() { return this.auth.currentUser; }
+
+  get deliveryConsultants(): User[] {
+    return this.auth.getAllUsers().filter(u => u.role === 'delivery_consultant');
+  }
 
   ngOnInit() {
     this.owners = this.auth.getAllUsers().filter(u =>

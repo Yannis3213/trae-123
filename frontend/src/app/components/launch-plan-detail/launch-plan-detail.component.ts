@@ -10,6 +10,7 @@ import {
   ProcessRecord,
   AuditNote,
   ExceptionLog,
+  User,
 } from '../../models/launch-plan';
 
 @Component({
@@ -48,12 +49,26 @@ import {
             </div>
             <div class="action-buttons flex gap-sm wrap">
               <ng-container *ngIf="canEdit">
-                <button *ngIf="plan.status === 'draft' && canSubmit"
-                  class="btn btn-warning"
-                  [disabled]="loading"
-                  (click)="doSubmit()">
-                  📤 提交复核
-                </button>
+                <ng-container *ngIf="plan.status === 'draft'">
+                  <button *ngIf="canAssign && !plan.assignee"
+                    class="btn btn-primary"
+                    [disabled]="loading"
+                    (click)="showAssignSelect = !showAssignSelect">
+                    🔄 指派交付顾问
+                  </button>
+                  <button *ngIf="plan.assignee && plan.current_handler === currentUser.name && currentUser.role === 'delivery_consultant'"
+                    class="btn btn-primary"
+                    [disabled]="loading"
+                    (click)="doAccept()">
+                    ✋ 接办
+                  </button>
+                  <button *ngIf="canSubmit"
+                    class="btn btn-warning"
+                    [disabled]="loading"
+                    (click)="doSubmit()">
+                    📤 提交复核
+                  </button>
+                </ng-container>
                 <button *ngIf="plan.status === 'pending_review' && currentUser.role === 'cs_lead'"
                   class="btn btn-danger"
                   [disabled]="loading"
@@ -71,7 +86,7 @@ import {
                 </button>
               </ng-container>
               <button *ngIf="!canEdit && plan.status !== 'archived'" class="btn" disabled style="opacity:.7" title="非当前处理人无法操作">
-                🔒 当前处理人：{{plan.current_handler}}
+                🔒 当前处理人：{{plan.current_handler}}（{{plan.current_handler_role_name || '未知角色'}}）
               </button>
               <button *ngIf="plan.status === 'archived'" class="btn" disabled style="opacity:.7">
                 📦 已归档（只读）
@@ -101,6 +116,16 @@ import {
               <strong [ngClass]="{primary: plan.current_handler === currentUser.name}">
                 {{plan.current_handler === currentUser.name ? '👉 ' : ''}}{{plan.current_handler}}
               </strong>
+              <span *ngIf="plan.current_handler_role_name" class="tag tag-info" style="margin-left:4px;font-size:11px">
+                {{plan.current_handler_role_name}}
+              </span>
+            </div>
+            <div class="meta-item" *ngIf="plan.assignee">
+              <span class="meta-label">指派交付顾问</span>
+              <strong>{{plan.assignee}}</strong>
+              <span *ngIf="plan.assignee_role" class="tag tag-info" style="margin-left:4px;font-size:11px">
+                {{plan.assignee_role === 'delivery_consultant' ? '交付顾问' : plan.assignee_role}}
+              </span>
             </div>
             <div class="meta-item">
               <span class="meta-label">创建人</span>
@@ -112,6 +137,20 @@ import {
               <span *ngIf="localVersion && localVersion !== plan.version"
                 class="tag tag-danger ml-sm">页面 v{{localVersion}} ≠ 后端 v{{plan.version}}</span>
             </div>
+          </div>
+
+          <div *ngIf="showAssignSelect && canAssign && !plan.assignee && plan.status === 'draft'"
+            class="assign-bar flex gap-sm mt-md" style="padding:12px;background:#f0f9ff;border:1px solid #93c5fd;border-radius:8px">
+            <span style="font-size:14px;line-height:36px;color:#1d4ed8">🔄 选择交付顾问：</span>
+            <select class="select" [(ngModel)]="assigneeName" style="flex:0 0 180px">
+              <option value="">-- 请选择 --</option>
+              <option *ngFor="let u of deliveryConsultants" [value]="u.name">{{u.name}}（{{u.role_name}}）</option>
+            </select>
+            <input class="input" [(ngModel)]="assignComment" placeholder="指派说明（可选）" style="flex:1">
+            <button class="btn btn-primary btn-sm" [disabled]="!assigneeName || assigning" (click)="doAssign()">
+              {{assigning ? '指派中...' : '确认指派'}}
+            </button>
+            <button class="btn btn-sm" (click)="showAssignSelect = false">取消</button>
           </div>
         </div>
 
@@ -391,6 +430,10 @@ export class LaunchPlanDetailComponent implements OnInit, OnDestroy {
 
   showRejectModal = false;
   showArchiveModal = false;
+  showAssignSelect = false;
+  assigneeName = '';
+  assignComment = '';
+  assigning = false;
 
   formSubmitComment = true;
   submitComment = '';
@@ -424,6 +467,16 @@ export class LaunchPlanDetailComponent implements OnInit, OnDestroy {
     const u = this.currentUser;
     return (u.name === this.plan!.current_handler || u.name === this.plan!.owner || u.role === 'cs_lead')
       && ['cs_manager', 'delivery_consultant', 'cs_lead'].includes(u.role);
+  }
+
+  get canAssign(): boolean {
+    if (!this.plan) return false;
+    const u = this.currentUser;
+    return u.role === 'cs_manager' && this.plan.owner === u.name && this.plan.status === 'draft';
+  }
+
+  get deliveryConsultants(): User[] {
+    return this.auth.getAllUsers().filter(u => u.role === 'delivery_consultant');
   }
 
   ngOnInit() {
@@ -501,6 +554,53 @@ export class LaunchPlanDetailComponent implements OnInit, OnDestroy {
           if (e.error?.current_version) this.localVersion = e.error.current_version;
         } else if (e.status === 403) {
           this.toast.error(msg);
+        } else {
+          this.toast.error(msg);
+        }
+      }
+    );
+  }
+
+  doAssign() {
+    if (!this.plan || !this.assigneeName) return;
+    this.assigning = true;
+    this.svc.assign(this.plan.id, this.assigneeName, this.localVersion!, this.assignComment.trim()).subscribe(
+      (res) => {
+        this.localVersion = res.new_version;
+        this.toast.success(`已指派给交付顾问 ${this.assigneeName}`);
+        this.assigneeName = '';
+        this.assignComment = '';
+        this.showAssignSelect = false;
+        this.assigning = false;
+        this.loadDetail();
+      },
+      (e) => {
+        this.assigning = false;
+        const msg = e.error?.error || '指派失败';
+        if (e.status === 409) {
+          this.toast.error('版本冲突：' + msg + '（请刷新后重试）');
+        } else {
+          this.toast.error(msg);
+        }
+      }
+    );
+  }
+
+  doAccept() {
+    if (!this.plan) return;
+    this.loading = true;
+    this.svc.accept(this.plan.id, this.localVersion!).subscribe(
+      (res) => {
+        this.localVersion = res.new_version;
+        this.toast.success('已接办该计划单');
+        this.loading = false;
+        this.loadDetail();
+      },
+      (e) => {
+        this.loading = false;
+        const msg = e.error?.error || '接办失败';
+        if (e.status === 409) {
+          this.toast.error('版本冲突：' + msg + '（请刷新后重试）');
         } else {
           this.toast.error(msg);
         }

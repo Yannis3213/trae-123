@@ -10,6 +10,11 @@ export interface LaunchPlan {
   status_name: string;
   owner: string;
   current_handler: string;
+  current_handler_role: string;
+  current_handler_role_name: string;
+  assignee: string;
+  assignee_role: string;
+  last_submitter: string;
   launch_target: string;
   config_checklist: string;
   acceptance_notes: string;
@@ -20,7 +25,6 @@ export interface LaunchPlan {
   created_at: string;
   updated_at: string;
   deadline_warning: 'normal' | 'urgent' | 'overdue';
-  current_handler_role: string;
 }
 
 export interface Attachment {
@@ -88,6 +92,8 @@ export interface BatchResult {
   total: number;
   success: number;
   failed: number;
+  overdue_blocked: number;
+  missing_evidence: number;
   items: BatchResultItem[];
 }
 
@@ -97,6 +103,8 @@ export interface BatchResultItem {
   customer_name?: string;
   success: boolean;
   reason: string;
+  result_type: 'success' | 'overdue_blocked' | 'missing_evidence' | 'error';
+  correction_hint: string;
 }
 
 export interface ListResponse<T> {

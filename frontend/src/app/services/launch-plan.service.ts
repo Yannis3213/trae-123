@@ -94,6 +94,22 @@ export class LaunchPlanService {
     );
   }
 
+  assign(id: string, assignee: string, version: number, comment?: string) {
+    return this.http.post<{ message: string; new_version: number }>(
+      `${this.base}/launch-plans/${id}/assign`,
+      { assignee, version, comment },
+      { headers: this.headers() }
+    );
+  }
+
+  accept(id: string, version: number, comment?: string) {
+    return this.http.post<{ message: string; new_version: number }>(
+      `${this.base}/launch-plans/${id}/accept`,
+      { version, comment },
+      { headers: this.headers() }
+    );
+  }
+
   batchAdvance(ids: string[], target_status: string, comment?: string) {
     return this.http.post<BatchResult>(
       `${this.base}/launch-plans/batch-advance`,

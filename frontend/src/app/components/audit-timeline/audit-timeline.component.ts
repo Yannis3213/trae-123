@@ -163,6 +163,8 @@ export class AuditTimelineComponent {
       reject: '↩️ 退回补正',
       archive: '✅ 归档',
       overdue_blocked: '🚫 逾期拦截',
+      assign: '🔄 指派交付顾问',
+      accept: '✋ 接办',
     };
     return map[a] || a;
   }

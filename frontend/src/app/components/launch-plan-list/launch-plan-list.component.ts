@@ -155,6 +155,9 @@ import { LaunchPlan, Stats, BatchResult } from '../../models/launch-plan';
                   👉 {{plan.current_handler}}
                 </span>
                 <span *ngIf="plan.current_handler !== currentUser.name">{{plan.current_handler}}</span>
+                <span *ngIf="plan.current_handler_role_name" class="tag tag-info" style="margin-left:4px;font-size:11px">
+                  {{plan.current_handler_role_name}}
+                </span>
               </td>
               <td>
                 <span *ngFor="let tag of planAbnormalTags(plan)" class="tag tag-danger" style="margin-right:4px;margin-bottom:2px">
@@ -254,7 +257,6 @@ export class LaunchPlanListComponent implements OnInit, OnDestroy {
   get selectableIds(): string[] {
     return this.plans.filter(p => {
       if (p.status === 'archived') return false;
-      if (p.deadline_warning === 'overdue') return false;
       return true;
     }).map(p => p.id);
   }
@@ -381,7 +383,7 @@ export class LaunchPlanListComponent implements OnInit, OnDestroy {
   batchAdvance(target_status: string) {
     if (this.selectedIds.length === 0) return;
     const targetLabel = target_status === 'archived' ? '批量归档' : '批量推进到待复核';
-    if (!confirm(`确认${targetLabel}？共选中 ${this.selectedIds.length} 条计划单，逾期单据将被自动拦截并记录。`)) {
+    if (!confirm(`确认${targetLabel}？共选中 ${this.selectedIds.length} 条计划单，逾期单据将被逐条拦截留痕，正常单照常推进。`)) {
       return;
     }
     this.svc.batchAdvance(this.selectedIds, target_status).subscribe(
