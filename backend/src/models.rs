@@ -201,6 +201,8 @@ pub struct BatchProcessResultItem {
     pub current_handler_role: Option<String>,
     pub current_handler_name: Option<String>,
     pub last_opinion: Option<String>,
+    pub exception_count: Option<i64>,
+    pub exception_latest: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

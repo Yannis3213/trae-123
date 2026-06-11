@@ -136,6 +136,8 @@ export interface BatchResultItem {
   current_handler_role?: string;
   current_handler_name?: string;
   last_opinion?: string;
+  exception_count?: number;
+  exception_latest?: string;
 }
 
 export const api = {

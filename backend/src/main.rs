@@ -112,8 +112,14 @@ fn list_orders(
 
     orders.retain(|o| {
         match user.role {
-            Role::WarehouseKeeper => o.current_handler_role == Role::WarehouseKeeper.to_str(),
-            Role::WarehouseSupervisor => o.current_handler_role == Role::WarehouseSupervisor.to_str(),
+            Role::WarehouseKeeper => {
+                o.current_handler_role == Role::WarehouseKeeper.to_str()
+                    && o.current_handler_id.as_deref().map(|h| h == user.id).unwrap_or(false)
+            }
+            Role::WarehouseSupervisor => {
+                o.current_handler_role == Role::WarehouseSupervisor.to_str()
+                    && o.current_handler_id.as_deref().map(|h| h == user.id).unwrap_or(false)
+            }
             Role::OperationsManager => true,
         }
     });
@@ -219,6 +225,7 @@ fn get_order(
     actions.dedup();
 
     let can_edit_modules = order.current_handler_role == user.role.to_str()
+        && order.current_handler_id.as_deref().map(|h| h == user.id).unwrap_or(true)
         && order.status != OrderStatus::Rechecked
         && (order.status == OrderStatus::Exception
             || matches!(user.role, Role::WarehouseKeeper)
@@ -301,6 +308,21 @@ fn batch_process_orders(
 ) -> Json<ApiResponse<Vec<BatchProcessResultItem>>> {
     let user = auth.0;
     let mut results = Vec::new();
+
+    fn fill_order_fields(db: &State<Database>, order: &InboundOrder) -> (Option<String>, Option<String>, Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>, Option<String>) {
+        let excs = db.list_exceptions(&order.id);
+        (
+            Some(order.status.to_str().to_string()),
+            Some(order.status.display_name().to_string()),
+            Some(order.version),
+            Some(order.current_handler_role.clone()),
+            order.current_handler_name.clone(),
+            order.last_opinion.clone(),
+            Some(excs.len() as i64),
+            excs.first().map(|e| e.reason.clone()),
+        )
+    }
+
     for sub in &req.orders {
         let order_no = db.get_order(&sub.order_id).map(|o| o.order_no.clone()).unwrap_or_else(|| sub.order_id.clone());
         let mut order = match db.get_order(&sub.order_id) {
@@ -308,7 +330,7 @@ fn batch_process_orders(
             None => {
                 results.push(BatchProcessResultItem {
                     order_id: sub.order_id.clone(),
-                    order_no: order_no.clone(),
+                    order_no,
                     success: false,
                     message: "单据不存在".to_string(),
                     new_status: None,
@@ -317,50 +339,65 @@ fn batch_process_orders(
                     current_handler_role: None,
                     current_handler_name: None,
                     last_opinion: None,
+                    exception_count: None,
+                    exception_latest: None,
                 });
                 continue;
             }
         };
         if let Err(msg) = validate_process(db, &order, sub, &user) {
+            let (s, sd, v, hr, hn, lo, ec, el) = fill_order_fields(db, &order);
             results.push(BatchProcessResultItem {
                 order_id: sub.order_id.clone(),
                 order_no: order_no.clone(),
                 success: false,
                 message: msg,
-                new_status: None,
-                new_status_display: None,
-                new_version: None,
-                current_handler_role: None,
-                current_handler_name: None,
-                last_opinion: None,
+                new_status: s,
+                new_status_display: sd,
+                new_version: v,
+                current_handler_role: hr,
+                current_handler_name: hn,
+                last_opinion: lo,
+                exception_count: ec,
+                exception_latest: el,
             });
             continue;
         }
         match apply_process(db, &mut order, sub, &user) {
-            Ok(()) => results.push(BatchProcessResultItem {
-                order_id: sub.order_id.clone(),
-                order_no: order_no.clone(),
-                success: true,
-                message: format!("成功执行「{}」，状态更新为「{}」", sub.action, order.status.display_name()),
-                new_status: Some(order.status.to_str().to_string()),
-                new_status_display: Some(order.status.display_name().to_string()),
-                new_version: Some(order.version),
-                current_handler_role: Some(order.current_handler_role.clone()),
-                current_handler_name: order.current_handler_name.clone(),
-                last_opinion: order.last_opinion.clone(),
-            }),
-            Err(msg) => results.push(BatchProcessResultItem {
-                order_id: sub.order_id.clone(),
-                order_no: order_no.clone(),
-                success: false,
-                message: msg,
-                new_status: None,
-                new_status_display: None,
-                new_version: None,
-                current_handler_role: None,
-                current_handler_name: None,
-                last_opinion: None,
-            }),
+            Ok(()) => {
+                let (s, sd, v, hr, hn, lo, ec, el) = fill_order_fields(db, &order);
+                results.push(BatchProcessResultItem {
+                    order_id: sub.order_id.clone(),
+                    order_no: order_no.clone(),
+                    success: true,
+                    message: format!("成功执行「{}」，状态更新为「{}」", sub.action, order.status.display_name()),
+                    new_status: s,
+                    new_status_display: sd,
+                    new_version: v,
+                    current_handler_role: hr,
+                    current_handler_name: hn,
+                    last_opinion: lo,
+                    exception_count: ec,
+                    exception_latest: el,
+                })
+            }
+            Err(msg) => {
+                let (s, sd, v, hr, hn, lo, ec, el) = fill_order_fields(db, &order);
+                results.push(BatchProcessResultItem {
+                    order_id: sub.order_id.clone(),
+                    order_no: order_no.clone(),
+                    success: false,
+                    message: msg,
+                    new_status: s,
+                    new_status_display: sd,
+                    new_version: v,
+                    current_handler_role: hr,
+                    current_handler_name: hn,
+                    last_opinion: lo,
+                    exception_count: ec,
+                    exception_latest: el,
+                })
+            }
         }
     }
     Json(ApiResponse::ok(results))

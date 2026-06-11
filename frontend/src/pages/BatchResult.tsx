@@ -109,13 +109,18 @@ export default function BatchResult() {
                         <Tag color={item.success ? 'green' : 'red'}>
                           {item.success ? '处理成功' : '处理失败'}
                         </Tag>
-                        {item.success && item.new_status && (
+                        {item.new_status && (
                           <Tag color={item.new_status === 'rechecked' ? 'success' : item.new_status === 'exception' ? 'warning' : 'processing'}>
                             {item.new_status_display || STATUS_LABEL[item.new_status] || item.new_status}
                           </Tag>
                         )}
-                        {item.success && item.new_version !== undefined && (
+                        {item.new_version !== undefined && (
                           <Tag color="blue" style={{ fontSize: 12 }}>v{item.new_version}</Tag>
+                        )}
+                        {(item.exception_count ?? 0) > 0 && (
+                          <Tag color="volcano" style={{ fontSize: 12 }} title={item.exception_latest || ''}>
+                            异常{item.exception_count}条
+                          </Tag>
                         )}
                       </Space>
                     }
@@ -127,17 +132,35 @@ export default function BatchResult() {
                           message={item.message}
                           style={{ marginBottom: 8 }}
                         />
-                        {item.success && (
+                        {(item.new_status || item.current_handler_name || item.last_opinion || (item.exception_count ?? 0) > 0) && (
                           <Descriptions column={2} size="small" style={{ marginTop: 8 }}>
                             <Descriptions.Item label="当前处理人">
-                              <UserOutlined /> {item.current_handler_name || '-'}
-                              <span style={{ color: '#8c8c8c', marginLeft: 6 }}>
-                                ({item.current_handler_role ? ROLE_LABEL[item.current_handler_role] : '-'})
-                              </span>
+                              {item.current_handler_name ? (
+                                <>
+                                  <UserOutlined /> {item.current_handler_name}
+                                  <span style={{ color: '#8c8c8c', marginLeft: 6 }}>
+                                    ({item.current_handler_role ? ROLE_LABEL[item.current_handler_role] : '-'})
+                                  </span>
+                                </>
+                              ) : (
+                                <span style={{ color: '#bfbfbf' }}>-</span>
+                              )}
                             </Descriptions.Item>
                             <Descriptions.Item label="版本">
-                              <Tag color="blue" style={{ fontSize: 12 }}>v{item.new_version}</Tag>
+                              {item.new_version !== undefined ? (
+                                <Tag color="blue" style={{ fontSize: 12 }}>v{item.new_version}</Tag>
+                              ) : (
+                                <span style={{ color: '#bfbfbf' }}>-</span>
+                              )}
                             </Descriptions.Item>
+                            {(item.exception_count ?? 0) > 0 && (
+                              <Descriptions.Item label="异常原因" span={2}>
+                                <Tag color="volcano" style={{ fontSize: 12 }}>异常{item.exception_count}条</Tag>
+                                <span style={{ marginLeft: 8, fontSize: 12, color: '#1f1f1f' }}>
+                                  {item.exception_latest}
+                                </span>
+                              </Descriptions.Item>
+                            )}
                             {item.last_opinion && (
                               <Descriptions.Item label="上一处理意见" span={2}>
                                 <div style={{ background: '#f5f5f5', padding: '6px 10px', borderRadius: 4, fontSize: 12 }}>

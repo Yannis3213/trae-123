@@ -196,6 +196,22 @@ export default function OrderList() {
     return actions;
   };
 
+  const canProcess = (order: InboundOrder) => {
+    if (!user) return false;
+    if (order.status === 'rechecked') return false;
+    return order.current_handler_id === user.id && order.current_handler_role === user.role;
+  };
+
+  const rowSelectionBase = {
+    selectedRowKeys: selectedIds,
+    onChange: (keys: any) => setSelectedIds(keys as string[]),
+    getCheckboxProps: (record: InboundOrder) => ({
+      disabled: !canProcess(record),
+      title: canProcess(record) ? '可批量办理' : '非您负责或已归档，无法批量办理',
+    }),
+    preserveSelectedRowKeys: true,
+  };
+
   const renderGroupedView = () => {
     if (!groups) return null;
     return (
@@ -215,7 +231,7 @@ export default function OrderList() {
                 rowKey="id"
                 dataSource={g.list}
                 columns={columns}
-                rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as string[]) }}
+                rowSelection={rowSelectionBase}
                 pagination={false}
                 locale={{ emptyText: <Empty description="暂无单据" /> }}
               />
@@ -333,14 +349,13 @@ export default function OrderList() {
         </span>
       </div>
 
-      {viewMode === 'table' || !isManager ? (
         <Table
           size="middle"
           rowKey="id"
           loading={loading}
           dataSource={orders}
           columns={columns}
-          rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys as string[]) }}
+          rowSelection={rowSelectionBase}
           pagination={{ pageSize: 10 }}
           scroll={{ x: 1500 }}
           locale={{ emptyText: <Empty description="暂无符合条件的入库单" /> }}
