@@ -1,0 +1,22 @@
+export class BusinessException {
+  constructor(
+    public readonly code: string,
+    public readonly message: string,
+    public readonly statusCode: number = 400,
+    public readonly details?: any,
+  ) {}
+}
+
+export const ErrorCodes = {
+  UNAUTHORIZED_ROLE: 'UNAUTHORIZED_ROLE',
+  STATUS_CONFLICT: 'STATUS_CONFLICT',
+  VERSION_CONFLICT: 'VERSION_CONFLICT',
+  MISSING_EVIDENCE: 'MISSING_EVIDENCE',
+  MISSING_MATERIAL: 'MISSING_MATERIAL',
+  OVERDUE_PROCESSING: 'OVERDUE_PROCESSING',
+  DUPLICATE_SUBMISSION: 'DUPLICATE_SUBMISSION',
+  INVALID_STATUS_TRANSITION: 'INVALID_STATUS_TRANSITION',
+  NOT_FOUND: 'NOT_FOUND',
+  FORBIDDEN_ACTION: 'FORBIDDEN_ACTION',
+  SKIP_PROCESSING_STEP: 'SKIP_PROCESSING_STEP',
+};
