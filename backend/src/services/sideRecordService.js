@@ -12,11 +12,35 @@ const {
 } = require('../middleware/auth');
 
 class SideRecordService {
+  static _getNextHandler(targetStatus, record, userId) {
+    if (targetStatus === STATUS.RETURNED || targetStatus === STATUS.MATERIAL_MISSING) {
+      return record.registrarId;
+    }
+    if (targetStatus === STATUS.PENDING_REVIEW) {
+      const supervisors = UserModel.findByRole(ROLES.SUPERVISOR);
+      return supervisors.length > 0 ? supervisors[0].id : userId;
+    }
+    if (targetStatus === STATUS.REVIEW_PASSED || targetStatus === STATUS.OVERDUE) {
+      const reviewers = UserModel.findByRole(ROLES.REVIEWER);
+      return reviewers.length > 0 ? reviewers[0].id : userId;
+    }
+    if (targetStatus === STATUS.STATUS_CONFLICT) {
+      return userId;
+    }
+    if (targetStatus === STATUS.SYNCED) {
+      return null;
+    }
+    return userId;
+  }
+
   static create(data, userId) {
+    const supervisors = UserModel.findByRole(ROLES.SUPERVISOR);
+    const firstSupervisor = supervisors.length > 0 ? supervisors[0].id : userId;
+
     const record = SideRecordModel.create({
       ...data,
       registrarId: userId,
-      currentHandlerId: userId
+      currentHandlerId: firstSupervisor
     });
 
     ProcessRecordModel.create({
@@ -25,8 +49,8 @@ class SideRecordService {
       fromStatus: null,
       toStatus: STATUS.PENDING_REVIEW,
       operatorId: userId,
-      handlerId: userId,
-      remark: '创建旁站记录单',
+      handlerId: firstSupervisor,
+      remark: '创建旁站记录单，提交至专业监理工程师审核',
       version: 1
     });
 
@@ -89,8 +113,17 @@ class SideRecordService {
       return { success: false, message: statusCheck.message };
     }
 
-    const missingEvidence = validateEvidence(data, 'submit');
+    const updateData = this._extractUpdateData(data);
+    const mergedEvidence = {
+      sitePhoto: updateData.sitePhoto || record.sitePhoto,
+      inspectionRecord: updateData.inspectionRecord || record.inspectionRecord,
+      signatures: updateData.signatures || record.signatures
+    };
+
+    const missingEvidence = validateEvidence(mergedEvidence, 'submit');
     if (missingEvidence.length > 0) {
+      const nextHandler = this._getNextHandler(STATUS.MATERIAL_MISSING, record, userId);
+
       AbnormalReasonModel.create({
         sideRecordId: id,
         reasonType: 'material_missing',
@@ -99,38 +132,42 @@ class SideRecordService {
         reportedBy: userId
       });
 
+      const newVersion = record.version + 1;
+      SideRecordModel.update(id, {
+        status: STATUS.MATERIAL_MISSING,
+        abnormalReason: `缺少必填证据：${missingEvidence.join(', ')}`,
+        abnormalType: 'material_missing',
+        currentHandlerId: nextHandler,
+        version: newVersion,
+        ...updateData
+      });
+
       ProcessRecordModel.create({
         sideRecordId: id,
         action: 'material_missing',
         fromStatus: record.status,
         toStatus: STATUS.MATERIAL_MISSING,
         operatorId: userId,
-        handlerId: userId,
+        handlerId: nextHandler,
         evidenceMissing: missingEvidence,
         abnormalReason: `缺少必填证据：${missingEvidence.join(', ')}`,
         abnormalType: 'material_missing',
         remark: data.remark,
-        version: record.version
+        version: newVersion
       });
 
-      SideRecordModel.update(id, {
-        status: STATUS.MATERIAL_MISSING,
-        abnormalReason: `缺少必填证据：${missingEvidence.join(', ')}`,
-        abnormalType: 'material_missing',
-        version: record.version + 1,
-        ...this._extractUpdateData(data)
-      });
-
-      return { success: false, message: `缺少必填证据：${missingEvidence.join(', ')}`, data: this.getDetail(id, userId) };
+      return { success: false, message: `缺少必填证据：${missingEvidence.join(', ')}，已转入缺料队列`, data: this.getDetail(id, userId) };
     }
 
+    const nextHandler = this._getNextHandler(STATUS.PENDING_REVIEW, record, userId);
     const newVersion = record.version + 1;
     SideRecordModel.update(id, {
       status: STATUS.PENDING_REVIEW,
       abnormalReason: null,
       abnormalType: null,
+      currentHandlerId: nextHandler,
       version: newVersion,
-      ...this._extractUpdateData(data)
+      ...updateData
     });
 
     ProcessRecordModel.create({
@@ -139,14 +176,14 @@ class SideRecordService {
       fromStatus: record.status,
       toStatus: STATUS.PENDING_REVIEW,
       operatorId: userId,
-      handlerId: userId,
+      handlerId: nextHandler,
       evidenceSubmitted: REQUIRED_EVIDENCE_FIELDS,
-      remark: data.remark || '提交旁站记录单',
+      remark: data.remark || '提交旁站记录单，已移交至专业监理工程师审核',
       version: newVersion
     });
 
     this._updateWarningGroup(id);
-    return { success: true, message: '提交成功', data: this.getDetail(id, userId) };
+    return { success: true, message: '提交成功，已移交至专业监理工程师审核', data: this.getDetail(id, userId) };
   }
 
   static review(id, data, userId, userRole) {
@@ -162,6 +199,11 @@ class SideRecordService {
     const versionCheck = validateVersion(record, data.version);
     if (!versionCheck.valid) {
       return { success: false, message: versionCheck.message };
+    }
+
+    const handlerCheck = validateHandler(record, userId);
+    if (!handlerCheck.valid) {
+      return { success: false, message: handlerCheck.message };
     }
 
     const action = data.action || 'pass';
@@ -198,34 +240,49 @@ class SideRecordService {
       return { success: false, message: statusCheck.message };
     }
 
-    const missingEvidence = validateEvidence(data, 'review');
-    if (action === 'pass' && missingEvidence.length > 0) {
-      return { success: false, message: `审核通过需确认证据完整：${missingEvidence.join(', ')}` };
-    }
-
     if ([STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus)) {
-      if (data.abnormalReason) {
-        AbnormalReasonModel.create({
-          sideRecordId: id,
-          reasonType: action,
-          reasonDetail: data.abnormalReason,
-          relatedField: data.relatedField || null,
-          reportedBy: userId
-        });
+      if (!data.abnormalReason || data.abnormalReason.trim() === '') {
+        return { success: false, message: `操作「${actionName}」必须填写异常原因` };
       }
     }
 
+    const updateData = this._extractUpdateData(data);
+    const mergedEvidence = {
+      sitePhoto: updateData.sitePhoto || record.sitePhoto,
+      inspectionRecord: updateData.inspectionRecord || record.inspectionRecord,
+      signatures: updateData.signatures || record.signatures
+    };
+
+    let missingEvidence = [];
+    if (action === 'pass') {
+      missingEvidence = validateEvidence(mergedEvidence, 'review');
+      if (missingEvidence.length > 0) {
+        return { success: false, message: `审核通过需确认证据完整，缺失：${missingEvidence.join(', ')}` };
+      }
+    }
+
+    if ([STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus)) {
+      AbnormalReasonModel.create({
+        sideRecordId: id,
+        reasonType: action,
+        reasonDetail: data.abnormalReason,
+        relatedField: data.relatedField || null,
+        reportedBy: userId
+      });
+    }
+
+    const nextHandler = this._getNextHandler(targetStatus, record, userId);
     const newVersion = record.version + 1;
     SideRecordModel.update(id, {
       status: targetStatus,
       reviewerId: userId,
-      currentHandlerId: targetStatus === STATUS.RETURNED ? record.registrarId : userId,
+      currentHandlerId: nextHandler,
       abnormalReason: data.abnormalReason || null,
       abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus) ? action : null,
       version: newVersion,
       problemNoticeStatus: data.problemNoticeStatus || record.problemNoticeStatus,
       rectificationReviewStatus: data.rectificationReviewStatus || record.rectificationReviewStatus,
-      ...this._extractUpdateData(data)
+      ...updateData
     });
 
     ProcessRecordModel.create({
@@ -234,12 +291,18 @@ class SideRecordService {
       fromStatus: record.status,
       toStatus: targetStatus,
       operatorId: userId,
-      handlerId: targetStatus === STATUS.RETURNED ? record.registrarId : userId,
+      handlerId: nextHandler,
       evidenceSubmitted: action === 'pass' ? REQUIRED_EVIDENCE_FIELDS : null,
       evidenceMissing: action === 'missing' ? missingEvidence : null,
       abnormalReason: data.abnormalReason || null,
       abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(targetStatus) ? action : null,
-      remark: data.remark || actionName,
+      remark: data.remark || `${actionName}，移交至${
+        targetStatus === STATUS.RETURNED || targetStatus === STATUS.MATERIAL_MISSING 
+          ? '登记人补正' 
+          : targetStatus === STATUS.REVIEW_PASSED 
+            ? '总监代表复核' 
+            : '当前处理人'
+      }`,
       version: newVersion
     });
 
@@ -260,6 +323,11 @@ class SideRecordService {
     const versionCheck = validateVersion(record, data.version);
     if (!versionCheck.valid) {
       return { success: false, message: versionCheck.message };
+    }
+
+    const handlerCheck = validateHandler(record, userId);
+    if (!handlerCheck.valid) {
+      return { success: false, message: handlerCheck.message };
     }
 
     const action = data.action || 'sync';
@@ -292,10 +360,23 @@ class SideRecordService {
       return { success: false, message: statusCheck.message };
     }
 
+    if ([STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE].includes(targetStatus)) {
+      if (!data.abnormalReason || data.abnormalReason.trim() === '') {
+        return { success: false, message: `操作「${actionName}」必须填写异常原因` };
+      }
+    }
+
+    const updateData = this._extractUpdateData(data);
+    const mergedEvidence = {
+      sitePhoto: record.sitePhoto,
+      inspectionRecord: record.inspectionRecord,
+      signatures: record.signatures
+    };
+
     if (action === 'sync') {
-      const missingEvidence = validateEvidence(record, 'archive');
+      const missingEvidence = validateEvidence(mergedEvidence, 'archive');
       if (missingEvidence.length > 0) {
-        return { success: false, message: `归档前证据不完整：${missingEvidence.join(', ')}` };
+        return { success: false, message: `归档前证据不完整，缺失：${missingEvidence.join(', ')}` };
       }
     }
 
@@ -309,17 +390,18 @@ class SideRecordService {
       });
     }
 
+    const nextHandler = this._getNextHandler(targetStatus, record, userId);
     const newVersion = record.version + 1;
     SideRecordModel.update(id, {
       status: targetStatus,
       finalArchiverId: userId,
-      currentHandlerId: targetStatus === STATUS.RETURNED ? record.registrarId : null,
+      currentHandlerId: nextHandler,
       abnormalReason: data.abnormalReason || null,
       abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE].includes(targetStatus) ? action : null,
       version: newVersion,
       problemNoticeStatus: data.problemNoticeStatus || record.problemNoticeStatus,
       rectificationReviewStatus: data.rectificationReviewStatus || record.rectificationReviewStatus,
-      ...this._extractUpdateData(data)
+      ...updateData
     });
 
     ProcessRecordModel.create({
@@ -328,11 +410,17 @@ class SideRecordService {
       fromStatus: record.status,
       toStatus: targetStatus,
       operatorId: userId,
-      handlerId: targetStatus === STATUS.RETURNED ? record.registrarId : null,
+      handlerId: nextHandler,
       evidenceSubmitted: action === 'sync' ? REQUIRED_EVIDENCE_FIELDS : null,
       abnormalReason: data.abnormalReason || null,
       abnormalType: [STATUS.RETURNED, STATUS.MATERIAL_MISSING, STATUS.OVERDUE].includes(targetStatus) ? action : null,
-      remark: data.remark || actionName,
+      remark: data.remark || `${actionName}，${
+        targetStatus === STATUS.SYNCED 
+          ? '已完成归档' 
+          : targetStatus === STATUS.RETURNED || targetStatus === STATUS.MATERIAL_MISSING 
+            ? '移交至登记人补正' 
+            : '移交至当前处理人'
+      }`,
       version: newVersion
     });
 
@@ -344,24 +432,69 @@ class SideRecordService {
     const results = [];
     for (const id of ids) {
       try {
+        const record = SideRecordModel.findById(id);
+        if (!record) {
+          results.push({
+            id,
+            recordNo: id,
+            success: false,
+            message: '旁站记录单不存在'
+          });
+          continue;
+        }
+
+        const recordNo = record.recordNo;
+        const currentVersion = record.version;
+
+        if (data.version === undefined || data.version === null) {
+          data.version = currentVersion;
+        }
+
         let result;
         if (action === 'submit') {
-          result = this.submit(id, data, userId, userRole);
+          if (userRole !== ROLES.REGISTRAR) {
+            results.push({
+              id, recordNo,
+              success: false,
+              message: '越权：只有登记员可以执行提交操作'
+            });
+            continue;
+          }
+          result = this.submit(id, { ...data, version: currentVersion }, userId, userRole);
         } else if (['pass', 'return', 'missing', 'overdue', 'conflict'].includes(action)) {
-          result = this.review(id, { ...data, action }, userId, userRole);
+          if (userRole !== ROLES.SUPERVISOR) {
+            results.push({
+              id, recordNo,
+              success: false,
+              message: '越权：只有审核主管可以执行审核操作'
+            });
+            continue;
+          }
+          result = this.review(id, { ...data, action, version: currentVersion }, userId, userRole);
         } else if (['sync', 'return', 'missing', 'overdue'].includes(action)) {
-          result = this.archive(id, { ...data, action }, userId, userRole);
+          if (userRole !== ROLES.REVIEWER) {
+            results.push({
+              id, recordNo,
+              success: false,
+              message: '越权：只有复核负责人可以执行归档操作'
+            });
+            continue;
+          }
+          result = this.archive(id, { ...data, action, version: currentVersion }, userId, userRole);
         } else {
           result = { success: false, message: `不支持的批量操作：${action}` };
         }
 
         results.push({
           id,
-          recordNo: SideRecordModel.findById(id)?.recordNo || id,
+          recordNo,
           success: result.success,
-          message: result.message
+          message: result.message,
+          newStatus: result.data?.status,
+          newHandler: result.data?.currentHandlerName
         });
       } catch (err) {
+        console.error('[Batch Error]', err);
         results.push({
           id,
           recordNo: SideRecordModel.findById(id)?.recordNo || id,

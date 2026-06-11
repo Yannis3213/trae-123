@@ -32,6 +32,9 @@ export default function DetailModal({ id, onClose, onRefresh }) {
       const payload = {
         ...actionData,
         version: record.version,
+        sitePhoto: record.sitePhoto,
+        inspectionRecord: record.inspectionRecord,
+        signatures: record.signatures,
         problemNoticeStatus: record.problemNoticeStatus,
         rectificationReviewStatus: record.rectificationReviewStatus
       };
@@ -41,9 +44,10 @@ export default function DetailModal({ id, onClose, onRefresh }) {
         setRecord(res.data);
         setActionData({ remark: '', abnormalReason: '', relatedField: '' });
         onRefresh && onRefresh();
+        setTimeout(() => loadDetail(), 300);
       }
     } catch (e) {
-      setMessage('操作异常');
+      setMessage('操作异常，请检查网络或后端服务');
     } finally {
       setSubmitting(false);
     }

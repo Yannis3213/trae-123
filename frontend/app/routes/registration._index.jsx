@@ -9,7 +9,7 @@ import BatchModal from '../components/BatchModal';
 import CreateModal from '../components/CreateModal';
 
 const MODULE_TYPE = 'registration';
-const STATUSES = [STATUS.PENDING_REVIEW, STATUS.RETURNED, STATUS.MATERIAL_MISSING];
+const VISIBLE_STATUSES = [STATUS.PENDING_REVIEW, STATUS.RETURNED, STATUS.MATERIAL_MISSING];
 
 export default function RegistrationPage() {
   const navigate = useNavigate();
@@ -22,26 +22,31 @@ export default function RegistrationPage() {
   const [showBatch, setShowBatch] = useState(false);
   const [stats, setStats] = useState(null);
   const [user, setUser] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const u = getCurrentUser();
     if (!u) { navigate('/login'); return; }
     setUser(u);
-    if (u.role !== ROLES.REGISTRAR && u.role !== ROLES.SUPERVISOR && u.role !== ROLES.REVIEWER) {
+    if (u.role !== ROLES.REGISTRAR) {
       navigate('/ledger');
       return;
     }
     loadData();
     loadStats();
-  }, [navigate]);
+  }, [navigate, refreshKey]);
 
   const loadData = async (extraFilters = {}) => {
     setLoading(true);
-    const roleFilters = user?.role === ROLES.REGISTRAR
-      ? { statuses: STATUSES.join(',') }
-      : {};
-    const res = await api.sideRecords.list({ ...filters, ...extraFilters, ...roleFilters });
-    if (res.success) setRecords(res.data);
+    setSelected([]);
+    const statusFilter = { statuses: VISIBLE_STATUSES.join(',') };
+    const res = await api.sideRecords.list({ ...filters, ...extraFilters, ...statusFilter });
+    if (res.success) {
+      const filtered = res.data.filter(r =>
+        VISIBLE_STATUSES.includes(r.status) && r.registrarId === user?.id
+      );
+      setRecords(filtered);
+    }
     setLoading(false);
   };
 
@@ -60,7 +65,10 @@ export default function RegistrationPage() {
   };
 
   const handleSearch = (f) => loadData(f);
-  const refresh = () => { loadData(); loadStats(); };
+
+  const refresh = () => {
+    setRefreshKey(prev => prev + 1);
+  };
 
   return (
     <div className="p-6">

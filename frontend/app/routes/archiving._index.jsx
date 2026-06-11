@@ -8,7 +8,8 @@ import DetailModal from '../components/DetailModal';
 import BatchModal from '../components/BatchModal';
 
 const MODULE_TYPE = 'archiving';
-const STATUSES = [STATUS.REVIEW_PASSED, STATUS.OVERDUE, STATUS.SYNCED];
+const VISIBLE_STATUSES = [STATUS.REVIEW_PASSED, STATUS.OVERDUE, STATUS.SYNCED];
+const OPERABLE_STATUSES = [STATUS.REVIEW_PASSED, STATUS.OVERDUE];
 
 export default function ArchivingPage() {
   const navigate = useNavigate();
@@ -20,20 +21,27 @@ export default function ArchivingPage() {
   const [showBatch, setShowBatch] = useState(false);
   const [stats, setStats] = useState(null);
   const [user, setUser] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const u = getCurrentUser();
     if (!u) { navigate('/login'); return; }
     setUser(u);
+    if (u.role !== ROLES.REVIEWER) {
+      navigate('/ledger');
+      return;
+    }
     loadData();
     loadStats();
-  }, [navigate]);
+  }, [navigate, refreshKey]);
 
   const loadData = async (extraFilters = {}) => {
     setLoading(true);
-    const res = await api.sideRecords.list({ ...filters, ...extraFilters });
+    setSelected([]);
+    const statusFilter = { statuses: VISIBLE_STATUSES.join(',') };
+    const res = await api.sideRecords.list({ ...filters, ...extraFilters, ...statusFilter });
     if (res.success) {
-      const filtered = res.data.filter(r => STATUSES.includes(r.status));
+      const filtered = res.data.filter(r => VISIBLE_STATUSES.includes(r.status));
       setRecords(filtered);
     }
     setLoading(false);
@@ -45,14 +53,24 @@ export default function ArchivingPage() {
   };
 
   const toggleSelect = (id) => {
+    const record = records.find(r => r.id === id);
+    if (record && !OPERABLE_STATUSES.includes(record.status)) {
+      return;
+    }
     setSelected(selected.includes(id) ? selected.filter(i => i !== id) : [...selected, id]);
   };
+
   const toggleSelectAll = () => {
-    if (selected.length === records.length) setSelected([]);
-    else setSelected(records.map(r => r.id));
+    const operableRecords = records.filter(r => OPERABLE_STATUSES.includes(r.status));
+    if (selected.length === operableRecords.length) setSelected([]);
+    else setSelected(operableRecords.map(r => r.id));
   };
+
   const handleSearch = (f) => loadData(f);
-  const refresh = () => { loadData(); loadStats(); };
+
+  const refresh = () => {
+    setRefreshKey(prev => prev + 1);
+  };
 
   return (
     <div className="p-6">
@@ -115,9 +133,16 @@ export default function ArchivingPage() {
             <tbody>
               {loading && <tr><td colSpan={13} className="empty-state">加载中...</td></tr>}
               {!loading && records.length === 0 && <tr><td colSpan={13} className="empty-state">暂无待归档单据</td></tr>}
-              {records.map(r => (
-                <tr key={r.id}>
-                  <td><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} /></td>
+              {records.map(r => {
+                const isSynced = r.status === STATUS.SYNCED;
+                return (
+                <tr key={r.id} className={isSynced ? 'opacity-60' : ''}>
+                  <td>
+                    <input type="checkbox"
+                      checked={selected.includes(r.id)}
+                      disabled={isSynced}
+                      onChange={() => !isSynced && toggleSelect(r.id)} />
+                  </td>
                   <td className="font-mono text-blue-600">{r.recordNo}</td>
                   <td>{r.projectName}</td>
                   <td>{r.location}</td>
@@ -131,11 +156,12 @@ export default function ArchivingPage() {
                   <td className="text-sm">{r.rectificationReviewStatus || '—'}</td>
                   <td>
                     <button className="text-blue-600 hover:underline text-sm" onClick={() => setDetailId(r.id)}>
-                      详情/办理
+                      {isSynced ? '查看详情' : '详情/办理'}
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

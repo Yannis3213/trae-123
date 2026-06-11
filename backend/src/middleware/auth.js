@@ -56,13 +56,12 @@ function requireRole(...allowedRoles) {
   };
 }
 
-function validateEvidence(record, action) {
+function validateEvidence(recordOrData, action) {
   const missing = [];
   if (action === 'submit' || action === 'review' || action === 'archive') {
     for (const field of REQUIRED_EVIDENCE_FIELDS) {
-      const dbField = field === 'sitePhoto' ? 'sitePhoto' :
-                      field === 'inspectionRecord' ? 'inspectionRecord' : 'signatures';
-      if (!record[dbField]) {
+      const value = recordOrData[field];
+      if (!value || (typeof value === 'string' && value.trim() === '')) {
         missing.push(field);
       }
     }
@@ -71,10 +70,15 @@ function validateEvidence(record, action) {
 }
 
 function validateVersion(record, clientVersion) {
-  if (clientVersion !== undefined && clientVersion !== null) {
-    if (record.version !== parseInt(clientVersion, 10)) {
-      return { valid: false, message: `版本冲突：当前版本v${record.version}，您提交的版本v${clientVersion}，请刷新后重试` };
-    }
+  if (clientVersion === undefined || clientVersion === null || clientVersion === '') {
+    return { valid: false, message: '参数缺失：必须提交当前版本号 version' };
+  }
+  const clientVer = parseInt(clientVersion, 10);
+  if (isNaN(clientVer)) {
+    return { valid: false, message: '参数错误：版本号必须为数字' };
+  }
+  if (record.version !== clientVer) {
+    return { valid: false, message: `版本冲突：当前版本v${record.version}，您提交的版本v${clientVer}，请刷新后重试` };
   }
   return { valid: true };
 }

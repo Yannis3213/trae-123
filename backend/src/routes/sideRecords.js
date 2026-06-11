@@ -53,7 +53,7 @@ router.post('/:id/archive', requireRole(ROLES.REVIEWER), async (ctx) => {
   ctx.body = result;
 });
 
-router.post('/batch', async (ctx) => {
+router.post('/batch', authMiddleware, async (ctx) => {
   const { ids, action, data } = ctx.request.body;
   const userId = ctx.state.user.id;
   const userRole = ctx.state.user.role;
@@ -65,6 +65,22 @@ router.post('/batch', async (ctx) => {
 
   if (!action) {
     ctx.body = { success: false, message: '请指定批量操作类型' };
+    return;
+  }
+
+  if (action === 'submit' && userRole !== ROLES.REGISTRAR) {
+    ctx.status = 403;
+    ctx.body = { success: false, message: '越权：只有旁站记录登记员可以执行批量提交' };
+    return;
+  }
+  if (['pass', 'return', 'missing', 'overdue', 'conflict'].includes(action) && userRole !== ROLES.SUPERVISOR) {
+    ctx.status = 403;
+    ctx.body = { success: false, message: '越权：只有旁站记录审核主管可以执行批量审核' };
+    return;
+  }
+  if (['sync'].includes(action) && userRole !== ROLES.REVIEWER) {
+    ctx.status = 403;
+    ctx.body = { success: false, message: '越权：只有工程监理公司复核负责人可以执行批量归档' };
     return;
   }
 

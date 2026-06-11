@@ -8,7 +8,7 @@ import DetailModal from '../components/DetailModal';
 import BatchModal from '../components/BatchModal';
 
 const MODULE_TYPE = 'verification';
-const STATUSES = [STATUS.PENDING_REVIEW, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT];
+const VISIBLE_STATUSES = [STATUS.PENDING_REVIEW, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT];
 
 export default function VerificationPage() {
   const navigate = useNavigate();
@@ -20,20 +20,30 @@ export default function VerificationPage() {
   const [showBatch, setShowBatch] = useState(false);
   const [stats, setStats] = useState(null);
   const [user, setUser] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const u = getCurrentUser();
     if (!u) { navigate('/login'); return; }
     setUser(u);
+    if (u.role !== ROLES.SUPERVISOR) {
+      navigate('/ledger');
+      return;
+    }
     loadData();
     loadStats();
-  }, [navigate]);
+  }, [navigate, refreshKey]);
 
   const loadData = async (extraFilters = {}) => {
     setLoading(true);
-    const res = await api.sideRecords.list({ ...filters, ...extraFilters });
+    setSelected([]);
+    const statusFilter = { statuses: VISIBLE_STATUSES.join(',') };
+    const res = await api.sideRecords.list({ ...filters, ...extraFilters, ...statusFilter });
     if (res.success) {
-      const filtered = res.data.filter(r => STATUSES.includes(r.status));
+      const filtered = res.data.filter(r =>
+        VISIBLE_STATUSES.includes(r.status) &&
+        (!r.currentHandlerId || r.currentHandlerId === user?.id)
+      );
       setRecords(filtered);
     }
     setLoading(false);
@@ -47,12 +57,17 @@ export default function VerificationPage() {
   const toggleSelect = (id) => {
     setSelected(selected.includes(id) ? selected.filter(i => i !== id) : [...selected, id]);
   };
+
   const toggleSelectAll = () => {
     if (selected.length === records.length) setSelected([]);
     else setSelected(records.map(r => r.id));
   };
+
   const handleSearch = (f) => loadData(f);
-  const refresh = () => { loadData(); loadStats(); };
+
+  const refresh = () => {
+    setRefreshKey(prev => prev + 1);
+  };
 
   return (
     <div className="p-6">
