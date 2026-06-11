@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useStore } from '@/store';
 import type { LedgerItem, Status } from '@/types';
+import { CATEGORIES } from '@/types';
 import StatusBadge from '@/components/StatusBadge';
 import FilterBar from '@/components/FilterBar';
 
@@ -79,7 +80,7 @@ export default function LedgerPage() {
                 <td className="px-3 py-3 text-gray-700">{item.order_no}</td>
                 <td className="px-3 py-3 text-gray-700 max-w-[200px] truncate">{item.title}</td>
                 <td className="px-3 py-3 text-gray-700">{item.enterprise_name}</td>
-                <td className="px-3 py-3 text-gray-700">{item.category}</td>
+                <td className="px-3 py-3 text-gray-700">{item.category_label || CATEGORIES[item.category] || item.category}</td>
                 <td className="px-3 py-3"><StatusBadge status={item.status as Status} /></td>
                 <td className="px-3 py-3 text-gray-700">{item.urgency === 'urgent' ? '紧急' : '普通'}</td>
                 <td className="px-3 py-3 text-gray-700">{item.deadline?.slice(0, 10)}</td>

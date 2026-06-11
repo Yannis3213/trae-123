@@ -94,6 +94,7 @@ export interface RepairOrder {
   confirmation_status?: string;
   attachment_count?: number;
   processing_record_count?: number;
+  category_label?: string;
 }
 
 export interface BatchResult {
@@ -143,7 +144,17 @@ export const STATUS_COLORS: Record<Status, string> = {
   resubmitted: 'bg-blue-100 text-blue-700',
 };
 
-export const CATEGORIES = ['电气', '管道', '空调', '电梯', '消防', '装修', '其他'] as const;
+export const CATEGORIES: Record<string, string> = {
+  electrical: '电气',
+  plumbing: '管道',
+  hvac: '空调',
+  elevator: '电梯',
+  fire: '消防',
+  decoration: '装修',
+  other: '其他',
+};
+
+export const CATEGORY_OPTIONS = Object.entries(CATEGORIES).map(([value, label]) => ({ value, label }));
 
 export const PRESET_USERS: User[] = [
   { id: 'u1', name: '企业客服张三', role: 'enterprise_service' },

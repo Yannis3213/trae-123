@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, CheckCircle, AlertTriangle, FileText, Paperclip, AlertCircle } from 'lucide-react';
 import { useStore } from '@/store';
-import { STATUS_LABELS } from '@/types';
+import { STATUS_LABELS, CATEGORIES } from '@/types';
 import type { RepairOrder } from '@/types';
 import StatusBadge from '@/components/StatusBadge';
 import Timeline from '@/components/Timeline';
@@ -50,7 +50,7 @@ export default function RepairDetailPage() {
     { label: '企业名称', value: order.enterprise_name },
     { label: '联系人', value: order.contact_person },
     { label: '联系电话', value: order.contact_phone },
-    { label: '分类', value: order.category },
+    { label: '分类', value: order.category_label || CATEGORIES[order.category] || order.category },
     { label: '紧急程度', value: order.urgency === 'urgent' ? '紧急' : '普通' },
     { label: '截止日期', value: order.deadline?.slice(0, 10) },
     { label: '创建人', value: order.created_by },

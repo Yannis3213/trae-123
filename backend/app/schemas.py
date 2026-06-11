@@ -9,6 +9,16 @@ REPAIR_ORDER_UPDATE_FIELDS = [
     "contact_phone", "category", "urgency", "deadline",
 ]
 
+CATEGORY_MAP = {
+    "electrical": "电气",
+    "plumbing": "管道",
+    "hvac": "空调",
+    "elevator": "电梯",
+    "fire": "消防",
+    "decoration": "装修",
+    "other": "其他",
+}
+
 STATUS_ACTION_MAP = {
     "pending_submit": "submit",
     "pending_process": "process",

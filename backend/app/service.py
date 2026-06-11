@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from . import repository, validator
 from .schemas import (
     STATUS_ACTION_MAP, DISPATCH_STATUS_MAP, CONFIRMATION_STATUS_MAP,
-    REPAIR_ORDER_UPDATE_FIELDS,
+    REPAIR_ORDER_UPDATE_FIELDS, CATEGORY_MAP,
 )
 
 
@@ -78,6 +78,14 @@ def _enrich_order_with_computed(order):
     order["processing_record_count"] = repository.count_processing_records(order["id"])
     order["dispatch_status"] = DISPATCH_STATUS_MAP.get(order["status"], "未派单")
     order["confirmation_status"] = CONFIRMATION_STATUS_MAP.get(order["status"], "未确认")
+    order["category_label"] = CATEGORY_MAP.get(order.get("category", ""), order.get("category", ""))
+    return order
+
+
+def _enriched_get(order_id):
+    order = repository.get_repair_order_by_id(order_id)
+    if order:
+        _enrich_order_with_computed(order)
     return order
 
 
@@ -118,6 +126,7 @@ def get_repair_order_detail(order_id):
     order["processing_records"] = repository.get_processing_records(order_id)
     order["audit_notes"] = repository.get_audit_notes(order_id)
     order["exception_reasons"] = repository.get_exception_reasons(order_id)
+    _enrich_order_with_computed(order)
     return order
 
 
@@ -146,7 +155,9 @@ def create_repair_order(data):
         "deadline": data["deadline"],
     }
     repository.create_repair_order(order_data)
-    return repository.get_repair_order_by_id(order_id)
+    order = repository.get_repair_order_by_id(order_id)
+    _enrich_order_with_computed(order)
+    return order
 
 
 def update_repair_order(order_id, data):
@@ -165,7 +176,7 @@ def update_repair_order(order_id, data):
                 update_data[field] = data[field]
         update_data["version"] = order["version"] + 1
         repository.update_repair_order(order_id, update_data)
-        return repository.get_repair_order_by_id(order_id)
+        return _enriched_get(order_id)
     except validator.ValidationError as e:
         exc_type = _classify_exception_type(e.message)
         detail = f"action={action}, handler_id={updated_by}"
@@ -209,7 +220,7 @@ def submit_repair_order(order_id, data):
         repository.update_repair_order(order_id, update_data)
         _create_record(order_id, action, actual_handler_id,
                        user["name"], handler_role, "pending_submit", "pending_process", "提交报修单")
-        return repository.get_repair_order_by_id(order_id)
+        return _enriched_get(order_id)
     except validator.ValidationError as e:
         exc_type = _classify_exception_type(e.message)
         detail = f"action={action}, handler_id={handler_id}"
@@ -242,7 +253,7 @@ def process_repair_order(order_id, data):
         repository.update_repair_order(order_id, update_data)
         _create_record(order_id, action, handler_id, user["name"], handler_role,
                        "pending_process", "processing", data.get("opinion", "受理工单"))
-        return repository.get_repair_order_by_id(order_id)
+        return _enriched_get(order_id)
     except validator.ValidationError as e:
         exc_type = _classify_exception_type(e.message)
         detail = f"action={action}, handler_id={handler_id}"
@@ -277,7 +288,7 @@ def verify_repair_order(order_id, data):
         repository.update_repair_order(order_id, update_data)
         _create_record(order_id, action, handler_id, user["name"], handler_role,
                        "processing", "pending_review", data.get("opinion", "核验通过"))
-        return repository.get_repair_order_by_id(order_id)
+        return _enriched_get(order_id)
     except validator.ValidationError as e:
         exc_type = _classify_exception_type(e.message)
         detail = f"action={action}, handler_id={handler_id}"
@@ -312,7 +323,7 @@ def review_repair_order(order_id, data):
         repository.update_repair_order(order_id, update_data)
         _create_record(order_id, action, handler_id, user["name"], handler_role,
                        "pending_review", "pending_archive", data.get("opinion", "复核通过"))
-        return repository.get_repair_order_by_id(order_id)
+        return _enriched_get(order_id)
     except validator.ValidationError as e:
         exc_type = _classify_exception_type(e.message)
         detail = f"action={action}, handler_id={handler_id}"
@@ -347,7 +358,7 @@ def archive_repair_order(order_id, data):
         repository.update_repair_order(order_id, update_data)
         _create_record(order_id, action, handler_id, user["name"], handler_role,
                        "pending_archive", "archived", data.get("opinion", "归档"))
-        return repository.get_repair_order_by_id(order_id)
+        return _enriched_get(order_id)
     except validator.ValidationError as e:
         exc_type = _classify_exception_type(e.message)
         detail = f"action={action}, handler_id={handler_id}"
@@ -389,7 +400,7 @@ def return_repair_order(order_id, data):
         repository.update_repair_order(order_id, update_data)
         _create_record(order_id, action, handler_id, user["name"], handler_role,
                        from_status, "returned", return_opinion)
-        return repository.get_repair_order_by_id(order_id)
+        return _enriched_get(order_id)
     except validator.ValidationError as e:
         exc_type = _classify_exception_type(e.message)
         detail = f"action={action}, handler_id={handler_id}"
@@ -426,7 +437,7 @@ def resubmit_repair_order(order_id, data):
         repository.update_repair_order(order_id, update_data)
         _create_record(order_id, action, actual_handler_id,
                        user["name"], handler_role, "returned", "pending_process", correction_reason)
-        return repository.get_repair_order_by_id(order_id)
+        return _enriched_get(order_id)
     except validator.ValidationError as e:
         exc_type = _classify_exception_type(e.message)
         detail = f"action={action}, handler_id={handler_id}"

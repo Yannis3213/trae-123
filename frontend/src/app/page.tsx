@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { RotateCcw, Play, Eye } from 'lucide-react';
 import { useStore } from '@/store';
+import { CATEGORIES } from '@/types';
 import StatusBadge from '@/components/StatusBadge';
 import WarningCard from '@/components/WarningCard';
 import FilterBar from '@/components/FilterBar';
@@ -80,6 +81,7 @@ export default function HomePage() {
     { key: 'order_no', title: '工单号', width: '140px' },
     { key: 'title', title: '标题', render: (row: RepairOrder) => <span className="truncate max-w-[200px] block">{row.title}</span> },
     { key: 'enterprise_name', title: '企业名称', width: '140px' },
+    { key: 'category', title: '分类', width: '80px', render: (row: RepairOrder) => <span className="text-sm">{row.category_label || CATEGORIES[row.category] || row.category}</span> },
     { key: 'status', title: '状态', width: '110px', render: (row: RepairOrder) => <StatusBadge status={row.status} /> },
     { key: 'current_handler_name', title: '当前处理人', width: '120px' },
     { key: 'attachment_count', title: '附件', width: '70px', render: (row: RepairOrder) => {

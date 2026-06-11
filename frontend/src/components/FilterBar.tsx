@@ -1,7 +1,7 @@
 'use client';
 
 import { Search, Filter } from 'lucide-react';
-import { CATEGORIES } from '@/types';
+import { CATEGORY_OPTIONS } from '@/types';
 import type { Status } from '@/types';
 
 interface Props {
@@ -52,7 +52,7 @@ export default function FilterBar({
       </div>
       <select value={category} onChange={(e) => onCategoryChange(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-primary">
         <option value="">全部分类</option>
-        {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        {CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
       </select>
       <input
         value={enterpriseName}

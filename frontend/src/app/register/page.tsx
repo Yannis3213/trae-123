@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Save, Send, ShieldAlert } from 'lucide-react';
 import { useStore } from '@/store';
-import { CATEGORIES } from '@/types';
+import { CATEGORY_OPTIONS } from '@/types';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -83,7 +83,7 @@ export default function RegisterPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">分类 <span className="text-red-500">*</span></label>
               <select value={form.category} onChange={(e) => update('category', e.target.value)} className="input-field">
                 <option value="">请选择</option>
-                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                {CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </div>
           </div>
