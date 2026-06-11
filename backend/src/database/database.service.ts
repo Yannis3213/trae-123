@@ -18,6 +18,7 @@ export class DatabaseService implements OnModuleInit {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.createTables();
+    this.runMigrations();
     this.seedIfEmpty();
   }
 
@@ -111,6 +112,34 @@ export class DatabaseService implements OnModuleInit {
         FOREIGN KEY (created_by) REFERENCES users(id)
       );
     `);
+  }
+
+  private runMigrations() {
+    const srCols = this.db.prepare("PRAGMA table_info(suitability_records)").all() as Array<{ name: string }>;
+    const srColNames = srCols.map(c => c.name);
+
+    if (!srColNames.includes('review_opinion')) {
+      this.db.exec('ALTER TABLE suitability_records ADD COLUMN review_opinion TEXT');
+    }
+    if (!srColNames.includes('review_result')) {
+      this.db.exec('ALTER TABLE suitability_records ADD COLUMN review_result TEXT');
+    }
+    if (!srColNames.includes('correction_reason')) {
+      this.db.exec('ALTER TABLE suitability_records ADD COLUMN correction_reason TEXT');
+    }
+
+    const prCols = this.db.prepare("PRAGMA table_info(processing_records)").all() as Array<{ name: string }>;
+    const prColNames = prCols.map(c => c.name);
+
+    if (!prColNames.includes('review_opinion')) {
+      this.db.exec('ALTER TABLE processing_records ADD COLUMN review_opinion TEXT');
+    }
+    if (!prColNames.includes('review_result')) {
+      this.db.exec('ALTER TABLE processing_records ADD COLUMN review_result TEXT');
+    }
+    if (!prColNames.includes('correction_reason')) {
+      this.db.exec('ALTER TABLE processing_records ADD COLUMN correction_reason TEXT');
+    }
   }
 
   private seedIfEmpty() {

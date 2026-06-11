@@ -273,11 +273,31 @@ export class RecordsService {
     }
   }
 
-  submitCorrection(id: number, user: any, comment?: string, correctionReason?: string) {
+  submitCorrection(id: number, user: any, comment?: string, correctionReason?: string, version?: number) {
     const db = this.dbService.getDb();
     const record = db.prepare('SELECT * FROM suitability_records WHERE id = ?').get(id) as any;
     if (!record) {
       throw new BadRequestException('记录不存在');
+    }
+
+    if (version !== undefined && version !== record.version) {
+      throw new ConflictException('VERSION_CONFLICT: 记录已被其他人修改，请刷新后重试');
+    }
+
+    if (record.status !== 'pending_assign' && record.status !== 'transferred') {
+      throw new BadRequestException('INVALID_STATUS: 只有待分派或已转办状态的记录可以提交补正');
+    }
+
+    if (user.role === 'financial_advisor') {
+      if (record.created_by !== user.id) {
+        throw new ForbiddenException('NOT_ASSIGNED_HANDLER: 您不是该记录的创建人');
+      }
+    } else if (user.role === 'compliance_officer') {
+      if (record.current_handler !== user.id) {
+        throw new ForbiddenException('NOT_ASSIGNED_HANDLER: 您不是该记录的当前处理人');
+      }
+    } else {
+      throw new ForbiddenException('UNAUTHORIZED_ROLE: 只有理财顾问或合规专员可以提交补正');
     }
 
     const txn = db.transaction(() => {
@@ -290,6 +310,15 @@ export class RecordsService {
         INSERT INTO processing_records (record_id, action, from_status, to_status, handler_id, handler_role, comment, correction_reason)
         VALUES (?, 'correction', ?, ?, ?, ?, ?, ?)
       `).run(id, record.status, record.status, user.id, user.role, comment || '提交修正材料', correctionReason || null);
+
+      const unresolvedCorrections = db.prepare(
+        "SELECT id FROM exception_reasons WHERE record_id = ? AND reason_type = 'return_correction' AND resolved = 0"
+      ).all(id) as Array<{ id: number }>;
+
+      const resolveStmt = db.prepare('UPDATE exception_reasons SET resolved = 1, resolved_at = datetime(\'now\') WHERE id = ?');
+      for (const exc of unresolvedCorrections) {
+        resolveStmt.run(exc.id);
+      }
 
       this.dbService.recalcExpiryStatus(id);
     });
