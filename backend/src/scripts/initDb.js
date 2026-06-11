@@ -83,6 +83,7 @@ function initDatabase() {
       abnormal_type TEXT,
       remark TEXT,
       version INTEGER,
+      status_snapshot TEXT,
       processed_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (side_record_id) REFERENCES side_records(id) ON DELETE CASCADE,
       FOREIGN KEY (operator_id) REFERENCES users(id),

@@ -139,14 +139,16 @@ class SideRecordService {
           reportedBy: userId
         });
 
-        SideRecordModel.update(id, {
+        const sideRecordUpdate = {
           status: STATUS.MATERIAL_MISSING,
           abnormalReason: `缺少必填证据：${missingEvidence.join(', ')}`,
           abnormalType: 'material_missing',
           currentHandlerId: nextHandler,
           version: newVersion,
           ...updateData
-        });
+        };
+
+        SideRecordModel.update(id, sideRecordUpdate);
 
         ProcessRecordModel.create({
           sideRecordId: id,
@@ -159,7 +161,8 @@ class SideRecordService {
           abnormalReason: `缺少必填证据：${missingEvidence.join(', ')}`,
           abnormalType: 'material_missing',
           remark: data.remark,
-          version: newVersion
+          version: newVersion,
+          statusSnapshot: this._buildStatusSnapshot(record, sideRecordUpdate, STATUS.MATERIAL_MISSING, nextHandler, newVersion)
         });
       });
 
@@ -177,14 +180,16 @@ class SideRecordService {
     const newVersion = record.version + 1;
 
     const tx = db.transaction(() => {
-      SideRecordModel.update(id, {
+      const sideRecordUpdate = {
         status: STATUS.PENDING_REVIEW,
         abnormalReason: null,
         abnormalType: null,
         currentHandlerId: nextHandler,
         version: newVersion,
         ...updateData
-      });
+      };
+
+      SideRecordModel.update(id, sideRecordUpdate);
 
       ProcessRecordModel.create({
         sideRecordId: id,
@@ -195,7 +200,8 @@ class SideRecordService {
         handlerId: nextHandler,
         evidenceSubmitted: REQUIRED_EVIDENCE_FIELDS,
         remark: data.remark || '提交旁站记录单，已移交至专业监理工程师审核',
-        version: newVersion
+        version: newVersion,
+        statusSnapshot: this._buildStatusSnapshot(record, sideRecordUpdate, STATUS.PENDING_REVIEW, nextHandler, newVersion)
       });
     });
 
@@ -299,7 +305,7 @@ class SideRecordService {
         });
       }
 
-      SideRecordModel.update(id, {
+      const sideRecordUpdate = {
         status: targetStatus,
         reviewerId: userId,
         currentHandlerId: nextHandler,
@@ -309,7 +315,9 @@ class SideRecordService {
         problemNoticeStatus: data.problemNoticeStatus || record.problemNoticeStatus,
         rectificationReviewStatus: data.rectificationReviewStatus || record.rectificationReviewStatus,
         ...updateData
-      });
+      };
+
+      SideRecordModel.update(id, sideRecordUpdate);
 
       ProcessRecordModel.create({
         sideRecordId: id,
@@ -329,7 +337,8 @@ class SideRecordService {
               ? '总监代表复核' 
               : '当前处理人'
         }`,
-        version: newVersion
+        version: newVersion,
+        statusSnapshot: this._buildStatusSnapshot(record, sideRecordUpdate, targetStatus, nextHandler, newVersion)
       });
     });
 
@@ -428,7 +437,7 @@ class SideRecordService {
         });
       }
 
-      SideRecordModel.update(id, {
+      const sideRecordUpdate = {
         status: targetStatus,
         finalArchiverId: userId,
         currentHandlerId: nextHandler,
@@ -438,7 +447,9 @@ class SideRecordService {
         problemNoticeStatus: data.problemNoticeStatus || record.problemNoticeStatus,
         rectificationReviewStatus: data.rectificationReviewStatus || record.rectificationReviewStatus,
         ...updateData
-      });
+      };
+
+      SideRecordModel.update(id, sideRecordUpdate);
 
       ProcessRecordModel.create({
         sideRecordId: id,
@@ -457,7 +468,8 @@ class SideRecordService {
               ? '移交至登记人补正' 
               : '移交至当前处理人'
         }`,
-        version: newVersion
+        version: newVersion,
+        statusSnapshot: this._buildStatusSnapshot(record, sideRecordUpdate, targetStatus, nextHandler, newVersion)
       });
     });
 
@@ -489,11 +501,43 @@ class SideRecordService {
 
         const recordNo = record.recordNo;
         const currentVersion = record.version;
+        const clientVersion = data.versions && data.versions[id] !== undefined ? data.versions[id] : data.version;
 
-        if (data.version === undefined || data.version === null) {
-          data.version = currentVersion;
+        if (clientVersion === undefined || clientVersion === null || clientVersion === '') {
+          results.push({
+            id, recordNo,
+            success: false,
+            message: '参数缺失：必须提交当前版本号 version',
+            newStatus: record.status,
+            newHandler: record.currentHandlerName
+          });
+          continue;
         }
 
+        const clientVer = parseInt(clientVersion, 10);
+        if (isNaN(clientVer)) {
+          results.push({
+            id, recordNo,
+            success: false,
+            message: '参数错误：版本号必须为数字',
+            newStatus: record.status,
+            newHandler: record.currentHandlerName
+          });
+          continue;
+        }
+
+        if (record.version !== clientVer) {
+          results.push({
+            id, recordNo,
+            success: false,
+            message: `版本冲突：当前版本v${record.version}，您提交的版本v${clientVer}，请刷新后重试`,
+            newStatus: record.status,
+            newHandler: record.currentHandlerName
+          });
+          continue;
+        }
+
+        const itemData = { ...data, version: clientVer };
         let result;
 
         if (userRole === ROLES.REGISTRAR) {
@@ -505,7 +549,7 @@ class SideRecordService {
             });
             continue;
           }
-          result = this.submit(id, { ...data, version: currentVersion }, userId, userRole);
+          result = this.submit(id, itemData, userId, userRole);
 
         } else if (userRole === ROLES.SUPERVISOR) {
           const allowedActions = ['pass', 'return', 'missing', 'overdue', 'conflict'];
@@ -517,7 +561,7 @@ class SideRecordService {
             });
             continue;
           }
-          result = this.review(id, { ...data, action, version: currentVersion }, userId, userRole);
+          result = this.review(id, { ...itemData, action }, userId, userRole);
 
         } else if (userRole === ROLES.REVIEWER) {
           const allowedActions = ['sync', 'return', 'missing', 'overdue'];
@@ -529,7 +573,7 @@ class SideRecordService {
             });
             continue;
           }
-          result = this.archive(id, { ...data, action, version: currentVersion }, userId, userRole);
+          result = this.archive(id, { ...itemData, action }, userId, userRole);
 
         } else {
           result = { success: false, message: `未知角色：${userRole}，无权执行批量操作` };
@@ -652,6 +696,29 @@ class SideRecordService {
       if (data[f] !== undefined) result[f] = data[f];
     }
     return result;
+  }
+
+  static _buildStatusSnapshot(record, updateData, targetStatus, nextHandler, newVersion) {
+    return {
+      id: record.id,
+      recordNo: record.recordNo,
+      projectName: updateData.projectName || record.projectName,
+      status: targetStatus,
+      currentHandlerId: nextHandler,
+      version: newVersion,
+      abnormalReason: updateData.abnormalReason || null,
+      abnormalType: updateData.abnormalType || null,
+      registrarId: record.registrarId,
+      reviewerId: record.reviewerId,
+      finalArchiverId: record.finalArchiverId,
+      deadline: updateData.deadline || record.deadline,
+      sitePhoto: updateData.sitePhoto || record.sitePhoto,
+      inspectionRecord: updateData.inspectionRecord || record.inspectionRecord,
+      signatures: updateData.signatures || record.signatures,
+      problemNoticeStatus: updateData.problemNoticeStatus || record.problemNoticeStatus,
+      rectificationReviewStatus: updateData.rectificationReviewStatus || record.rectificationReviewStatus,
+      snapshotTime: new Date().toISOString()
+    };
   }
 
   static _formatForList(record) {

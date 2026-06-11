@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { StatusBadge, WarningBadge } from './Badges';
-import { STATUS, STATUS_NAMES, ROLES, getCurrentUser } from '../constants';
+import { STATUS, STATUS_NAMES, ROLES, ROLE_CONFIG, ABNORMAL_ACTIONS, getCurrentUser } from '../constants';
 
 export default function DetailModal({ id, onClose, onRefresh }) {
   const [record, setRecord] = useState(null);
@@ -11,8 +11,10 @@ export default function DetailModal({ id, onClose, onRefresh }) {
   const [actionData, setActionData] = useState({ remark: '', abnormalReason: '', relatedField: '' });
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
+  const [actionResult, setActionResult] = useState(null);
 
   const user = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('currentUser') || 'null') : null;
+  const roleConfig = user ? ROLE_CONFIG[user.role] : null;
 
   useEffect(() => {
     if (id) loadDetail();
@@ -26,7 +28,12 @@ export default function DetailModal({ id, onClose, onRefresh }) {
   };
 
   const handleAction = async (action, endpointFn) => {
+    if (ABNORMAL_ACTIONS.includes(action) && !actionData.abnormalReason.trim()) {
+      setMessage('请填写异常原因');
+      return;
+    }
     setMessage('');
+    setActionResult(null);
     setSubmitting(true);
     try {
       const payload = {
@@ -41,10 +48,30 @@ export default function DetailModal({ id, onClose, onRefresh }) {
       const res = await endpointFn(id, payload);
       setMessage(res.message);
       if (res.success) {
+        setActionResult({
+          success: true,
+          newStatus: res.data?.status,
+          newHandler: res.data?.currentHandlerName,
+          abnormalReason: res.data?.abnormalReason,
+          version: res.data?.version
+        });
         setRecord(res.data);
         setActionData({ remark: '', abnormalReason: '', relatedField: '' });
         onRefresh && onRefresh();
         setTimeout(() => loadDetail(), 300);
+      } else {
+        setActionResult({
+          success: false,
+          newStatus: res.data?.status,
+          newHandler: res.data?.currentHandlerName,
+          abnormalReason: res.data?.abnormalReason,
+          message: res.message
+        });
+        if (res.data) {
+          setRecord(res.data);
+          onRefresh && onRefresh();
+          setTimeout(() => loadDetail(), 300);
+        }
       }
     } catch (e) {
       setMessage('操作异常，请检查网络或后端服务');
@@ -65,11 +92,16 @@ export default function DetailModal({ id, onClose, onRefresh }) {
   if (!id) return null;
 
   const renderActions = () => {
-    if (!record || !user) return null;
+    if (!record || !user || !roleConfig) return null;
     const actions = [];
+    const { allowedActions } = roleConfig;
+    const canOperate = roleConfig.operableStatuses.includes(record.status) &&
+      roleConfig.filterFn(record, user);
+
+    if (!canOperate) return [];
 
     if (user.role === ROLES.REGISTRAR) {
-      if ([STATUS.PENDING_REVIEW, STATUS.RETURNED, STATUS.MATERIAL_MISSING].includes(record.status)) {
+      if (allowedActions.includes('submit')) {
         actions.push(
           <button key="submit" className="btn btn-primary" disabled={submitting}
             onClick={() => handleAction('submit', api.sideRecords.submit)}>
@@ -80,20 +112,32 @@ export default function DetailModal({ id, onClose, onRefresh }) {
     }
 
     if (user.role === ROLES.SUPERVISOR) {
-      if ([STATUS.PENDING_REVIEW, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT].includes(record.status)) {
+      if (allowedActions.includes('pass')) {
         actions.push(
           <button key="pass" className="btn btn-success" disabled={submitting}
             onClick={() => handleAction('pass', (i, d) => api.sideRecords.review(i, { ...d, action: 'pass' }))}>
             审核通过
-          </button>,
+          </button>
+        );
+      }
+      if (allowedActions.includes('return')) {
+        actions.push(
           <button key="return" className="btn btn-warning" disabled={submitting}
             onClick={() => handleAction('return', (i, d) => api.sideRecords.review(i, { ...d, action: 'return' }))}>
             退回补正
-          </button>,
+          </button>
+        );
+      }
+      if (allowedActions.includes('missing')) {
+        actions.push(
           <button key="missing" className="btn btn-default" disabled={submitting}
             onClick={() => handleAction('missing', (i, d) => api.sideRecords.review(i, { ...d, action: 'missing' }))}>
             缺料退回
-          </button>,
+          </button>
+        );
+      }
+      if (allowedActions.includes('overdue')) {
+        actions.push(
           <button key="overdue" className="btn btn-danger" disabled={submitting}
             onClick={() => handleAction('overdue', (i, d) => api.sideRecords.review(i, { ...d, action: 'overdue' }))}>
             标记逾期
@@ -103,12 +147,16 @@ export default function DetailModal({ id, onClose, onRefresh }) {
     }
 
     if (user.role === ROLES.REVIEWER) {
-      if ([STATUS.REVIEW_PASSED, STATUS.OVERDUE].includes(record.status)) {
+      if (allowedActions.includes('sync')) {
         actions.push(
           <button key="sync" className="btn btn-success" disabled={submitting}
             onClick={() => handleAction('sync', (i, d) => api.sideRecords.archive(i, { ...d, action: 'sync' }))}>
             同步归档
-          </button>,
+          </button>
+        );
+      }
+      if (allowedActions.includes('return')) {
+        actions.push(
           <button key="return" className="btn btn-warning" disabled={submitting}
             onClick={() => handleAction('return', (i, d) => api.sideRecords.archive(i, { ...d, action: 'return' }))}>
             退回补正
@@ -284,10 +332,35 @@ export default function DetailModal({ id, onClose, onRefresh }) {
           )}
 
           {message && (
-            <div className={`mt-4 p-2.5 rounded text-sm ${
+            <div className={`mt-4 p-3 rounded text-sm ${
               message.includes('成功') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
             }`}>
-              {message}
+              <div className="font-medium mb-2">{message}</div>
+              {actionResult && (
+                <div className="grid grid-cols-2 gap-2 text-xs mt-2">
+                  <div>
+                    <span className="opacity-70">新状态：</span>
+                    {actionResult.newStatus && <StatusBadge status={actionResult.newStatus} />}
+                    {!actionResult.newStatus && <span className="opacity-60">—</span>}
+                  </div>
+                  <div>
+                    <span className="opacity-70">新处理人：</span>
+                    <span>{actionResult.newHandler || '—'}</span>
+                  </div>
+                  {actionResult.abnormalReason && (
+                    <div className="col-span-2">
+                      <span className="opacity-70">异常原因：</span>
+                      <span>{actionResult.abnormalReason}</span>
+                    </div>
+                  )}
+                  {actionResult.version && (
+                    <div>
+                      <span className="opacity-70">新版本：</span>
+                      <span className="font-mono">v{actionResult.version}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { api } from '../utils/api';
-import { ROLES, STATUS_NAMES } from '../constants';
+import { ROLE_CONFIG, ABNORMAL_ACTIONS } from '../constants';
 import { StatusBadge } from './Badges';
 
-export default function BatchModal({ selectedIds, onClose, onRefresh, moduleType, userRole }) {
+export default function BatchModal({ selectedIds, records = [], onClose, onRefresh, moduleType, userRole }) {
   const [action, setAction] = useState('');
   const [remark, setRemark] = useState('');
   const [abnormalReason, setAbnormalReason] = useState('');
@@ -13,29 +13,9 @@ export default function BatchModal({ selectedIds, onClose, onRefresh, moduleType
 
   if (!selectedIds || selectedIds.length === 0) return null;
 
-  const getOptions = () => {
-    if (moduleType === 'registration' || userRole === ROLES.REGISTRAR) {
-      return [{ value: 'submit', label: '批量提交/补正' }];
-    }
-    if (moduleType === 'verification' || userRole === ROLES.SUPERVISOR) {
-      return [
-        { value: 'pass', label: '批量审核通过' },
-        { value: 'return', label: '批量退回补正' },
-        { value: 'missing', label: '批量缺料退回' },
-        { value: 'overdue', label: '批量标记逾期' }
-      ];
-    }
-    if (moduleType === 'archiving' || userRole === ROLES.REVIEWER) {
-      return [
-        { value: 'sync', label: '批量同步归档' },
-        { value: 'return', label: '批量退回补正' }
-      ];
-    }
-    return [];
-  };
-
-  const needsAbnormalReason = ['return', 'missing', 'overdue', 'conflict'].includes(action);
-  const options = getOptions();
+  const roleConf = ROLE_CONFIG[userRole];
+  const options = roleConf ? roleConf.batchActions : [];
+  const needsAbnormalReason = ABNORMAL_ACTIONS.includes(action);
 
   const handleSubmit = async () => {
     if (!action) {
@@ -50,10 +30,18 @@ export default function BatchModal({ selectedIds, onClose, onRefresh, moduleType
     setSubmitting(true);
     setResult(null);
     try {
+      const versions = {};
+      selectedIds.forEach(id => {
+        const rec = records.find(r => r.id === id);
+        if (rec && rec.version !== undefined) {
+          versions[id] = rec.version;
+        }
+      });
+
       const res = await api.sideRecords.batch(selectedIds, action, {
         remark,
         abnormalReason
-      });
+      }, versions);
       setResult(res.data || res);
       if (res.success) onRefresh && onRefresh();
     } catch (e) {

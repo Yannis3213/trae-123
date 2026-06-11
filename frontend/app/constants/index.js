@@ -69,3 +69,43 @@ export const DEMO_ACCOUNTS = [
   { username: 'zhuanyejianli', password: '123456', role: ROLES.SUPERVISOR, name: '李工（专业监理）' },
   { username: 'zongjiandaibiao', password: '123456', role: ROLES.REVIEWER, name: '王总监代表' }
 ];
+
+export const ROLE_CONFIG = {
+  [ROLES.REGISTRAR]: {
+    module: MODULES.REGISTRATION,
+    moduleName: MODULE_NAMES[MODULES.REGISTRATION],
+    visibleStatuses: [STATUS.PENDING_REVIEW, STATUS.RETURNED, STATUS.MATERIAL_MISSING],
+    operableStatuses: [STATUS.PENDING_REVIEW, STATUS.RETURNED, STATUS.MATERIAL_MISSING],
+    filterFn: (record, user) => record.registrarId === user?.id,
+    batchActions: [{ value: 'submit', label: '批量提交/补正' }],
+    allowedActions: ['submit']
+  },
+  [ROLES.SUPERVISOR]: {
+    module: MODULES.VERIFICATION,
+    moduleName: MODULE_NAMES[MODULES.VERIFICATION],
+    visibleStatuses: [STATUS.PENDING_REVIEW, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT],
+    operableStatuses: [STATUS.PENDING_REVIEW, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT],
+    filterFn: (record, user) => !record.currentHandlerId || record.currentHandlerId === user?.id,
+    batchActions: [
+      { value: 'pass', label: '批量审核通过' },
+      { value: 'return', label: '批量退回补正' },
+      { value: 'missing', label: '批量缺料退回' },
+      { value: 'overdue', label: '批量标记逾期' }
+    ],
+    allowedActions: ['pass', 'return', 'missing', 'overdue', 'conflict']
+  },
+  [ROLES.REVIEWER]: {
+    module: MODULES.ARCHIVING,
+    moduleName: MODULE_NAMES[MODULES.ARCHIVING],
+    visibleStatuses: [STATUS.REVIEW_PASSED, STATUS.OVERDUE, STATUS.SYNCED],
+    operableStatuses: [STATUS.REVIEW_PASSED, STATUS.OVERDUE],
+    filterFn: (record, user) => true,
+    batchActions: [
+      { value: 'sync', label: '批量同步归档' },
+      { value: 'return', label: '批量退回补正' }
+    ],
+    allowedActions: ['sync', 'return', 'missing', 'overdue']
+  }
+};
+
+export const ABNORMAL_ACTIONS = ['return', 'missing', 'overdue', 'conflict'];

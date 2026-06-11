@@ -271,15 +271,16 @@ class ProcessRecordModel {
       INSERT INTO process_records (
         id, side_record_id, action, from_status, to_status,
         operator_id, handler_id, evidence_submitted, evidence_missing,
-        abnormal_reason, abnormal_type, remark, version
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        abnormal_reason, abnormal_type, remark, version, status_snapshot
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, data.sideRecordId, data.action, data.fromStatus || null, data.toStatus || null,
       data.operatorId, data.handlerId || null,
       data.evidenceSubmitted ? JSON.stringify(data.evidenceSubmitted) : null,
       data.evidenceMissing ? JSON.stringify(data.evidenceMissing) : null,
       data.abnormalReason || null, data.abnormalType || null,
-      data.remark || null, data.version || null
+      data.remark || null, data.version || null,
+      data.statusSnapshot ? JSON.stringify(data.statusSnapshot) : null
     );
     return this.findById(id);
   }

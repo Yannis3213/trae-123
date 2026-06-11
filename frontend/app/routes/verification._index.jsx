@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from '@remix-run/react';
 import { api, getCurrentUser } from '../utils/api';
-import { STATUS, ROLES } from '../constants';
+import { STATUS, ROLES, ROLE_CONFIG } from '../constants';
 import { StatusBadge, WarningBadge, StatCard } from '../components/Badges';
 import ListFilter from '../components/ListFilter';
 import DetailModal from '../components/DetailModal';
 import BatchModal from '../components/BatchModal';
 
 const MODULE_TYPE = 'verification';
-const VISIBLE_STATUSES = [STATUS.PENDING_REVIEW, STATUS.MATERIAL_MISSING, STATUS.OVERDUE, STATUS.STATUS_CONFLICT];
+const roleConfig = ROLE_CONFIG[ROLES.SUPERVISOR];
+const VISIBLE_STATUSES = roleConfig.visibleStatuses;
+const OPERABLE_STATUSES = roleConfig.operableStatuses;
 
 export default function VerificationPage() {
   const navigate = useNavigate();
@@ -41,8 +43,7 @@ export default function VerificationPage() {
     const res = await api.sideRecords.list({ ...filters, ...extraFilters, ...statusFilter });
     if (res.success) {
       const filtered = res.data.filter(r =>
-        VISIBLE_STATUSES.includes(r.status) &&
-        (!r.currentHandlerId || r.currentHandlerId === user?.id)
+        VISIBLE_STATUSES.includes(r.status) && roleConfig.filterFn(r, user)
       );
       setRecords(filtered);
     }
@@ -55,12 +56,15 @@ export default function VerificationPage() {
   };
 
   const toggleSelect = (id) => {
+    const record = records.find(r => r.id === id);
+    if (record && !OPERABLE_STATUSES.includes(record.status)) return;
     setSelected(selected.includes(id) ? selected.filter(i => i !== id) : [...selected, id]);
   };
 
   const toggleSelectAll = () => {
-    if (selected.length === records.length) setSelected([]);
-    else setSelected(records.map(r => r.id));
+    const operableRecords = records.filter(r => OPERABLE_STATUSES.includes(r.status));
+    if (selected.length === operableRecords.length) setSelected([]);
+    else setSelected(operableRecords.map(r => r.id));
   };
 
   const handleSearch = (f) => loadData(f);
@@ -131,9 +135,15 @@ export default function VerificationPage() {
             <tbody>
               {loading && <tr><td colSpan={13} className="empty-state">加载中...</td></tr>}
               {!loading && records.length === 0 && <tr><td colSpan={13} className="empty-state">暂无待核验单据</td></tr>}
-              {records.map(r => (
-                <tr key={r.id}>
-                  <td><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} /></td>
+              {records.map(r => {
+                const canOperate = OPERABLE_STATUSES.includes(r.status);
+                return (
+                <tr key={r.id} className={!canOperate ? 'opacity-60' : ''}>
+                  <td>
+                    <input type="checkbox" checked={selected.includes(r.id)}
+                      disabled={!canOperate}
+                      onChange={() => canOperate && toggleSelect(r.id)} />
+                  </td>
                   <td className="font-mono text-blue-600">{r.recordNo}</td>
                   <td>{r.projectName}</td>
                   <td>{r.location}</td>
@@ -151,7 +161,8 @@ export default function VerificationPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -159,7 +170,7 @@ export default function VerificationPage() {
 
       {detailId && <DetailModal id={detailId} onClose={() => setDetailId(null)} onRefresh={refresh} />}
       {showBatch && (
-        <BatchModal selectedIds={selected} onClose={() => { setShowBatch(false); setSelected([]); }}
+        <BatchModal selectedIds={selected} records={records} onClose={() => { setShowBatch(false); setSelected([]); }}
           onRefresh={refresh} moduleType={MODULE_TYPE} userRole={user?.role} />
       )}
     </div>

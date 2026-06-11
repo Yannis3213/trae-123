@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from '@remix-run/react';
 import { api, getCurrentUser } from '../utils/api';
-import { STATUS, ROLES } from '../constants';
+import { STATUS, ROLES, ROLE_CONFIG } from '../constants';
 import { StatusBadge, WarningBadge, StatCard } from '../components/Badges';
 import ListFilter from '../components/ListFilter';
 import DetailModal from '../components/DetailModal';
 import BatchModal from '../components/BatchModal';
 
 const MODULE_TYPE = 'archiving';
-const VISIBLE_STATUSES = [STATUS.REVIEW_PASSED, STATUS.OVERDUE, STATUS.SYNCED];
-const OPERABLE_STATUSES = [STATUS.REVIEW_PASSED, STATUS.OVERDUE];
+const roleConfig = ROLE_CONFIG[ROLES.REVIEWER];
+const VISIBLE_STATUSES = roleConfig.visibleStatuses;
+const OPERABLE_STATUSES = roleConfig.operableStatuses;
 
 export default function ArchivingPage() {
   const navigate = useNavigate();
@@ -41,7 +42,9 @@ export default function ArchivingPage() {
     const statusFilter = { statuses: VISIBLE_STATUSES.join(',') };
     const res = await api.sideRecords.list({ ...filters, ...extraFilters, ...statusFilter });
     if (res.success) {
-      const filtered = res.data.filter(r => VISIBLE_STATUSES.includes(r.status));
+      const filtered = res.data.filter(r =>
+        VISIBLE_STATUSES.includes(r.status) && roleConfig.filterFn(r, user)
+      );
       setRecords(filtered);
     }
     setLoading(false);
@@ -54,9 +57,7 @@ export default function ArchivingPage() {
 
   const toggleSelect = (id) => {
     const record = records.find(r => r.id === id);
-    if (record && !OPERABLE_STATUSES.includes(record.status)) {
-      return;
-    }
+    if (record && !OPERABLE_STATUSES.includes(record.status)) return;
     setSelected(selected.includes(id) ? selected.filter(i => i !== id) : [...selected, id]);
   };
 
@@ -169,7 +170,7 @@ export default function ArchivingPage() {
 
       {detailId && <DetailModal id={detailId} onClose={() => setDetailId(null)} onRefresh={refresh} />}
       {showBatch && (
-        <BatchModal selectedIds={selected} onClose={() => { setShowBatch(false); setSelected([]); }}
+        <BatchModal selectedIds={selected} records={records} onClose={() => { setShowBatch(false); setSelected([]); }}
           onRefresh={refresh} moduleType={MODULE_TYPE} userRole={user?.role} />
       )}
     </div>

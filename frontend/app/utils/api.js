@@ -69,8 +69,10 @@ export const api = {
       request(`/side-records/${id}/review`, { method: 'POST', body: JSON.stringify(data) }),
     archive: (id, data) =>
       request(`/side-records/${id}/archive`, { method: 'POST', body: JSON.stringify(data) }),
-    batch: (ids, action, data = {}) =>
-      request('/side-records/batch', { method: 'POST', body: JSON.stringify({ ids, action, data }) }),
+    batch: (ids, action, data = {}, versions = {}) => {
+      const payload = { ids, action, data: { ...data, versions } };
+      return request('/side-records/batch', { method: 'POST', body: JSON.stringify(payload) });
+    },
     addNote: (id, content) =>
       request(`/side-records/${id}/notes`, { method: 'POST', body: JSON.stringify({ content }) }),
     statistics: () => request('/side-records/statistics/summary'),
