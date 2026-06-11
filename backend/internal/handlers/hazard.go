@@ -465,6 +465,8 @@ type ProcessActionRequest struct {
 }
 
 func (h *Handler) validateRequiredEvidence(toStatus models.HazardStatus, req *ProcessActionRequest) ValidateResult {
+	hasEvidence := len(req.Evidence) > 0 || len(req.Attachments) > 0
+
 	switch toStatus {
 	case models.StatusRectifying:
 		if strings.TrimSpace(req.RectifyNotice) == "" {
@@ -472,6 +474,15 @@ func (h *Handler) validateRequiredEvidence(toStatus models.HazardStatus, req *Pr
 				Valid:     false,
 				Message:   "整改通知内容为必填证据，请补充后再提交",
 				ErrorCode: "missing_rectify_notice",
+				FixByRole: models.RoleSupervisor,
+				FixByName: getRoleName(models.RoleSupervisor),
+			}
+		}
+		if !hasEvidence {
+			return ValidateResult{
+				Valid:     false,
+				Message:   "下发整改通知必须上传佐证材料（现场照片、整改通知书等）",
+				ErrorCode: "missing_evidence",
 				FixByRole: models.RoleSupervisor,
 				FixByName: getRoleName(models.RoleSupervisor),
 			}
@@ -486,12 +497,40 @@ func (h *Handler) validateRequiredEvidence(toStatus models.HazardStatus, req *Pr
 				FixByName: getRoleName(models.RoleSupervisor),
 			}
 		}
+		if !hasEvidence {
+			return ValidateResult{
+				Valid:     false,
+				Message:   "提交复查销项必须上传佐证材料（复查照片、整改完成证明等）",
+				ErrorCode: "missing_evidence",
+				FixByRole: models.RoleSupervisor,
+				FixByName: getRoleName(models.RoleSupervisor),
+			}
+		}
+	case models.StatusRevisited:
+		if !hasEvidence {
+			return ValidateResult{
+				Valid:     false,
+				Message:   "确认回访必须上传佐证材料（回访记录、签字确认等）",
+				ErrorCode: "missing_evidence",
+				FixByRole: models.RoleStationChief,
+				FixByName: getRoleName(models.RoleStationChief),
+			}
+		}
 	case models.StatusClosed:
 		if strings.TrimSpace(req.RecheckResult) == "" {
 			return ValidateResult{
 				Valid:     false,
 				Message:   "销项归档必须填写复查结果",
 				ErrorCode: "missing_recheck_result",
+				FixByRole: models.RoleStationChief,
+				FixByName: getRoleName(models.RoleStationChief),
+			}
+		}
+		if !hasEvidence {
+			return ValidateResult{
+				Valid:     false,
+				Message:   "销项归档必须上传完整佐证材料（复查记录、销项审批等）",
+				ErrorCode: "missing_evidence",
 				FixByRole: models.RoleStationChief,
 				FixByName: getRoleName(models.RoleStationChief),
 			}
@@ -558,6 +597,9 @@ func (h *Handler) ProcessHazard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Version > 0 && req.Version != currentVersion {
+		h.handleFailure(tx, id,
+			fmt.Sprintf("版本冲突：页面 v%d / 后端 v%d", req.Version, currentVersion),
+			"版本冲突", user.Name)
 		jsonErrorDetail(w, http.StatusConflict,
 			fmt.Sprintf("版本冲突：页面版本 v%d 与后端最新版本 v%d 不一致，请刷新后重试", req.Version, currentVersion),
 			map[string]interface{}{
@@ -566,12 +608,17 @@ func (h *Handler) ProcessHazard(w http.ResponseWriter, r *http.Request) {
 				"current_version":     currentVersion,
 				"current_status":      currentStatus,
 				"current_status_name": getStatusName(currentStatus),
+				"fix_by_name":         currentHandler,
 				"fix_suggestion":      "请刷新页面获取最新数据后再操作",
 			})
 		return
 	}
 
 	if req.PageStatus != "" && req.PageStatus != currentStatus {
+		h.handleFailure(tx, id,
+			fmt.Sprintf("状态冲突：页面「%s」/ 后端「%s」",
+				getStatusName(req.PageStatus), getStatusName(currentStatus)),
+			"状态冲突", user.Name)
 		jsonErrorDetail(w, http.StatusConflict,
 			fmt.Sprintf("状态冲突：页面状态「%s」与后端状态「%s」不一致，请刷新后重试",
 				getStatusName(req.PageStatus), getStatusName(currentStatus)),
@@ -582,6 +629,7 @@ func (h *Handler) ProcessHazard(w http.ResponseWriter, r *http.Request) {
 				"current_status":      currentStatus,
 				"current_status_name": getStatusName(currentStatus),
 				"current_version":     currentVersion,
+				"fix_by_name":         currentHandler,
 				"fix_suggestion":      "页面状态已过期，请刷新后重新操作",
 			})
 		return
@@ -593,6 +641,7 @@ func (h *Handler) ProcessHazard(w http.ResponseWriter, r *http.Request) {
 	}
 	warningLevel := calcWarningLevel(deadline)
 	if warningLevel == models.WarningOverdue && req.ToStatus != models.StatusReturned && req.ToStatus != "" {
+		h.handleFailure(tx, id, "已逾期不能直接推进", "逾期", user.Name)
 		jsonErrorDetail(w, http.StatusBadRequest,
 			"该隐患单已逾期，不能直接推进状态。请先在详情页补正或走退回补正流程",
 			map[string]interface{}{
@@ -606,9 +655,43 @@ func (h *Handler) ProcessHazard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	handlerCheckStatus := []models.HazardStatus{
+		models.StatusAssigned, models.StatusTransferred,
+		models.StatusRectifying, models.StatusRechecking,
+		models.StatusRevisited, models.StatusReturned,
+	}
+	isHandlerCheckRequired := false
+	for _, s := range handlerCheckStatus {
+		if currentStatus == s {
+			isHandlerCheckRequired = true
+			break
+		}
+	}
+	if isHandlerCheckRequired && strings.TrimSpace(currentHandler) != "" &&
+		strings.TrimSpace(currentHandler) != user.Name &&
+		req.ToStatus != models.StatusReturned {
+		h.handleFailure(tx, id,
+			fmt.Sprintf("非当前处理人操作：%s 尝试操作，处理人为 %s", user.Name, currentHandler),
+			"越权操作", user.Name)
+		jsonErrorDetail(w, http.StatusForbidden,
+			fmt.Sprintf("该隐患单当前处理人为「%s」，需由本人办理。请切换到对应用户或由当前处理人操作", currentHandler),
+			map[string]interface{}{
+				"error_code":      "not_current_handler",
+				"current_handler": currentHandler,
+				"operator":        user.Name,
+				"fix_by_role":     "",
+				"fix_by_name":     currentHandler,
+				"fix_suggestion":  "请由当前处理人登录操作，或重新分派处理人",
+			})
+		return
+	}
+
 	if req.ToStatus != "" {
 		vr := h.validateTransition(currentStatus, req.ToStatus, user)
 		if !vr.Valid {
+			h.handleFailure(tx, id,
+				fmt.Sprintf("状态流转校验失败：%s → %s，原因：%s", currentStatus, req.ToStatus, vr.Message),
+				"状态冲突", user.Name)
 			detail := map[string]interface{}{
 				"error_code":        vr.ErrorCode,
 				"from_status":       currentStatus,
@@ -629,6 +712,9 @@ func (h *Handler) ProcessHazard(w http.ResponseWriter, r *http.Request) {
 
 	evr := h.validateRequiredEvidence(req.ToStatus, &req)
 	if !evr.Valid {
+		h.handleFailure(tx, id,
+			fmt.Sprintf("必填证据缺失：%s", evr.Message),
+			"缺材料", user.Name)
 		detail := map[string]interface{}{
 			"error_code":     evr.ErrorCode,
 			"to_status":      req.ToStatus,
@@ -703,16 +789,23 @@ func (h *Handler) ProcessHazard(w http.ResponseWriter, r *http.Request) {
 
 	res, err := tx.Exec(updateSQL, updateArgs...)
 	if err != nil {
+		h.handleFailure(tx, id,
+			fmt.Sprintf("更新数据库失败：%s", err.Error()),
+			"系统错误", user.Name)
 		log.Printf("更新隐患单失败: %v", err)
 		jsonError(w, http.StatusInternalServerError, "处理失败")
 		return
 	}
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
+		h.handleFailure(tx, id,
+			"更新冲突：状态或版本已在别处被修改",
+			"更新冲突", user.Name)
 		jsonErrorDetail(w, http.StatusConflict,
 			"更新失败：状态或版本已在别处被修改，请刷新后重试",
 			map[string]interface{}{
 				"error_code":     "update_conflict",
+				"fix_by_name":    currentHandler,
 				"fix_suggestion": "请刷新页面获取最新状态后再操作",
 			})
 		return
@@ -852,20 +945,26 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		result.ToStatusName = getStatusName(req.ToStatus)
 
 		if item.Version > 0 && item.Version != currentVersion {
+			h.handleFailure(tx, item.ID,
+				fmt.Sprintf("版本冲突：页面 v%d / 后端 v%d", item.Version, currentVersion),
+				"版本冲突", user.Name)
 			result.Message = fmt.Sprintf("版本冲突：页面 v%d / 后端 v%d", item.Version, currentVersion)
 			result.ErrorCode = "version_conflict"
 			result.FixByRole = string(user.Role)
-			result.FixByName = getRoleName(user.Role)
-			tx.Rollback()
+			result.FixByName = currentHandler
 			results = append(results, result)
 			continue
 		}
 
 		if item.PageStatus != "" && item.PageStatus != currentStatus {
+			h.handleFailure(tx, item.ID,
+				fmt.Sprintf("状态冲突：页面「%s」/ 后端「%s」",
+					getStatusName(item.PageStatus), getStatusName(currentStatus)),
+				"状态冲突", user.Name)
 			result.Message = fmt.Sprintf("状态冲突：页面「%s」/ 后端「%s」",
 				getStatusName(item.PageStatus), getStatusName(currentStatus))
 			result.ErrorCode = "status_conflict"
-			tx.Rollback()
+			result.FixByName = currentHandler
 			results = append(results, result)
 			continue
 		}
@@ -878,11 +977,36 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		result.WarningLevel = string(warningLevel)
 
 		if warningLevel == models.WarningOverdue && req.ToStatus != models.StatusReturned && req.ToStatus != "" {
+			h.handleFailure(tx, item.ID, "已逾期不能直接推进", "逾期", user.Name)
 			result.Message = "已逾期，不能直接推进。请先到详情页补正或退回"
 			result.ErrorCode = "overdue_blocked"
 			result.FixByRole = string(models.RoleSupervisor)
 			result.FixByName = getRoleName(models.RoleSupervisor)
-			tx.Rollback()
+			results = append(results, result)
+			continue
+		}
+
+		handlerCheckStatus := []models.HazardStatus{
+			models.StatusAssigned, models.StatusTransferred,
+			models.StatusRectifying, models.StatusRechecking,
+			models.StatusRevisited, models.StatusReturned,
+		}
+		isHandlerCheckRequired := false
+		for _, s := range handlerCheckStatus {
+			if currentStatus == s {
+				isHandlerCheckRequired = true
+				break
+			}
+		}
+		if isHandlerCheckRequired && strings.TrimSpace(currentHandler) != "" &&
+			strings.TrimSpace(currentHandler) != user.Name &&
+			req.ToStatus != models.StatusReturned {
+			h.handleFailure(tx, item.ID,
+				fmt.Sprintf("非当前处理人操作：%s 尝试操作，处理人为 %s", user.Name, currentHandler),
+				"越权操作", user.Name)
+			result.Message = fmt.Sprintf("非当前处理人：该单据处理人为「%s」", currentHandler)
+			result.ErrorCode = "not_current_handler"
+			result.FixByName = currentHandler
 			results = append(results, result)
 			continue
 		}
@@ -890,13 +1014,15 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		if req.ToStatus != "" {
 			vr := h.validateTransition(currentStatus, req.ToStatus, user)
 			if !vr.Valid {
+				h.handleFailure(tx, item.ID,
+					fmt.Sprintf("状态流转校验失败：%s → %s，原因：%s", currentStatus, req.ToStatus, vr.Message),
+					"状态冲突", user.Name)
 				result.Message = vr.Message
 				result.ErrorCode = vr.ErrorCode
 				if vr.FixByRole != "" {
 					result.FixByRole = string(vr.FixByRole)
 					result.FixByName = vr.FixByName
 				}
-				tx.Rollback()
 				results = append(results, result)
 				continue
 			}
@@ -914,13 +1040,15 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		evr := h.validateRequiredEvidence(req.ToStatus, paReq)
 		if !evr.Valid {
+			h.handleFailure(tx, item.ID,
+				fmt.Sprintf("必填证据缺失：%s", evr.Message),
+				"缺材料", user.Name)
 			result.Message = evr.Message
 			result.ErrorCode = evr.ErrorCode
 			if evr.FixByRole != "" {
 				result.FixByRole = string(evr.FixByRole)
 				result.FixByName = evr.FixByName
 			}
-			tx.Rollback()
 			results = append(results, result)
 			continue
 		}
@@ -962,17 +1090,22 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 
 		res, err := tx.Exec(updateSQL, updateArgs...)
 		if err != nil {
+			h.handleFailure(tx, item.ID,
+				fmt.Sprintf("更新数据库失败：%s", err.Error()),
+				"系统错误", user.Name)
 			result.Message = "更新失败：" + err.Error()
 			result.ErrorCode = "update_error"
-			tx.Rollback()
 			results = append(results, result)
 			continue
 		}
 		affected, _ := res.RowsAffected()
 		if affected == 0 {
+			h.handleFailure(tx, item.ID,
+				"更新冲突：状态或版本已在别处被修改",
+				"更新冲突", user.Name)
 			result.Message = "状态冲突或已被他人修改，请刷新后重试"
 			result.ErrorCode = "update_conflict"
-			tx.Rollback()
+			result.FixByName = currentHandler
 			results = append(results, result)
 			continue
 		}
@@ -989,6 +1122,9 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		h.insertProcessRecordTx(tx, item.ID, req.Action, currentStatus, newStatus, user, req.Remark, allEvidence)
 
 		if err = tx.Commit(); err != nil {
+			h.handleFailure(tx, item.ID,
+				fmt.Sprintf("事务提交失败：%s", err.Error()),
+				"系统错误", user.Name)
 			result.Message = "提交失败"
 			result.ErrorCode = "commit_error"
 			results = append(results, result)
@@ -1302,4 +1438,24 @@ func (h *Handler) insertProcessRecordTx(tx *sql.Tx, hazardID int64, action strin
 	}
 	tx.Exec(`INSERT INTO process_records (hazard_id, action, from_status, to_status, operator, operator_role, remark, evidence) 
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, hazardID, action, from, to, user.Name, user.Role, remark, string(evidenceJSON))
+}
+
+func (h *Handler) insertAbnormalReasonTx(tx *sql.Tx, hazardID int64, reason string, category string, reportedBy string) {
+	if tx == nil {
+		return
+	}
+	tx.Exec(`INSERT INTO abnormal_reasons (hazard_id, reason, category, reported_by, resolved) 
+		VALUES (?, ?, ?, ?, 0)`, hazardID, reason, category, reportedBy)
+}
+
+func (h *Handler) insertAbnormalReason(hazardID int64, reason string, category string, reportedBy string) {
+	db.DB.Exec(`INSERT INTO abnormal_reasons (hazard_id, reason, category, reported_by, resolved) 
+		VALUES (?, ?, ?, ?, 0)`, hazardID, reason, category, reportedBy)
+}
+
+func (h *Handler) handleFailure(tx *sql.Tx, hazardID int64, reason string, category string, reportedBy string) {
+	if tx != nil {
+		tx.Rollback()
+	}
+	h.insertAbnormalReason(hazardID, reason, category, reportedBy)
 }

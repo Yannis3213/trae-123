@@ -85,10 +85,10 @@ export default function HazardDetail({ id, store, onClose }) {
 
     if (currentUser.role === ROLES.FIRE_SUPERVISOR) {
       if ([STATUS.ASSIGNED, STATUS.TRANSFERRED, STATUS.RETURNED].includes(from)) {
-        actions.push({ value: 'rectify', label: '下发整改通知', to_status: STATUS.RECTIFYING, require: ['rectify_notice'] })
+        actions.push({ value: 'rectify', label: '下发整改通知', to_status: STATUS.RECTIFYING, require: ['rectify_notice', 'attachments'] })
       }
       if (from === STATUS.RECTIFYING) {
-        actions.push({ value: 'recheck', label: '提交复查销项', to_status: STATUS.RECHECKING, require: ['recheck_result'] })
+        actions.push({ value: 'recheck', label: '提交复查销项', to_status: STATUS.RECHECKING, require: ['recheck_result', 'attachments'] })
         actions.push({ value: 'return_rectify', label: '退回补正材料', to_status: STATUS.RETURNED, require: ['return_reason'] })
       }
       if (from === STATUS.RECHECKING) {
@@ -98,12 +98,12 @@ export default function HazardDetail({ id, store, onClose }) {
 
     if (currentUser.role === ROLES.STATION_CHIEF) {
       if (from === STATUS.RECHECKING) {
-        actions.push({ value: 'revisit', label: '确认已回访', to_status: STATUS.REVISITED, require: [] })
-        actions.push({ value: 'close', label: '确认销项归档', to_status: STATUS.CLOSED, require: ['recheck_result'] })
+        actions.push({ value: 'revisit', label: '确认已回访', to_status: STATUS.REVISITED, require: ['attachments'] })
+        actions.push({ value: 'close', label: '确认销项归档', to_status: STATUS.CLOSED, require: ['recheck_result', 'attachments'] })
         actions.push({ value: 'return_chief', label: '退回补正', to_status: STATUS.RETURNED, require: ['return_reason'] })
       }
       if (from === STATUS.REVISITED) {
-        actions.push({ value: 'close_final', label: '最终销项', to_status: STATUS.CLOSED, require: [] })
+        actions.push({ value: 'close_final', label: '最终销项', to_status: STATUS.CLOSED, require: ['attachments'] })
       }
     }
 
@@ -133,14 +133,37 @@ export default function HazardDetail({ id, store, onClose }) {
   }
 
   const handleProcess = async (action) => {
+    if (action.require?.includes('current_handler') && !processForm.current_handler.trim()) {
+      showToast('请指定处理人', 'warning')
+      return
+    }
+    if (action.require?.includes('return_reason') && !processForm.return_reason.trim()) {
+      showToast('请填写退回原因', 'warning')
+      return
+    }
+    if (action.require?.includes('rectify_notice') && !processForm.rectify_notice.trim()) {
+      showToast('请填写整改通知内容', 'warning')
+      return
+    }
+    if (action.require?.includes('recheck_result') && !processForm.recheck_result.trim()) {
+      showToast('请填写复查结果', 'warning')
+      return
+    }
+    if (action.require?.includes('attachments') && processForm.attachments.length === 0 && attachments.length === 0) {
+      showToast('请添加至少一份佐证材料', 'warning')
+      return
+    }
+
     setSubmitting(true)
     try {
+      const allAttachments = [...attachments.map(a => a.file_name), ...processForm.attachments]
       const payload = {
         ...processForm,
         action: action.value,
         to_status: action.to_status,
         page_status: hazard.status,
-        version: hazard.version
+        version: hazard.version,
+        evidence: allAttachments
       }
 
       const res = await api.processHazard(id, payload)
@@ -207,6 +230,7 @@ export default function HazardDetail({ id, store, onClose }) {
   const showHandler = actions.some(a => a.require?.includes('current_handler'))
   const showRectifyNotice = actions.some(a => a.require?.includes('rectify_notice')) || hazard.status === STATUS.RECTIFYING
   const showRecheckResult = actions.some(a => a.require?.includes('recheck_result')) || hazard.status === STATUS.RECHECKING
+  const requireAttachments = actions.some(a => a.require?.includes('attachments'))
 
   return (
     <div className="modal-mask" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -359,7 +383,10 @@ export default function HazardDetail({ id, store, onClose }) {
               </div>
 
               <div className="detail-section">
-                <div className="section-title"><span className="dot"></span>附件材料与佐证</div>
+                <div className="section-title">
+                  <span className="dot"></span>附件材料与佐证
+                  {requireAttachments && <span className="required-tag" style={{marginLeft: '8px', color: '#dc2626', fontSize: '12px'}}>* 必填</span>}
+                </div>
                 {attachments.length === 0 && processForm.attachments.length === 0 ? (
                   <div className="empty-state" style={{padding: '20px', fontSize: '13px'}}>暂无附件</div>
                 ) : (
