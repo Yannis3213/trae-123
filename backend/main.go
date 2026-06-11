@@ -44,6 +44,7 @@ func main() {
 		orders.PUT("/:id/audit", handler.AuditOrder)
 		orders.PUT("/:id/review", handler.ReviewOrder)
 		orders.PUT("/:id/supplement", handler.SupplementOrder)
+		orders.PUT("/:id/process-module", handler.ProcessModule)
 		orders.POST("/batch-process", handler.BatchProcess)
 		orders.GET("/:id/audit-trail", handler.GetAuditTrail)
 		orders.POST("/:id/attachments", handler.UploadAttachment)

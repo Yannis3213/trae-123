@@ -441,3 +441,56 @@ func UploadAttachment(c echo.Context) error {
 		Data:    attachment,
 	})
 }
+
+func ProcessModule(c echo.Context) error {
+	user := middleware.GetCurrentUser(c)
+
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, model.Response{
+			Code:    400,
+			Message: "无效的订单ID",
+			Data:    nil,
+		})
+	}
+
+	var req model.ProcessModuleRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, model.Response{
+			Code:    400,
+			Message: "请求参数错误",
+			Data:    nil,
+		})
+	}
+
+	if req.ModuleType == "" {
+		return c.JSON(http.StatusOK, model.Response{
+			Code:    400,
+			Message: "模块类型不能为空",
+			Data:    nil,
+		})
+	}
+
+	err = service.ProcessModule(id, &req, user)
+	if err != nil {
+		return c.JSON(http.StatusOK, model.Response{
+			Code:    500,
+			Message: err.Error(),
+			Data:    nil,
+		})
+	}
+
+	if req.SubmitNext {
+		return c.JSON(http.StatusOK, model.Response{
+			Code:    0,
+			Message: "办理成功，已进入下一阶段",
+			Data:    nil,
+		})
+	}
+	return c.JSON(http.StatusOK, model.Response{
+		Code:    0,
+		Message: "模块办理成功",
+		Data:    nil,
+	})
+}

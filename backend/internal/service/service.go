@@ -691,6 +691,11 @@ func BatchProcess(req *model.BatchProcessRequest, user *model.User) (*model.Batc
 
 		switch req.Action {
 		case "audit_pass":
+			if req.Opinion == "" {
+				result.Message = "批量审核通过必须填写审核意见"
+				results = append(results, result)
+				continue
+			}
 			auditReq := &model.AuditOrderRequest{
 				Version: getCurrentVersion(orderID),
 				Pass:    true,
@@ -866,6 +871,254 @@ func UploadAttachment(orderID int64, req *model.UploadAttachmentRequest, user *m
 		UploadedAt: now,
 		ModuleType: req.ModuleType,
 	}, nil
+}
+
+func ProcessModule(id int64, req *model.ProcessModuleRequest, user *model.User) error {
+	tx, err := db.DB.Begin()
+	if err != nil {
+		return errors.New("开启事务失败")
+	}
+	defer tx.Rollback()
+
+	var order model.LiveSelectionOrder
+	var isOverdue int
+	err = tx.QueryRow(`
+		SELECT id, status, current_handler, current_role, version, deadline,
+		       submission_evidence, sample_evidence, registration_evidence, is_overdue
+		FROM live_selection_orders WHERE id = ?
+	`, id).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.CurrentRole, &order.Version, &order.Deadline,
+		&order.SubmissionEvidence, &order.SampleEvidence, &order.RegistrationEvidence, &isOverdue)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("选品单不存在")
+		}
+		return errors.New("查询选品单失败")
+	}
+	order.IsOverdue = isOverdue == 1
+
+	now := time.Now().In(location)
+
+	writeException := func(orderID int64, operator, operatorRole, content string, now time.Time) {
+		tx.Exec(`
+			INSERT INTO audit_remarks 
+			(order_id, operator, operator_role, remark_type, content, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, orderID, operator, operatorRole, model.RemarkTypeException, content, now)
+	}
+
+	allowedRoles := map[string]string{
+		model.ModuleTypeSubmission:   model.RoleRegistrar,
+		model.ModuleTypeSample:       model.RoleAuditor,
+		model.ModuleTypeRegistration: model.RoleReviewer,
+	}
+	allowedRole, ok := allowedRoles[req.ModuleType]
+	if !ok {
+		writeException(id, user.Username, user.Role, "无效的模块类型："+req.ModuleType, now)
+		return errors.New("无效的模块类型")
+	}
+	if user.Role != allowedRole {
+		roleName := map[string]string{
+			model.RoleRegistrar: "直播选品登记员",
+			model.RoleAuditor:   "直播选品审核主管",
+			model.RoleReviewer:  "直播电商团队复核负责人",
+		}[allowedRole]
+		writeException(id, user.Username, user.Role,
+			fmt.Sprintf("角色校验失败：只有%s可以办理该模块", roleName), now)
+		return fmt.Errorf("只有%s可以办理该模块", roleName)
+	}
+
+	if order.CurrentHandler != user.Username {
+		writeException(id, user.Username, user.Role,
+			fmt.Sprintf("责任人校验失败：当前处理人是%s，操作人是%s", order.CurrentHandler, user.Username), now)
+		return errors.New("您不是当前处理人，无法办理该模块")
+	}
+
+	validStatuses := map[string][]string{
+		model.ModuleTypeSubmission:   {model.StatusDraft, model.StatusReturned},
+		model.ModuleTypeSample:       {model.StatusPendingAudit},
+		model.ModuleTypeRegistration: {model.StatusAuditPassed},
+	}
+	statusValid := false
+	for _, s := range validStatuses[req.ModuleType] {
+		if order.Status == s {
+			statusValid = true
+			break
+		}
+	}
+	if !statusValid {
+		moduleName := map[string]string{
+			model.ModuleTypeSubmission:   "选品提报",
+			model.ModuleTypeSample:       "样品确认",
+			model.ModuleTypeRegistration: "直播选品单登记",
+		}[req.ModuleType]
+		writeException(id, user.Username, user.Role,
+			fmt.Sprintf("状态校验失败：%s模块不能在[%s]状态下办理", moduleName, order.Status), now)
+		return fmt.Errorf("%s模块不能在当前状态下办理", moduleName)
+	}
+
+	if order.Version != req.Version {
+		writeException(id, user.Username, user.Role,
+			fmt.Sprintf("版本校验失败：当前版本%d，请求版本%d", order.Version, req.Version), now)
+		return errors.New("版本冲突，请刷新后重试")
+	}
+
+	overdueWarned := false
+	if now.After(order.Deadline) {
+		overdueReason := fmt.Sprintf("办理时已超过截止时间%s", order.Deadline.Format("2006-01-02 15:04:05"))
+		_, _ = tx.Exec(`
+			UPDATE live_selection_orders 
+			SET is_overdue = 1, overdue_reason = ?
+			WHERE id = ?
+		`, overdueReason, id)
+		overdueWarned = true
+	}
+
+	if req.SubmitNext && !hasEvidence(req.Evidence) {
+		moduleName := map[string]string{
+			model.ModuleTypeSubmission:   "选品提报",
+			model.ModuleTypeSample:       "样品确认",
+			model.ModuleTypeRegistration: "直播选品单登记",
+		}[req.ModuleType]
+		writeException(id, user.Username, user.Role,
+			fmt.Sprintf("必填证据校验失败：进入下一步前%s模块证据不能为空", moduleName), now)
+		return fmt.Errorf("进入下一步前必须上传%s证据", moduleName)
+	}
+
+	newSubmissionEv := order.SubmissionEvidence
+	newSampleEv := order.SampleEvidence
+	newRegistrationEv := order.RegistrationEvidence
+
+	switch req.ModuleType {
+	case model.ModuleTypeSubmission:
+		if req.Evidence != "" {
+			newSubmissionEv = req.Evidence
+		}
+	case model.ModuleTypeSample:
+		if req.Evidence != "" {
+			newSampleEv = req.Evidence
+		}
+	case model.ModuleTypeRegistration:
+		if req.Evidence != "" {
+			newRegistrationEv = req.Evidence
+		}
+	}
+
+	version := order.Version
+	newStatus := order.Status
+	newHandler := order.CurrentHandler
+	newRole := order.CurrentRole
+	statusChanged := false
+
+	action := fmt.Sprintf("process_%s", req.ModuleType)
+	opinion := req.Opinion
+	if opinion == "" {
+		moduleName := map[string]string{
+			model.ModuleTypeSubmission:   "选品提报",
+			model.ModuleTypeSample:       "样品确认",
+			model.ModuleTypeRegistration: "直播选品单登记",
+		}[req.ModuleType]
+		opinion = fmt.Sprintf("办理%s模块", moduleName)
+	}
+
+	if req.SubmitNext {
+		version = order.Version + 1
+		statusChanged = true
+		switch req.ModuleType {
+		case model.ModuleTypeSubmission:
+			newStatus = model.StatusPendingAudit
+			newHandler = "auditor"
+			newRole = model.RoleAuditor
+		case model.ModuleTypeSample:
+			newStatus = model.StatusAuditPassed
+			newHandler = "reviewer"
+			newRole = model.RoleReviewer
+		case model.ModuleTypeRegistration:
+			newStatus = model.StatusSynced
+			newHandler = ""
+			newRole = ""
+		}
+	}
+
+	_, err = tx.Exec(`
+		UPDATE live_selection_orders 
+		SET submission_evidence = ?, sample_evidence = ?, registration_evidence = ?,
+		    status = ?, current_handler = ?, current_role = ?, version = ?, updated_at = ?
+		WHERE id = ? AND version = ?
+	`, newSubmissionEv, newSampleEv, newRegistrationEv,
+		newStatus, newHandler, newRole, version, now, id, req.Version)
+	if err != nil {
+		writeException(id, user.Username, user.Role, "更新选品单证据和状态失败："+err.Error(), now)
+		return errors.New("更新选品单失败")
+	}
+
+	_, err = tx.Exec(`
+		INSERT INTO process_records 
+		(order_id, operator, operator_role, action, from_status, to_status, opinion, version, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, user.Username, user.Role, action, order.Status, newStatus, opinion, version, now)
+	if err != nil {
+		writeException(id, user.Username, user.Role, "添加处理记录失败："+err.Error(), now)
+		return errors.New("添加处理记录失败")
+	}
+
+	if req.AuditRemark != "" {
+		_, err = tx.Exec(`
+			INSERT INTO audit_remarks 
+			(order_id, operator, operator_role, remark_type, content, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, id, user.Username, user.Role, model.RemarkTypeSupplement, req.AuditRemark, now)
+		if err != nil {
+			writeException(id, user.Username, user.Role, "添加审计备注失败："+err.Error(), now)
+			return errors.New("添加审计备注失败")
+		}
+	}
+
+	if overdueWarned {
+		_, _ = tx.Exec(`
+			INSERT INTO audit_remarks 
+			(order_id, operator, operator_role, remark_type, content, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, id, user.Username, user.Role, model.RemarkTypeException,
+			fmt.Sprintf("警告：该选品单已超过截止时间%s", order.Deadline.Format("2006-01-02 15:04:05")), now)
+	}
+
+	if statusChanged {
+		statusText := map[string]string{
+			model.StatusDraft:       "草稿",
+			model.StatusReturned:    "已退回",
+			model.StatusPendingAudit: "待审核",
+			model.StatusAuditPassed: "审核通过",
+			model.StatusSynced:      "已同步",
+		}
+		_, err = tx.Exec(`
+			INSERT INTO audit_remarks 
+			(order_id, operator, operator_role, remark_type, content, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, id, user.Username, user.Role, model.RemarkTypeStatusChange,
+			fmt.Sprintf("状态变更：%s -> %s", statusText[order.Status], statusText[newStatus]), now)
+		if err != nil {
+			writeException(id, user.Username, user.Role, "添加状态变更备注失败："+err.Error(), now)
+			return errors.New("添加状态变更备注失败")
+		}
+
+		statusAction := map[string]string{
+			model.ModuleTypeSubmission:   "submit",
+			model.ModuleTypeSample:       "audit_pass",
+			model.ModuleTypeRegistration: "review",
+		}[req.ModuleType]
+
+		_, err = tx.Exec(`
+			INSERT INTO process_records 
+			(order_id, operator, operator_role, action, from_status, to_status, opinion, version, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, id, user.Username, user.Role, statusAction, order.Status, newStatus, opinion, version, now)
+		if err != nil {
+			writeException(id, user.Username, user.Role, "添加状态变更记录失败："+err.Error(), now)
+			return errors.New("添加状态变更记录失败")
+		}
+	}
+
+	return tx.Commit()
 }
 
 func hasEvidence(evidenceJSON string) bool {

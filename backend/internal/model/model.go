@@ -178,6 +178,15 @@ type BatchProcessResponse struct {
 	Results []*BatchProcessResult `json:"results"`
 }
 
+type ProcessModuleRequest struct {
+	ModuleType  string `json:"module_type"`
+	Version     int    `json:"version"`
+	Evidence    string `json:"evidence"`
+	Opinion     string `json:"opinion"`
+	AuditRemark string `json:"audit_remark"`
+	SubmitNext  bool   `json:"submit_next"`
+}
+
 type OverdueQueueItem struct {
 	Handler     string                 `json:"handler"`
 	Role        string                 `json:"role"`

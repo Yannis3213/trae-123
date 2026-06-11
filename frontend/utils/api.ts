@@ -157,6 +157,30 @@ export const api = {
       method: "POST",
       body: data,
     }),
+
+  processModule: (id: number, data: {
+    module_type: "submission" | "sample" | "registration";
+    version: number;
+    evidence: string;
+    opinion: string;
+    audit_remark?: string;
+    submit_next: boolean;
+  }) =>
+    apiRequest<void>(`/orders/${id}/process-module`, {
+      method: "PUT",
+      body: data,
+    }),
+
+  uploadAttachment: (id: number, data: {
+    file_name: string;
+    file_type: string;
+    file_url: string;
+    module_type: "submission" | "sample" | "registration";
+  }) =>
+    apiRequest<SelectionAttachment>(`/orders/${id}/attachments`, {
+      method: "POST",
+      body: data,
+    }),
 };
 
 export interface LiveSelectionOrder {
