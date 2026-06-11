@@ -1,7 +1,24 @@
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
+
+fn parse_sqlite_datetime(s: &str) -> Result<DateTime<Utc>, String> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Ok(Utc.from_utc_datetime(&naive));
+    }
+    Err(format!("无法解析时间字符串: {}", s))
+}
+
+fn parse_optional_sqlite_datetime(s: Option<&str>) -> Result<Option<DateTime<Utc>>, String> {
+    match s {
+        Some(s) if !s.is_empty() => parse_sqlite_datetime(s).map(Some),
+        _ => Ok(None),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(rename_all = "snake_case")]
@@ -149,10 +166,10 @@ impl TryFrom<UserRow> for User {
             id: Uuid::parse_str(&r.id).map_err(|e| format!("{}", e))?,
             username: r.username,
             real_name: r.real_name,
-            role: Role::from_str(&r.role).ok_or("invalid role")?,
+            role: Role::from_str(&r.role).ok_or_else(|| format!("无效的role: {}", r.role))?,
             password_hash: r.password_hash,
-            created_at: r.created_at.parse().map_err(|e: chrono::ParseError| format!("{}", e))?,
-            updated_at: r.updated_at.parse().map_err(|e: chrono::ParseError| format!("{}", e))?,
+            created_at: parse_sqlite_datetime(&r.created_at)?,
+            updated_at: parse_sqlite_datetime(&r.updated_at)?,
         })
     }
 }
@@ -221,20 +238,20 @@ impl TryFrom<CaseRow> for Case {
             location: r.location,
             reporter_name: r.reporter_name,
             reporter_phone: r.reporter_phone,
-            status: CaseStatus::from_str(&r.status).ok_or("invalid status")?,
-            current_stage: ProcessingStage::from_str(&r.current_stage).ok_or("invalid stage")?,
+            status: CaseStatus::from_str(&r.status).ok_or_else(|| format!("无效的status: {}", r.status))?,
+            current_stage: ProcessingStage::from_str(&r.current_stage).ok_or_else(|| format!("无效的stage: {}", r.current_stage))?,
             current_handler_id: r.current_handler_id.as_deref().map(Uuid::parse_str).transpose().map_err(|e| format!("{}", e))?,
             current_handler_name: r.current_handler_name,
             registration_materials_complete: r.registration_materials_complete != 0,
             dispatch_timeline_met: r.dispatch_timeline_met != 0,
             followup_evidence_complete: r.followup_evidence_complete != 0,
-            deadline: r.deadline.parse().map_err(|e: chrono::ParseError| format!("{}", e))?,
+            deadline: parse_sqlite_datetime(&r.deadline)?,
             version: r.version,
             created_by: Uuid::parse_str(&r.created_by).map_err(|e| format!("{}", e))?,
             created_by_name: r.created_by_name,
-            created_at: r.created_at.parse().map_err(|e: chrono::ParseError| format!("{}", e))?,
-            updated_at: r.updated_at.parse().map_err(|e: chrono::ParseError| format!("{}", e))?,
-            completed_at: r.completed_at.map(|s| s.parse()).transpose().map_err(|e: chrono::ParseError| format!("{}", e))?,
+            created_at: parse_sqlite_datetime(&r.created_at)?,
+            updated_at: parse_sqlite_datetime(&r.updated_at)?,
+            completed_at: parse_optional_sqlite_datetime(r.completed_at.as_deref())?,
         })
     }
 }
@@ -287,7 +304,7 @@ impl TryFrom<AttachmentRow> for Attachment {
             category: r.category,
             uploaded_by: Uuid::parse_str(&r.uploaded_by).map_err(|e| format!("{}", e))?,
             uploaded_by_name: r.uploaded_by_name,
-            uploaded_at: r.uploaded_at.parse().map_err(|e: chrono::ParseError| format!("{}", e))?,
+            uploaded_at: parse_sqlite_datetime(&r.uploaded_at)?,
         })
     }
 }
@@ -328,15 +345,15 @@ impl TryFrom<ProcessingRecordRow> for ProcessingRecord {
         Ok(ProcessingRecord {
             id: Uuid::parse_str(&r.id).map_err(|e| format!("{}", e))?,
             case_id: Uuid::parse_str(&r.case_id).map_err(|e| format!("{}", e))?,
-            stage: ProcessingStage::from_str(&r.stage).ok_or("invalid stage")?,
+            stage: ProcessingStage::from_str(&r.stage).ok_or_else(|| format!("无效的stage: {}", r.stage))?,
             action: r.action,
             from_status: r.from_status.as_deref().and_then(CaseStatus::from_str),
-            to_status: CaseStatus::from_str(&r.to_status).ok_or("invalid to_status")?,
+            to_status: CaseStatus::from_str(&r.to_status).ok_or_else(|| format!("无效的to_status: {}", r.to_status))?,
             handler_id: Uuid::parse_str(&r.handler_id).map_err(|e| format!("{}", e))?,
             handler_name: r.handler_name,
-            handler_role: Role::from_str(&r.handler_role).ok_or("invalid handler_role")?,
+            handler_role: Role::from_str(&r.handler_role).ok_or_else(|| format!("无效的handler_role: {}", r.handler_role))?,
             remarks: r.remarks,
-            created_at: r.created_at.parse().map_err(|e: chrono::ParseError| format!("{}", e))?,
+            created_at: parse_sqlite_datetime(&r.created_at)?,
         })
     }
 }
@@ -373,7 +390,7 @@ impl TryFrom<AuditNoteRow> for AuditNote {
             anomaly_reason: r.anomaly_reason,
             noted_by: Uuid::parse_str(&r.noted_by).map_err(|e| format!("{}", e))?,
             noted_by_name: r.noted_by_name,
-            noted_at: r.noted_at.parse().map_err(|e: chrono::ParseError| format!("{}", e))?,
+            noted_at: parse_sqlite_datetime(&r.noted_at)?,
         })
     }
 }

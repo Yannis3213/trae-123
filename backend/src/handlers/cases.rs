@@ -104,6 +104,8 @@ pub async fn add_attachment(
     req: Json<AddAttachmentRequest>,
     pool: &State<SqlitePool>,
 ) -> Result<Json<crate::models::Attachment>, AppError> {
+    check_role_permission(&user, &[Role::Dispatcher, Role::PoliceOfficer, Role::Reviewer])?;
+
     let result = case_service::add_attachment(
         pool.inner(),
         req.case_id,

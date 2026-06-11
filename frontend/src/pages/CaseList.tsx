@@ -23,7 +23,7 @@ import {
   PlusOutlined,
   SearchOutlined,
   ReloadOutlined,
-  BatchOperationOutlined,
+  ClusterOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   ClockCircleOutlined,
@@ -576,7 +576,7 @@ const CaseList: React.FC = () => {
               {selectedRowKeys.length > 0 && (
                 <Button
                   type="primary"
-                  icon={<BatchOperationOutlined />}
+                  icon={<ClusterOutlined />}
                   onClick={() => setBatchModalVisible(true)}
                 >
                   批量处理

@@ -16,7 +16,7 @@ declare module '@ant-design/icons' {
   export const CheckOutlined: React.ComponentType<any>;
   export const PlusOutlined: React.ComponentType<any>;
   export const SearchOutlined: React.ComponentType<any>;
-  export const BatchOperationOutlined: React.ComponentType<any>;
+  export const ClusterOutlined: React.ComponentType<any>;
   export const LogoutOutlined: React.ComponentType<any>;
   export const MenuFoldOutlined: React.ComponentType<any>;
   export const MenuUnfoldOutlined: React.ComponentType<any>;
