@@ -347,6 +347,19 @@
             show-icon
             style="margin-bottom: 16px;"
           />
+          <el-alert 
+            v-if="detail?.status === STATUS.RETURNED"
+            title="该线索单已被退回，请补充材料后重新提交" 
+            type="error" 
+            :closable="false"
+            show-icon
+            style="margin-bottom: 16px;"
+          >
+            <template #default>
+              <p v-if="detail?.return_reason"><strong>退回原因：</strong>{{ detail.return_reason }}</p>
+              <p>请在下方「补正材料」操作区补充缺失附件后重新提交。</p>
+            </template>
+          </el-alert>
 
           <div v-if="availableActions.length > 0">
             <div 
@@ -382,6 +395,17 @@
               <li>✓ 当前状态：{{ STATUS_LABELS[detail?.status] }}</li>
               <li>✓ 当前处理人：{{ detail?.current_handler_name || '待分配' }}</li>
               <li>✓ 当前版本：v{{ detail?.version }}</li>
+              <li v-if="detail?.abnormal_tags?.length" style="color: #F56C6C;">
+                ⚠ 异常标签：{{ detail.abnormal_tags.map(t => ABNORMAL_LABELS[t]).join('、') }}
+              </li>
+              <li v-else>✓ 异常标签：无</li>
+              <li v-if="requiredAttachmentTypes.length > 0">
+                ⚠ 必填附件：{{ requiredAttachmentTypes.join('、') }}
+                <span v-if="missingAttachmentTypes.length > 0" style="color: #F56C6C;">
+                  （缺：{{ missingAttachmentTypes.join('、') }}）
+                </span>
+                <span v-else style="color: #67C23A;">（已齐）</span>
+              </li>
             </ul>
           </div>
         </el-card>
@@ -561,7 +585,7 @@ const availableActions = computed(() => {
       });
     }
   } else if (role === ROLES.AUDITOR) {
-    if ([STATUS.PENDING_SUBMIT, STATUS.PENDING_AUDIT, STATUS.RESUBMITTED].includes(currentStatus)) {
+    if ([STATUS.PENDING_AUDIT, STATUS.RESUBMITTED].includes(currentStatus)) {
       actions.push({
         value: 'audit_pass',
         label: '审核通过',
@@ -621,6 +645,33 @@ const availableActions = computed(() => {
 const canAddAuditNote = computed(() => {
   return (authStore.isAuditor || authStore.isReviewer) && 
          detail.value?.status !== STATUS.ARCHIVED;
+});
+
+const REQUIRED_ATTACHMENTS = {
+  pending_audit: ['enterprise_info'],
+  pending_review: ['enterprise_info', 'visit_record'],
+  approved: ['enterprise_info', 'visit_record', 'signing_contract']
+};
+
+const ATTACHMENT_LABELS = {
+  enterprise_info: '企业资料',
+  visit_record: '拜访记录',
+  signing_contract: '签约合同'
+};
+
+const requiredAttachmentTypes = computed(() => {
+  const status = detail.value?.status;
+  if (!status || !REQUIRED_ATTACHMENTS[status]) return [];
+  return REQUIRED_ATTACHMENTS[status].map(t => ATTACHMENT_LABELS[t] || t);
+});
+
+const missingAttachmentTypes = computed(() => {
+  const status = detail.value?.status;
+  if (!status || !REQUIRED_ATTACHMENTS[status]) return [];
+  const existing = (detail.value?.attachments || []).map(a => a.attachment_type);
+  return REQUIRED_ATTACHMENTS[status]
+    .filter(t => !existing.includes(t))
+    .map(t => ATTACHMENT_LABELS[t] || t);
 });
 
 const canSubmitProcess = computed(() => {

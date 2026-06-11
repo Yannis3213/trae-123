@@ -383,7 +383,7 @@ function initClues() {
       current_handler_id: 1,
       created_by: 1,
       version: 1,
-      abnormal_tags: JSON.stringify(['overdue'])
+      abnormal_tags: JSON.stringify([])
     },
     {
       clue_no: 'ZS20240601012',
@@ -467,7 +467,6 @@ function initProcessingRecords() {
   
   const records = [
     { clue_id: 2, from_status: 'pending_submit', to_status: 'pending_audit', action: '提交审核', result: 'success', remark: '材料齐全，进入审核环节', operator_id: 4, created_at: now.subtract(5, 'day').format('YYYY-MM-DD HH:mm:ss') },
-    { clue_id: 2, from_status: 'pending_audit', to_status: 'pending_audit', action: '审核中', result: 'success', remark: '正在核实企业资质', operator_id: 2, created_at: now.subtract(3, 'day').format('YYYY-MM-DD HH:mm:ss') },
     { clue_id: 3, from_status: 'pending_submit', to_status: 'pending_audit', action: '提交审核', result: 'success', remark: '初次提交', operator_id: 1, created_at: now.subtract(7, 'day').format('YYYY-MM-DD HH:mm:ss') },
     { clue_id: 3, from_status: 'pending_audit', to_status: 'returned', action: '退回补正', result: 'success', remark: '缺少企业营业执照附件和场地使用证明，请补充后重新提交', operator_id: 2, created_at: now.subtract(4, 'day').format('YYYY-MM-DD HH:mm:ss') },
     { clue_id: 4, from_status: 'pending_submit', to_status: 'pending_audit', action: '提交审核', result: 'success', remark: '初次提交', operator_id: 4, created_at: now.subtract(10, 'day').format('YYYY-MM-DD HH:mm:ss') },
@@ -475,7 +474,6 @@ function initProcessingRecords() {
     { clue_id: 4, from_status: 'returned', to_status: 'resubmitted', action: '重新提交', result: 'success', remark: '已补充资质证明', operator_id: 4, created_at: now.subtract(3, 'day').format('YYYY-MM-DD HH:mm:ss') },
     { clue_id: 5, from_status: 'pending_submit', to_status: 'pending_audit', action: '提交审核', result: 'success', remark: '材料齐全', operator_id: 4, created_at: now.subtract(14, 'day').format('YYYY-MM-DD HH:mm:ss') },
     { clue_id: 5, from_status: 'pending_audit', to_status: 'pending_review', action: '审核通过', result: 'success', remark: '企业资质良好，建议入驻', operator_id: 2, created_at: now.subtract(10, 'day').format('YYYY-MM-DD HH:mm:ss') },
-    { clue_id: 5, from_status: 'pending_review', to_status: 'pending_review', action: '复核中', result: 'success', remark: '正在复核合同条款', operator_id: 3, created_at: now.subtract(5, 'day').format('YYYY-MM-DD HH:mm:ss') },
     { clue_id: 7, from_status: 'pending_submit', to_status: 'pending_audit', action: '提交审核', result: 'success', remark: '', operator_id: 4, created_at: now.subtract(2, 'day').format('YYYY-MM-DD HH:mm:ss') },
     { clue_id: 8, from_status: 'pending_submit', to_status: 'pending_audit', action: '提交审核', result: 'success', remark: '', operator_id: 4, created_at: now.subtract(20, 'day').format('YYYY-MM-DD HH:mm:ss') },
     { clue_id: 8, from_status: 'pending_audit', to_status: 'pending_review', action: '审核通过', result: 'success', remark: '优质企业，重点跟进', operator_id: 5, created_at: now.subtract(15, 'day').format('YYYY-MM-DD HH:mm:ss') },
@@ -553,6 +551,160 @@ function initAbnormalLogs() {
   console.log('✅ 异常日志数据初始化完成');
 }
 
+function initBatchResults() {
+  const now = dayjs();
+
+  const batchResults = [
+    {
+      batch_no: 'BATCH20240601001',
+      clue_id: 5,
+      clue_no: 'ZS20240601005',
+      success: 1,
+      error_code: null,
+      error_message: null,
+      from_status: 'pending_audit',
+      to_status: 'pending_review',
+      old_version: 2,
+      new_version: 3,
+      abnormal_type: null,
+      processing_record_id: 6,
+      operator_id: 2,
+      created_at: now.subtract(10, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      batch_no: 'BATCH20240601001',
+      clue_id: 8,
+      clue_no: 'ZS20240601008',
+      success: 1,
+      error_code: null,
+      error_message: null,
+      from_status: 'pending_audit',
+      to_status: 'pending_review',
+      old_version: 2,
+      new_version: 3,
+      abnormal_type: null,
+      processing_record_id: 8,
+      operator_id: 2,
+      created_at: now.subtract(10, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      batch_no: 'BATCH20240601002',
+      clue_id: 6,
+      clue_no: 'ZS20240601006',
+      success: 0,
+      error_code: 'OVERDUE',
+      error_message: '线索单已逾期，请先进入详情页处理逾期问题，节点超时落到责任人处理',
+      from_status: 'pending_submit',
+      to_status: 'pending_audit',
+      old_version: 1,
+      new_version: null,
+      abnormal_type: 'overdue',
+      processing_record_id: null,
+      operator_id: 2,
+      created_at: now.subtract(2, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      batch_no: 'BATCH20240601002',
+      clue_id: 3,
+      clue_no: 'ZS20240601003',
+      success: 0,
+      error_code: 'MISSING_MATERIAL',
+      error_message: '缺少必填附件：企业资料',
+      from_status: 'returned',
+      to_status: 'resubmitted',
+      old_version: 2,
+      new_version: null,
+      abnormal_type: 'missing_material',
+      processing_record_id: null,
+      operator_id: 2,
+      created_at: now.subtract(2, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      batch_no: 'BATCH20240601002',
+      clue_id: 7,
+      clue_no: 'ZS20240601007',
+      success: 1,
+      error_code: null,
+      error_message: null,
+      from_status: 'pending_audit',
+      to_status: 'pending_review',
+      old_version: 1,
+      new_version: 2,
+      abnormal_type: null,
+      processing_record_id: null,
+      operator_id: 2,
+      created_at: now.subtract(2, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      batch_no: 'BATCH20240601003',
+      clue_id: 2,
+      clue_no: 'ZS20240601002',
+      success: 0,
+      error_code: 'VERSION_CONFLICT',
+      error_message: '版本冲突：当前版本为2，您提交的版本为1，请刷新后重试',
+      from_status: 'pending_audit',
+      to_status: 'pending_review',
+      old_version: 1,
+      new_version: null,
+      abnormal_type: 'version_conflict',
+      processing_record_id: null,
+      operator_id: 2,
+      created_at: now.subtract(4, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      batch_no: 'BATCH20240601004',
+      clue_id: 10,
+      clue_no: 'ZS20240601010',
+      success: 1,
+      error_code: null,
+      error_message: null,
+      from_status: 'approved',
+      to_status: 'archived',
+      old_version: 4,
+      new_version: 5,
+      abnormal_type: null,
+      processing_record_id: null,
+      operator_id: 3,
+      created_at: now.subtract(10, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      batch_no: 'BATCH20240601004',
+      clue_id: 8,
+      clue_no: 'ZS20240601008',
+      success: 0,
+      error_code: 'MISSING_MATERIAL',
+      error_message: '缺少必填附件：签约合同',
+      from_status: 'pending_review',
+      to_status: 'approved',
+      old_version: 3,
+      new_version: null,
+      abnormal_type: 'missing_material',
+      processing_record_id: null,
+      operator_id: 3,
+      created_at: now.subtract(10, 'day').format('YYYY-MM-DD HH:mm:ss')
+    }
+  ];
+
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO batch_results (
+      batch_no, clue_id, clue_no, success, error_code, error_message,
+      from_status, to_status, old_version, new_version,
+      abnormal_type, processing_record_id, operator_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  batchResults.forEach(r => {
+    stmt.run(
+      r.batch_no, r.clue_id, r.clue_no, r.success, r.error_code,
+      r.error_message, r.from_status, r.to_status, r.old_version,
+      r.new_version, r.abnormal_type, r.processing_record_id,
+      r.operator_id, r.created_at
+    );
+  });
+
+  console.log('✅ 批量处理结果数据初始化完成');
+}
+
 console.log('🚀 开始初始化数据库...\n');
 
 initDatabase();
@@ -562,6 +714,7 @@ initAttachments();
 initProcessingRecords();
 initAuditNotes();
 initAbnormalLogs();
+initBatchResults();
 
 console.log('\n🎉 数据库初始化完成！');
 console.log('\n📋 演示账号：');

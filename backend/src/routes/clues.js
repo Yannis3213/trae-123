@@ -61,27 +61,27 @@ clues.post('/:id/process', isAllRoles(), async (c) => {
   return c.json({ code: 200, message: result.message, data: result.data });
 });
 
-clues.post('/batch', isAllRoles(), async (c) => {
-  const user = c.get('user');
-  const { items, action } = await c.req.json();
-  
-  if (!items || items.length === 0) {
-    return c.json({ code: 400, message: '请选择要批量处理的线索单' }, 400);
-  }
-  
-  if (!action) {
-    return c.json({ code: 400, message: '请指定批量操作类型' }, 400);
-  }
-  
-  const result = processBatch(items, action, user);
-  
-  return c.json({ code: 200, message: '批量处理完成', data: result });
-});
-
 clues.get('/batch/:batchNo', isAllRoles(), async (c) => {
   const batchNo = c.req.param('batchNo');
   const results = getBatchResults(batchNo);
   return c.json({ code: 200, data: results });
+});
+
+clues.post('/batch', isAllRoles(), async (c) => {
+  const user = c.get('user');
+  const { items, action } = await c.req.json();
+
+  if (!items || items.length === 0) {
+    return c.json({ code: 400, message: '请选择要批量处理的线索单' }, 400);
+  }
+
+  if (!action) {
+    return c.json({ code: 400, message: '请指定批量操作类型' }, 400);
+  }
+
+  const result = processBatch(items, action, user);
+
+  return c.json({ code: 200, message: '批量处理完成', data: result });
 });
 
 clues.post('/:id/audit-notes', isAuditorOrReviewer(), async (c) => {

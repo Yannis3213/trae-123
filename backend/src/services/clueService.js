@@ -209,6 +209,28 @@ export function processClue(clueId, actionData, user) {
       user.id
     ]);
 
+    if (target_status === STATUS.RETURNED && return_reason) {
+      runQuery(`
+        INSERT INTO audit_notes (clue_id, note, auditor_id)
+        VALUES (?, ?, ?)
+      `, [
+        clueId,
+        `【退回补正】退回原因：${return_reason}${remark ? `\n备注：${remark}` : ''}`,
+        user.id
+      ]);
+    }
+
+    if ([STATUS.APPROVED, STATUS.REJECTED, STATUS.ARCHIVED].includes(target_status) && remark) {
+      runQuery(`
+        INSERT INTO audit_notes (clue_id, note, auditor_id)
+        VALUES (?, ?, ?)
+      `, [
+        clueId,
+        `【${action}】${remark}`,
+        user.id
+      ]);
+    }
+
     updateAbnormalTags(clueId);
 
     commitTransaction();
@@ -502,16 +524,25 @@ export function getAbnormalLogs(clueId) {
 }
 
 export function getBatchResults(batchNo) {
-  return allQuery(`
-    SELECT br.*, c.clue_no as current_clue_no, c.status as current_status, 
-           c.version as current_version, c.title,
-           u.name as operator_name,
-           from_u.name as from_status_label,
-           to_u.name as to_status_label
+  const rows = allQuery(`
+    SELECT br.*,
+           c.clue_no as current_clue_no,
+           c.status as current_status,
+           c.version as current_version,
+           c.title,
+           c.current_handler_id,
+           ch.name as current_handler_name,
+           u.name as operator_name
     FROM batch_results br
     LEFT JOIN clues c ON br.clue_id = c.id
+    LEFT JOIN users ch ON c.current_handler_id = ch.id
     LEFT JOIN users u ON br.operator_id = u.id
     WHERE br.batch_no = ?
     ORDER BY br.id ASC
   `, [batchNo]);
+
+  return rows.map(row => ({
+    ...row,
+    success: !!row.success
+  }));
 }

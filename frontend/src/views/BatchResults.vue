@@ -159,6 +159,13 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="当前处理人" width="110">
+          <template #default="{ row }">
+            <span v-if="row.current_handler_name">{{ row.current_handler_name }}</span>
+            <span v-else style="color: #c0c4cc;">-</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="版本" width="110" align="center">
           <template #default="{ row }">
             <span v-if="row.old_version != null">
