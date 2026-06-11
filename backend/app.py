@@ -184,12 +184,12 @@ def validate_evidence(order: Dict[str, Any], action: str, evidence: Optional[Dic
                 'valid_fields': list(valid_fields)
             }
         
-        has_real_evidence = any(v and v.strip() for v in evidence.values())
-        if not has_real_evidence:
+        empty_fields = [k for k, v in evidence.items() if not v or not v.strip()]
+        if empty_fields:
             return {
-                'error': '补正证据不能为空，请填写有效的证据材料',
-                'code': 'EMPTY_CORRECTION_EVIDENCE',
-                'expected': '每项补正证据必须填写非空内容'
+                'error': f"补正证据值不能为空：{', '.join(empty_fields)}，请填写有效内容",
+                'code': 'EMPTY_EVIDENCE_VALUE',
+                'empty_fields': empty_fields
             }
     
     if action == 'review':
@@ -635,13 +635,49 @@ async def batch_process(request: Request, user: Dict[str, Any]):
                 
                 conn.commit()
                 
-                results.append({
+                record_data = {
+                    'action': action,
+                    'action_label': _action_label(action),
+                    'from_status': order['status'],
+                    'from_status_label': STATUS_FLOW[order['status']],
+                    'to_status': update_result['new_status'],
+                    'to_status_label': STATUS_FLOW[update_result['new_status']],
+                    'from_stage': order['current_stage'],
+                    'from_stage_label': STAGES[order['current_stage']],
+                    'to_stage': update_result['new_stage'],
+                    'to_stage_label': STAGES[update_result['new_stage']],
+                    'from_role': order['current_role'],
+                    'from_role_label': ROLES[order['current_role']],
+                    'to_role': update_result['new_role'],
+                    'to_role_label': ROLES[update_result['new_role']],
+                    'handler': user['id'],
+                    'handler_name': user['name'],
+                    'handler_role': user['role'],
+                    'handler_role_label': ROLES[user['role']],
+                    'opinion': opinion,
+                    'audit_remark': audit_remark,
+                    'exception_reason': exception_reason,
+                    'is_exception': is_exception,
+                    'version_before': order['version'],
+                    'version_after': update_result['new_version']
+                }
+                
+                result_item = {
                     'order_id': order_id,
                     'order_no': order['order_no'],
                     'success': True,
                     'message': f"处理成功：{STATUS_FLOW[order['status']]} → {STATUS_FLOW[update_result['new_status']]}",
+                    'record': record_data,
                     **update_result
-                })
+                }
+                
+                if audit_remark:
+                    result_item['audit_remark'] = audit_remark
+                
+                if is_exception and exception_reason:
+                    result_item['exception_reason'] = exception_reason
+                
+                results.append(result_item)
             except Exception as e:
                 conn.rollback()
                 results.append({
