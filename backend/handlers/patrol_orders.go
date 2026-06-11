@@ -644,8 +644,12 @@ func ActionPatrolOrder(c *gin.Context) {
 			if order.Status == config.StatusPending || order.Status == config.StatusSupplement {
 				nextStatus = config.StatusSupplement
 				order.SupplementReason = req.Reason
-			} else {
+				order.RejectReason = ""
+			} else if order.Status == config.StatusApproved {
+				nextStatus = config.StatusRejected
 				order.RejectReason = req.Reason
+				order.ConfirmEvidence = false
+				order.SupplementReason = ""
 			}
 			order.CurrentHandlerID = order.CreatorID
 			order.CurrentHandler = order.CreatorName
@@ -656,6 +660,10 @@ func ActionPatrolOrder(c *gin.Context) {
 			if order.Status != config.StatusSupplement && order.Status != config.StatusPending {
 				return fmt.Errorf("状态为%s时无法执行补正操作", order.Status)
 			}
+			if len(req.Attachments) > 0 {
+				order.EvidenceUploaded = true
+			}
+			order.SupplementReason = ""
 		case config.ActionResubmit:
 			if user.Role != config.RoleCustomerManager {
 				return errors.New("仅客户经理可重新提交")
@@ -667,6 +675,11 @@ func ActionPatrolOrder(c *gin.Context) {
 			order.CurrentHandlerID = "underwriter_01"
 			order.CurrentHandler = "核保专员-李"
 			order.AbnormalReason = ""
+			order.RejectReason = ""
+			order.SupplementReason = ""
+			if len(req.Attachments) > 0 {
+				order.EvidenceUploaded = true
+			}
 		case config.ActionSync:
 			if user.Role != config.RoleBusinessOwner {
 				return errors.New("仅业务负责人可执行同步操作")
@@ -678,6 +691,8 @@ func ActionPatrolOrder(c *gin.Context) {
 			if user.Role != config.RoleBusinessOwner {
 				return errors.New("仅业务负责人可归档")
 			}
+			order.CurrentHandlerID = order.CreatorID
+			order.CurrentHandler = order.CreatorName
 		}
 
 		order.Status = nextStatus
@@ -695,6 +710,27 @@ func ActionPatrolOrder(c *gin.Context) {
 			return err
 		}
 
+		historyRemark := req.Remark
+		historyAbnormal := ""
+		if req.Action == config.ActionReject {
+			if order.Status == config.StatusSupplement {
+				historyRemark = "退回补正：" + req.Reason
+			} else {
+				historyRemark = "审核退回：" + req.Reason
+			}
+			historyAbnormal = req.Reason
+		} else if req.Action == config.ActionSupplement {
+			historyRemark = "补正资料"
+			if req.Reason != "" {
+				historyRemark += "：" + req.Reason
+			}
+		} else if req.Action == config.ActionResubmit {
+			historyRemark = "重新提交"
+			if req.Reason != "" {
+				historyRemark += "：" + req.Reason
+			}
+		}
+
 		h := models.OrderHistory{
 			PatrolOrderID:  order.ID,
 			Action:         req.Action,
@@ -703,31 +739,45 @@ func ActionPatrolOrder(c *gin.Context) {
 			OperatorID:     user.UserID,
 			OperatorName:   user.UserName,
 			OperatorRole:   user.Role,
-			Remark:         req.Remark,
-			AbnormalReason: req.Reason,
+			Remark:         historyRemark,
+			AbnormalReason: historyAbnormal,
 			CreatedAt:      now,
 		}
 		if err := tx.Create(&h).Error; err != nil {
 			return err
 		}
 
-		if req.Reason != "" {
+		if req.Reason != "" || req.Action == config.ActionReject || req.Action == config.ActionSupplement || req.Action == config.ActionResubmit {
+			noteContent := req.Reason
 			noteType := "remark"
 			if req.Action == config.ActionReject {
 				noteType = "reject"
-			} else if req.Action == config.ActionSupplement || req.Action == config.ActionResubmit {
+				if noteContent == "" {
+					noteContent = "审核退回"
+				}
+			} else if req.Action == config.ActionSupplement {
 				noteType = "supplement"
+				if noteContent == "" {
+					noteContent = "提交补正资料"
+				}
+			} else if req.Action == config.ActionResubmit {
+				noteType = "supplement"
+				if noteContent == "" {
+					noteContent = "重新提交申请"
+				}
 			}
-			an := models.AuditNote{
-				PatrolOrderID: order.ID,
-				NoteType:      noteType,
-				Content:       req.Reason,
-				OperatorID:    user.UserID,
-				OperatorName:  user.UserName,
-				CreatedAt:     now,
-			}
-			if err := tx.Create(&an).Error; err != nil {
-				return err
+			if noteContent != "" {
+				an := models.AuditNote{
+					PatrolOrderID: order.ID,
+					NoteType:      noteType,
+					Content:       noteContent,
+					OperatorID:    user.UserID,
+					OperatorName:  user.UserName,
+					CreatedAt:     now,
+				}
+				if err := tx.Create(&an).Error; err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -908,8 +958,12 @@ func BatchActionPatrolOrders(c *gin.Context) {
 				if order.Status == config.StatusPending || order.Status == config.StatusSupplement {
 					nextStatus = config.StatusSupplement
 					order.SupplementReason = req.Reason
-				} else {
+					order.RejectReason = ""
+				} else if order.Status == config.StatusApproved {
+					nextStatus = config.StatusRejected
 					order.RejectReason = req.Reason
+					order.ConfirmEvidence = false
+					order.SupplementReason = ""
 				}
 				order.CurrentHandlerID = order.CreatorID
 				order.CurrentHandler = order.CreatorName
@@ -918,18 +972,47 @@ func BatchActionPatrolOrders(c *gin.Context) {
 				order.CurrentHandlerID = "underwriter_01"
 				order.CurrentHandler = "核保专员-李"
 				order.AbnormalReason = ""
+				order.RejectReason = ""
+				order.SupplementReason = ""
+			case config.ActionSupplement:
+				order.SupplementReason = ""
 			case config.ActionSync:
 				order.ConfirmEvidence = true
 				order.CurrentHandler = user.UserName
 				order.CurrentHandlerID = user.UserID
+			case config.ActionArchive:
+				order.CurrentHandlerID = order.CreatorID
+				order.CurrentHandler = order.CreatorName
 			}
 
 			order.Status = nextStatus
 			order.Version++
 			order.UpdatedAt = now
 
+			if order.Deadline != nil && now.After(*order.Deadline) &&
+				(nextStatus == config.StatusPending || nextStatus == config.StatusApproved) {
+				if order.AbnormalReason == "" {
+					order.AbnormalReason = "办理超时"
+				}
+			}
+
 			if err := tx.Save(&order).Error; err != nil {
 				return err
+			}
+
+			historyRemark := req.Remark
+			historyAbnormal := ""
+			if req.Action == config.ActionReject {
+				if nextStatus == config.StatusSupplement {
+					historyRemark = "退回补正：" + req.Reason
+				} else {
+					historyRemark = "审核退回：" + req.Reason
+				}
+				historyAbnormal = req.Reason
+			} else if req.Action == config.ActionResubmit {
+				historyRemark = "重新提交"
+			} else if req.Action == config.ActionSupplement {
+				historyRemark = "补正资料"
 			}
 
 			h := models.OrderHistory{
@@ -940,31 +1023,45 @@ func BatchActionPatrolOrders(c *gin.Context) {
 				OperatorID:     user.UserID,
 				OperatorName:   user.UserName,
 				OperatorRole:   user.Role,
-				Remark:         req.Remark,
-				AbnormalReason: req.Reason,
+				Remark:         historyRemark,
+				AbnormalReason: historyAbnormal,
 				CreatedAt:      now,
 			}
 			if err := tx.Create(&h).Error; err != nil {
 				return err
 			}
 
-			if req.Reason != "" {
+			if req.Reason != "" || req.Action == config.ActionReject || req.Action == config.ActionSupplement || req.Action == config.ActionResubmit {
+				noteContent := req.Reason
 				noteType := "remark"
 				if req.Action == config.ActionReject {
 					noteType = "reject"
+					if noteContent == "" {
+						noteContent = "审核退回"
+					}
+				} else if req.Action == config.ActionSupplement {
+					noteType = "supplement"
+					if noteContent == "" {
+						noteContent = "补正资料"
+					}
 				} else if req.Action == config.ActionResubmit {
 					noteType = "supplement"
+					if noteContent == "" {
+						noteContent = "重新提交"
+					}
 				}
-				an := models.AuditNote{
-					PatrolOrderID: order.ID,
-					NoteType:      noteType,
-					Content:       req.Reason,
-					OperatorID:    user.UserID,
-					OperatorName:  user.UserName,
-					CreatedAt:     now,
-				}
-				if err := tx.Create(&an).Error; err != nil {
-					return err
+				if noteContent != "" {
+					an := models.AuditNote{
+						PatrolOrderID: order.ID,
+						NoteType:      noteType,
+						Content:       noteContent,
+						OperatorID:    user.UserID,
+						OperatorName:  user.UserName,
+						CreatedAt:     now,
+					}
+					if err := tx.Create(&an).Error; err != nil {
+						return err
+					}
 				}
 			}
 			return nil

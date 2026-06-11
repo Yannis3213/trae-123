@@ -249,9 +249,9 @@ export default function OrderList({ mode }) {
                         <button className="btn btn-sm" onClick={() => nav(`/orders/${o.id}`)}>详情</button>
                         {canOperate(o) && (
                           role === 'customer_manager' ? (
-                            o.status === '待补正' && (
+                            (o.status === '待补正' || o.status === '审核退回') && (
                               <>
-                                <button className="btn btn-sm btn-warning" onClick={() => handleSingleAction(o, 'supplement')}>补正</button>
+                                {o.status === '待补正' && <button className="btn btn-sm btn-warning" onClick={() => handleSingleAction(o, 'supplement')}>补正</button>}
                                 <button className="btn btn-sm btn-primary" onClick={() => handleSingleAction(o, 'resubmit')}>重提</button>
                               </>
                             )

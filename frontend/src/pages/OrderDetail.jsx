@@ -92,9 +92,12 @@ export default function OrderDetail() {
     const o = data.order
     const acts = []
     if (role === 'customer_manager') {
-      if (o.status === '待补正' || o.status === '审核退回') {
-        acts.push({ key: 'resubmit', label: '重新提交', btnClass: 'btn-primary' })
+      if (o.status === '待补正') {
         acts.push({ key: 'supplement', label: '补正资料', btnClass: 'btn-warning' })
+        acts.push({ key: 'resubmit', label: '重新提交', btnClass: 'btn-primary' })
+      }
+      if (o.status === '审核退回') {
+        acts.push({ key: 'resubmit', label: '重新提交', btnClass: 'btn-primary' })
       }
     }
     if (role === 'underwriter' && o.status === '待审核') {

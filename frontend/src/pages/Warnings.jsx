@@ -239,9 +239,14 @@ export default function Warnings() {
                                 ) : role === 'business_owner' ? (
                                   o.status === '审核通过' ? (
                                     <button className="btn btn-sm btn-primary" onClick={() => setActionModal({ type: 'single', action: 'sync', order: o })}>同步</button>
+                                  ) : o.status === '已同步' ? (
+                                    <button className="btn btn-sm btn-success" onClick={() => setActionModal({ type: 'single', action: 'archive', order: o })}>归档</button>
                                   ) : null
                                 ) : (
-                                  <button className="btn btn-sm btn-primary" onClick={() => setActionModal({ type: 'single', action: 'resubmit', order: o })}>重提</button>
+                                  <>
+                                    {o.status === '待补正' && <button className="btn btn-sm btn-warning" onClick={() => setActionModal({ type: 'single', action: 'supplement', order: o })}>补正</button>}
+                                    {(o.status === '待补正' || o.status === '审核退回') && <button className="btn btn-sm btn-primary" onClick={() => setActionModal({ type: 'single', action: 'resubmit', order: o })}>重提</button>}
+                                  </>
                                 )
                               )}
                             </td>
