@@ -57,7 +57,7 @@ export default function StatusActionButtons({
         await onSave();
         message.success('保存成功');
       } else {
-        await caseApi.action(caseItem.id, { action });
+        await caseApi.action(caseItem.id, { action, version: caseItem.version });
         message.success(`${buttonLabel}成功`);
       }
       onActionSuccess?.();

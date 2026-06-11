@@ -156,7 +156,7 @@ export interface CaseListResponse {
 export interface CaseActionRequest {
   action: string;
   remark?: string;
-  version?: number;
+  version: number;
 }
 
 export interface BatchResult {

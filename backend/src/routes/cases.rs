@@ -504,7 +504,7 @@ fn delete_case(
 pub struct CaseActionPathRequest {
     pub action: String,
     pub remark: Option<String>,
-    pub version: Option<i32>,
+    pub version: i32,
 }
 
 #[post("/cases/<case_id>/action", data = "<req>")]
@@ -516,9 +516,7 @@ fn case_action(
 ) -> Result<(Status, Json<ApiResponse<LegalCase>>)> {
     let case = get_case(db, case_id)?;
 
-    if let Some(v) = req.version {
-        check_version(case.version, v)?;
-    }
+    check_version(case.version, req.version)?;
 
     if !can_access_case(&auth.user, case.created_by, case.current_handler_id, &case.status) {
         return Err(AppError::PermissionError(
@@ -566,7 +564,7 @@ fn case_action(
                 &[UserRole::Reviewer, UserRole::Supervisor, UserRole::Director],
                 "审核案件",
             )?;
-            if matches!(case.status, CaseStatus::Submitted) {
+            if matches!(case.status, CaseStatus::Submitted | CaseStatus::Resubmitted) {
                 Some(CaseStatus::Reviewing)
             } else {
                 return Err(AppError::InvalidStatusTransition {

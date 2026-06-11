@@ -430,10 +430,30 @@ pub fn update_case_status(
 
     {
         let conn = db.conn.lock();
-        conn.execute(
-            "UPDATE legal_cases SET status = ?1, queue = ?2, version = version + 1, updated_at = ?3 WHERE id = ?4",
-            (new_status.as_str(), &queue, Utc::now(), case_id),
-        )?;
+
+        if matches!(new_status, CaseStatus::Assigned | CaseStatus::Followup) {
+            let maybe_lawyer: Option<i64> = conn.query_row(
+                "SELECT lawyer_id FROM case_assignment WHERE case_id = ?1",
+                [case_id],
+                |row| row.get::<_, Option<i64>>(0),
+            ).unwrap_or(None);
+            if let Some(lawyer_id) = maybe_lawyer {
+                conn.execute(
+                    "UPDATE legal_cases SET status = ?1, queue = ?2, current_handler_id = ?3, version = version + 1, updated_at = ?4 WHERE id = ?5",
+                    (new_status.as_str(), &queue, lawyer_id, Utc::now(), case_id),
+                )?;
+            } else {
+                conn.execute(
+                    "UPDATE legal_cases SET status = ?1, queue = ?2, version = version + 1, updated_at = ?3 WHERE id = ?4",
+                    (new_status.as_str(), &queue, Utc::now(), case_id),
+                )?;
+            }
+        } else {
+            conn.execute(
+                "UPDATE legal_cases SET status = ?1, queue = ?2, version = version + 1, updated_at = ?3 WHERE id = ?4",
+                (new_status.as_str(), &queue, Utc::now(), case_id),
+            )?;
+        }
     }
 
     record_processing_record(

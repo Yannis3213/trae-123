@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Modal, Form, Select, Input, Button, message, Space, Alert, Table, Tag } from 'antd';
 import { SendOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { batchApi } from '../utils/api';
 import { STATUS_BUTTONS, STATUS_MAP } from '../utils/constants';
-import type { LegalCase, BatchResult } from '../../types';
+import { useAuth } from '../contexts/AuthContext';
+import type { LegalCase, BatchResult, UserRole } from '../../types';
 
 const { TextArea } = Input;
 
@@ -20,9 +21,11 @@ export default function BatchProcessModal({
   onClose, 
   onSuccess 
 }: BatchProcessModalProps) {
+  const { user } = useAuth();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<BatchResult[] | null>(null);
+  const [currentAction, setCurrentAction] = useState<string | undefined>(undefined);
 
   const handleSubmit = async (values: { action: string; remark?: string }) => {
     setLoading(true);
@@ -45,28 +48,44 @@ export default function BatchProcessModal({
   const handleClose = () => {
     form.resetFields();
     setResults(null);
+    setCurrentAction(undefined);
     onClose();
     if (results) {
       onSuccess();
     }
   };
 
-  const validCases = selectedCases.filter(c => 
-    ['pending_submit', 'returned'].includes(c.status)
-  );
+  const currentRole = user?.role as UserRole | undefined;
 
-  const invalidCases = selectedCases.filter(c => 
-    !['pending_submit', 'returned'].includes(c.status)
-  );
+  const availableActions = useMemo(() => {
+    const actions = STATUS_BUTTONS.filter(btn => {
+      if (!selectedCases.some(c => c.status === btn.status)) return false;
+      if (btn.roles && currentRole && !btn.roles.includes(currentRole)) return false;
+      return true;
+    }).reduce((acc: typeof STATUS_BUTTONS, btn) => {
+      if (!acc.some(b => b.action === btn.action)) {
+        acc.push(btn);
+      }
+      return acc;
+    }, []);
+    return actions;
+  }, [selectedCases, currentRole]);
 
-  const availableActions = STATUS_BUTTONS.filter(btn => 
-    selectedCases.some(c => c.status === btn.status)
-  ).reduce((acc: typeof STATUS_BUTTONS, btn) => {
-    if (!acc.some(b => b.action === btn.action)) {
-      acc.push(btn);
-    }
-    return acc;
-  }, []);
+  const validCases = useMemo(() => {
+    if (!currentAction) return selectedCases;
+    const btnStatuses = STATUS_BUTTONS
+      .filter(btn => btn.action === currentAction)
+      .map(btn => btn.status);
+    return selectedCases.filter(c => btnStatuses.includes(c.status));
+  }, [selectedCases, currentAction]);
+
+  const invalidCases = useMemo(() => {
+    if (!currentAction) return [];
+    const btnStatuses = STATUS_BUTTONS
+      .filter(btn => btn.action === currentAction)
+      .map(btn => btn.status);
+    return selectedCases.filter(c => !btnStatuses.includes(c.status));
+  }, [selectedCases, currentAction]);
 
   const resultColumns = [
     {
@@ -161,6 +180,7 @@ export default function BatchProcessModal({
           >
             <Select 
               placeholder="请选择要执行的操作"
+              onChange={(val) => setCurrentAction(val)}
               options={availableActions.map(btn => ({
                 value: btn.action,
                 label: btn.label,

@@ -164,6 +164,16 @@ fn process_single_case(
                 });
             }
         }
+        "review" => {
+            if matches!(case.status, CaseStatus::Submitted | CaseStatus::Resubmitted) {
+                CaseStatus::Reviewing
+            } else {
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "reviewing".to_string(),
+                });
+            }
+        }
         _ => new_status.clone().ok_or_else(|| {
             AppError::InternalError(format!("操作 {} 缺少目标状态", action))
         })?,

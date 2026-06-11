@@ -18,11 +18,18 @@ import {
   EditOutlined, 
   SendOutlined,
   DeleteOutlined,
-  BatchProcessingOutlined
+  BatchProcessingOutlined,
+  AuditOutlined,
+  TeamOutlined,
+  PhoneOutlined,
+  FolderOutlined,
+  RollbackOutlined,
+  CheckCircleOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { caseApi } from '../utils/api';
-import { STATUS_MAP, STATUS_COLOR_MAP, PRIORITY_MAP, PRIORITY_COLOR_MAP } from '../utils/constants';
+import { STATUS_MAP, STATUS_COLOR_MAP, PRIORITY_MAP, PRIORITY_COLOR_MAP, STATUS_BUTTONS } from '../utils/constants';
+import { useAuth } from '../contexts/AuthContext';
 import CaseFilter from './CaseFilter';
 import WarningBadge from './WarningBadge';
 import BatchProcessModal from './BatchProcessModal';
@@ -31,7 +38,8 @@ import type {
   CaseListRequest, 
   CaseListResponse,
   CaseStatus,
-  CaseQueue 
+  CaseQueue,
+  UserRole
 } from '../../types';
 
 interface CaseListProps {
@@ -51,6 +59,7 @@ export default function CaseList({
   onCreate,
   initialFilters 
 }: CaseListProps) {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<LegalCase[]>([]);
   const [pagination, setPagination] = useState<TablePaginationConfig>({
@@ -224,67 +233,80 @@ export default function CaseList({
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: 280,
       fixed: 'right' as const,
-      render: (_: unknown, record: LegalCase) => (
-        <Space size="small">
-          <Button 
-            type="link" 
-            size="small" 
-            icon={<EyeOutlined />}
-            onClick={() => onView?.(record)}
-          >
-            查看
-          </Button>
-          {['draft', 'pending_submit', 'returned'].includes(record.status) && (
+      render: (_: unknown, record: LegalCase) => {
+        const currentRole = user?.role as UserRole | undefined;
+        const rowButtons = STATUS_BUTTONS.filter(btn => {
+          if (btn.status !== record.status) return false;
+          if (btn.roles && currentRole && !btn.roles.includes(currentRole)) return false;
+          return true;
+        });
+
+        const ACTION_ICON_MAP: Record<string, React.ReactNode> = {
+          submit: <SendOutlined />,
+          resubmit: <SendOutlined />,
+          review: <AuditOutlined />,
+          assign: <TeamOutlined />,
+          start_followup: <PhoneOutlined />,
+          complete: <CheckCircleOutlined />,
+          archive: <FolderOutlined />,
+          return: <RollbackOutlined />,
+        };
+
+        return (
+          <Space size="small" wrap>
             <Button 
               type="link" 
               size="small" 
-              icon={<EditOutlined />}
-              onClick={() => onEdit?.(record)}
+              icon={<EyeOutlined />}
+              onClick={() => onView?.(record)}
             >
-              编辑
+              查看
             </Button>
-          )}
-          {record.status === 'pending_submit' && (
-            <Popconfirm
-              title="确定提交该案件吗？"
-              onConfirm={() => handleAction(record.id, 'submit', record.version)}
-              okText="确定"
-              cancelText="取消"
-            >
-              <Button type="link" size="small" icon={<SendOutlined />}>
-                提交
+            {['draft', 'pending_submit', 'returned'].includes(record.status) && (
+              <Button 
+                type="link" 
+                size="small" 
+                icon={<EditOutlined />}
+                onClick={() => onEdit?.(record)}
+              >
+                编辑
               </Button>
-            </Popconfirm>
-          )}
-          {record.status === 'returned' && (
-            <Popconfirm
-              title="确定重新提交该案件吗？"
-              onConfirm={() => handleAction(record.id, 'resubmit', record.version)}
-              okText="确定"
-              cancelText="取消"
-            >
-              <Button type="link" size="small" icon={<SendOutlined />}>
-                重提
-              </Button>
-            </Popconfirm>
-          )}
-          {record.status === 'draft' && (
-            <Popconfirm
-              title="确定删除该案件吗？"
-              onConfirm={() => handleDelete(record.id)}
-              okText="确定"
-              cancelText="取消"
-              okType="danger"
-            >
-              <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                删除
-              </Button>
-            </Popconfirm>
-          )}
-        </Space>
-      ),
+            )}
+            {rowButtons.map(btn => (
+              <Popconfirm
+                key={btn.action}
+                title={`确定${btn.label}该案件吗？`}
+                onConfirm={() => handleAction(record.id, btn.action, record.version)}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button 
+                  type="link" 
+                  size="small" 
+                  icon={ACTION_ICON_MAP[btn.action]}
+                  danger={btn.action === 'return'}
+                >
+                  {btn.label}
+                </Button>
+              </Popconfirm>
+            ))}
+            {record.status === 'draft' && (
+              <Popconfirm
+                title="确定删除该案件吗？"
+                onConfirm={() => handleDelete(record.id)}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                  删除
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
