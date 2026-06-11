@@ -1,5 +1,5 @@
 import { createSignal, Show, For, onMount } from 'solid-js';
-import { api, STATUS_LABELS, OVERDUE_LABELS } from '../lib/api';
+import { api, STATUS_LABELS, OVERDUE_LABELS, getErrorMessage } from '../lib/api';
 
 export default function OverdueQueue() {
   const [data, setData] = createSignal<any>({ nearExpiry: [], overdue: [], nearExpiryCount: 0, overdueCount: 0 });
@@ -43,7 +43,7 @@ export default function OverdueQueue() {
       setSelectedIds(new Set());
       await loadData();
     } catch (err: any) {
-      setBatchResult({ error: true, message: err.message || '批量推进失败' });
+      setBatchResult({ error: true, message: getErrorMessage(err) });
     } finally {
       setBatchLoading(false);
     }

@@ -11,12 +11,104 @@ import {
 import { BusinessException, ErrorCodes } from '../common/exceptions';
 import { v4 as uuidv4 } from 'uuid';
 
+interface ActionValidationResult {
+  allowed: boolean;
+  code?: string;
+  message?: string;
+  targetStatus?: string;
+  extraChecks?: {
+    requireEvidence?: boolean;
+    checkPendingMaterials?: boolean;
+    checkFieldRecords?: boolean;
+  };
+}
+
+interface BatchActionResult {
+  taskId: string;
+  taskNo: string;
+  success: boolean;
+  reason?: string;
+}
+
 @Injectable()
 export class PlantingTaskService {
   constructor(
     private readonly dbService: DatabaseService,
     private readonly authService: AuthService,
   ) {}
+
+  private readonly ACTION_RULES: Record<string, {
+    allowedFrom: string[];
+    targetStatus?: string;
+    allowedRoles: string[];
+    requireAssignee?: boolean;
+    extraChecks?: {
+      requireEvidence?: boolean;
+      checkPendingMaterials?: boolean;
+      checkFieldRecords?: boolean;
+      evidenceLabel?: string;
+    };
+  }> = {
+    assign: {
+      allowedFrom: [TASK_STATUS.PENDING_ASSIGN, TASK_STATUS.RETURNED_FOR_CORRECTION, TASK_STATUS.ASSIGNED],
+      targetStatus: TASK_STATUS.ASSIGNED,
+      allowedRoles: [USER_ROLES.COOPERATIVE_DIRECTOR],
+    },
+    process: {
+      allowedFrom: [TASK_STATUS.ASSIGNED],
+      targetStatus: TASK_STATUS.PROCESSING,
+      allowedRoles: [USER_ROLES.COOPERATIVE_DIRECTOR, USER_ROLES.AGRICULTURAL_TECHNICIAN, USER_ROLES.FIELD_MANAGER],
+      requireAssignee: true,
+      extraChecks: {
+        requireEvidence: true,
+        evidenceLabel: '开始处理需要提供处理依据（如农资清单、作业计划等）',
+      },
+    },
+    complete_processing: {
+      allowedFrom: [TASK_STATUS.PROCESSING],
+      targetStatus: TASK_STATUS.TRANSFERRED,
+      allowedRoles: [USER_ROLES.COOPERATIVE_DIRECTOR, USER_ROLES.AGRICULTURAL_TECHNICIAN, USER_ROLES.FIELD_MANAGER],
+      requireAssignee: true,
+      extraChecks: {
+        requireEvidence: true,
+        checkPendingMaterials: true,
+        evidenceLabel: '完成处理需要提交处理结果（如田间记录照片、产量数据等）',
+      },
+    },
+    transfer: {
+      allowedFrom: [TASK_STATUS.ASSIGNED, TASK_STATUS.PROCESSING, TASK_STATUS.TRANSFERRED],
+      targetStatus: TASK_STATUS.TRANSFERRED,
+      allowedRoles: [USER_ROLES.COOPERATIVE_DIRECTOR, USER_ROLES.AGRICULTURAL_TECHNICIAN, USER_ROLES.FIELD_MANAGER],
+      requireAssignee: true,
+    },
+    follow_up: {
+      allowedFrom: [TASK_STATUS.TRANSFERRED],
+      targetStatus: TASK_STATUS.FOLLOWED_UP,
+      allowedRoles: [USER_ROLES.COOPERATIVE_DIRECTOR, USER_ROLES.AGRICULTURAL_TECHNICIAN],
+      extraChecks: {
+        requireEvidence: true,
+        evidenceLabel: '回访必须填写回访结果（如客户确认、验收意见等）',
+      },
+    },
+    archive: {
+      allowedFrom: [TASK_STATUS.FOLLOWED_UP],
+      targetStatus: TASK_STATUS.ARCHIVED,
+      allowedRoles: [USER_ROLES.COOPERATIVE_DIRECTOR],
+      extraChecks: {
+        checkPendingMaterials: true,
+        checkFieldRecords: true,
+      },
+    },
+    return_for_correction: {
+      allowedFrom: [TASK_STATUS.PENDING_ASSIGN, TASK_STATUS.ASSIGNED, TASK_STATUS.PROCESSING, TASK_STATUS.TRANSFERRED, TASK_STATUS.FOLLOWED_UP],
+      targetStatus: TASK_STATUS.RETURNED_FOR_CORRECTION,
+      allowedRoles: [USER_ROLES.COOPERATIVE_DIRECTOR, USER_ROLES.AGRICULTURAL_TECHNICIAN],
+      extraChecks: {
+        requireEvidence: true,
+        evidenceLabel: '退回补正必须填写退回原因（材料缺失/时限问题/状态冲突等具体说明）',
+      },
+    },
+  };
 
   async list(filters: {
     status?: string;
@@ -241,21 +333,140 @@ export class PlantingTaskService {
     return this.detail(id);
   }
 
-  async assign(id: string, assigneeId: string, version: number, userId: string, userRole: string) {
-    const task = this.getTaskOrThrow(id);
-    this.checkVersion(task, version);
-
-    if (userRole !== USER_ROLES.COOPERATIVE_DIRECTOR) {
-      throw new BusinessException(ErrorCodes.UNAUTHORIZED_ROLE, '只有合作社主任可以分派种植任务', 403);
+  private validateAction(
+    action: string,
+    task: any,
+    version: number,
+    userId: string,
+    userRole: string,
+    evidence?: string,
+  ): ActionValidationResult {
+    const rule = this.ACTION_RULES[action];
+    if (!rule) {
+      return { allowed: false, code: ErrorCodes.FORBIDDEN_ACTION, message: `不支持的操作: ${action}` };
     }
 
-    const allowedFrom = [TASK_STATUS.PENDING_ASSIGN, TASK_STATUS.RETURNED_FOR_CORRECTION, TASK_STATUS.ASSIGNED];
-    if (!allowedFrom.includes(task.status)) {
-      throw new BusinessException(
-        ErrorCodes.INVALID_STATUS_TRANSITION,
-        `当前状态"${TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS]}"不能执行分派`,
-        400,
-      );
+    if (task.version !== version) {
+      return {
+        allowed: false,
+        code: ErrorCodes.VERSION_CONFLICT,
+        message: `版本冲突：任务已被修改（当前版本v${task.version}，提交版本v${version}），请刷新后重试`,
+      };
+    }
+
+    if (!rule.allowedFrom.includes(task.status)) {
+      return {
+        allowed: false,
+        code: ErrorCodes.INVALID_STATUS_TRANSITION,
+        message: `当前状态"${TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS]}"不能执行${this.getActionLabel(action)}`,
+      };
+    }
+
+    if (!rule.allowedRoles.includes(userRole)) {
+      return {
+        allowed: false,
+        code: ErrorCodes.UNAUTHORIZED_ROLE,
+        message: this.getRoleDeniedMessage(action, userRole),
+      };
+    }
+
+    if (rule.requireAssignee && task.assignee_id !== userId && userRole !== USER_ROLES.COOPERATIVE_DIRECTOR) {
+      return {
+        allowed: false,
+        code: ErrorCodes.FORBIDDEN_ACTION,
+        message: '只有当前处理人或合作社主任可以操作此任务',
+      };
+    }
+
+    if (userRole === USER_ROLES.FIELD_MANAGER && task.assignee_role !== USER_ROLES.FIELD_MANAGER && action !== 'transfer') {
+      return {
+        allowed: false,
+        code: ErrorCodes.SKIP_PROCESSING_STEP,
+        message: '田间管理员不能跳过处理环节，只能处理分派给自己的任务',
+      };
+    }
+
+    if (rule.extraChecks?.requireEvidence && (!evidence || evidence.trim().length === 0)) {
+      return {
+        allowed: false,
+        code: ErrorCodes.MISSING_EVIDENCE,
+        message: rule.extraChecks.evidenceLabel || '请提供必要的处理依据',
+      };
+    }
+
+    if (rule.extraChecks?.checkPendingMaterials) {
+      const materials = this.dbService.query(
+        'SELECT * FROM material_requisitions WHERE task_id = ? AND requisition_status = ?',
+        [task.id, 'pending'],
+      ) as any[];
+      if (materials.length > 0) {
+        return {
+          allowed: false,
+          code: ErrorCodes.MISSING_MATERIAL,
+          message: `存在${materials.length}项未审批的农资领用，${this.getActionLabel(action)}前请先审批材料`,
+        };
+      }
+    }
+
+    if (rule.extraChecks?.checkFieldRecords) {
+      const fieldCount = this.dbService.queryOne(
+        'SELECT COUNT(*) as cnt FROM field_records WHERE task_id = ?',
+        [task.id],
+      ).cnt;
+      if (fieldCount === 0) {
+        return {
+          allowed: false,
+          code: ErrorCodes.MISSING_EVIDENCE,
+          message: '该任务还没有田间记录，归档前请先录入田间作业记录',
+        };
+      }
+    }
+
+    return {
+      allowed: true,
+      targetStatus: rule.targetStatus,
+      extraChecks: rule.extraChecks,
+    };
+  }
+
+  private getRoleDeniedMessage(action: string, userRole: string): string {
+    const roleLabel = userRole === USER_ROLES.FIELD_MANAGER ? '田间管理员'
+      : userRole === USER_ROLES.AGRICULTURAL_TECHNICIAN ? '农技员' : '合作社主任';
+    const actionLabel = this.getActionLabel(action);
+
+    if (action === 'archive') {
+      return `${roleLabel}不能归档，只有合作社主任可以归档任务`;
+    }
+    if (action === 'assign') {
+      return `${roleLabel}不能分派任务，只有合作社主任可以分派`;
+    }
+    if (action === 'follow_up') {
+      return `${roleLabel}不能回访，只有合作社主任或农技员可以回访`;
+    }
+    if (action === 'return_for_correction') {
+      return `${roleLabel}不能退回补正，只有合作社主任或农技员可以退回`;
+    }
+    return `${roleLabel}没有权限执行${actionLabel}操作`;
+  }
+
+  private getActionLabel(action: string): string {
+    const map: Record<string, string> = {
+      assign: '分派',
+      process: '开始处理',
+      complete_processing: '完成处理',
+      transfer: '转办',
+      follow_up: '回访',
+      archive: '归档',
+      return_for_correction: '退回补正',
+    };
+    return map[action] || action;
+  }
+
+  async assign(id: string, assigneeId: string, version: number, userId: string, userRole: string) {
+    const task = this.getTaskOrThrow(id);
+    const validation = this.validateAction('assign', task, version, userId, userRole);
+    if (!validation.allowed) {
+      throw new BusinessException(validation.code!, validation.message!, 400);
     }
 
     if (!assigneeId) {
@@ -274,77 +485,45 @@ export class PlantingTaskService {
       [TASK_STATUS.ASSIGNED, assigneeId, assignee.role, id],
     );
 
+    const assigneeRoleLabel = assignee.role === USER_ROLES.FIELD_MANAGER ? '田间管理员'
+      : assignee.role === USER_ROLES.AGRICULTURAL_TECHNICIAN ? '农技员' : '主任';
+
     this.logAudit(id, userId, userRole, 'assign', beforeStatus, TASK_STATUS.ASSIGNED, null,
-      `分派给 ${assignee.displayName}(${assignee.role === USER_ROLES.FIELD_MANAGER ? '田间管理员' : assignee.role === USER_ROLES.AGRICULTURAL_TECHNICIAN ? '农技员' : '主任'})`);
+      `分派给 ${assignee.displayName}(${assigneeRoleLabel})`);
+    this.addProcessingRecord(id, userId, userRole, 'assign', `分派给 ${assignee.displayName}`, 'success');
 
     return this.detail(id);
   }
 
   async process(id: string, action: string, evidence: string | undefined, version: number, userId: string, userRole: string) {
     const task = this.getTaskOrThrow(id);
-    this.checkVersion(task, version);
+    const actualAction = action === 'process' ? 'process' : 'complete_processing';
 
-    if (task.assignee_id !== userId && userRole !== USER_ROLES.COOPERATIVE_DIRECTOR) {
-      throw new BusinessException(ErrorCodes.FORBIDDEN_ACTION, '只有当前处理人或合作社主任可以处理该任务', 403);
+    const validation = this.validateAction(actualAction, task, version, userId, userRole, evidence);
+    if (!validation.allowed) {
+      throw new BusinessException(validation.code!, validation.message!, 400);
     }
 
-    if (task.status === TASK_STATUS.ASSIGNED) {
-      if (userRole === USER_ROLES.FIELD_MANAGER && task.assignee_role !== USER_ROLES.FIELD_MANAGER) {
-        throw new BusinessException(ErrorCodes.UNAUTHORIZED_ROLE, '田间管理员不能跳过处理环节，只能处理分派给自己的任务', 403);
-      }
-      if (!evidence || evidence.trim().length === 0) {
-        throw new BusinessException(ErrorCodes.MISSING_EVIDENCE, '开始处理需要提供处理依据（如农资清单、作业计划等）');
-      }
-      this.dbService.run(
-        `UPDATE planting_tasks SET status = ?, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
-        [TASK_STATUS.PROCESSING, id],
-      );
-      this.logAudit(id, userId, userRole, 'process', task.status, TASK_STATUS.PROCESSING, null, evidence);
-      this.addProcessingRecord(id, userId, userRole, 'start_processing', evidence, 'success');
-    } else if (task.status === TASK_STATUS.PROCESSING) {
-      if (!evidence || evidence.trim().length === 0) {
-        throw new BusinessException(ErrorCodes.MISSING_EVIDENCE, '完成处理需要提交处理结果（如田间记录照片、产量数据等）');
-      }
+    const beforeStatus = task.status;
+    const targetStatus = validation.targetStatus!;
 
-      const materials = this.dbService.query(
-        'SELECT * FROM material_requisitions WHERE task_id = ? AND requisition_status = ?',
-        [id, 'pending'],
-      ) as any[];
-      if (materials.length > 0) {
-        throw new BusinessException(ErrorCodes.MISSING_MATERIAL, `还有${materials.length}项农资领用未审批，完成处理前请先审批材料`, 400, {
-          pendingMaterials: materials.length,
-        });
-      }
+    this.dbService.run(
+      `UPDATE planting_tasks SET status = ?, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
+      [targetStatus, id],
+    );
 
-      this.dbService.run(
-        `UPDATE planting_tasks SET status = ?, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
-        [TASK_STATUS.TRANSFERRED, id],
-      );
-      this.logAudit(id, userId, userRole, 'complete_processing', task.status, TASK_STATUS.TRANSFERRED, null, evidence);
-      this.addProcessingRecord(id, userId, userRole, 'complete_processing', evidence, 'success');
-    } else {
-      throw new BusinessException(ErrorCodes.INVALID_STATUS_TRANSITION,
-        `当前状态"${TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS]}"无法进行此操作，只能在已分派或处理中状态执行`, 400);
-    }
+    const actionLabel = actualAction === 'process' ? 'start_processing' : 'complete_processing';
+    this.logAudit(id, userId, userRole, actionLabel, beforeStatus, targetStatus, null, evidence);
+    this.addProcessingRecord(id, userId, userRole, actionLabel, evidence || '', 'success');
 
     return this.detail(id);
   }
 
   async transfer(id: string, targetAssigneeId: string, remarks: string | undefined, version: number, userId: string, userRole: string) {
     const task = this.getTaskOrThrow(id);
-    this.checkVersion(task, version);
-
-    if (task.assignee_id !== userId && userRole !== USER_ROLES.COOPERATIVE_DIRECTOR) {
-      throw new BusinessException(ErrorCodes.FORBIDDEN_ACTION, '只有当前处理人或合作社主任可以转办任务', 403);
-    }
-
-    const allowedFrom = [TASK_STATUS.ASSIGNED, TASK_STATUS.PROCESSING, TASK_STATUS.TRANSFERRED];
-    if (!allowedFrom.includes(task.status)) {
-      throw new BusinessException(
-        ErrorCodes.INVALID_STATUS_TRANSITION,
-        `当前状态"${TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS]}"不能执行转办`,
-        400,
-      );
+    const validation = this.validateAction('transfer', task, version, userId, userRole);
+    if (!validation.allowed) {
+      throw new BusinessException(validation.code!, validation.message!, 400);
     }
 
     if (!targetAssigneeId) {
@@ -377,23 +556,19 @@ export class PlantingTaskService {
 
   async followUp(id: string, result: string, version: number, userId: string, userRole: string) {
     const task = this.getTaskOrThrow(id);
-    this.checkVersion(task, version);
-
-    if (task.status !== TASK_STATUS.TRANSFERRED) {
-      throw new BusinessException(ErrorCodes.INVALID_STATUS_TRANSITION,
-        `当前状态"${TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS]}"不能回访，只能在已转办状态执行`, 400);
+    const validation = this.validateAction('follow_up', task, version, userId, userRole, result);
+    if (!validation.allowed) {
+      throw new BusinessException(validation.code!, validation.message!, 400);
     }
 
-    if (!result || result.trim().length === 0) {
-      throw new BusinessException(ErrorCodes.MISSING_EVIDENCE, '回访必须填写回访结果（如客户确认、验收意见等）');
-    }
+    const beforeStatus = task.status;
 
     this.dbService.run(
       `UPDATE planting_tasks SET status = ?, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [TASK_STATUS.FOLLOWED_UP, id],
     );
 
-    this.logAudit(id, userId, userRole, 'follow_up', task.status, TASK_STATUS.FOLLOWED_UP, null, result);
+    this.logAudit(id, userId, userRole, 'follow_up', beforeStatus, TASK_STATUS.FOLLOWED_UP, null, result);
     this.addProcessingRecord(id, userId, userRole, 'follow_up', result, 'success');
 
     return this.detail(id);
@@ -401,42 +576,19 @@ export class PlantingTaskService {
 
   async archive(id: string, version: number, userId: string, userRole: string) {
     const task = this.getTaskOrThrow(id);
-    this.checkVersion(task, version);
-
-    if (userRole !== USER_ROLES.COOPERATIVE_DIRECTOR) {
-      throw new BusinessException(ErrorCodes.UNAUTHORIZED_ROLE, '农技员不能替合作社主任归档，田间管理员也不能归档，请联系主任操作', 403);
+    const validation = this.validateAction('archive', task, version, userId, userRole);
+    if (!validation.allowed) {
+      throw new BusinessException(validation.code!, validation.message!, 400);
     }
 
-    if (task.status !== TASK_STATUS.FOLLOWED_UP) {
-      throw new BusinessException(ErrorCodes.INVALID_STATUS_TRANSITION,
-        `当前状态"${TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS]}"不能归档，必须先完成回访`, 400);
-    }
-
-    const materials = this.dbService.query(
-      'SELECT * FROM material_requisitions WHERE task_id = ? AND requisition_status = ?',
-      [id, 'pending'],
-    ) as any[];
-    if (materials.length > 0) {
-      throw new BusinessException(ErrorCodes.MISSING_MATERIAL,
-        `存在${materials.length}项未审批的农资领用，无法归档，请先审批材料`, 400, {
-        pendingMaterials: materials.length,
-      });
-    }
-
-    const fieldCount = this.dbService.queryOne(
-      'SELECT COUNT(*) as cnt FROM field_records WHERE task_id = ?',
-      [id],
-    ).cnt;
-    if (fieldCount === 0) {
-      throw new BusinessException(ErrorCodes.MISSING_EVIDENCE, '该任务还没有田间记录，归档前请先录入田间作业记录');
-    }
+    const beforeStatus = task.status;
 
     this.dbService.run(
       `UPDATE planting_tasks SET status = ?, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [TASK_STATUS.ARCHIVED, id],
     );
 
-    this.logAudit(id, userId, userRole, 'archive', task.status, TASK_STATUS.ARCHIVED, null, '任务归档完成');
+    this.logAudit(id, userId, userRole, 'archive', beforeStatus, TASK_STATUS.ARCHIVED, null, '任务归档完成');
     this.addProcessingRecord(id, userId, userRole, 'archive', '归档完成', 'success');
 
     return this.detail(id);
@@ -444,25 +596,19 @@ export class PlantingTaskService {
 
   async returnForCorrection(id: string, reason: string, version: number, userId: string, userRole: string) {
     const task = this.getTaskOrThrow(id);
-    this.checkVersion(task, version);
-
-    if (task.status === TASK_STATUS.ARCHIVED) {
-      throw new BusinessException(ErrorCodes.INVALID_STATUS_TRANSITION, '已归档任务不能退回补正', 400);
-    }
-    if (task.status === TASK_STATUS.RETURNED_FOR_CORRECTION) {
-      throw new BusinessException(ErrorCodes.STATUS_CONFLICT, '任务已处于退回补正状态，不能重复退回');
+    const validation = this.validateAction('return_for_correction', task, version, userId, userRole, reason);
+    if (!validation.allowed) {
+      throw new BusinessException(validation.code!, validation.message!, 400);
     }
 
-    if (!reason || reason.trim().length === 0) {
-      throw new BusinessException(ErrorCodes.MISSING_EVIDENCE, '退回补正必须填写退回原因（材料缺失/时限问题/状态冲突等具体说明）');
-    }
+    const beforeStatus = task.status;
 
     this.dbService.run(
       `UPDATE planting_tasks SET status = ?, exception_reason = ?, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ?`,
       [TASK_STATUS.RETURNED_FOR_CORRECTION, reason, id],
     );
 
-    this.logAudit(id, userId, userRole, 'return_for_correction', task.status, TASK_STATUS.RETURNED_FOR_CORRECTION, reason, `退回原因: ${reason}`);
+    this.logAudit(id, userId, userRole, 'return_for_correction', beforeStatus, TASK_STATUS.RETURNED_FOR_CORRECTION, reason, `退回原因: ${reason}`);
     this.addProcessingRecord(id, userId, userRole, 'return_for_correction', reason, 'failure');
 
     return this.detail(id);
@@ -475,18 +621,12 @@ export class PlantingTaskService {
     userId: string,
     userRole: string,
   ) {
-    const results: Array<{
-      taskId: string;
-      taskNo: string;
-      success: boolean;
-      reason?: string;
-      data?: any;
-    }> = [];
+    const results: BatchActionResult[] = [];
 
     for (const taskId of taskIds) {
       try {
         const task = this.dbService.queryOne(
-          'SELECT id, task_no, status, version, assignee_id, assignee_role, exception_reason FROM planting_tasks WHERE id = ?',
+          'SELECT * FROM planting_tasks WHERE id = ?',
           [taskId],
         ) as any;
 
@@ -495,55 +635,21 @@ export class PlantingTaskService {
           continue;
         }
 
-        const targetStatus = this.getTargetStatusForAction(action, task.status);
-        if (!targetStatus) {
+        const validation = this.validateAction(action, task, task.version, userId, userRole, evidence);
+        if (!validation.allowed) {
+          this.logAudit(taskId, userId, userRole, action, task.status, task.status, validation.message, `批量${this.getActionLabel(action)}失败: ${validation.message}`);
+          this.addProcessingRecord(taskId, userId, userRole, action, validation.message || '', 'failure');
           results.push({
             taskId,
             taskNo: task.task_no,
             success: false,
-            reason: `状态"${TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS]}"不能执行${this.getActionLabel(action)}操作`,
+            reason: validation.message!,
           });
           continue;
         }
 
-        const roleCheck = this.checkRolePermissionSilent(userRole, targetStatus, action, task, userId);
-        if (!roleCheck.allowed) {
-          results.push({
-            taskId,
-            taskNo: task.task_no,
-            success: false,
-            reason: roleCheck.reason!,
-          });
-          continue;
-        }
-
-        if (action === 'process' || action === 'follow_up') {
-          if (!evidence || evidence.trim().length === 0) {
-            results.push({
-              taskId,
-              taskNo: task.task_no,
-              success: false,
-              reason: this.getActionLabel(action) + '需要提交处理依据/结果',
-            });
-            continue;
-          }
-        }
-
-        if (action === 'archive') {
-          const materials = this.dbService.query(
-            'SELECT * FROM material_requisitions WHERE task_id = ? AND requisition_status = ?',
-            [taskId, 'pending'],
-          ) as any[];
-          if (materials.length > 0) {
-            results.push({
-              taskId,
-              taskNo: task.task_no,
-              success: false,
-              reason: `存在${materials.length}项未审批农资领用，无法归档`,
-            });
-            continue;
-          }
-        }
+        const targetStatus = validation.targetStatus!;
+        const beforeStatus = task.status;
 
         const updateResult = this.dbService.run(
           `UPDATE planting_tasks SET status = ?, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ? AND version = ?`,
@@ -551,16 +657,19 @@ export class PlantingTaskService {
         );
 
         if (updateResult.changes === 0) {
+          const failReason = '版本冲突，任务已被其他人修改，请刷新后重试';
+          this.logAudit(taskId, userId, userRole, action, task.status, task.status, failReason, `批量${this.getActionLabel(action)}失败: ${failReason}`);
+          this.addProcessingRecord(taskId, userId, userRole, action, failReason, 'failure');
           results.push({
             taskId,
             taskNo: task.task_no,
             success: false,
-            reason: '版本冲突，任务已被其他人修改，请刷新后重试',
+            reason: failReason,
           });
           continue;
         }
 
-        this.logAudit(taskId, userId, userRole, action, task.status, targetStatus, null, evidence || `批量${this.getActionLabel(action)}`);
+        this.logAudit(taskId, userId, userRole, action, beforeStatus, targetStatus, null, evidence || `批量${this.getActionLabel(action)}`);
         this.addProcessingRecord(taskId, userId, userRole, action, evidence || '', 'success');
 
         results.push({ taskId, taskNo: task.task_no, success: true });
@@ -585,6 +694,54 @@ export class PlantingTaskService {
     };
   }
 
+  async executeBatchAction(
+    taskId: string,
+    action: string,
+    evidence: string | undefined,
+    userId: string,
+    userRole: string,
+  ): { success: boolean; reason?: string } {
+    try {
+      const task = this.dbService.queryOne(
+        'SELECT * FROM planting_tasks WHERE id = ?',
+        [taskId],
+      ) as any;
+
+      if (!task) {
+        return { success: false, reason: '种植任务不存在' };
+      }
+
+      const validation = this.validateAction(action, task, task.version, userId, userRole, evidence);
+      if (!validation.allowed) {
+        this.logAudit(taskId, userId, userRole, action, task.status, task.status, validation.message, `${this.getActionLabel(action)}失败: ${validation.message}`);
+        this.addProcessingRecord(taskId, userId, userRole, action, validation.message || '', 'failure');
+        return { success: false, reason: validation.message! };
+      }
+
+      const targetStatus = validation.targetStatus!;
+      const beforeStatus = task.status;
+
+      const updateResult = this.dbService.run(
+        `UPDATE planting_tasks SET status = ?, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ? AND version = ?`,
+        [targetStatus, taskId, task.version],
+      );
+
+      if (updateResult.changes === 0) {
+        const failReason = '版本冲突，任务已被其他人修改';
+        this.logAudit(taskId, userId, userRole, action, task.status, task.status, failReason, `${this.getActionLabel(action)}失败: ${failReason}`);
+        this.addProcessingRecord(taskId, userId, userRole, action, failReason, 'failure');
+        return { success: false, reason: failReason };
+      }
+
+      this.logAudit(taskId, userId, userRole, action, beforeStatus, targetStatus, null, evidence || this.getActionLabel(action));
+      this.addProcessingRecord(taskId, userId, userRole, action, evidence || '', 'success');
+
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, reason: e.message || '处理失败' };
+    }
+  }
+
   async auditLogs(taskId: string) {
     return this.dbService.query(
       `SELECT a.*, u.display_name as operator_name FROM audit_logs a LEFT JOIN users u ON a.operator_id = u.id WHERE a.task_id = ? ORDER BY a.created_at DESC`,
@@ -605,98 +762,6 @@ export class PlantingTaskService {
       throw new BusinessException(ErrorCodes.NOT_FOUND, '种植任务不存在', 404);
     }
     return task;
-  }
-
-  private checkVersion(task: any, clientVersion: number) {
-    if (task.version !== clientVersion) {
-      throw new BusinessException(
-        ErrorCodes.VERSION_CONFLICT,
-        `版本冲突：任务已被修改（当前版本v${task.version}，提交版本v${clientVersion}），请刷新后重试`,
-        409,
-        { currentVersion: task.version, clientVersion },
-      );
-    }
-  }
-
-  private getActionLabel(action: string): string {
-    const map: Record<string, string> = {
-      assign: '分派',
-      process: '处理',
-      complete_processing: '完成处理',
-      transfer: '转办',
-      follow_up: '回访',
-      archive: '归档',
-      return_for_correction: '退回补正',
-    };
-    return map[action] || action;
-  }
-
-  private getTargetStatusForAction(action: string, currentStatus: string): string | null {
-    const transitions: Record<string, Record<string, string>> = {
-      assign: {
-        [TASK_STATUS.PENDING_ASSIGN]: TASK_STATUS.ASSIGNED,
-        [TASK_STATUS.RETURNED_FOR_CORRECTION]: TASK_STATUS.ASSIGNED,
-        [TASK_STATUS.ASSIGNED]: TASK_STATUS.ASSIGNED,
-      },
-      process: {
-        [TASK_STATUS.ASSIGNED]: TASK_STATUS.PROCESSING,
-        [TASK_STATUS.PROCESSING]: TASK_STATUS.TRANSFERRED,
-      },
-      transfer: {
-        [TASK_STATUS.ASSIGNED]: TASK_STATUS.TRANSFERRED,
-        [TASK_STATUS.PROCESSING]: TASK_STATUS.TRANSFERRED,
-        [TASK_STATUS.TRANSFERRED]: TASK_STATUS.TRANSFERRED,
-      },
-      follow_up: {
-        [TASK_STATUS.TRANSFERRED]: TASK_STATUS.FOLLOWED_UP,
-      },
-      archive: {
-        [TASK_STATUS.FOLLOWED_UP]: TASK_STATUS.ARCHIVED,
-      },
-      return_for_correction: {
-        [TASK_STATUS.PENDING_ASSIGN]: TASK_STATUS.RETURNED_FOR_CORRECTION,
-        [TASK_STATUS.ASSIGNED]: TASK_STATUS.RETURNED_FOR_CORRECTION,
-        [TASK_STATUS.PROCESSING]: TASK_STATUS.RETURNED_FOR_CORRECTION,
-        [TASK_STATUS.TRANSFERRED]: TASK_STATUS.RETURNED_FOR_CORRECTION,
-        [TASK_STATUS.FOLLOWED_UP]: TASK_STATUS.RETURNED_FOR_CORRECTION,
-      },
-    };
-
-    return transitions[action]?.[currentStatus] || null;
-  }
-
-  private checkRolePermissionSilent(
-    userRole: string,
-    targetStatus: string,
-    action: string,
-    task: any,
-    userId: string,
-  ): { allowed: boolean; reason?: string } {
-    if (targetStatus === TASK_STATUS.ARCHIVED && userRole !== USER_ROLES.COOPERATIVE_DIRECTOR) {
-      return { allowed: false, reason: '农技员不能替合作社主任归档' };
-    }
-
-    if (action === 'assign' && userRole !== USER_ROLES.COOPERATIVE_DIRECTOR) {
-      return { allowed: false, reason: '只有合作社主任可以分派任务' };
-    }
-
-    if (userRole === USER_ROLES.FIELD_MANAGER) {
-      const skippedActions = ['assign', 'archive', 'follow_up'];
-      if (skippedActions.includes(action)) {
-        return { allowed: false, reason: '田间管理员不能跳过处理环节分派/回访/归档' };
-      }
-      if (action === 'transfer' && targetStatus === TASK_STATUS.TRANSFERRED && task.assignee_id !== userId) {
-        return { allowed: false, reason: '田间管理员只能转办自己处理中的任务' };
-      }
-    }
-
-    if (action === 'process' || action === 'transfer') {
-      if (task.assignee_id && task.assignee_id !== userId && userRole !== USER_ROLES.COOPERATIVE_DIRECTOR) {
-        return { allowed: false, reason: '只有当前处理人或合作社主任可以操作此任务' };
-      }
-    }
-
-    return { allowed: true };
   }
 
   private addProcessingRecord(

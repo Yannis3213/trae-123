@@ -163,5 +163,28 @@ export const FIELD_RECORD_TYPE_LABELS: Record<string, string> = {
   pest_control: '病虫害防治',
   harvesting: '收获',
   inspection: '巡检',
+  pruning: '修剪',
   other: '其他',
 };
+
+export const ERROR_CODE_MESSAGES: Record<string, string> = {
+  UNAUTHORIZED_ROLE: '角色权限不足',
+  STATUS_CONFLICT: '状态冲突，无法执行此操作',
+  VERSION_CONFLICT: '版本冲突，任务已被其他人修改，请刷新后重试',
+  MISSING_EVIDENCE: '缺少必要的处理依据或证据',
+  MISSING_MATERIAL: '存在未审批的农资领用',
+  OVERDUE_PROCESSING: '任务已逾期，请先处理逾期任务',
+  DUPLICATE_SUBMISSION: '重复提交',
+  INVALID_STATUS_TRANSITION: '当前状态无法执行此操作',
+  NOT_FOUND: '记录不存在',
+  FORBIDDEN_ACTION: '没有权限执行此操作',
+  SKIP_PROCESSING_STEP: '田间管理员不能跳过处理环节，只能处理分派给自己的任务',
+};
+
+export function getErrorMessage(err: any): string {
+  if (!err) return '操作失败';
+  if (err.code && ERROR_CODE_MESSAGES[err.code]) {
+    return err.message || ERROR_CODE_MESSAGES[err.code];
+  }
+  return err.message || '操作失败，请稍后重试';
+}

@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../common/database.service';
-import { TASK_STATUS, TASK_STATUS_LABELS, OVERDUE_STATUS, OVERDUE_STATUS_LABELS, USER_ROLES } from '../common/constants';
-import { BusinessException, ErrorCodes } from '../common/exceptions';
+import {
+  TASK_STATUS,
+  TASK_STATUS_LABELS,
+  OVERDUE_STATUS,
+  OVERDUE_STATUS_LABELS,
+  USER_ROLES,
+} from '../common/constants';
 import { PlantingTaskService } from '../planting-task/planting-task.service';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -12,7 +17,7 @@ export class OverdueQueueService {
     private readonly taskService: PlantingTaskService,
   ) {}
 
-  async list(userId: string, userRole: string) {
+  async list() {
     const tasks = this.dbService.query(
       `SELECT t.*, u.display_name as assignee_name
        FROM planting_tasks t
@@ -78,6 +83,8 @@ export class OverdueQueueService {
       reason?: string;
     }> = [];
 
+    const now = new Date();
+
     for (const taskId of taskIds) {
       try {
         const task = this.dbService.queryOne(
@@ -91,77 +98,82 @@ export class OverdueQueueService {
         }
 
         const deadlineDate = new Date(task.deadline);
-        const now = new Date();
         if (deadlineDate >= now) {
-          results.push({ taskId, taskNo: task.task_no, success: false, reason: '该任务尚未逾期，不能使用逾期批量推进' });
+          const failReason = '该任务尚未逾期，不能使用逾期批量推进';
+          this.dbService.run(
+            `INSERT INTO audit_logs (id, task_id, operator_id, operator_role, action, before_status, after_status, fail_reason, remarks)
+             VALUES (?, ?, ?, ?, 'overdue_advance', ?, ?, ?, ?)`,
+            [uuidv4(), taskId, userId, userRole, task.status, task.status, failReason, `逾期批量推进失败: ${failReason}`],
+          );
+          this.dbService.run(
+            `INSERT INTO processing_records (id, task_id, processor_id, processor_role, action, result, evidence)
+             VALUES (?, ?, ?, ?, 'overdue_advance', 'failure', ?)`,
+            [uuidv4(), taskId, userId, userRole, failReason],
+          );
+          results.push({ taskId, taskNo: task.task_no, success: false, reason: failReason });
           continue;
         }
 
-        const targetStatus = this.getNextStatus(task.status);
-        if (!targetStatus) {
-          results.push({
-            taskId,
-            taskNo: task.task_no,
-            success: false,
-            reason: `当前状态"${TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS]}"无法自动推进`,
-          });
+        const advanceAction = this.getAdvanceAction(task.status);
+        if (!advanceAction) {
+          const failReason = `当前状态"${TASK_STATUS_LABELS[task.status as keyof typeof TASK_STATUS_LABELS]}"无法自动推进`;
+          this.dbService.run(
+            `INSERT INTO audit_logs (id, task_id, operator_id, operator_role, action, before_status, after_status, fail_reason, remarks)
+             VALUES (?, ?, ?, ?, 'overdue_advance', ?, ?, ?, ?)`,
+            [uuidv4(), taskId, userId, userRole, task.status, task.status, failReason, `逾期批量推进失败: ${failReason}`],
+          );
+          this.dbService.run(
+            `INSERT INTO processing_records (id, task_id, processor_id, processor_role, action, result, evidence)
+             VALUES (?, ?, ?, ?, 'overdue_advance', 'failure', ?)`,
+            [uuidv4(), taskId, userId, userRole, failReason],
+          );
+          results.push({ taskId, taskNo: task.task_no, success: false, reason: failReason });
           continue;
         }
 
-        if (task.assignee_id !== userId && userRole !== USER_ROLES.COOPERATIVE_DIRECTOR) {
-          results.push({
-            taskId,
-            taskNo: task.task_no,
-            success: false,
-            reason: '只有当前责任人或合作社主任可以推进逾期任务',
-          });
-          continue;
-        }
-
-        this.dbService.run(
-          `UPDATE planting_tasks SET status = ?, version = version + 1, updated_at = datetime('now', 'localtime') WHERE id = ? AND version = ?`,
-          [targetStatus, taskId, task.version],
+        const executeResult = await this.taskService.executeBatchAction(
+          taskId,
+          advanceAction,
+          evidence || `逾期批量推进`,
+          userId,
+          userRole,
         );
 
-        const updated = this.dbService.queryOne('SELECT version FROM planting_tasks WHERE id = ?', [taskId]) as any;
-        if (updated && updated.version === task.version) {
-          results.push({
-            taskId,
-            taskNo: task.task_no,
-            success: false,
-            reason: '版本冲突，任务已被其他人修改',
-          });
-          continue;
-        }
-
-        this.dbService.run(
-          `INSERT INTO audit_logs (id, task_id, operator_id, operator_role, action, before_status, after_status, remarks)
-           VALUES (?, ?, ?, ?, 'overdue_advance', ?, ?, '逾期批量推进')`,
-          [uuidv4(), taskId, userId, userRole, task.status, targetStatus],
-        );
-
-        results.push({ taskId, taskNo: task.task_no, success: true });
+        results.push({
+          taskId,
+          taskNo: task.task_no,
+          success: executeResult.success,
+          reason: executeResult.reason,
+        });
       } catch (e: any) {
-        results.push({ taskId, taskNo: '', success: false, reason: e.message || '处理失败' });
+        results.push({
+          taskId,
+          taskNo: '',
+          success: false,
+          reason: e.message || '处理失败',
+        });
       }
     }
 
+    const successCount = results.filter((r) => r.success).length;
+    const failCount = results.filter((r) => !r.success).length;
+
     return {
       total: results.length,
-      successCount: results.filter((r) => r.success).length,
-      failCount: results.filter((r) => !r.success).length,
+      successCount,
+      failCount,
       results,
     };
   }
 
-  private getNextStatus(currentStatus: string): string | null {
+  private getAdvanceAction(currentStatus: string): string | null {
     const flow: Record<string, string> = {
-      [TASK_STATUS.PENDING_ASSIGN]: TASK_STATUS.ASSIGNED,
-      [TASK_STATUS.ASSIGNED]: TASK_STATUS.PROCESSING,
-      [TASK_STATUS.PROCESSING]: TASK_STATUS.TRANSFERRED,
-      [TASK_STATUS.TRANSFERRED]: TASK_STATUS.FOLLOWED_UP,
-      [TASK_STATUS.FOLLOWED_UP]: TASK_STATUS.ARCHIVED,
-      [TASK_STATUS.RETURNED_FOR_CORRECTION]: TASK_STATUS.PENDING_ASSIGN,
+      [TASK_STATUS.PENDING_ASSIGN]: 'assign',
+      [TASK_STATUS.ASSIGNED]: 'process',
+      [TASK_STATUS.PROCESSING]: 'complete_processing',
+      [TASK_STATUS.TRANSFERRED]: 'follow_up',
+      [TASK_STATUS.FOLLOWED_UP]: 'archive',
+      [TASK_STATUS.RETURNED_FOR_CORRECTION]: 'assign',
     };
     return flow[currentStatus] || null;
   }

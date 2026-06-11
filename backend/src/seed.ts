@@ -361,6 +361,97 @@ function seed() {
   insertMaterial.run(uuidv4(), t10Id, '钾肥', 80, '公斤', 'pending', 'u-technician', 'agricultural_technician', yesterday, null, '膨瓜期追肥未审批');
   insertField.run(uuidv4(), t10Id, yesterday, 'inspection', '西瓜膨瓜期检查，果实生长均匀', 'u-technician', 'agricultural_technician', '晴', null);
 
+  // ================= 新增样例1: 已回访但缺田间记录 - 测试归档拦截 =================
+  const t11Id = 't-followed-no-field';
+  insertTask.run(t11Id, 'ZZ-202606-0010',
+    '甜瓜种植-南区9号田',
+    '甜瓜种植已完成回访但无田间记录，用于测试归档时"缺田间记录"拦截',
+    'followed_up', 'u-technician', 'agricultural_technician',
+    'u-director', 'cooperative_director',
+    '2026年甜瓜种植计划', 2026, 6, in5Days, 5, null,
+  );
+  insertAudit.run(uuidv4(), t11Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：甜瓜种植-南区9号田');
+  insertAudit.run(uuidv4(), t11Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派给 李农技(农技员)');
+  insertAudit.run(uuidv4(), t11Id, 'u-technician', 'agricultural_technician', 'process', 'assigned', 'processing', null, '开始甜瓜种植，已定植');
+  insertAudit.run(uuidv4(), t11Id, 'u-technician', 'agricultural_technician', 'complete_processing', 'processing', 'transferred', null, '田间管理完成，但未录入田间记录');
+  insertAudit.run(uuidv4(), t11Id, 'u-director', 'cooperative_director', 'follow_up', 'transferred', 'followed_up', null, '回访完成，社员确认坐果良好');
+  insertProc.run(uuidv4(), t11Id, 'u-technician', 'agricultural_technician', 'start_processing', 'success', null, '定植完成');
+  insertProc.run(uuidv4(), t11Id, 'u-technician', 'agricultural_technician', 'complete_processing', 'success', null, '管理完成，但田间记录未录入');
+  insertProc.run(uuidv4(), t11Id, 'u-director', 'cooperative_director', 'follow_up', 'success', null, '回访确认');
+  insertMaterial.run(uuidv4(), t11Id, '甜瓜苗', 4000, '株', 'approved', 'u-technician', 'agricultural_technician', day5Ago, day5Ago, null);
+  // 注意：这里故意不插入field_records，用于测试归档拦截
+  insertAttach.run(uuidv4(), t11Id, '甜瓜定植照片.jpg', 890000, 'image/jpeg', 'u-technician', 'agricultural_technician');
+
+  // ================= 新增样例2: 旧版本冲突测试 =================
+  const t12Id = 't-version-conflict';
+  insertTask.run(t12Id, 'ZZ-202606-0011',
+    '蔬菜种植-东区10号田',
+    '蔬菜种植任务，用于测试版本冲突（当前version=5）',
+    'processing', 'u-technician', 'agricultural_technician',
+    'u-director', 'cooperative_director',
+    '2026年蔬菜种植计划', 2026, 6, in5Days, 5, null,
+  );
+  insertAudit.run(uuidv4(), t12Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：蔬菜种植-东区10号田');
+  insertAudit.run(uuidv4(), t12Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派给 李农技 v2');
+  insertAudit.run(uuidv4(), t12Id, 'u-technician', 'agricultural_technician', 'process', 'assigned', 'processing', null, '开始处理 v3');
+  insertAudit.run(uuidv4(), t12Id, 'u-technician', 'agricultural_technician', 'process', 'processing', 'processing', null, '更新处理内容 v4');
+  insertAudit.run(uuidv4(), t12Id, 'u-technician', 'agricultural_technician', 'process', 'processing', 'processing', null, '再次更新 v5');
+  insertProc.run(uuidv4(), t12Id, 'u-technician', 'agricultural_technician', 'start_processing', 'success', null, '版本3开始处理');
+  insertField.run(uuidv4(), t12Id, yesterday, 'sowing', '蔬菜定植完成', 'u-technician', 'agricultural_technician', '晴', null);
+  insertMaterial.run(uuidv4(), t12Id, '番茄苗', 2000, '株', 'approved', 'u-technician', 'agricultural_technician', day5Ago, day3Ago, null);
+  insertAttach.run(uuidv4(), t12Id, '蔬菜种植现场.jpg', 760000, 'image/jpeg', 'u-technician', 'agricultural_technician');
+
+  // ================= 新增样例3: 越权测试 - 田间管理员被分派给非田间管理员角色的任务 =================
+  const t13Id = 't-unauthorized-field';
+  insertTask.run(t13Id, 'ZZ-202606-0012',
+    '小麦病虫害防治-西区11号田',
+    '测试田间管理员越权操作：assignee_role是农技员，但assignee_id是田间管理员（数据异常场景）',
+    'assigned', 'u-field', 'agricultural_technician',
+    'u-director', 'cooperative_director',
+    '2026年小麦病虫害防治计划', 2026, 6, in2Days, 2, null,
+  );
+  insertAudit.run(uuidv4(), t13Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：小麦病虫害防治-西区11号田');
+  insertAudit.run(uuidv4(), t13Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派时误将assignee_role设为农技员，但实际分给了田间管理员张田间');
+  insertProc.run(uuidv4(), t13Id, 'u-director', 'cooperative_director', 'assign', 'success', null, '分派完成（数据异常测试用）');
+  insertMaterial.run(uuidv4(), t13Id, '杀虫剂-吡虫啉', 30, '瓶', 'approved', 'u-director', 'cooperative_director', day3Ago, yesterday, null);
+  // 注意：assignee_role故意设为agricultural_technician，但assignee_id是u-field，用于测试田间管理员跳过处理环节的拦截
+
+  // ================= 新增样例4: 多项缺材料样例 =================
+  const t14Id = 't-multiple-missing';
+  insertTask.run(t14Id, 'ZZ-202606-0013',
+    '葡萄园管理-北区12号田',
+    '葡萄园管理任务，有多项未审批农资，测试完成处理时拦截',
+    'processing', 'u-technician', 'agricultural_technician',
+    'u-director', 'cooperative_director',
+    '2026年葡萄园管理计划', 2026, 6, in5Days, 3, null,
+  );
+  insertAudit.run(uuidv4(), t14Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：葡萄园管理-北区12号田');
+  insertAudit.run(uuidv4(), t14Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派给 李农技');
+  insertAudit.run(uuidv4(), t14Id, 'u-technician', 'agricultural_technician', 'process', 'assigned', 'processing', null, '开始葡萄园夏季修剪');
+  insertProc.run(uuidv4(), t14Id, 'u-technician', 'agricultural_technician', 'start_processing', 'success', null, '夏季修剪开始');
+  // 3项pending农资
+  insertMaterial.run(uuidv4(), t14Id, '复合肥', 150, '公斤', 'pending', 'u-technician', 'agricultural_technician', today, null, '膨果肥未审批');
+  insertMaterial.run(uuidv4(), t14Id, '杀菌剂-波尔多液', 50, '瓶', 'pending', 'u-technician', 'agricultural_technician', yesterday, null, '霜霉病防治未审批');
+  insertMaterial.run(uuidv4(), t14Id, '叶面肥', 40, '升', 'pending', 'u-technician', 'agricultural_technician', yesterday, null, '叶面喷施未审批');
+  insertMaterial.run(uuidv4(), t14Id, '修枝剪', 10, '把', 'approved', 'u-technician', 'agricultural_technician', day5Ago, day3Ago, null);
+  insertField.run(uuidv4(), t14Id, yesterday, 'pruning', '夏季修剪完成，剪除徒长枝和过密枝', 'u-technician', 'agricultural_technician', '多云', null);
+  insertAttach.run(uuidv4(), t14Id, '葡萄园修剪后照片.jpg', 1100000, 'image/jpeg', 'u-technician', 'agricultural_technician');
+
+  // ================= 新增样例5: 田间管理员分派给自己的任务 - 正常场景 =================
+  const t15Id = 't-field-normal';
+  insertTask.run(t15Id, 'ZZ-202606-0014',
+    '果园除草-南区13号田',
+    '正常分派给田间管理员的任务，用于测试田间管理员正常处理流程',
+    'assigned', 'u-field', 'field_manager',
+    'u-director', 'cooperative_director',
+    '2026年果园管理计划', 2026, 6, in2Days, 2, null,
+  );
+  insertAudit.run(uuidv4(), t15Id, 'u-director', 'cooperative_director', 'create', null, 'pending_assign', null, '创建任务：果园除草-南区13号田');
+  insertAudit.run(uuidv4(), t15Id, 'u-director', 'cooperative_director', 'assign', 'pending_assign', 'assigned', null, '分派给 张田间(田间管理员) - 正常场景');
+  insertProc.run(uuidv4(), t15Id, 'u-director', 'cooperative_director', 'assign', 'success', null, '分派给田间管理员');
+  insertMaterial.run(uuidv4(), t15Id, '除草剂-草甘膦', 20, '升', 'approved', 'u-field', 'field_manager', yesterday, yesterday, null);
+  insertAttach.run(uuidv4(), t15Id, '果园杂草情况.jpg', 650000, 'image/jpeg', 'u-field', 'field_manager');
+
   console.log('');
   console.log('========================================');
   console.log('  农业合作社 SQLite 演示数据初始化完成');
@@ -371,31 +462,39 @@ function seed() {
   console.log('  - 农技员:     technician / 123456  (处理+转办)');
   console.log('  - 田间管理员: fieldmanager / 123456 (处理+录入记录)');
   console.log('');
-  console.log('▶ 四类演示单据：');
+  console.log('▶ 四类演示单据（共15个任务）：');
   console.log('  【正常流转】');
   console.log('    ZZ-202606-0001 待分派   - 小麦种植，带附件(方案+地形图)');
   console.log('    ZZ-202606-0002 已分派   - 水稻育秧，带农资审批+附件');
   console.log('    ZZ-202606-0003 处理中   - 玉米播种，带田间记录×2+农资×2+附件');
+  console.log('    ZZ-202606-0014 已分派   - 果园除草，田间管理员正常处理任务');
   console.log('  【已转办】');
   console.log('    ZZ-202606-0004 已转办   - 大豆种植，农技员转田间管理员，带田间巡检');
   console.log('  【已回访】');
   console.log('    ZZ-202606-0005 已回访   - 花生收获，回访确认亩产320kg');
   console.log('    ZZ-202606-0009 已回访   - 西瓜种植 (有1项未审批农资，归档被拦截用)');
+  console.log('    ZZ-202606-0010 已回访   - 甜瓜种植 (故意缺田间记录，归档拦截测试核心样例)');
   console.log('  【退回补正 / 异常】');
   console.log('    ZZ-202606-0006 退回补正 - 棉花种植，缺化肥和农药审批');
   console.log('    ZZ-202606-0007 已分派   - 油菜种植，已逾期2天未处理');
-  console.log('    ZZ-202606-0008 处理中   - 红薯种植，田间管理员处理 (冲突测试)');
+  console.log('    ZZ-202606-0008 处理中   - 红薯种植，田间管理员处理 (正常处理场景)');
+  console.log('    ZZ-202606-0011 处理中   - 蔬菜种植 (version=5，版本冲突测试)');
+  console.log('    ZZ-202606-0012 已分派   - 小麦病虫害防治 (assignee_role异常，田间管理员越权拦截)');
+  console.log('    ZZ-202606-0013 处理中   - 葡萄园管理 (3项pending农资，完成处理拦截)');
   console.log('  【已归档】');
   console.log('    ZZ-202605-0001 已归档   - 春小麦收获，4附件+完整审批');
   console.log('');
   console.log('▶ 异常入口 (用于接口穿透测试)：');
-  console.log('  ✅ 越权归档:   用农技员账号归档 0005');
-  console.log('  ✅ 重复提交:   用 version=1 提交 0003 (当前 v3)');
-  console.log('  ✅ 状态冲突:   对已归档 0001 (202605-0001) 再次分派');
-  console.log('  ✅ 缺证据:     处理 0002 (水稻育秧) 不提供 evidence');
-  console.log('  ✅ 越权推进:   田间管理员尝试分派/回访/归档');
-  console.log('  ✅ 缺材料归档: 主任归档 0009 (有未审批钾肥)');
-  console.log('  ✅ 缺田间记录: 主任归档一个有回访但无field_record的任务');
+  console.log('  ✅ 越权归档:     用农技员账号归档 0005');
+  console.log('  ✅ 版本冲突:     用 version=1 提交 0011 (当前 v5)');
+  console.log('  ✅ 状态冲突:     对已归档 202605-0001 再次分派');
+  console.log('  ✅ 缺证据:       处理 0002 (水稻育秧) 不提供 evidence');
+  console.log('  ✅ 越权推进:     田间管理员尝试分派/回访/归档');
+  console.log('  ✅ 缺材料归档:   主任归档 0009 (有未审批钾肥)');
+  console.log('  ✅ 缺田间记录:   主任归档 0010 (已回访但无field_record)');
+  console.log('  ✅ 多项缺材料:   农技员完成处理 0013 (3项pending农资)');
+  console.log('  ✅ 田间管理员越权: 田间管理员处理 0012 (assignee_role不是field_manager)');
+  console.log('  ✅ 非处理人越权: 田间管理员处理 0002 (处理人是李农技)');
   console.log('');
 
   db.close();

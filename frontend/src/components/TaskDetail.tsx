@@ -1,6 +1,6 @@
 import { createSignal, Show, For, onMount } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
-import { api, STATUS_LABELS, STATUS_BADGE_CLASS, OVERDUE_LABELS, ROLE_LABELS, FIELD_RECORD_TYPE_LABELS, getCurrentUser } from '../lib/api';
+import { api, STATUS_LABELS, STATUS_BADGE_CLASS, OVERDUE_LABELS, ROLE_LABELS, FIELD_RECORD_TYPE_LABELS, getCurrentUser, getErrorMessage } from '../lib/api';
 
 export default function TaskDetail(props: { id: string }) {
   const navigate = useNavigate();
@@ -63,7 +63,7 @@ export default function TaskDetail(props: { id: string }) {
       setActionSuccess('操作成功');
       await loadTask();
     } catch (err: any) {
-      setActionError(err.message || err.code || '操作失败');
+      setActionError(getErrorMessage(err));
     }
   };
 
@@ -105,47 +105,75 @@ export default function TaskDetail(props: { id: string }) {
   const isTechnician = () => user()?.role === 'agricultural_technician';
   const isFieldManager = () => user()?.role === 'field_manager';
   const isAssignee = () => task()?.assigneeId === user()?.id;
+  const currentUserRole = () => user()?.role || '';
 
-  const canAssign = () => {
-    if (!isDirector()) return false;
-    const s = task()?.status;
-    return s === 'pending_assign' || s === 'returned_for_correction' || s === 'assigned';
+  const ACTION_RULES: Record<string, {
+    allowedFrom: string[];
+    allowedRoles: string[];
+    requireAssignee?: boolean;
+  }> = {
+    assign: {
+      allowedFrom: ['pending_assign', 'returned_for_correction', 'assigned'],
+      allowedRoles: ['cooperative_director'],
+    },
+    process: {
+      allowedFrom: ['assigned'],
+      allowedRoles: ['cooperative_director', 'agricultural_technician', 'field_manager'],
+      requireAssignee: true,
+    },
+    complete_processing: {
+      allowedFrom: ['processing'],
+      allowedRoles: ['cooperative_director', 'agricultural_technician', 'field_manager'],
+      requireAssignee: true,
+    },
+    transfer: {
+      allowedFrom: ['assigned', 'processing', 'transferred'],
+      allowedRoles: ['cooperative_director', 'agricultural_technician', 'field_manager'],
+      requireAssignee: true,
+    },
+    follow_up: {
+      allowedFrom: ['transferred'],
+      allowedRoles: ['cooperative_director', 'agricultural_technician'],
+    },
+    archive: {
+      allowedFrom: ['followed_up'],
+      allowedRoles: ['cooperative_director'],
+    },
+    return_for_correction: {
+      allowedFrom: ['pending_assign', 'assigned', 'processing', 'transferred', 'followed_up'],
+      allowedRoles: ['cooperative_director', 'agricultural_technician'],
+    },
   };
 
-  const canProcess = () => {
-    const s = task()?.status;
-    if (s !== 'assigned') return false;
-    if (isFieldManager() && !isAssignee()) return false;
-    return isAssignee() || isDirector();
+  const canDoAction = (action: string) => {
+    const t = task();
+    const u = user();
+    if (!t || !u) return false;
+
+    const rule = ACTION_RULES[action];
+    if (!rule) return false;
+
+    if (!rule.allowedFrom.includes(t.status)) return false;
+    if (!rule.allowedRoles.includes(u.role)) return false;
+
+    if (rule.requireAssignee) {
+      if (t.assigneeId !== u.id && u.role !== 'cooperative_director') return false;
+    }
+
+    if (u.role === 'field_manager' && t.assigneeRole !== 'field_manager' && action !== 'transfer') {
+      return false;
+    }
+
+    return true;
   };
 
-  const canCompleteProcessing = () => {
-    const s = task()?.status;
-    if (s !== 'processing') return false;
-    if (isFieldManager() && !isAssignee()) return false;
-    return isAssignee() || isDirector();
-  };
-
-  const canTransfer = () => {
-    const s = task()?.status;
-    if (!['assigned', 'processing', 'transferred'].includes(s)) return false;
-    if (isFieldManager() && !isAssignee()) return false;
-    return isAssignee() || isDirector();
-  };
-
-  const canFollowUp = () => {
-    if (task()?.status !== 'transferred') return false;
-    if (isFieldManager()) return false;
-    return isDirector() || isTechnician();
-  };
-
-  const canArchive = () => task()?.status === 'followed_up' && isDirector();
-
-  const canReturn = () => {
-    const s = task()?.status;
-    if (s === 'archived' || s === 'returned_for_correction') return false;
-    return isDirector() || isTechnician();
-  };
+  const canAssign = () => canDoAction('assign');
+  const canProcess = () => canDoAction('process');
+  const canCompleteProcessing = () => canDoAction('complete_processing');
+  const canTransfer = () => canDoAction('transfer');
+  const canFollowUp = () => canDoAction('follow_up');
+  const canArchive = () => canDoAction('archive');
+  const canReturn = () => canDoAction('return_for_correction');
 
   return (
     <div class="p-6">

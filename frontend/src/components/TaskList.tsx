@@ -1,6 +1,6 @@
 import { createSignal, Show, For, onMount } from 'solid-js';
 import { useNavigate } from '@solidjs/router';
-import { api, STATUS_LABELS, STATUS_BADGE_CLASS, OVERDUE_LABELS, getCurrentUser } from '../lib/api';
+import { api, STATUS_LABELS, STATUS_BADGE_CLASS, OVERDUE_LABELS, getCurrentUser, getErrorMessage } from '../lib/api';
 
 export default function TaskList() {
   const navigate = useNavigate();
@@ -75,7 +75,7 @@ export default function TaskList() {
       await loadTasks();
       await loadStatistics();
     } catch (err: any) {
-      setBatchResult({ error: true, message: err.message || '批量处理失败' });
+      setBatchResult({ error: true, message: getErrorMessage(err) });
     } finally {
       setBatchLoading(false);
     }
