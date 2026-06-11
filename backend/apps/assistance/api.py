@@ -128,6 +128,7 @@ def create_new_application(request, payload: ApplicationCreateSchema):
 @api.post('/applications/process', auth=auth, response=ApplicationDetailSchema)
 def process_single_application(request, payload: ApplicationProcessSchema):
     user = request.auth
+    application = None
     try:
         application = AssistanceApplication.objects.select_for_update().get(
             id=payload.application_id
@@ -135,14 +136,39 @@ def process_single_application(request, payload: ApplicationProcessSchema):
     except AssistanceApplication.DoesNotExist:
         raise BusinessException('NOT_FOUND', '帮扶申请不存在')
 
-    application, record = process_application_action(
-        user=user,
-        application=application,
-        action=payload.action,
-        version=payload.version,
-        comment=payload.comment or '',
-        evidence_required=payload.evidence_required
-    )
+    try:
+        if payload.action == 'return' and not payload.comment:
+            raise BusinessException('MISSING_COMMENT', '退回补正必须填写原因')
+
+        application, record = process_application_action(
+            user=user,
+            application=application,
+            action=payload.action,
+            version=payload.version,
+            comment=payload.comment or '',
+            evidence_required=payload.evidence_required
+        )
+    except BusinessException as exc:
+        exc_type_map = {
+            'PERMISSION_DENIED': 'permission_violation',
+            'NOT_HANDLER': 'permission_violation',
+            'VERSION_CONFLICT': 'version_conflict',
+            'STATUS_CONFLICT': 'status_conflict',
+            'MISSING_EVIDENCE': 'missing_evidence',
+            'OVERDUE_BLOCKED': 'overdue',
+            'DUPLICATE_SUBMISSION': 'duplicate_submission',
+            'MISSING_COMMENT': 'validation_error',
+        }
+        if application:
+            create_exception_log(
+                operator=user,
+                exception_type=exc_type_map.get(exc.error_code, 'business_error'),
+                error_code=exc.error_code,
+                error_message=exc.error_message,
+                application=application,
+                request_data=f'{{"action":"{payload.action}","version":{payload.version}}}'
+            )
+        raise
 
     return build_application_detail_schema(application)
 

@@ -30,7 +30,7 @@ const evidenceTypeOptions = [
   { value: 'amount_calculation', label: '金额计算表' },
 ];
 
-export default function ApplicationDetail({ applicationId, onClose, onUpdated }) {
+export default function ApplicationDetail({ applicationId, currentUser, onClose, onUpdated }) {
   const [application, setApplication] = createSignal(null);
   const [loading, setLoading] = createSignal(false);
   const [action, setAction] = createSignal('');
@@ -73,30 +73,38 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
 
   const getAvailableActions = () => {
     const app = application();
-    if (!app) return [];
+    if (!app || !currentUser) return [];
 
     const actions = [];
-    const role = app.current_handler_id === app.creator_id ? 'community_worker' :
-                 app.current_handler_id === app.street_clerk_id ? 'street_clerk' :
-                 app.current_handler_id === app.leader_id ? 'leader' : '';
+    const role = currentUser.role;
+    const isCurrentHandler = !app.current_handler_id || app.current_handler_id === currentUser.id;
+    const isCreator = app.creator_id === currentUser.id;
+    const isStreetClerk = role === 'street_clerk' && app.street_clerk_id === currentUser.id;
+    const isLeader = role === 'leader' && app.leader_id === currentUser.id;
 
     if (app.status === 'pending' || app.status === 'returned') {
-      if (role === 'community_worker') {
+      if (role === 'community_worker' && isCreator) {
         if (app.status === 'returned') {
           actions.push('correct');
         } else {
           actions.push('submit');
         }
-      } else if (role === 'street_clerk' || role === 'leader') {
-        actions.push('accept');
+      } else if ((role === 'street_clerk' || role === 'leader') && app.status === 'pending') {
+        if (isCurrentHandler || !app.current_handler_id) {
+          actions.push('accept');
+        }
       }
     }
 
     if (app.status === 'accepted') {
-      if (role === 'street_clerk') {
-        actions.push('process', 'return');
-      } else if (role === 'leader') {
-        actions.push('approve', 'reject', 'return');
+      if (role === 'street_clerk' && (isStreetClerk || app.current_handler_id === currentUser.id)) {
+        if (app.current_node === 'difficulty_support' || app.current_node === 'home_verification') {
+          actions.push('process', 'return');
+        }
+      } else if (role === 'leader' && (isLeader || app.current_handler_id === currentUser.id)) {
+        if (app.current_node === 'rescue_confirmation' || app.current_node === 'home_verification') {
+          actions.push('approve', 'reject', 'return');
+        }
       }
     }
 
@@ -121,12 +129,24 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
         comment: comment(),
       });
       setApplication(result);
+      try {
+        const logs = await api.getExceptionLogs(applicationId);
+        setExceptionLogs(logs);
+      } catch (e) {
+        setExceptionLogs([]);
+      }
       setSuccess(`${actionLabels[action()] || action()}操作成功`);
       setAction('');
       setComment('');
       onUpdated && onUpdated();
     } catch (err) {
       setError(`${err.error_code}: ${err.error_message}`);
+      try {
+        const logs = await api.getExceptionLogs(applicationId);
+        setExceptionLogs(logs);
+      } catch (e) {
+        /* ignore */
+      }
     } finally {
       setProcessing(false);
     }
@@ -150,6 +170,7 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
       setUploadFileName('');
       setUploadFileType('');
       setSuccess('材料上传成功');
+      onUpdated && onUpdated();
     } catch (err) {
       setError(`${err.error_code}: ${err.error_message}`);
     } finally {

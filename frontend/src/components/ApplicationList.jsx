@@ -16,7 +16,7 @@ const evidenceTypeOptions = [
   { value: 'amount_calculation', label: '金额计算表' },
 ];
 
-export default function ApplicationList({ user, onViewDetail, onBatchProcess, onCreate, refreshTrigger }) {
+export default function ApplicationList({ user, onViewDetail, onBatchProcess, onCreate, onUpdated, refreshTrigger }) {
   const [activeTab, setActiveTab] = createSignal('pending');
   const [applications, setApplications] = createSignal([]);
   const [selectedIds, setSelectedIds] = createSignal(new Set());
@@ -154,6 +154,7 @@ export default function ApplicationList({ user, onViewDetail, onBatchProcess, on
       setShowReturnModal(false);
       setReturnTarget(null);
       loadData();
+      onUpdated && onUpdated();
     } catch (err) {
       setReturnError(`${err.error_code}: ${err.error_message}`);
     } finally {
@@ -208,6 +209,7 @@ export default function ApplicationList({ user, onViewDetail, onBatchProcess, on
       setShowCorrectModal(false);
       setCorrectTarget(null);
       loadData();
+      onUpdated && onUpdated();
     } catch (err) {
       setCorrectError(`${err.error_code}: ${err.error_message}`);
     } finally {

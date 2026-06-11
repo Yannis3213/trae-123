@@ -98,6 +98,7 @@ export default function App() {
           onViewDetail={handleViewDetail}
           onBatchProcess={handleBatchProcess}
           onCreate={() => setShowCreate(true)}
+          onUpdated={handleDataUpdated}
           refreshTrigger={refreshTrigger()}
         />
       </main>
@@ -105,6 +106,7 @@ export default function App() {
       {detailId() && (
         <ApplicationDetail
           applicationId={detailId()}
+          currentUser={user()}
           onClose={() => setDetailId(null)}
           onUpdated={handleDataUpdated}
         />

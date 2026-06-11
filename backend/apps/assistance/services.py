@@ -344,6 +344,7 @@ def process_application_action(
 
     elif action == 'correct':
         check_status(application, ['returned'])
+        check_required_evidence(application, application.current_node)
         application.status = 'pending'
         application.node_deadline = None
         application.warning_status = 'normal'
