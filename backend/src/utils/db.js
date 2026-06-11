@@ -28,6 +28,30 @@ const migrations = [
   {
     check: "SELECT count(*) as cnt FROM pragma_table_info('batch_results') WHERE name='new_handler'",
     sql: "ALTER TABLE batch_results ADD COLUMN new_handler TEXT"
+  },
+  {
+    check: "SELECT count(*) as cnt FROM pragma_table_info('batch_results') WHERE name='from_node'",
+    sql: "ALTER TABLE batch_results ADD COLUMN from_node TEXT"
+  },
+  {
+    check: "SELECT count(*) as cnt FROM pragma_table_info('batch_results') WHERE name='from_status'",
+    sql: "ALTER TABLE batch_results ADD COLUMN from_status TEXT"
+  },
+  {
+    check: "SELECT count(*) as cnt FROM pragma_table_info('batch_results') WHERE name='from_version'",
+    sql: "ALTER TABLE batch_results ADD COLUMN from_version INTEGER"
+  },
+  {
+    check: "SELECT count(*) as cnt FROM pragma_table_info('batch_results') WHERE name='from_handler'",
+    sql: "ALTER TABLE batch_results ADD COLUMN from_handler TEXT"
+  },
+  {
+    check: "SELECT count(*) as cnt FROM pragma_table_info('batch_results') WHERE name='exception_type'",
+    sql: "ALTER TABLE batch_results ADD COLUMN exception_type TEXT"
+  },
+  {
+    check: "SELECT count(*) as cnt FROM pragma_table_info('batch_results') WHERE name='exception_detail'",
+    sql: "ALTER TABLE batch_results ADD COLUMN exception_detail TEXT"
   }
 ];
 

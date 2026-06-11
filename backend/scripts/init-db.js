@@ -127,10 +127,16 @@ db.exec(`
     error_message TEXT,
     operator TEXT NOT NULL,
     operation_type TEXT NOT NULL,
+    from_node TEXT,
+    from_status TEXT,
+    from_version INTEGER,
+    from_handler TEXT,
     new_node TEXT,
     new_status TEXT,
     new_version INTEGER,
     new_handler TEXT,
+    exception_type TEXT,
+    exception_detail TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 

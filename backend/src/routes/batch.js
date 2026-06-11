@@ -23,14 +23,39 @@ async function routes(fastify) {
         const { formId, version } = formInput;
         const currentForm = db.prepare('SELECT * FROM merchant_entry_forms WHERE id = ?').get(formId);
 
+        const baseResult = {
+          formId,
+          formNo: currentForm ? currentForm.form_no : null,
+          fromNode: currentForm ? currentForm.current_node : null,
+          fromStatus: currentForm ? currentForm.status : null,
+          fromVersion: currentForm ? currentForm.version : null,
+          fromHandler: currentForm ? currentForm.current_handler : null,
+          exceptionType: null,
+          exceptionDetail: null,
+        };
+
         if (!currentForm) {
-          results.push({ formId, formNo: null, success: false, errorType: EXCEPTION_TYPES.MATERIAL_MISSING, errorMessage: '入驻单不存在' });
+          results.push({
+            ...baseResult,
+            success: false,
+            errorType: EXCEPTION_TYPES.MATERIAL_MISSING,
+            errorMessage: '入驻单不存在',
+            exceptionType: EXCEPTION_TYPES.MATERIAL_MISSING,
+            exceptionDetail: '入驻单不存在'
+          });
           return;
         }
 
         if (version !== undefined && version !== currentForm.version) {
           recordException(db, { formId, exceptionType: EXCEPTION_TYPES.VERSION_CONFLICT, exceptionDetail: `批量处理版本${version}与当前版本${currentForm.version}冲突`, exceptionNode: currentForm.current_node, createdBy: user.username });
-          results.push({ formId, formNo: currentForm.form_no, success: false, errorType: EXCEPTION_TYPES.VERSION_CONFLICT, errorMessage: `版本冲突：当前版本为${currentForm.version}` });
+          results.push({
+            ...baseResult,
+            success: false,
+            errorType: EXCEPTION_TYPES.VERSION_CONFLICT,
+            errorMessage: `版本冲突：当前版本为${currentForm.version}`,
+            exceptionType: EXCEPTION_TYPES.VERSION_CONFLICT,
+            exceptionDetail: `批量处理版本${version}与当前版本${currentForm.version}冲突`
+          });
           return;
         }
 
@@ -39,13 +64,27 @@ async function routes(fastify) {
           validation.errors.forEach(err => {
             recordException(db, { formId, exceptionType: err.type, exceptionDetail: err.message, exceptionNode: currentForm.current_node, createdBy: user.username });
           });
-          results.push({ formId, formNo: currentForm.form_no, success: false, errorType: validation.errors[0].type, errorMessage: validation.errors[0].message });
+          results.push({
+            ...baseResult,
+            success: false,
+            errorType: validation.errors[0].type,
+            errorMessage: validation.errors[0].message,
+            exceptionType: validation.errors[0].type,
+            exceptionDetail: validation.errors[0].message
+          });
           return;
         }
 
         const matrix = OPERATION_MATRIX[operation];
         if (!matrix) {
-          results.push({ formId, formNo: currentForm.form_no, success: false, errorType: EXCEPTION_TYPES.STATUS_CONFLICT, errorMessage: `不支持的批量操作: ${operation}` });
+          results.push({
+            ...baseResult,
+            success: false,
+            errorType: EXCEPTION_TYPES.STATUS_CONFLICT,
+            errorMessage: `不支持的批量操作: ${operation}`,
+            exceptionType: EXCEPTION_TYPES.STATUS_CONFLICT,
+            exceptionDetail: `不支持的批量操作: ${operation}`
+          });
           return;
         }
 
@@ -64,7 +103,14 @@ async function routes(fastify) {
             const evidenceCheck = checkEvidence(formId, currentForm.current_node);
             if (!evidenceCheck.complete) {
               recordException(db, { formId, exceptionType: EXCEPTION_TYPES.EVIDENCE_MISSING, exceptionDetail: `批量处理缺少证据: ${evidenceCheck.missingLabels.join(', ')}`, exceptionNode: currentForm.current_node, createdBy: user.username, missingTypes: evidenceCheck.missing.join(',') });
-              results.push({ formId, formNo: currentForm.form_no, success: false, errorType: EXCEPTION_TYPES.EVIDENCE_MISSING, errorMessage: `缺少证据: ${evidenceCheck.missingLabels.join(', ')}` });
+              results.push({
+                ...baseResult,
+                success: false,
+                errorType: EXCEPTION_TYPES.EVIDENCE_MISSING,
+                errorMessage: `缺少证据: ${evidenceCheck.missingLabels.join(', ')}`,
+                exceptionType: EXCEPTION_TYPES.EVIDENCE_MISSING,
+                exceptionDetail: `批量处理缺少证据: ${evidenceCheck.missingLabels.join(', ')}`
+              });
               return;
             }
           }
@@ -189,10 +235,12 @@ async function routes(fastify) {
           });
 
           results.push({
-            formId, formNo: currentForm.form_no, success: true,
-            errorType: null, errorMessage: null,
-            fromNode, fromStatus,
-            newNode: toNode, newStatus: toStatus,
+            ...baseResult,
+            success: true,
+            errorType: null,
+            errorMessage: null,
+            newNode: toNode,
+            newStatus: toStatus,
             newNodeLabel: NODE_LABELS[toNode],
             newStatusLabel: STATUS_LABELS[toStatus],
             newVersion,
@@ -200,7 +248,14 @@ async function routes(fastify) {
           });
         } catch (err) {
           recordException(db, { formId, exceptionType: EXCEPTION_TYPES.STATUS_CONFLICT, exceptionDetail: `批量处理异常: ${err.message}`, exceptionNode: currentForm.current_node, createdBy: user.username });
-          results.push({ formId, formNo: currentForm.form_no, success: false, errorType: EXCEPTION_TYPES.STATUS_CONFLICT, errorMessage: err.message });
+          results.push({
+            ...baseResult,
+            success: false,
+            errorType: EXCEPTION_TYPES.STATUS_CONFLICT,
+            errorMessage: err.message,
+            exceptionType: EXCEPTION_TYPES.STATUS_CONFLICT,
+            exceptionDetail: `批量处理异常: ${err.message}`
+          });
         }
       });
 
@@ -209,10 +264,17 @@ async function routes(fastify) {
           INSERT INTO batch_results (
             batch_no, form_id, form_no, success, error_type,
             error_message, operator, operation_type,
-            new_node, new_status, new_version, new_handler
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(batchNo, r.formId, r.formNo, r.success ? 1 : 0, r.errorType, r.errorMessage, user.username, operation,
-          r.newNode || null, r.newStatus || null, r.newVersion || null, r.newHandler || null);
+            from_node, from_status, from_version, from_handler,
+            new_node, new_status, new_version, new_handler,
+            exception_type, exception_detail
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          batchNo, r.formId, r.formNo, r.success ? 1 : 0, r.errorType, r.errorMessage,
+          user.username, operation,
+          r.fromNode || null, r.fromStatus || null, r.fromVersion || null, r.fromHandler || null,
+          r.newNode || null, r.newStatus || null, r.newVersion || null, r.newHandler || null,
+          r.exceptionType || null, r.exceptionDetail || null
+        );
       });
     });
 

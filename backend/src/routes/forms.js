@@ -17,47 +17,54 @@ async function routes(fastify) {
     const user = request.user;
     const offset = (page - 1) * pageSize;
 
-    let whereClause = 'WHERE 1=1';
-    const params = [];
+    const buildWhereClause = (includeDeadlineGroup = true) => {
+      let clause = 'WHERE 1=1';
+      const p = [];
 
-    if (user.role === ROLES.MERCHANT_REGISTRAR) {
-      whereClause += ` AND (
-        current_node IN ('${NODES.ENTRY_REGISTRATION}', '${NODES.ENTRY_FORM_REGISTRATION}')
-        OR created_by = ?
-      )`;
-      params.push(user.username);
-    } else if (user.role === ROLES.AUDIT_SUPERVISOR) {
-      whereClause += ` AND current_node IN ('${NODES.QUALIFICATION_AUDIT}')`;
-    } else if (user.role === ROLES.PLATFORM_LEADER) {
-      whereClause += ` AND current_node IN ('${NODES.FINAL_REVIEW}', '${NODES.ARCHIVED}')`;
-    }
-
-    if (status) { whereClause += ' AND status = ?'; params.push(status); }
-    if (currentNode) { whereClause += ' AND current_node = ?'; params.push(currentNode); }
-    if (keyword) {
-      whereClause += ' AND (merchant_name LIKE ? OR form_no LIKE ? OR contact_name LIKE ?)';
-      const kw = `%${keyword}%`; params.push(kw, kw, kw);
-    }
-    if (businessType) { whereClause += ' AND business_type = ?'; params.push(businessType); }
-
-    if (deadlineGroup) {
-      const now = new Date().toISOString();
-      if (deadlineGroup === 'overdue') {
-        whereClause += ' AND deadline IS NOT NULL AND deadline < ? AND status != ?';
-        params.push(now, STATUSES.ARCHIVED);
-      } else if (deadlineGroup === 'near') {
-        whereClause += ` AND deadline IS NOT NULL AND deadline >= ? AND deadline <= datetime('now', '+1 day') AND status != ?`;
-        params.push(now, STATUSES.ARCHIVED);
-      } else if (deadlineGroup === 'normal') {
-        whereClause += ` AND (deadline IS NULL OR deadline > datetime('now', '+1 day')) AND status != ?`;
-        params.push(STATUSES.ARCHIVED);
+      if (user.role === ROLES.MERCHANT_REGISTRAR) {
+        clause += ` AND (
+          current_node IN ('${NODES.ENTRY_REGISTRATION}', '${NODES.ENTRY_FORM_REGISTRATION}')
+          OR created_by = ?
+        )`;
+        p.push(user.username);
+      } else if (user.role === ROLES.AUDIT_SUPERVISOR) {
+        clause += ` AND current_node IN ('${NODES.QUALIFICATION_AUDIT}')`;
+      } else if (user.role === ROLES.PLATFORM_LEADER) {
+        clause += ` AND current_node IN ('${NODES.FINAL_REVIEW}', '${NODES.ARCHIVED}')`;
       }
-    }
 
-    const { total } = db.prepare(`SELECT COUNT(*) as total FROM merchant_entry_forms ${whereClause}`).get(...params);
-    const forms = db.prepare(`SELECT * FROM merchant_entry_forms ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset);
+      if (status) { clause += ' AND status = ?'; p.push(status); }
+      if (currentNode) { clause += ' AND current_node = ?'; p.push(currentNode); }
+      if (keyword) {
+        clause += ' AND (merchant_name LIKE ? OR form_no LIKE ? OR contact_name LIKE ?)';
+        const kw = `%${keyword}%`; p.push(kw, kw, kw);
+      }
+      if (businessType) { clause += ' AND business_type = ?'; p.push(businessType); }
 
-    const statsRaw = db.prepare(`SELECT status, current_node, COUNT(*) as count FROM merchant_entry_forms ${whereClause} GROUP BY status, current_node`).all(...params);
+      if (includeDeadlineGroup && deadlineGroup) {
+        const now = new Date().toISOString();
+        if (deadlineGroup === 'overdue') {
+          clause += ' AND deadline IS NOT NULL AND deadline < ? AND status != ?';
+          p.push(now, STATUSES.ARCHIVED);
+        } else if (deadlineGroup === 'near') {
+          clause += ` AND deadline IS NOT NULL AND deadline >= ? AND deadline <= datetime('now', '+1 day') AND status != ?`;
+          p.push(now, STATUSES.ARCHIVED);
+        } else if (deadlineGroup === 'normal') {
+          clause += ` AND (deadline IS NULL OR deadline > datetime('now', '+1 day')) AND status != ?`;
+          p.push(STATUSES.ARCHIVED);
+        }
+      }
+
+      return { clause, params: p };
+    };
+
+    const listWhere = buildWhereClause(true);
+    const statsWhere = buildWhereClause(false);
+
+    const { total } = db.prepare(`SELECT COUNT(*) as total FROM merchant_entry_forms ${listWhere.clause}`).get(...listWhere.params);
+    const forms = db.prepare(`SELECT * FROM merchant_entry_forms ${listWhere.clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...listWhere.params, pageSize, offset);
+
+    const statsRaw = db.prepare(`SELECT status, current_node, COUNT(*) as count FROM merchant_entry_forms ${listWhere.clause} GROUP BY status, current_node`).all(...listWhere.params);
 
     const enhancedForms = forms.map(form => {
       const timeoutInfo = checkTimeout(form.deadline);
@@ -77,9 +84,9 @@ async function routes(fastify) {
         SUM(CASE WHEN deadline IS NOT NULL AND deadline < datetime('now') AND status != ? THEN 1 ELSE 0 END) as overdue,
         SUM(CASE WHEN deadline IS NOT NULL AND deadline >= datetime('now') AND deadline <= datetime('now', '+1 day') AND status != ? THEN 1 ELSE 0 END) as near,
         SUM(CASE WHEN (deadline IS NULL OR deadline > datetime('now', '+1 day')) AND status != ? THEN 1 ELSE 0 END) as normal
-      FROM merchant_entry_forms ${whereClause}
+      FROM merchant_entry_forms ${statsWhere.clause}
     `;
-    const deadlineResult = db.prepare(deadlineSql).get(...params, STATUSES.ARCHIVED, STATUSES.ARCHIVED, STATUSES.ARCHIVED);
+    const deadlineResult = db.prepare(deadlineSql).get(...statsWhere.params, STATUSES.ARCHIVED, STATUSES.ARCHIVED, STATUSES.ARCHIVED);
     deadlineStats.overdue = deadlineResult.overdue || 0;
     deadlineStats.near = deadlineResult.near || 0;
     deadlineStats.normal = deadlineResult.normal || 0;

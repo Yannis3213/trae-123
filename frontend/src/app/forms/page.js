@@ -409,33 +409,45 @@ export default function FormsPage() {
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <Row gutter={16}>
           <Col span={6}>
-            <Card>
+            <Card
+              style={{ cursor: filters.deadlineGroup === 'normal' ? { borderColor: '#1677ff', boxShadow: '0 0 0 2px rgba(22, 119, 255, 0.1)' } : {} }}
+              onClick={() => handleFilterChange('deadlineGroup', filters.deadlineGroup === 'normal' ? null : 'normal')}
+            >
               <Statistic
-                title="待处理"
+                title="正常"
                 value={stats.byDeadline?.normal || 0}
                 prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
                 valueStyle={{ color: '#52c41a' }}
               />
+              {filters.deadlineGroup === 'normal' && <Tag color="blue" style={{ marginTop: 8 }}>已筛选</Tag>}
             </Card>
           </Col>
           <Col span={6}>
-            <Card>
+            <Card
+              style={{ cursor: filters.deadlineGroup === 'near' ? { borderColor: '#faad14', boxShadow: '0 0 0 2px rgba(250, 173, 20, 0.1)' } : {} }}
+              onClick={() => handleFilterChange('deadlineGroup', filters.deadlineGroup === 'near' ? null : 'near')}
+            >
               <Statistic
                 title="临期(1天内)"
                 value={stats.byDeadline?.near || 0}
                 prefix={<ClockCircleOutlined style={{ color: '#faad14' }} />}
                 valueStyle={{ color: '#faad14' }}
               />
+              {filters.deadlineGroup === 'near' && <Tag color="orange" style={{ marginTop: 8 }}>已筛选</Tag>}
             </Card>
           </Col>
           <Col span={6}>
-            <Card>
+            <Card
+              style={{ cursor: filters.deadlineGroup === 'overdue' ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.1)' } : {} }}
+              onClick={() => handleFilterChange('deadlineGroup', filters.deadlineGroup === 'overdue' ? null : 'overdue')}
+            >
               <Statistic
                 title="逾期"
                 value={stats.byDeadline?.overdue || 0}
                 prefix={<ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />}
                 valueStyle={{ color: '#ff4d4f' }}
               />
+              {filters.deadlineGroup === 'overdue' && <Tag color="red" style={{ marginTop: 8 }}>已筛选</Tag>}
             </Card>
           </Col>
           <Col span={6}>
@@ -449,6 +461,16 @@ export default function FormsPage() {
             </Card>
           </Col>
         </Row>
+
+        {filters.deadlineGroup && (
+          <Alert
+            message={`到期筛选：${deadlineGroups.find(g => g.value === filters.deadlineGroup)?.label}（${stats.byDeadline?.[filters.deadlineGroup] || 0}条）`}
+            type={filters.deadlineGroup === 'overdue' ? 'error' : filters.deadlineGroup === 'near' ? 'warning' : 'success'}
+            showIcon
+            closable
+            onClose={() => handleFilterChange('deadlineGroup', null)}
+          />
+        )}
 
         <Card>
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -858,27 +880,45 @@ export default function FormsPage() {
                   </Space>
                 }
               >
-                {result.success ? (
-                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                  <div>
+                    <Text type="secondary">原节点：</Text>
+                    <Tag>{getNodeLabel(result.fromNode)}</Tag>
+                    <Text type="secondary" style={{ marginLeft: 8 }}>原状态：</Text>
+                    <Tag color={getStatusTag(result.fromStatus)?.color}>{getStatusTag(result.fromStatus)?.label}</Tag>
+                    <Text type="secondary" style={{ marginLeft: 8 }}>原版本：</Text>
+                    <Tag>v{result.fromVersion}</Tag>
+                    <Text type="secondary" style={{ marginLeft: 8 }}>原处理人：</Text>
+                    <Tag>{result.fromHandler || '未分配'}</Tag>
+                  </div>
+                  {result.success ? (
                     <div>
                       <Text type="secondary">新节点：</Text>
                       <Tag color="blue">{result.newNodeLabel || getNodeLabel(result.newNode)}</Tag>
                       <Text type="secondary" style={{ marginLeft: 8 }}>新状态：</Text>
                       <Tag color={getStatusTag(result.newStatus)?.color}>{result.newStatusLabel || getStatusTag(result.newStatus)?.label}</Tag>
-                    </div>
-                    <div>
-                      <Text type="secondary">版本：</Text>
+                      <Text type="secondary" style={{ marginLeft: 8 }}>新版本：</Text>
                       <Tag>v{result.newVersion}</Tag>
-                      <Text type="secondary" style={{ marginLeft: 8 }}>处理人：</Text>
+                      <Text type="secondary" style={{ marginLeft: 8 }}>新处理人：</Text>
                       <Tag color="geekblue">{result.newHandler || '未分配'}</Tag>
                     </div>
-                  </Space>
-                ) : (
-                  <div>
-                    <Tag color="orange">{getExceptionTypeLabel(result.errorType)}</Tag>
-                    <Text type="danger">{result.errorMessage}</Text>
-                  </div>
-                )}
+                  ) : (
+                    <div style={{ marginTop: 8 }}>
+                      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                        <div>
+                          <Tag color="orange">{getExceptionTypeLabel(result.exceptionType || result.errorType)}</Tag>
+                          <Text type="danger">{result.errorMessage}</Text>
+                        </div>
+                        {result.exceptionDetail && (
+                          <div>
+                            <Text type="secondary">异常详情：</Text>
+                            <Text type="warning" style={{ fontSize: 12 }}>{result.exceptionDetail}</Text>
+                          </div>
+                        )}
+                      </Space>
+                    </div>
+                  )}
+                </Space>
               </Card>
             ))}
           </Space>
