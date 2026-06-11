@@ -15,10 +15,15 @@ export class OverdueQueueController {
 
   @Post('batch-advance')
   async batchAdvance(
-    @Body() body: { taskIds: string[]; action: string; evidence?: string },
+    @Body() body: { taskIds: string[]; evidence?: string },
     @Headers('x-user-id') userId: string,
     @Headers('x-user-role') userRole: string,
-  ) {
-    return this.service.batchAdvance(body.taskIds, body.action, body.evidence, userId, userRole);
+  ): Promise<{
+    total: number;
+    successCount: number;
+    failCount: number;
+    results: Array<{ taskId: string; taskNo: string; success: boolean; reason?: string }>;
+  }> {
+    return this.service.batchAdvance(body.taskIds, body.evidence, userId, userRole);
   }
 }

@@ -30,6 +30,55 @@ interface BatchActionResult {
   reason?: string;
 }
 
+interface TaskListItem {
+  id: string;
+  taskNo: string;
+  title: string;
+  description?: string;
+  status: string;
+  statusLabel: string;
+  assigneeId?: string;
+  assigneeName?: string;
+  assigneeRole?: string;
+  creatorId: string;
+  creatorName?: string;
+  planName?: string;
+  planYear?: number;
+  planMonth?: number;
+  deadline?: string;
+  version: number;
+  exceptionReason?: string;
+  overdueStatus: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface TaskStatistics {
+  pendingAssign: number;
+  assigned: number;
+  processing: number;
+  transferred: number;
+  followedUp: number;
+  archived: number;
+  returnedForCorrection: number;
+  total: number;
+}
+
+interface TaskDetail extends TaskListItem {
+  materials: any[];
+  fieldRecords: any[];
+  auditLogs: any[];
+  processingRecords: any[];
+  attachments: any[];
+}
+
+interface BatchProcessResult {
+  total: number;
+  successCount: number;
+  failCount: number;
+  results: BatchActionResult[];
+}
+
 @Injectable()
 export class PlantingTaskService {
   constructor(
@@ -118,7 +167,7 @@ export class PlantingTaskService {
     overdueStatus?: string;
     userId?: string;
     userRole?: string;
-  }) {
+  }): Promise<TaskListItem[]> {
     let sql = `
       SELECT t.*, u.display_name as assignee_name, c.display_name as creator_name
       FROM planting_tasks t
@@ -191,7 +240,7 @@ export class PlantingTaskService {
     return tasks.filter(Boolean);
   }
 
-  async statistics(userId?: string, userRole?: string) {
+  async statistics(userId?: string, userRole?: string): Promise<TaskStatistics> {
     const rows = this.dbService.query(
       `SELECT status, COUNT(*) as count FROM planting_tasks GROUP BY status`,
     ) as any[];
@@ -213,7 +262,7 @@ export class PlantingTaskService {
     };
   }
 
-  async detail(id: string) {
+  async detail(id: string): Promise<TaskDetail> {
     const task = this.dbService.queryOne(
       `SELECT t.*, u.display_name as assignee_name, c.display_name as creator_name
        FROM planting_tasks t
@@ -297,7 +346,7 @@ export class PlantingTaskService {
     },
     userId: string,
     userRole: string,
-  ) {
+  ): Promise<TaskDetail> {
     if (userRole !== USER_ROLES.COOPERATIVE_DIRECTOR && userRole !== USER_ROLES.AGRICULTURAL_TECHNICIAN) {
       throw new BusinessException(ErrorCodes.UNAUTHORIZED_ROLE, '田间管理员不能发起种植任务，需由主任或农技员创建', 403);
     }
@@ -462,7 +511,7 @@ export class PlantingTaskService {
     return map[action] || action;
   }
 
-  async assign(id: string, assigneeId: string, version: number, userId: string, userRole: string) {
+  async assign(id: string, assigneeId: string, version: number, userId: string, userRole: string): Promise<TaskDetail> {
     const task = this.getTaskOrThrow(id);
     const validation = this.validateAction('assign', task, version, userId, userRole);
     if (!validation.allowed) {
@@ -495,7 +544,7 @@ export class PlantingTaskService {
     return this.detail(id);
   }
 
-  async process(id: string, action: string, evidence: string | undefined, version: number, userId: string, userRole: string) {
+  async process(id: string, action: string, evidence: string | undefined, version: number, userId: string, userRole: string): Promise<TaskDetail> {
     const task = this.getTaskOrThrow(id);
     const actualAction = action === 'process' ? 'process' : 'complete_processing';
 
@@ -519,7 +568,7 @@ export class PlantingTaskService {
     return this.detail(id);
   }
 
-  async transfer(id: string, targetAssigneeId: string, remarks: string | undefined, version: number, userId: string, userRole: string) {
+  async transfer(id: string, targetAssigneeId: string, remarks: string | undefined, version: number, userId: string, userRole: string): Promise<TaskDetail> {
     const task = this.getTaskOrThrow(id);
     const validation = this.validateAction('transfer', task, version, userId, userRole);
     if (!validation.allowed) {
@@ -554,7 +603,7 @@ export class PlantingTaskService {
     return this.detail(id);
   }
 
-  async followUp(id: string, result: string, version: number, userId: string, userRole: string) {
+  async followUp(id: string, result: string, version: number, userId: string, userRole: string): Promise<TaskDetail> {
     const task = this.getTaskOrThrow(id);
     const validation = this.validateAction('follow_up', task, version, userId, userRole, result);
     if (!validation.allowed) {
@@ -574,7 +623,7 @@ export class PlantingTaskService {
     return this.detail(id);
   }
 
-  async archive(id: string, version: number, userId: string, userRole: string) {
+  async archive(id: string, version: number, userId: string, userRole: string): Promise<TaskDetail> {
     const task = this.getTaskOrThrow(id);
     const validation = this.validateAction('archive', task, version, userId, userRole);
     if (!validation.allowed) {
@@ -594,7 +643,7 @@ export class PlantingTaskService {
     return this.detail(id);
   }
 
-  async returnForCorrection(id: string, reason: string, version: number, userId: string, userRole: string) {
+  async returnForCorrection(id: string, reason: string, version: number, userId: string, userRole: string): Promise<TaskDetail> {
     const task = this.getTaskOrThrow(id);
     const validation = this.validateAction('return_for_correction', task, version, userId, userRole, reason);
     if (!validation.allowed) {
@@ -609,7 +658,7 @@ export class PlantingTaskService {
     );
 
     this.logAudit(id, userId, userRole, 'return_for_correction', beforeStatus, TASK_STATUS.RETURNED_FOR_CORRECTION, reason, `退回原因: ${reason}`);
-    this.addProcessingRecord(id, userId, userRole, 'return_for_correction', reason, 'failure');
+    this.addProcessingRecord(id, userId, userRole, 'return_for_correction', reason, 'failure', reason);
 
     return this.detail(id);
   }
@@ -620,7 +669,7 @@ export class PlantingTaskService {
     evidence: string | undefined,
     userId: string,
     userRole: string,
-  ) {
+  ): Promise<BatchProcessResult> {
     const results: BatchActionResult[] = [];
 
     for (const taskId of taskIds) {
@@ -638,7 +687,7 @@ export class PlantingTaskService {
         const validation = this.validateAction(action, task, task.version, userId, userRole, evidence);
         if (!validation.allowed) {
           this.logAudit(taskId, userId, userRole, action, task.status, task.status, validation.message, `批量${this.getActionLabel(action)}失败: ${validation.message}`);
-          this.addProcessingRecord(taskId, userId, userRole, action, validation.message || '', 'failure');
+          this.addProcessingRecord(taskId, userId, userRole, action, validation.message || '', 'failure', validation.message);
           results.push({
             taskId,
             taskNo: task.task_no,
@@ -659,7 +708,7 @@ export class PlantingTaskService {
         if (updateResult.changes === 0) {
           const failReason = '版本冲突，任务已被其他人修改，请刷新后重试';
           this.logAudit(taskId, userId, userRole, action, task.status, task.status, failReason, `批量${this.getActionLabel(action)}失败: ${failReason}`);
-          this.addProcessingRecord(taskId, userId, userRole, action, failReason, 'failure');
+          this.addProcessingRecord(taskId, userId, userRole, action, failReason, 'failure', failReason);
           results.push({
             taskId,
             taskNo: task.task_no,
@@ -700,7 +749,7 @@ export class PlantingTaskService {
     evidence: string | undefined,
     userId: string,
     userRole: string,
-  ): { success: boolean; reason?: string } {
+  ): Promise<{ success: boolean; reason?: string }> {
     try {
       const task = this.dbService.queryOne(
         'SELECT * FROM planting_tasks WHERE id = ?',
@@ -714,7 +763,7 @@ export class PlantingTaskService {
       const validation = this.validateAction(action, task, task.version, userId, userRole, evidence);
       if (!validation.allowed) {
         this.logAudit(taskId, userId, userRole, action, task.status, task.status, validation.message, `${this.getActionLabel(action)}失败: ${validation.message}`);
-        this.addProcessingRecord(taskId, userId, userRole, action, validation.message || '', 'failure');
+        this.addProcessingRecord(taskId, userId, userRole, action, validation.message || '', 'failure', validation.message);
         return { success: false, reason: validation.message! };
       }
 
@@ -729,7 +778,7 @@ export class PlantingTaskService {
       if (updateResult.changes === 0) {
         const failReason = '版本冲突，任务已被其他人修改';
         this.logAudit(taskId, userId, userRole, action, task.status, task.status, failReason, `${this.getActionLabel(action)}失败: ${failReason}`);
-        this.addProcessingRecord(taskId, userId, userRole, action, failReason, 'failure');
+        this.addProcessingRecord(taskId, userId, userRole, action, failReason, 'failure', failReason);
         return { success: false, reason: failReason };
       }
 
@@ -742,14 +791,14 @@ export class PlantingTaskService {
     }
   }
 
-  async auditLogs(taskId: string) {
+  async auditLogs(taskId: string): Promise<any[]> {
     return this.dbService.query(
       `SELECT a.*, u.display_name as operator_name FROM audit_logs a LEFT JOIN users u ON a.operator_id = u.id WHERE a.task_id = ? ORDER BY a.created_at DESC`,
       [taskId],
     );
   }
 
-  async processingRecords(taskId: string) {
+  async processingRecords(taskId: string): Promise<any[]> {
     return this.dbService.query(
       `SELECT p.*, u.display_name as processor_name FROM processing_records p LEFT JOIN users u ON p.processor_id = u.id WHERE p.task_id = ? ORDER BY p.created_at DESC`,
       [taskId],
@@ -771,11 +820,12 @@ export class PlantingTaskService {
     action: string,
     evidence: string,
     result: 'success' | 'failure',
+    failReason?: string,
   ) {
     this.dbService.run(
-      `INSERT INTO processing_records (id, task_id, processor_id, processor_role, action, result, evidence)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [uuidv4(), taskId, processorId, processorRole, action, result, evidence || null],
+      `INSERT INTO processing_records (id, task_id, processor_id, processor_role, action, result, fail_reason, evidence)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [uuidv4(), taskId, processorId, processorRole, action, result, result === 'failure' ? (failReason || evidence) : null, evidence || null],
     );
   }
 

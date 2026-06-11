@@ -37,7 +37,7 @@ export default function OverdueQueue() {
     try {
       const result: any = await api.overdueQueue.batchAdvance({
         taskIds: ids,
-        action: 'overdue_advance',
+        evidence: '逾期批量自动推进',
       });
       setBatchResult(result);
       setSelectedIds(new Set());

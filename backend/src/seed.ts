@@ -76,13 +76,14 @@ function seed() {
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
       record_date TEXT NOT NULL,
-      record_type TEXT NOT NULL,
+      record_type TEXT NOT NULL CHECK(record_type IN ('sowing', 'fertilizing', 'pest_control', 'harvesting', 'inspection', 'pruning', 'other')),
       content TEXT NOT NULL,
       recorder_id TEXT NOT NULL,
       recorder_role TEXT NOT NULL,
       weather TEXT,
       remarks TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (task_id) REFERENCES planting_tasks(id)
     );
 
     CREATE TABLE processing_records (
@@ -94,7 +95,8 @@ function seed() {
       result TEXT NOT NULL CHECK(result IN ('success', 'failure')),
       fail_reason TEXT,
       evidence TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (task_id) REFERENCES planting_tasks(id)
     );
 
     CREATE TABLE audit_logs (
@@ -107,7 +109,8 @@ function seed() {
       after_status TEXT,
       fail_reason TEXT,
       remarks TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (task_id) REFERENCES planting_tasks(id)
     );
 
     CREATE TABLE attachments (
@@ -118,8 +121,17 @@ function seed() {
       file_type TEXT NOT NULL,
       uploaded_by TEXT NOT NULL,
       uploaded_by_role TEXT NOT NULL,
-      uploaded_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      uploaded_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (task_id) REFERENCES planting_tasks(id)
     );
+
+    CREATE INDEX idx_tasks_status ON planting_tasks(status);
+    CREATE INDEX idx_tasks_assignee ON planting_tasks(assignee_id);
+    CREATE INDEX idx_tasks_deadline ON planting_tasks(deadline);
+    CREATE INDEX idx_audit_task ON audit_logs(task_id);
+    CREATE INDEX idx_material_task ON material_requisitions(task_id);
+    CREATE INDEX idx_field_task ON field_records(task_id);
+    CREATE INDEX idx_processing_task ON processing_records(task_id);
   `);
 
   const now = new Date();

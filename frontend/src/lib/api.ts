@@ -45,8 +45,19 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    const data = await res.json().catch(() => ({ message: '请求失败' }));
-    throw { status: res.status, ...data };
+    let errData: any = { code: 'UNKNOWN_ERROR', message: '请求失败' };
+    try {
+      errData = await res.json();
+    } catch (e) {
+      errData = { code: 'NETWORK_ERROR', message: '网络请求失败' };
+    }
+    throw {
+      status: res.status,
+      code: errData.code || 'UNKNOWN_ERROR',
+      message: errData.message || '操作失败',
+      details: errData.details || null,
+      timestamp: errData.timestamp || new Date().toISOString(),
+    };
   }
 
   if (res.headers.get('content-type')?.includes('text/csv')) {

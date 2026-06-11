@@ -7,10 +7,64 @@ import {
   Param,
   Query,
   Headers,
-  UseGuards,
 } from '@nestjs/common';
 import { PlantingTaskService } from './planting-task.service';
-import { RoleGuard } from './role.guard';
+
+interface TaskListItem {
+  id: string;
+  taskNo: string;
+  title: string;
+  description?: string;
+  status: string;
+  statusLabel: string;
+  assigneeId?: string;
+  assigneeName?: string;
+  assigneeRole?: string;
+  creatorId: string;
+  creatorName?: string;
+  planName?: string;
+  planYear?: number;
+  planMonth?: number;
+  deadline?: string;
+  version: number;
+  exceptionReason?: string;
+  overdueStatus: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface TaskStatistics {
+  pendingAssign: number;
+  assigned: number;
+  processing: number;
+  transferred: number;
+  followedUp: number;
+  archived: number;
+  returnedForCorrection: number;
+  total: number;
+}
+
+interface TaskDetail extends TaskListItem {
+  materials: any[];
+  fieldRecords: any[];
+  auditLogs: any[];
+  processingRecords: any[];
+  attachments: any[];
+}
+
+interface BatchActionResult {
+  taskId: string;
+  taskNo: string;
+  success: boolean;
+  reason?: string;
+}
+
+interface BatchProcessResult {
+  total: number;
+  successCount: number;
+  failCount: number;
+  results: BatchActionResult[];
+}
 
 @Controller('planting-tasks')
 export class PlantingTaskController {
@@ -25,7 +79,7 @@ export class PlantingTaskController {
     @Query('overdueStatus') overdueStatus?: string,
     @Headers('x-user-id') userId?: string,
     @Headers('x-user-role') userRole?: string,
-  ) {
+  ): Promise<TaskListItem[]> {
     return this.taskService.list({
       status,
       assigneeId,
@@ -38,12 +92,12 @@ export class PlantingTaskController {
   }
 
   @Get('statistics')
-  async statistics(@Headers('x-user-id') userId?: string, @Headers('x-user-role') userRole?: string) {
+  async statistics(@Headers('x-user-id') userId?: string, @Headers('x-user-role') userRole?: string): Promise<TaskStatistics> {
     return this.taskService.statistics(userId, userRole);
   }
 
   @Get(':id')
-  async detail(@Param('id') id: string) {
+  async detail(@Param('id') id: string): Promise<TaskDetail> {
     return this.taskService.detail(id);
   }
 
@@ -60,7 +114,7 @@ export class PlantingTaskController {
     },
     @Headers('x-user-id') userId: string,
     @Headers('x-user-role') userRole: string,
-  ) {
+  ): Promise<TaskDetail> {
     return this.taskService.create(body, userId, userRole);
   }
 
@@ -70,7 +124,7 @@ export class PlantingTaskController {
     @Body() body: { assigneeId: string; version: number },
     @Headers('x-user-id') userId: string,
     @Headers('x-user-role') userRole: string,
-  ) {
+  ): Promise<TaskDetail> {
     return this.taskService.assign(id, body.assigneeId, body.version, userId, userRole);
   }
 
@@ -80,7 +134,7 @@ export class PlantingTaskController {
     @Body() body: { action: string; evidence?: string; version: number },
     @Headers('x-user-id') userId: string,
     @Headers('x-user-role') userRole: string,
-  ) {
+  ): Promise<TaskDetail> {
     return this.taskService.process(id, body.action, body.evidence, body.version, userId, userRole);
   }
 
@@ -90,7 +144,7 @@ export class PlantingTaskController {
     @Body() body: { targetAssigneeId: string; remarks?: string; version: number },
     @Headers('x-user-id') userId: string,
     @Headers('x-user-role') userRole: string,
-  ) {
+  ): Promise<TaskDetail> {
     return this.taskService.transfer(
       id,
       body.targetAssigneeId,
@@ -107,7 +161,7 @@ export class PlantingTaskController {
     @Body() body: { result: string; version: number },
     @Headers('x-user-id') userId: string,
     @Headers('x-user-role') userRole: string,
-  ) {
+  ): Promise<TaskDetail> {
     return this.taskService.followUp(id, body.result, body.version, userId, userRole);
   }
 
@@ -117,7 +171,7 @@ export class PlantingTaskController {
     @Body() body: { version: number },
     @Headers('x-user-id') userId: string,
     @Headers('x-user-role') userRole: string,
-  ) {
+  ): Promise<TaskDetail> {
     return this.taskService.archive(id, body.version, userId, userRole);
   }
 
@@ -127,7 +181,7 @@ export class PlantingTaskController {
     @Body() body: { reason: string; version: number },
     @Headers('x-user-id') userId: string,
     @Headers('x-user-role') userRole: string,
-  ) {
+  ): Promise<TaskDetail> {
     return this.taskService.returnForCorrection(id, body.reason, body.version, userId, userRole);
   }
 
@@ -141,17 +195,17 @@ export class PlantingTaskController {
     },
     @Headers('x-user-id') userId: string,
     @Headers('x-user-role') userRole: string,
-  ) {
+  ): Promise<BatchProcessResult> {
     return this.taskService.batchProcess(body.taskIds, body.action, body.evidence, userId, userRole);
   }
 
   @Get(':id/audit-logs')
-  async auditLogs(@Param('id') id: string) {
+  async auditLogs(@Param('id') id: string): Promise<any[]> {
     return this.taskService.auditLogs(id);
   }
 
   @Get(':id/processing-records')
-  async processingRecords(@Param('id') id: string) {
+  async processingRecords(@Param('id') id: string): Promise<any[]> {
     return this.taskService.processingRecords(id);
   }
 }

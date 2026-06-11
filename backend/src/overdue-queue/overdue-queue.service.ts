@@ -17,7 +17,12 @@ export class OverdueQueueService {
     private readonly taskService: PlantingTaskService,
   ) {}
 
-  async list() {
+  async list(userId?: string, userRole?: string): Promise<{
+    nearExpiryCount: number;
+    overdueCount: number;
+    nearExpiry: any[];
+    overdue: any[];
+  }> {
     const tasks = this.dbService.query(
       `SELECT t.*, u.display_name as assignee_name
        FROM planting_tasks t
@@ -71,11 +76,15 @@ export class OverdueQueueService {
 
   async batchAdvance(
     taskIds: string[],
-    action: string,
     evidence: string | undefined,
     userId: string,
     userRole: string,
-  ) {
+  ): Promise<{
+    total: number;
+    successCount: number;
+    failCount: number;
+    results: Array<{ taskId: string; taskNo: string; success: boolean; reason?: string }>;
+  }> {
     const results: Array<{
       taskId: string;
       taskNo: string;
@@ -106,9 +115,9 @@ export class OverdueQueueService {
             [uuidv4(), taskId, userId, userRole, task.status, task.status, failReason, `逾期批量推进失败: ${failReason}`],
           );
           this.dbService.run(
-            `INSERT INTO processing_records (id, task_id, processor_id, processor_role, action, result, evidence)
-             VALUES (?, ?, ?, ?, 'overdue_advance', 'failure', ?)`,
-            [uuidv4(), taskId, userId, userRole, failReason],
+            `INSERT INTO processing_records (id, task_id, processor_id, processor_role, action, result, fail_reason, evidence)
+             VALUES (?, ?, ?, ?, 'overdue_advance', 'failure', ?, ?)`,
+            [uuidv4(), taskId, userId, userRole, failReason, failReason],
           );
           results.push({ taskId, taskNo: task.task_no, success: false, reason: failReason });
           continue;
@@ -123,9 +132,9 @@ export class OverdueQueueService {
             [uuidv4(), taskId, userId, userRole, task.status, task.status, failReason, `逾期批量推进失败: ${failReason}`],
           );
           this.dbService.run(
-            `INSERT INTO processing_records (id, task_id, processor_id, processor_role, action, result, evidence)
-             VALUES (?, ?, ?, ?, 'overdue_advance', 'failure', ?)`,
-            [uuidv4(), taskId, userId, userRole, failReason],
+            `INSERT INTO processing_records (id, task_id, processor_id, processor_role, action, result, fail_reason, evidence)
+             VALUES (?, ?, ?, ?, 'overdue_advance', 'failure', ?, ?)`,
+            [uuidv4(), taskId, userId, userRole, failReason, failReason],
           );
           results.push({ taskId, taskNo: task.task_no, success: false, reason: failReason });
           continue;
