@@ -81,9 +81,35 @@ export default function OrderList() {
     setPage(1);
   };
 
+  const canBatchProcess = (order: LiveSelectionOrder, action: "audit_pass" | "review"): boolean => {
+    if (!user) return false;
+    if (order.current_handler !== user.username) return false;
+    
+    if (action === "audit_pass") {
+      return order.status === "pending_audit" && user.role === "auditor";
+    }
+    if (action === "review") {
+      return order.status === "audit_passed" && user.role === "reviewer";
+    }
+    return false;
+  };
+
+  const getBatchProcessableCount = (action: "audit_pass" | "review"): number => {
+    return selectedIds.filter(id => {
+      const order = orders.find(o => o.id === id);
+      return order && canBatchProcess(order, action);
+    }).length;
+  };
+
   const openBatchModal = (action: "audit_pass" | "review") => {
     if (selectedIds.length === 0) {
       showToast("请先选择要处理的选品单", "error");
+      return;
+    }
+    const processableCount = getBatchProcessableCount(action);
+    if (processableCount === 0) {
+      const statusRequired = action === "audit_pass" ? "待审核" : "审核通过";
+      showToast(`没有可处理的单据，请选择状态为「${statusRequired}」且处理人为自己的单据`, "error");
       return;
     }
     setBatchAction(action);
@@ -93,9 +119,18 @@ export default function OrderList() {
 
   const handleBatchProcess = async () => {
     try {
+      const processableOrders = selectedIds
+        .map(id => orders.find(o => o.id === id))
+        .filter((o): o is LiveSelectionOrder => o !== undefined && canBatchProcess(o, batchAction));
+      
+      if (processableOrders.length === 0) {
+        showToast("没有可处理的单据", "error");
+        return;
+      }
+
       const result = await api.batchProcess({
         action: batchAction,
-        order_ids: selectedIds,
+        order_ids: processableOrders.map(o => o.id),
         opinion: batchOpinion || undefined,
       });
       setBatchResult(result);
@@ -203,25 +238,25 @@ export default function OrderList() {
             {canBatchAudit && (
               <button
                 onClick={() => openBatchModal("audit_pass")}
-                disabled={selectedIds.length === 0}
+                disabled={getBatchProcessableCount("audit_pass") === 0}
                 className="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                批量审核
+                批量审核 ({getBatchProcessableCount("audit_pass")})
               </button>
             )}
             {canBatchReview && (
               <button
                 onClick={() => openBatchModal("review")}
-                disabled={selectedIds.length === 0}
+                disabled={getBatchProcessableCount("review") === 0}
                 className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
-                批量归档
+                批量归档 ({getBatchProcessableCount("review")})
               </button>
             )}
           </div>
@@ -433,10 +468,41 @@ export default function OrderList() {
             <div className="px-6 py-4 space-y-4">
               {!batchResult ? (
                 <>
-                  <p className="text-sm text-gray-600">
-                    确定要对选中的 <span className="font-medium text-primary-600">{selectedIds.length}</span> 条选品单执行
-                    <span className="font-medium">{batchAction === "audit_pass" ? "审核通过" : "复核归档"}</span> 操作吗？
-                  </p>
+                  <div>
+                    <h4 className="font-medium text-gray-900 mb-2">待处理单据</h4>
+                    <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
+                      {selectedIds
+                        .map(id => orders.find(o => o.id === id))
+                        .filter((o): o is LiveSelectionOrder => o !== undefined && canBatchProcess(o, batchAction))
+                        .map(order => (
+                          <div key={order.id} className="flex items-center justify-between px-4 py-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50">
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium text-primary-600">{order.order_no}</span>
+                              <span className="text-sm text-gray-900">{order.product_name}</span>
+                            </div>
+                            <span className="text-sm font-mono text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+                              v{order.version}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  {selectedIds.filter(id => {
+                    const order = orders.find(o => o.id === id);
+                    return order && !canBatchProcess(order, batchAction);
+                  }).length > 0 && (
+                    <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                      <div className="text-sm text-yellow-800">
+                        <span className="font-medium">注意：</span>
+                        有 {selectedIds.filter(id => {
+                          const order = orders.find(o => o.id === id);
+                          return order && !canBatchProcess(order, batchAction);
+                        }).length} 条单据因状态不匹配或处理人不匹配，将被跳过
+                      </div>
+                    </div>
+                  )}
+
                   {batchAction === "audit_pass" && (
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">

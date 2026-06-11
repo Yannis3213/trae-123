@@ -85,6 +85,8 @@ func GetOrderList(c echo.Context) error {
 }
 
 func GetOrderDetail(c echo.Context) error {
+	user := middleware.GetCurrentUser(c)
+
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -95,7 +97,7 @@ func GetOrderDetail(c echo.Context) error {
 		})
 	}
 
-	result, err := service.GetOrderDetail(id)
+	result, err := service.GetOrderDetail(id, user)
 	if err != nil {
 		return c.JSON(http.StatusOK, model.Response{
 			Code:    500,
@@ -382,13 +384,20 @@ func BatchOverduePush(c echo.Context) error {
 		})
 	}
 
-	batchReq := &model.BatchProcessRequest{
-		Action:   "overdue_push",
-		OrderIDs: req.OrderIDs,
-		Opinion:  req.Reason,
+	var result *model.BatchProcessResponse
+	var err error
+
+	if len(req.Items) > 0 {
+		result, err = service.BatchOverduePushWithItems(&req, user)
+	} else {
+		batchReq := &model.BatchProcessRequest{
+			Action:   "overdue_push",
+			OrderIDs: req.OrderIDs,
+			Opinion:  req.Reason,
+		}
+		result, err = service.BatchProcess(batchReq, user)
 	}
 
-	result, err := service.BatchProcess(batchReq, user)
 	if err != nil {
 		return c.JSON(http.StatusOK, model.Response{
 			Code:    500,

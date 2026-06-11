@@ -24,6 +24,63 @@ func init() {
 	}
 }
 
+func validateOrderContext(order *model.LiveSelectionOrder, user *model.User,
+	allowedRoles []string, allowedStatuses []string, reqVersion int, now time.Time,
+	writeException func(content string)) (bool, error) {
+
+	roleValid := false
+	for _, r := range allowedRoles {
+		if user.Role == r {
+			roleValid = true
+			break
+		}
+	}
+	if !roleValid {
+		writeException(fmt.Sprintf("角色校验失败：需要角色%v，当前角色%s", allowedRoles, user.Role))
+		return false, fmt.Errorf("角色不匹配，无法操作")
+	}
+
+	if order.CurrentHandler != user.Username {
+		writeException(fmt.Sprintf("处理人校验失败：当前处理人是%s，操作人是%s",
+			order.CurrentHandler, user.Username))
+		return false, errors.New("您不是当前处理人，无法操作")
+	}
+
+	statusValid := false
+	for _, s := range allowedStatuses {
+		if order.Status == s {
+			statusValid = true
+			break
+		}
+	}
+	if !statusValid {
+		writeException(fmt.Sprintf("状态校验失败：需要状态%v，当前状态%s",
+			allowedStatuses, order.Status))
+		return false, fmt.Errorf("当前状态不允许该操作")
+	}
+
+	if reqVersion > 0 && order.Version != reqVersion {
+		writeException(fmt.Sprintf("版本校验失败：当前版本%d，请求版本%d",
+			order.Version, reqVersion))
+		return false, errors.New("版本冲突，请刷新后重试")
+	}
+
+	if now.After(order.Deadline) && !order.IsOverdue {
+		overdueReason := fmt.Sprintf("操作时已超过截止时间%s",
+			order.Deadline.Format("2006-01-02 15:04:05"))
+		_, _ = db.DB.Exec(`
+			UPDATE live_selection_orders 
+			SET is_overdue = 1, overdue_reason = ? WHERE id = ?
+		`, overdueReason, order.ID)
+		order.IsOverdue = true
+		order.OverdueReason = overdueReason
+		addAuditRemark(order.ID, user.Username, user.Role,
+			model.RemarkTypeException, "警告："+overdueReason, now)
+	}
+
+	return true, nil
+}
+
 func Login(username, password string) (*model.User, string, error) {
 	var user model.User
 	err := db.DB.QueryRow(
@@ -138,7 +195,7 @@ func GetOrderList(req *model.OrderListRequest, currentUser *model.User) (*model.
 	}, nil
 }
 
-func GetOrderDetail(id int64) (*model.OrderDetailResponse, error) {
+func GetOrderDetail(id int64, user *model.User) (*model.OrderDetailResponse, error) {
 	var o model.LiveSelectionOrder
 	var isOverdue int
 	err := db.DB.QueryRow(`
@@ -179,11 +236,16 @@ func GetOrderDetail(id int64) (*model.OrderDetailResponse, error) {
 		return nil, err
 	}
 
+	isCurrentHandler := o.CurrentHandler == user.Username
+	canOperate := isCurrentHandler && o.Status != model.StatusSynced
+
 	return &model.OrderDetailResponse{
-		Order:          &o,
-		Attachments:    attachments,
-		ProcessRecords: processRecords,
-		AuditRemarks:   auditRemarks,
+		Order:            &o,
+		Attachments:      attachments,
+		ProcessRecords:   processRecords,
+		AuditRemarks:     auditRemarks,
+		IsCurrentHandler: isCurrentHandler,
+		CanOperate:       canOperate,
 	}, nil
 }
 
@@ -338,23 +400,23 @@ func CreateOrder(req *model.CreateOrderRequest, user *model.User) (*model.LiveSe
 }
 
 func SubmitOrder(id int64, req *model.SubmitOrderRequest, user *model.User) error {
-	if user.Role != model.RoleRegistrar {
-		return errors.New("只有直播选品登记员可以提交审核")
-	}
+	now := time.Now().In(location)
 
-	tx, err := db.DB.Begin()
-	if err != nil {
-		return errors.New("开启事务失败")
+	writeException := func(content string) {
+		_, _ = db.DB.Exec(`
+			INSERT INTO audit_remarks 
+			(order_id, operator, operator_role, remark_type, content, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, id, user.Username, user.Role, model.RemarkTypeException, content, now)
 	}
-	defer tx.Rollback()
 
 	var order model.LiveSelectionOrder
 	var isOverdue int
-	err = tx.QueryRow(`
-		SELECT id, status, current_handler, version, submission_evidence, sample_evidence, is_overdue
+	err := db.DB.QueryRow(`
+		SELECT id, status, current_handler, current_role, version, deadline, submission_evidence, sample_evidence, is_overdue
 		FROM live_selection_orders WHERE id = ?
-	`, id).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.Version,
-		&order.SubmissionEvidence, &order.SampleEvidence, &isOverdue)
+	`, id).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.CurrentRole, &order.Version,
+		&order.Deadline, &order.SubmissionEvidence, &order.SampleEvidence, &isOverdue)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("选品单不存在")
@@ -363,23 +425,26 @@ func SubmitOrder(id int64, req *model.SubmitOrderRequest, user *model.User) erro
 	}
 	order.IsOverdue = isOverdue == 1
 
-	if order.Status != model.StatusDraft && order.Status != model.StatusReturned {
-		return errors.New("只有草稿或退回状态的选品单才能提交审核")
-	}
+	allowedRoles := []string{model.RoleRegistrar}
+	allowedStatuses := []string{model.StatusDraft, model.StatusReturned}
 
-	if order.CurrentHandler != user.Username {
-		return errors.New("您不是当前处理人，无法提交")
-	}
-
-	if order.Version != req.Version {
-		return errors.New("版本冲突，请刷新后重试")
+	valid, err := validateOrderContext(&order, user, allowedRoles, allowedStatuses, req.Version, now, writeException)
+	if !valid {
+		return err
 	}
 
 	if !hasEvidence(order.SubmissionEvidence) {
+		writeException("提交审核失败：选品提报证据不能为空")
 		return errors.New("提交审核前必须上传选品提报证据")
 	}
 
-	now := time.Now().In(location)
+	tx, err := db.DB.Begin()
+	if err != nil {
+		writeException("提交审核开启事务失败：" + err.Error())
+		return errors.New("开启事务失败")
+	}
+	defer tx.Rollback()
+
 	newVersion := order.Version + 1
 
 	_, err = tx.Exec(`
@@ -389,6 +454,7 @@ func SubmitOrder(id int64, req *model.SubmitOrderRequest, user *model.User) erro
 		WHERE id = ? AND version = ?
 	`, model.StatusPendingAudit, "auditor", model.RoleAuditor, newVersion, now, "", id, req.Version)
 	if err != nil {
+		writeException("提交审核更新状态失败：" + err.Error())
 		return errors.New("更新选品单状态失败")
 	}
 
@@ -398,6 +464,7 @@ func SubmitOrder(id int64, req *model.SubmitOrderRequest, user *model.User) erro
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, id, user.Username, user.Role, "submit", order.Status, model.StatusPendingAudit, "提交审核", newVersion, now)
 	if err != nil {
+		writeException("提交审核添加处理记录失败：" + err.Error())
 		return errors.New("添加处理记录失败")
 	}
 
@@ -408,6 +475,7 @@ func SubmitOrder(id int64, req *model.SubmitOrderRequest, user *model.User) erro
 	`, id, user.Username, user.Role, model.RemarkTypeStatusChange,
 		fmt.Sprintf("状态变更：%s -> 待审核", order.Status), now)
 	if err != nil {
+		writeException("提交审核添加审计备注失败：" + err.Error())
 		return errors.New("添加审计备注失败")
 	}
 
@@ -415,27 +483,23 @@ func SubmitOrder(id int64, req *model.SubmitOrderRequest, user *model.User) erro
 }
 
 func AuditOrder(id int64, req *model.AuditOrderRequest, user *model.User) error {
-	if user.Role != model.RoleAuditor {
-		return errors.New("只有直播选品审核主管可以审核")
-	}
+	now := time.Now().In(location)
 
-	if req.Opinion == "" {
-		return errors.New("审核意见不能为空")
+	writeException := func(content string) {
+		_, _ = db.DB.Exec(`
+			INSERT INTO audit_remarks 
+			(order_id, operator, operator_role, remark_type, content, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, id, user.Username, user.Role, model.RemarkTypeException, content, now)
 	}
-
-	tx, err := db.DB.Begin()
-	if err != nil {
-		return errors.New("开启事务失败")
-	}
-	defer tx.Rollback()
 
 	var order model.LiveSelectionOrder
 	var isOverdue int
-	err = tx.QueryRow(`
-		SELECT id, status, current_handler, version, sample_evidence, is_overdue
+	err := db.DB.QueryRow(`
+		SELECT id, status, current_handler, current_role, version, deadline, sample_evidence, is_overdue
 		FROM live_selection_orders WHERE id = ?
-	`, id).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.Version,
-		&order.SampleEvidence, &isOverdue)
+	`, id).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.CurrentRole, &order.Version,
+		&order.Deadline, &order.SampleEvidence, &isOverdue)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("选品单不存在")
@@ -444,34 +508,41 @@ func AuditOrder(id int64, req *model.AuditOrderRequest, user *model.User) error 
 	}
 	order.IsOverdue = isOverdue == 1
 
-	if order.Status != model.StatusPendingAudit {
-		return errors.New("只有待审核状态的选品单才能审核")
+	if strings.TrimSpace(req.Opinion) == "" {
+		writeException("审核失败：审核意见不能为空")
+		return errors.New("审核意见不能为空")
 	}
 
-	if order.CurrentHandler != user.Username && order.CurrentHandler != "" {
-		if order.CurrentHandler != user.Username {
-			return errors.New("您不是当前审核人，无法审核")
-		}
+	allowedRoles := []string{model.RoleAuditor}
+	allowedStatuses := []string{model.StatusPendingAudit}
+
+	valid, err := validateOrderContext(&order, user, allowedRoles, allowedStatuses, req.Version, now, writeException)
+	if !valid {
+		return err
 	}
 
-	if order.Version != req.Version {
-		return errors.New("版本冲突，请刷新后重试")
+	if req.Pass && !hasEvidence(order.SampleEvidence) {
+		writeException("审核通过失败：样品证据不能为空")
+		return errors.New("审核通过前必须确认样品证据")
 	}
 
-	now := time.Now().In(location)
+	tx, err := db.DB.Begin()
+	if err != nil {
+		writeException("审核开启事务失败：" + err.Error())
+		return errors.New("开启事务失败")
+	}
+	defer tx.Rollback()
+
 	newVersion := order.Version + 1
 
 	if req.Pass {
-		if !hasEvidence(order.SampleEvidence) {
-			return errors.New("审核通过前必须确认样品证据")
-		}
-
 		_, err = tx.Exec(`
 			UPDATE live_selection_orders 
 			SET status = ?, current_handler = ?, current_role = ?, version = ?, updated_at = ?
 			WHERE id = ? AND version = ?
 		`, model.StatusAuditPassed, "reviewer", model.RoleReviewer, newVersion, now, id, req.Version)
 		if err != nil {
+			writeException("审核通过更新状态失败：" + err.Error())
 			return errors.New("更新选品单状态失败")
 		}
 
@@ -482,6 +553,7 @@ func AuditOrder(id int64, req *model.AuditOrderRequest, user *model.User) error 
 		`, id, user.Username, user.Role, "audit_pass", model.StatusPendingAudit, model.StatusAuditPassed,
 			req.Opinion, newVersion, now)
 		if err != nil {
+			writeException("审核通过添加处理记录失败：" + err.Error())
 			return errors.New("添加处理记录失败")
 		}
 
@@ -492,6 +564,7 @@ func AuditOrder(id int64, req *model.AuditOrderRequest, user *model.User) error 
 		`, id, user.Username, user.Role, model.RemarkTypeStatusChange,
 			"状态变更：待审核 -> 审核通过", now)
 		if err != nil {
+			writeException("审核通过添加审计备注失败：" + err.Error())
 			return errors.New("添加审计备注失败")
 		}
 	} else {
@@ -502,6 +575,7 @@ func AuditOrder(id int64, req *model.AuditOrderRequest, user *model.User) error 
 			WHERE id = ? AND version = ?
 		`, model.StatusReturned, "registrar", model.RoleRegistrar, newVersion, now, req.Opinion, id, req.Version)
 		if err != nil {
+			writeException("审核退回更新状态失败：" + err.Error())
 			return errors.New("更新选品单状态失败")
 		}
 
@@ -512,6 +586,7 @@ func AuditOrder(id int64, req *model.AuditOrderRequest, user *model.User) error 
 		`, id, user.Username, user.Role, "return", model.StatusPendingAudit, model.StatusReturned,
 			req.Opinion, newVersion, now)
 		if err != nil {
+			writeException("审核退回添加处理记录失败：" + err.Error())
 			return errors.New("添加处理记录失败")
 		}
 
@@ -522,6 +597,7 @@ func AuditOrder(id int64, req *model.AuditOrderRequest, user *model.User) error 
 		`, id, user.Username, user.Role, model.RemarkTypeException,
 			"审核退回："+req.Opinion, now)
 		if err != nil {
+			writeException("审核退回添加审计备注失败：" + err.Error())
 			return errors.New("添加审计备注失败")
 		}
 	}
@@ -530,27 +606,23 @@ func AuditOrder(id int64, req *model.AuditOrderRequest, user *model.User) error 
 }
 
 func ReviewOrder(id int64, req *model.ReviewOrderRequest, user *model.User) error {
-	if user.Role != model.RoleReviewer {
-		return errors.New("只有直播电商团队复核负责人可以复核归档")
-	}
+	now := time.Now().In(location)
 
-	if req.Opinion == "" {
-		return errors.New("复核意见不能为空")
+	writeException := func(content string) {
+		_, _ = db.DB.Exec(`
+			INSERT INTO audit_remarks 
+			(order_id, operator, operator_role, remark_type, content, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, id, user.Username, user.Role, model.RemarkTypeException, content, now)
 	}
-
-	tx, err := db.DB.Begin()
-	if err != nil {
-		return errors.New("开启事务失败")
-	}
-	defer tx.Rollback()
 
 	var order model.LiveSelectionOrder
 	var isOverdue int
-	err = tx.QueryRow(`
-		SELECT id, status, current_handler, version, registration_evidence, is_overdue
+	err := db.DB.QueryRow(`
+		SELECT id, status, current_handler, current_role, version, deadline, registration_evidence, is_overdue
 		FROM live_selection_orders WHERE id = ?
-	`, id).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.Version,
-		&order.RegistrationEvidence, &isOverdue)
+	`, id).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.CurrentRole, &order.Version,
+		&order.Deadline, &order.RegistrationEvidence, &isOverdue)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("选品单不存在")
@@ -559,19 +631,31 @@ func ReviewOrder(id int64, req *model.ReviewOrderRequest, user *model.User) erro
 	}
 	order.IsOverdue = isOverdue == 1
 
-	if order.Status != model.StatusAuditPassed {
-		return errors.New("只有审核通过状态的选品单才能复核归档")
+	if strings.TrimSpace(req.Opinion) == "" {
+		writeException("复核归档失败：复核意见不能为空")
+		return errors.New("复核意见不能为空")
 	}
 
-	if order.Version != req.Version {
-		return errors.New("版本冲突，请刷新后重试")
+	allowedRoles := []string{model.RoleReviewer}
+	allowedStatuses := []string{model.StatusAuditPassed}
+
+	valid, err := validateOrderContext(&order, user, allowedRoles, allowedStatuses, req.Version, now, writeException)
+	if !valid {
+		return err
 	}
 
 	if !hasEvidence(order.RegistrationEvidence) {
+		writeException("复核归档失败：正式登记证据不能为空")
 		return errors.New("复核归档前必须有正式登记证据")
 	}
 
-	now := time.Now().In(location)
+	tx, err := db.DB.Begin()
+	if err != nil {
+		writeException("复核归档开启事务失败：" + err.Error())
+		return errors.New("开启事务失败")
+	}
+	defer tx.Rollback()
+
 	newVersion := order.Version + 1
 
 	_, err = tx.Exec(`
@@ -580,6 +664,7 @@ func ReviewOrder(id int64, req *model.ReviewOrderRequest, user *model.User) erro
 		WHERE id = ? AND version = ?
 	`, model.StatusSynced, "", "", newVersion, now, id, req.Version)
 	if err != nil {
+		writeException("复核归档更新状态失败：" + err.Error())
 		return errors.New("更新选品单状态失败")
 	}
 
@@ -590,6 +675,7 @@ func ReviewOrder(id int64, req *model.ReviewOrderRequest, user *model.User) erro
 	`, id, user.Username, user.Role, "review", model.StatusAuditPassed, model.StatusSynced,
 		req.Opinion, newVersion, now)
 	if err != nil {
+		writeException("复核归档添加处理记录失败：" + err.Error())
 		return errors.New("添加处理记录失败")
 	}
 
@@ -600,6 +686,7 @@ func ReviewOrder(id int64, req *model.ReviewOrderRequest, user *model.User) erro
 	`, id, user.Username, user.Role, model.RemarkTypeStatusChange,
 		"状态变更：审核通过 -> 已同步（归档）", now)
 	if err != nil {
+		writeException("复核归档添加审计备注失败：" + err.Error())
 		return errors.New("添加审计备注失败")
 	}
 
@@ -607,22 +694,23 @@ func ReviewOrder(id int64, req *model.ReviewOrderRequest, user *model.User) erro
 }
 
 func SupplementOrder(id int64, req *model.SupplementOrderRequest, user *model.User) error {
-	if user.Role != model.RoleRegistrar {
-		return errors.New("只有直播选品登记员可以补正")
-	}
+	now := time.Now().In(location)
 
-	tx, err := db.DB.Begin()
-	if err != nil {
-		return errors.New("开启事务失败")
+	writeException := func(content string) {
+		_, _ = db.DB.Exec(`
+			INSERT INTO audit_remarks 
+			(order_id, operator, operator_role, remark_type, content, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, id, user.Username, user.Role, model.RemarkTypeException, content, now)
 	}
-	defer tx.Rollback()
 
 	var order model.LiveSelectionOrder
 	var isOverdue int
-	err = tx.QueryRow(`
-		SELECT id, status, current_handler, version, is_overdue
+	err := db.DB.QueryRow(`
+		SELECT id, status, current_handler, current_role, version, deadline, is_overdue
 		FROM live_selection_orders WHERE id = ?
-	`, id).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.Version, &isOverdue)
+	`, id).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.CurrentRole, &order.Version,
+		&order.Deadline, &isOverdue)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("选品单不存在")
@@ -631,19 +719,21 @@ func SupplementOrder(id int64, req *model.SupplementOrderRequest, user *model.Us
 	}
 	order.IsOverdue = isOverdue == 1
 
-	if order.Status != model.StatusReturned {
-		return errors.New("只有退回状态的选品单才能补正")
+	allowedRoles := []string{model.RoleRegistrar}
+	allowedStatuses := []string{model.StatusReturned}
+
+	valid, err := validateOrderContext(&order, user, allowedRoles, allowedStatuses, req.Version, now, writeException)
+	if !valid {
+		return err
 	}
 
-	if order.CurrentHandler != user.Username {
-		return errors.New("您不是当前处理人，无法补正")
+	tx, err := db.DB.Begin()
+	if err != nil {
+		writeException("补正开启事务失败：" + err.Error())
+		return errors.New("开启事务失败")
 	}
+	defer tx.Rollback()
 
-	if order.Version != req.Version {
-		return errors.New("版本冲突，请刷新后重试")
-	}
-
-	now := time.Now().In(location)
 	newVersion := order.Version + 1
 
 	subEv := req.SubmissionEvidence
@@ -663,6 +753,7 @@ func SupplementOrder(id int64, req *model.SupplementOrderRequest, user *model.Us
 	`, model.StatusPendingAudit, "auditor", model.RoleAuditor, newVersion,
 		subEv, sampleEv, now, "", id, req.Version)
 	if err != nil {
+		writeException("补正更新状态失败：" + err.Error())
 		return errors.New("更新选品单状态失败")
 	}
 
@@ -673,6 +764,7 @@ func SupplementOrder(id int64, req *model.SupplementOrderRequest, user *model.Us
 	`, id, user.Username, user.Role, "supplement", model.StatusReturned, model.StatusPendingAudit,
 		"补正后重新提交", newVersion, now)
 	if err != nil {
+		writeException("补正添加处理记录失败：" + err.Error())
 		return errors.New("添加处理记录失败")
 	}
 
@@ -683,6 +775,7 @@ func SupplementOrder(id int64, req *model.SupplementOrderRequest, user *model.Us
 	`, id, user.Username, user.Role, model.RemarkTypeSupplement,
 		"补正材料，重新提交审核", now)
 	if err != nil {
+		writeException("补正添加审计备注失败：" + err.Error())
 		return errors.New("添加审计备注失败")
 	}
 
@@ -691,6 +784,7 @@ func SupplementOrder(id int64, req *model.SupplementOrderRequest, user *model.Us
 
 func BatchProcess(req *model.BatchProcessRequest, user *model.User) (*model.BatchProcessResponse, error) {
 	results := []*model.BatchProcessResult{}
+	now := time.Now().In(location)
 
 	for _, orderID := range req.OrderIDs {
 		result := &model.BatchProcessResult{
@@ -698,15 +792,25 @@ func BatchProcess(req *model.BatchProcessRequest, user *model.User) (*model.Batc
 			Success: false,
 		}
 
+		writeException := func(content string) {
+			_, _ = db.DB.Exec(`
+				INSERT INTO audit_remarks 
+				(order_id, operator, operator_role, remark_type, content, created_at)
+				VALUES (?, ?, ?, ?, ?, ?)
+			`, orderID, user.Username, user.Role, model.RemarkTypeException, content, now)
+		}
+
 		switch req.Action {
 		case "audit_pass":
-			if req.Opinion == "" {
+			if strings.TrimSpace(req.Opinion) == "" {
+				writeException("批量审核通过失败：审核意见不能为空")
 				result.Message = "批量审核通过必须填写审核意见"
 				results = append(results, result)
 				continue
 			}
+			version := getCurrentVersion(orderID)
 			auditReq := &model.AuditOrderRequest{
-				Version: getCurrentVersion(orderID),
+				Version: version,
 				Pass:    true,
 				Opinion: req.Opinion,
 			}
@@ -718,8 +822,15 @@ func BatchProcess(req *model.BatchProcessRequest, user *model.User) (*model.Batc
 				result.Message = "审核通过成功"
 			}
 		case "review":
+			if strings.TrimSpace(req.Opinion) == "" {
+				writeException("批量复核归档失败：复核意见不能为空")
+				result.Message = "批量复核归档必须填写复核意见"
+				results = append(results, result)
+				continue
+			}
+			version := getCurrentVersion(orderID)
 			reviewReq := &model.ReviewOrderRequest{
-				Version: getCurrentVersion(orderID),
+				Version: version,
 				Opinion: req.Opinion,
 			}
 			err := ReviewOrder(orderID, reviewReq, user)
@@ -730,7 +841,8 @@ func BatchProcess(req *model.BatchProcessRequest, user *model.User) (*model.Batc
 				result.Message = "复核归档成功"
 			}
 		case "overdue_push":
-			err := pushOverdueOrder(orderID, req.Opinion, user)
+			version := getCurrentVersion(orderID)
+			err := pushOverdueOrder(orderID, req.Opinion, version, "", user)
 			if err != nil {
 				result.Message = err.Error()
 			} else {
@@ -738,6 +850,7 @@ func BatchProcess(req *model.BatchProcessRequest, user *model.User) (*model.Batc
 				result.Message = "逾期推进成功"
 			}
 		default:
+			writeException("批量操作失败：不支持的操作类型 " + req.Action)
 			result.Message = "不支持的批量操作类型"
 		}
 
@@ -753,7 +866,52 @@ func getCurrentVersion(orderID int64) int {
 	return version
 }
 
-func pushOverdueOrder(orderID int64, reason string, user *model.User) error {
+func BatchOverduePushWithItems(req *model.BatchOverduePushRequest, user *model.User) (*model.BatchProcessResponse, error) {
+	results := []*model.BatchProcessResult{}
+	now := time.Now().In(location)
+
+	for _, item := range req.Items {
+		result := &model.BatchProcessResult{
+			OrderID: item.OrderID,
+			Success: false,
+		}
+
+		writeException := func(content string) {
+			_, _ = db.DB.Exec(`
+				INSERT INTO audit_remarks 
+				(order_id, operator, operator_role, remark_type, content, created_at)
+				VALUES (?, ?, ?, ?, ?, ?)
+			`, item.OrderID, user.Username, user.Role, model.RemarkTypeException, content, now)
+		}
+
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			writeException("逾期推进失败：处理意见不能为空")
+			result.Message = "逾期推进必须填写处理意见"
+			results = append(results, result)
+			continue
+		}
+
+		version := item.Version
+		if version <= 0 {
+			version = getCurrentVersion(item.OrderID)
+		}
+
+		err := pushOverdueOrder(item.OrderID, reason, version, item.AuditRemark, user)
+		if err != nil {
+			result.Message = err.Error()
+		} else {
+			result.Success = true
+			result.Message = "逾期推进成功"
+		}
+
+		results = append(results, result)
+	}
+
+	return &model.BatchProcessResponse{Results: results}, nil
+}
+
+func pushOverdueOrder(orderID int64, reason string, reqVersion int, auditRemark string, user *model.User) error {
 	now := time.Now().In(location)
 
 	writeException := func(content string) {
@@ -764,18 +922,13 @@ func pushOverdueOrder(orderID int64, reason string, user *model.User) error {
 		`, orderID, user.Username, user.Role, model.RemarkTypeException, content, now)
 	}
 
-	if user.Role != model.RoleAuditor {
-		writeException("逾期推进失败：只有直播选品审核主管可以执行逾期推进操作")
-		return errors.New("只有直播选品审核主管可以执行逾期推进操作")
-	}
-
 	var order model.LiveSelectionOrder
 	var isOverdue int
 	err := db.DB.QueryRow(`
-		SELECT id, status, current_handler, version, sample_evidence, is_overdue
+		SELECT id, status, current_handler, current_role, version, deadline, sample_evidence, is_overdue
 		FROM live_selection_orders WHERE id = ?
-	`, orderID).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.Version,
-		&order.SampleEvidence, &isOverdue)
+	`, orderID).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.CurrentRole, &order.Version,
+		&order.Deadline, &order.SampleEvidence, &isOverdue)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("选品单不存在")
@@ -784,9 +937,12 @@ func pushOverdueOrder(orderID int64, reason string, user *model.User) error {
 	}
 	order.IsOverdue = isOverdue == 1
 
-	if order.Status != model.StatusPendingAudit {
-		writeException(fmt.Sprintf("逾期推进失败：当前状态[%s]不是待审核，无法推进", order.Status))
-		return errors.New("只有待审核状态的选品单可以逾期推进")
+	allowedRoles := []string{model.RoleAuditor}
+	allowedStatuses := []string{model.StatusPendingAudit}
+
+	valid, err := validateOrderContext(&order, user, allowedRoles, allowedStatuses, reqVersion, now, writeException)
+	if !valid {
+		return err
 	}
 
 	if !order.IsOverdue {
@@ -794,9 +950,10 @@ func pushOverdueOrder(orderID int64, reason string, user *model.User) error {
 		return errors.New("只有已逾期的选品单可以执行逾期推进")
 	}
 
-	opinion := reason
+	opinion := strings.TrimSpace(reason)
 	if opinion == "" {
-		opinion = "逾期自动推进审核通过"
+		writeException("处理意见校验失败：逾期推进必须填写处理意见")
+		return errors.New("逾期推进必须填写处理意见")
 	}
 
 	tx, err := db.DB.Begin()
@@ -807,12 +964,16 @@ func pushOverdueOrder(orderID int64, reason string, user *model.User) error {
 	defer tx.Rollback()
 
 	newVersion := order.Version + 1
+	actualVersion := order.Version
+	if reqVersion > 0 {
+		actualVersion = reqVersion
+	}
 
 	_, err = tx.Exec(`
 		UPDATE live_selection_orders 
 		SET status = ?, current_handler = ?, current_role = ?, version = ?, updated_at = ?
 		WHERE id = ? AND version = ?
-	`, model.StatusAuditPassed, "reviewer", model.RoleReviewer, newVersion, now, orderID, order.Version)
+	`, model.StatusAuditPassed, "reviewer", model.RoleReviewer, newVersion, now, orderID, actualVersion)
 	if err != nil {
 		writeException("逾期推进更新状态失败：" + err.Error())
 		return errors.New("更新选品单状态失败")
@@ -822,7 +983,7 @@ func pushOverdueOrder(orderID int64, reason string, user *model.User) error {
 		INSERT INTO process_records 
 		(order_id, operator, operator_role, action, from_status, to_status, opinion, version, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, orderID, user.Username, user.Role, "overdue_push", model.StatusPendingAudit, model.StatusAuditPassed,
+	`, orderID, user.Username, user.Role, "audit_pass", model.StatusPendingAudit, model.StatusAuditPassed,
 		opinion, newVersion, now)
 	if err != nil {
 		writeException("逾期推进添加处理记录失败：" + err.Error())
@@ -846,6 +1007,22 @@ func pushOverdueOrder(orderID int64, reason string, user *model.User) error {
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, orderID, user.Username, user.Role, model.RemarkTypeException,
 		"逾期推进："+opinion, now)
+	if err != nil {
+		writeException("逾期推进添加逾期备注失败：" + err.Error())
+		return errors.New("添加逾期备注失败")
+	}
+
+	if strings.TrimSpace(auditRemark) != "" {
+		_, err = tx.Exec(`
+			INSERT INTO audit_remarks 
+			(order_id, operator, operator_role, remark_type, content, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, orderID, user.Username, user.Role, model.RemarkTypeSupplement, auditRemark, now)
+		if err != nil {
+			writeException("逾期推进添加审计备注失败：" + err.Error())
+			return errors.New("添加审计备注失败")
+		}
+	}
 
 	return tx.Commit()
 }
@@ -939,20 +1116,23 @@ func UploadAttachment(orderID int64, req *model.UploadAttachmentRequest, user *m
 	}
 
 	var order model.LiveSelectionOrder
+	var isOverdue int
 	err := db.DB.QueryRow(`
-		SELECT id, status, current_handler FROM live_selection_orders WHERE id = ?
-	`, orderID).Scan(&order.ID, &order.Status, &order.CurrentHandler)
+		SELECT id, status, current_handler, version, deadline, is_overdue 
+		FROM live_selection_orders WHERE id = ?
+	`, orderID).Scan(&order.ID, &order.Status, &order.CurrentHandler, &order.Version, &order.Deadline, &isOverdue)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("选品单不存在")
 		}
 		return nil, errors.New("查询选品单失败")
 	}
+	order.IsOverdue = isOverdue == 1
 
-	moduleRoleMap := map[string]string{
-		model.ModuleTypeSubmission:   model.RoleRegistrar,
-		model.ModuleTypeSample:       model.RoleAuditor,
-		model.ModuleTypeRegistration: model.RoleReviewer,
+	moduleRoleMap := map[string][]string{
+		model.ModuleTypeSubmission:   {model.RoleRegistrar},
+		model.ModuleTypeSample:       {model.RoleAuditor},
+		model.ModuleTypeRegistration: {model.RoleReviewer},
 	}
 	moduleNameMap := map[string]string{
 		model.ModuleTypeSubmission:   "选品提报",
@@ -965,34 +1145,28 @@ func UploadAttachment(orderID int64, req *model.UploadAttachmentRequest, user *m
 		model.ModuleTypeRegistration: {model.StatusAuditPassed},
 	}
 
-	allowedRole, ok := moduleRoleMap[req.ModuleType]
+	allowedRoles, ok := moduleRoleMap[req.ModuleType]
 	if !ok {
 		writeException("无效的附件模块类型：" + req.ModuleType)
 		return nil, errors.New("无效的附件模块类型")
 	}
-	if user.Role != allowedRole {
-		moduleName := moduleNameMap[req.ModuleType]
-		roleName := map[string]string{
-			model.RoleRegistrar: "直播选品登记员",
-			model.RoleAuditor:   "直播选品审核主管",
-			model.RoleReviewer:  "直播电商团队复核负责人",
-		}[allowedRole]
-		writeException(fmt.Sprintf("上传%s附件失败：只有%s可以上传该类型附件", moduleName, roleName))
-		return fmt.Errorf("只有%s可以上传%s附件", roleName, moduleName)
-	}
 
-	validStatuses := moduleStatusMap[req.ModuleType]
-	statusValid := false
-	for _, s := range validStatuses {
-		if order.Status == s {
-			statusValid = true
-			break
-		}
-	}
-	if !statusValid {
+	allowedStatuses := moduleStatusMap[req.ModuleType]
+	valid, err := validateOrderContext(&order, user, allowedRoles, allowedStatuses, 0, now, writeException)
+	if !valid {
 		moduleName := moduleNameMap[req.ModuleType]
-		writeException(fmt.Sprintf("上传%s附件失败：当前状态[%s]不允许上传该类型附件", moduleName, order.Status))
-		return fmt.Errorf("%s附件只能在对应状态下上传", moduleName)
+		if err != nil && strings.Contains(err.Error(), "角色不匹配") {
+			roleName := map[string]string{
+				model.RoleRegistrar: "直播选品登记员",
+				model.RoleAuditor:   "直播选品审核主管",
+				model.RoleReviewer:  "直播电商团队复核负责人",
+			}[allowedRoles[0]]
+			return nil, fmt.Errorf("只有%s可以上传%s附件", roleName, moduleName)
+		}
+		if err != nil && strings.Contains(err.Error(), "当前状态不允许该操作") {
+			return nil, fmt.Errorf("%s附件只能在对应状态下上传", moduleName)
+		}
+		return nil, err
 	}
 
 	result, err := db.DB.Exec(`
@@ -1041,12 +1215,12 @@ func ProcessModule(id int64, req *model.ProcessModuleRequest, user *model.User) 
 
 	now := time.Now().In(location)
 
-	writeException := func(orderID int64, operator, operatorRole, content string) {
+	writeException := func(content string) {
 		_, _ = db.DB.Exec(`
 			INSERT INTO audit_remarks 
 			(order_id, operator, operator_role, remark_type, content, created_at)
 			VALUES (?, ?, ?, ?, ?, ?)
-		`, orderID, operator, operatorRole, model.RemarkTypeException, content, now)
+		`, id, user.Username, user.Role, model.RemarkTypeException, content, now)
 	}
 
 	moduleNameMap := map[string]string{
@@ -1055,31 +1229,15 @@ func ProcessModule(id int64, req *model.ProcessModuleRequest, user *model.User) 
 		model.ModuleTypeRegistration: "直播选品单登记",
 	}
 
-	allowedRoles := map[string]string{
-		model.ModuleTypeSubmission:   model.RoleRegistrar,
-		model.ModuleTypeSample:       model.RoleAuditor,
-		model.ModuleTypeRegistration: model.RoleReviewer,
+	moduleRoleMap := map[string][]string{
+		model.ModuleTypeSubmission:   {model.RoleRegistrar},
+		model.ModuleTypeSample:       {model.RoleAuditor},
+		model.ModuleTypeRegistration: {model.RoleReviewer},
 	}
-	allowedRole, ok := allowedRoles[req.ModuleType]
+	allowedRoles, ok := moduleRoleMap[req.ModuleType]
 	if !ok {
-		writeException(id, user.Username, user.Role, "无效的模块类型："+req.ModuleType)
+		writeException("无效的模块类型：" + req.ModuleType)
 		return errors.New("无效的模块类型")
-	}
-	if user.Role != allowedRole {
-		roleName := map[string]string{
-			model.RoleRegistrar: "直播选品登记员",
-			model.RoleAuditor:   "直播选品审核主管",
-			model.RoleReviewer:  "直播电商团队复核负责人",
-		}[allowedRole]
-		writeException(id, user.Username, user.Role,
-			fmt.Sprintf("角色校验失败：只有%s可以办理该模块", roleName))
-		return fmt.Errorf("只有%s可以办理该模块", roleName)
-	}
-
-	if order.CurrentHandler != user.Username {
-		writeException(id, user.Username, user.Role,
-			fmt.Sprintf("责任人校验失败：当前处理人是%s，操作人是%s", order.CurrentHandler, user.Username))
-		return errors.New("您不是当前处理人，无法办理该模块")
 	}
 
 	validStatuses := map[string][]string{
@@ -1087,48 +1245,29 @@ func ProcessModule(id int64, req *model.ProcessModuleRequest, user *model.User) 
 		model.ModuleTypeSample:       {model.StatusPendingAudit},
 		model.ModuleTypeRegistration: {model.StatusAuditPassed},
 	}
-	statusValid := false
-	for _, s := range validStatuses[req.ModuleType] {
-		if order.Status == s {
-			statusValid = true
-			break
-		}
-	}
-	if !statusValid {
-		moduleName := moduleNameMap[req.ModuleType]
-		writeException(id, user.Username, user.Role,
-			fmt.Sprintf("状态校验失败：%s模块不能在[%s]状态下办理", moduleName, order.Status))
-		return fmt.Errorf("%s模块不能在当前状态下办理", moduleName)
+	allowedStatuses := validStatuses[req.ModuleType]
+
+	valid, err := validateOrderContext(&order, user, allowedRoles, allowedStatuses, req.Version, now, writeException)
+	if !valid {
+		return err
 	}
 
-	if order.Version != req.Version {
-		writeException(id, user.Username, user.Role,
-			fmt.Sprintf("版本校验失败：当前版本%d，请求版本%d", order.Version, req.Version))
-		return errors.New("版本冲突，请刷新后重试")
-	}
-
-	overdueWarned := false
-	if now.After(order.Deadline) && !order.IsOverdue {
-		overdueReason := fmt.Sprintf("办理时已超过截止时间%s", order.Deadline.Format("2006-01-02 15:04:05"))
-		_, _ = db.DB.Exec(`
-			UPDATE live_selection_orders 
-			SET is_overdue = 1, overdue_reason = ?
-			WHERE id = ?
-		`, overdueReason, id)
-		overdueWarned = true
-	}
-
+	moduleName := moduleNameMap[req.ModuleType]
 	if req.SubmitNext {
-		moduleName := moduleNameMap[req.ModuleType]
 		if strings.TrimSpace(req.Opinion) == "" {
-			writeException(id, user.Username, user.Role,
-				fmt.Sprintf("处理意见校验失败：%s模块进入下一步前必须填写处理意见", moduleName))
+			writeException(fmt.Sprintf("处理意见校验失败：%s模块进入下一步前必须填写处理意见", moduleName))
 			return fmt.Errorf("%s模块进入下一步前必须填写处理意见", moduleName)
 		}
 		if !hasEvidence(req.Evidence) {
-			writeException(id, user.Username, user.Role,
-				fmt.Sprintf("必填证据校验失败：进入下一步前%s模块证据不能为空", moduleName))
+			writeException(fmt.Sprintf("必填证据校验失败：进入下一步前%s模块证据不能为空", moduleName))
 			return fmt.Errorf("进入下一步前必须上传%s证据", moduleName)
+		}
+	}
+
+	if strings.TrimSpace(req.AuditRemark) != "" {
+		if len(strings.TrimSpace(req.AuditRemark)) == 0 {
+			writeException("审计备注内容为空")
+			return errors.New("审计备注内容不能为空")
 		}
 	}
 
@@ -1184,7 +1323,7 @@ func ProcessModule(id int64, req *model.ProcessModuleRequest, user *model.User) 
 
 	tx, err := db.DB.Begin()
 	if err != nil {
-		writeException(id, user.Username, user.Role, "开启事务失败："+err.Error())
+		writeException("开启事务失败：" + err.Error())
 		return errors.New("开启事务失败")
 	}
 	defer tx.Rollback()
@@ -1197,7 +1336,7 @@ func ProcessModule(id int64, req *model.ProcessModuleRequest, user *model.User) 
 	`, newSubmissionEv, newSampleEv, newRegistrationEv,
 		newStatus, newHandler, newRole, version, now, id, req.Version)
 	if err != nil {
-		writeException(id, user.Username, user.Role, "更新选品单证据和状态失败："+err.Error())
+		writeException("更新选品单证据和状态失败：" + err.Error())
 		return errors.New("更新选品单失败")
 	}
 
@@ -1207,29 +1346,20 @@ func ProcessModule(id int64, req *model.ProcessModuleRequest, user *model.User) 
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, id, user.Username, user.Role, action, order.Status, newStatus, opinion, version, now)
 	if err != nil {
-		writeException(id, user.Username, user.Role, "添加处理记录失败："+err.Error())
+		writeException("添加处理记录失败：" + err.Error())
 		return errors.New("添加处理记录失败")
 	}
 
-	if req.AuditRemark != "" {
+	if strings.TrimSpace(req.AuditRemark) != "" {
 		_, err = tx.Exec(`
 			INSERT INTO audit_remarks 
 			(order_id, operator, operator_role, remark_type, content, created_at)
 			VALUES (?, ?, ?, ?, ?, ?)
 		`, id, user.Username, user.Role, model.RemarkTypeSupplement, req.AuditRemark, now)
 		if err != nil {
-			writeException(id, user.Username, user.Role, "添加审计备注失败："+err.Error())
+			writeException("添加审计备注失败：" + err.Error())
 			return errors.New("添加审计备注失败")
 		}
-	}
-
-	if overdueWarned {
-		_, _ = tx.Exec(`
-			INSERT INTO audit_remarks 
-			(order_id, operator, operator_role, remark_type, content, created_at)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, id, user.Username, user.Role, model.RemarkTypeException,
-			fmt.Sprintf("警告：该选品单已超过截止时间%s", order.Deadline.Format("2006-01-02 15:04:05")), now)
 	}
 
 	if statusChanged {
@@ -1247,7 +1377,7 @@ func ProcessModule(id int64, req *model.ProcessModuleRequest, user *model.User) 
 		`, id, user.Username, user.Role, model.RemarkTypeStatusChange,
 			fmt.Sprintf("状态变更：%s -> %s", statusText[order.Status], statusText[newStatus]), now)
 		if err != nil {
-			writeException(id, user.Username, user.Role, "添加状态变更备注失败："+err.Error())
+			writeException("添加状态变更备注失败：" + err.Error())
 			return errors.New("添加状态变更备注失败")
 		}
 
@@ -1263,7 +1393,7 @@ func ProcessModule(id int64, req *model.ProcessModuleRequest, user *model.User) 
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, id, user.Username, user.Role, statusAction, order.Status, newStatus, opinion, version, now)
 		if err != nil {
-			writeException(id, user.Username, user.Role, "添加状态变更记录失败："+err.Error())
+			writeException("添加状态变更记录失败：" + err.Error())
 			return errors.New("添加状态变更记录失败")
 		}
 	}

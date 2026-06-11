@@ -19,13 +19,20 @@ export default function OverdueQueue() {
   const [expandedHandler, setExpandedHandler] = useState<string | null>(null);
   const [pushing, setPushing] = useState(false);
   const [selectedOverdueIds, setSelectedOverdueIds] = useState<number[]>([]);
+  const [user, setUser] = useState<{ username: string; role: string; name: string } | null>(null);
+  const [showPushModal, setShowPushModal] = useState(false);
+  const [pushReason, setPushReason] = useState("");
+  const [batchResults, setBatchResults] = useState<{ order_id: number; success: boolean; message: string }[] | null>(null);
+  const [processing, setProcessing] = useState(false);
+  const [allOrders, setAllOrders] = useState<LiveSelectionOrder[]>([]);
 
   useEffect(() => {
-    const user = getUser();
-    if (!user) {
+    const currentUser = getUser();
+    if (!currentUser) {
       window.location.href = "/login";
       return;
     }
+    setUser(currentUser);
     loadQueue();
   }, []);
 
@@ -34,6 +41,11 @@ export default function OverdueQueue() {
     try {
       const result = await api.getOverdueQueue();
       setQueue(result || []);
+      const orders: LiveSelectionOrder[] = [];
+      (result || []).forEach(group => {
+        group.orders.forEach(order => orders.push(order));
+      });
+      setAllOrders(orders);
       if (result && result.length > 0) {
         setExpandedHandler(result[0].handler);
       }
@@ -44,30 +56,72 @@ export default function OverdueQueue() {
     }
   };
 
-  const handleBatchPush = async () => {
-    if (selectedOverdueIds.length === 0) {
-      showToast("请先选择要推进的逾期单据", "error");
+  const canPushOrder = (order: LiveSelectionOrder): boolean => {
+    if (!user || user.role !== "auditor") return false;
+    if (order.status !== "pending_audit") return false;
+    if (!order.is_overdue) return false;
+    if (order.current_handler !== user.username) return false;
+    return true;
+  };
+
+  const getPushableSelectedCount = (): number => {
+    return selectedOverdueIds.filter(id => {
+      const order = allOrders.find(o => o.id === id);
+      return order && canPushOrder(order);
+    }).length;
+  };
+
+  const openPushModal = () => {
+    const pushableCount = getPushableSelectedCount();
+    if (pushableCount === 0) {
+      showToast("没有可推进的单据，请选择状态为待审核、已逾期且处理人为自己的单据", "error");
       return;
     }
-    setPushing(true);
+    setPushReason("");
+    setBatchResults(null);
+    setShowPushModal(true);
+  };
+
+  const handleBatchPush = async () => {
+    if (selectedOverdueIds.length === 0) {
+      showToast("请选择要推进的单据", "error");
+      return;
+    }
+    if (!pushReason.trim()) {
+      showToast("请填写处理原因/审计备注", "error");
+      return;
+    }
+    
+    const pushableOrders = selectedOverdueIds
+      .map(id => allOrders.find(o => o.id === id))
+      .filter((o): o is LiveSelectionOrder => o !== undefined && canPushOrder(o));
+    
+    if (pushableOrders.length === 0) {
+      showToast("没有可推进的单据", "error");
+      return;
+    }
+
+    setProcessing(true);
     try {
-      const result = await api.batchOverduePush({
-        order_ids: selectedOverdueIds,
-        reason: "批量逾期推进",
+      const resp = await api.batchOverduePush({
+        items: pushableOrders.map(order => ({
+          order_id: order.id,
+          version: order.version,
+          reason: pushReason,
+        })),
       });
-      const successCount = result.results.filter(r => r.success).length;
-      const failCount = result.results.filter(r => !r.success).length;
-      if (failCount === 0) {
-        showToast(`逾期批量推进成功，共处理 ${successCount} 条`, "success");
-      } else {
-        showToast(`批量推进完成：成功 ${successCount} 条，失败 ${failCount} 条`, "info");
-      }
+      
+      setBatchResults(resp.results);
+      const successCount = resp.results.filter(r => r.success).length;
+      const failCount = resp.results.filter(r => !r.success).length;
+      showToast(`批量推进完成：成功${successCount}条，失败${failCount}条`, successCount > 0 && failCount === 0 ? "success" : "info");
+      
       setSelectedOverdueIds([]);
       loadQueue();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "批量推进失败", "error");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "批量推进失败", "error");
     } finally {
-      setPushing(false);
+      setProcessing(false);
     }
   };
 
@@ -92,16 +146,23 @@ export default function OverdueQueue() {
           <h1 className="text-xl font-semibold text-gray-900">到期预警队列</h1>
           <p className="text-sm text-gray-500 mt-1">按责任人分组展示待处理选品单的到期情况</p>
         </div>
-        <button
-          onClick={handleBatchPush}
-          disabled={pushing || totalOverdue === 0}
-          className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-          </svg>
-          {pushing ? "推进中..." : "逾期批量推进"}
-        </button>
+        {user?.role === "auditor" && (
+          <button
+            onClick={openPushModal}
+            disabled={pushing || getPushableSelectedCount() === 0}
+            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+            </svg>
+            {pushing ? "推进中..." : `逾期批量推进 (${getPushableSelectedCount()})`}
+          </button>
+        )}
+        {user?.role !== "auditor" && (
+          <div className="text-sm text-gray-500 bg-gray-100 px-3 py-2 rounded">
+            仅审核员可执行批量推进操作
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-4 gap-4">
@@ -209,21 +270,23 @@ export default function OverdueQueue() {
                           <th className="px-6 py-3 text-left">
                             <input
                               type="checkbox"
-                              checked={item.orders.filter(o => o.is_overdue).every(o => selectedOverdueIds.includes(o.id))}
+                              checked={user?.role === "auditor" && item.orders.filter(o => canPushOrder(o)).length > 0 && 
+                                item.orders.filter(o => canPushOrder(o)).every(o => selectedOverdueIds.includes(o.id))}
                               onChange={(e) => {
-                                const overdueOrders = item.orders.filter(o => o.is_overdue);
+                                const pushableOrders = item.orders.filter(o => canPushOrder(o));
                                 const checked = (e.target as HTMLInputElement).checked;
                                 if (checked) {
                                   const newIds = [...selectedOverdueIds];
-                                  overdueOrders.forEach(o => {
+                                  pushableOrders.forEach(o => {
                                     if (!newIds.includes(o.id)) newIds.push(o.id);
                                   });
                                   setSelectedOverdueIds(newIds);
                                 } else {
-                                  setSelectedOverdueIds(selectedOverdueIds.filter(id => !overdueOrders.some(o => o.id === id)));
+                                  setSelectedOverdueIds(selectedOverdueIds.filter(id => !pushableOrders.some(o => o.id === id)));
                                 }
                               }}
-                              className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                              disabled={user?.role !== "auditor" || item.orders.filter(o => canPushOrder(o)).length === 0}
+                              className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded disabled:opacity-50"
                             />
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -234,6 +297,12 @@ export default function OverdueQueue() {
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             状态
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            当前处理人
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            版本
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             截止时间
@@ -255,6 +324,7 @@ export default function OverdueQueue() {
                             overdue: { label: "逾期", class: "bg-red-100 text-red-800", rowClass: "bg-red-50" },
                           };
                           const config = levelConfig[level];
+                          const canSelect = canPushOrder(order);
 
                           return (
                             <tr key={order.id} className={`hover:bg-gray-50 ${config.rowClass}`}>
@@ -270,7 +340,7 @@ export default function OverdueQueue() {
                                       setSelectedOverdueIds(selectedOverdueIds.filter(id => id !== order.id));
                                     }
                                   }}
-                                  disabled={!order.is_overdue}
+                                  disabled={!canSelect}
                                   className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded disabled:opacity-50"
                                 />
                               </td>
@@ -285,6 +355,22 @@ export default function OverdueQueue() {
                               <td className="px-6 py-4 whitespace-nowrap">
                                 <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(order.status)}`}>
                                   {getStatusLabel(order.status)}
+                                </span>
+                                {order.is_overdue && (
+                                  <span className="ml-2 px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 rounded-full">
+                                    已逾期
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className="text-sm text-gray-900">{order.current_handler || "-"}</span>
+                                {order.current_role && (
+                                  <div className="text-xs text-gray-500">{getRoleLabel(order.current_role)}</div>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className="text-sm font-mono text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+                                  v{order.version}
                                 </span>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap">
@@ -315,6 +401,138 @@ export default function OverdueQueue() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {showPushModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white">
+              <h3 className="text-lg font-semibold text-gray-900">
+                批量逾期推进
+              </h3>
+              <button
+                onClick={() => setShowPushModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              {!batchResults ? (
+                <>
+                  <div>
+                    <h4 className="font-medium text-gray-900 mb-2">选中的单据</h4>
+                    <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg">
+                      {selectedOverdueIds
+                        .map(id => allOrders.find(o => o.id === id))
+                        .filter((o): o is LiveSelectionOrder => o !== undefined && canPushOrder(o))
+                        .map(order => (
+                          <div key={order.id} className="flex items-center justify-between px-4 py-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50">
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium text-primary-600">{order.order_no}</span>
+                              <span className="text-sm text-gray-900">{order.product_name}</span>
+                            </div>
+                            <span className="text-sm font-mono text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
+                              v{order.version}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      统一处理意见/审计备注 <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={pushReason}
+                      onChange={(e) => setPushReason((e.target as HTMLTextAreaElement).value)}
+                      rows={3}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                      placeholder="请填写批量推进的审计备注说明..."
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button
+                      onClick={() => setShowPushModal(false)}
+                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={handleBatchPush}
+                      disabled={processing || !pushReason.trim()}
+                      className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {processing ? (
+                        <>
+                          <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          推进中...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                          </svg>
+                          确认推进
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">
+                        {batchResults.filter(r => r.success).length}
+                      </div>
+                      <div className="text-xs text-gray-500">成功</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-red-600">
+                        {batchResults.filter(r => !r.success).length}
+                      </div>
+                      <div className="text-xs text-gray-500">失败</div>
+                    </div>
+                  </div>
+                  {batchResults.filter(r => !r.success).length > 0 && (
+                    <div className="max-h-48 overflow-y-auto space-y-2">
+                      {batchResults.filter(r => !r.success).map((item, index) => {
+                        const order = allOrders.find(o => o.id === item.order_id);
+                        return (
+                          <div key={index} className="p-3 bg-red-50 rounded-lg text-sm">
+                            <div className="font-medium text-red-800">
+                              {order ? `${order.order_no} - ${order.product_name}` : `选品单 ID: ${item.order_id}`}
+                            </div>
+                            <div className="text-red-600 text-xs mt-1">失败原因: {item.message}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => {
+                        setShowPushModal(false);
+                        setBatchResults(null);
+                      }}
+                      className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+                    >
+                      确定
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

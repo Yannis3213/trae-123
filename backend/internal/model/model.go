@@ -125,10 +125,12 @@ type OrderListResponse struct {
 }
 
 type OrderDetailResponse struct {
-	Order          *LiveSelectionOrder    `json:"order"`
-	Attachments    []*SelectionAttachment `json:"attachments"`
-	ProcessRecords []*ProcessRecord       `json:"process_records"`
-	AuditRemarks   []*AuditRemark         `json:"audit_remarks"`
+	Order              *LiveSelectionOrder    `json:"order"`
+	Attachments        []*SelectionAttachment `json:"attachments"`
+	ProcessRecords     []*ProcessRecord       `json:"process_records"`
+	AuditRemarks       []*AuditRemark         `json:"audit_remarks"`
+	IsCurrentHandler   bool                   `json:"is_current_handler"`
+	CanOperate         bool                   `json:"can_operate"`
 }
 
 type CreateOrderRequest struct {
@@ -200,9 +202,16 @@ type OverdueQueueResponse struct {
 	Groups []*OverdueQueueItem `json:"groups"`
 }
 
+type OverduePushItem struct {
+	OrderID     int64  `json:"order_id"`
+	Version     int    `json:"version"`
+	AuditRemark string `json:"audit_remark"`
+}
+
 type BatchOverduePushRequest struct {
-	OrderIDs []int64 `json:"order_ids"`
-	Reason   string  `json:"reason"`
+	OrderIDs []int64          `json:"order_ids"`
+	Reason   string           `json:"reason"`
+	Items    []*OverduePushItem `json:"items"`
 }
 
 type UploadAttachmentRequest struct {

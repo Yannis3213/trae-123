@@ -60,6 +60,7 @@ export default function OrderDetail({ id }: OrderDetailProps) {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [user, setUser] = useState<{ username: string; role: string; name: string } | null>(null);
+  const [prevVersion, setPrevVersion] = useState<number | null>(null);
 
   const [moduleStates, setModuleStates] = useState<Record<ModuleType, {
     evidence: string;
@@ -94,6 +95,13 @@ export default function OrderDetail({ id }: OrderDetailProps) {
     setLoading(true);
     try {
       const detailData = await api.getOrder(id);
+      const newVersion = detailData.order.version;
+      
+      if (prevVersion !== null && prevVersion !== newVersion) {
+        showToast(`数据已更新，当前版本 v${newVersion}`, "info");
+      }
+      
+      setPrevVersion(newVersion);
       setOrder(detailData.order);
       setAttachments(detailData.attachments || []);
       setProcessRecords(detailData.process_records || []);
@@ -559,7 +567,24 @@ function ModuleProcessPanel({
   const config = MODULE_CONFIG[moduleKey];
   const moduleAttachments = attachments.filter(a => a.module_type === moduleKey);
   const evidenceCompleted = hasEvidence(evidence);
-  const canOperate = !!user && user.role === config.role && config.allowedStatuses.includes(order.status);
+  const roleMatch = !!user && user.role === config.role;
+  const handlerMatch = !!user && order.current_handler === user.username;
+  const statusMatch = config.allowedStatuses.includes(order.status);
+  const canOperate = roleMatch && handlerMatch && statusMatch;
+
+  const getCannotOperateReasons = () => {
+    const reasons: string[] = [];
+    if (!roleMatch) {
+      reasons.push(`需要角色：${getRoleLabel(config.role)}`);
+    }
+    if (!handlerMatch) {
+      reasons.push(`当前处理人：${order.current_handler || "-"}`);
+    }
+    if (!statusMatch) {
+      reasons.push(`允许状态：${config.allowedStatuses.map(s => getStatusLabel(s)).join(" / ")}`);
+    }
+    return reasons;
+  };
 
   const getStatusBadge = () => {
     if (evidenceCompleted) {
@@ -591,6 +616,9 @@ function ModuleProcessPanel({
         <div className="flex items-center gap-3">
           <h4 className="font-medium text-gray-900 text-lg">{moduleLabel}</h4>
           {getStatusBadge()}
+          <span className="text-sm text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+            📌 当前版本：v{order.version}
+          </span>
         </div>
         {!canOperate && !evidenceCompleted && (
           <div className="text-xs text-gray-400 bg-gray-50 px-3 py-1 rounded">
@@ -735,7 +763,25 @@ function ModuleProcessPanel({
         </div>
       )}
 
-      {!canOperate && (
+      {!canOperate && !evidenceCompleted && (
+        <div className="mt-4 p-4 bg-red-50 rounded-lg border border-red-100">
+          <div className="flex items-start gap-2 text-sm">
+            <svg className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div>
+              <div className="font-medium text-red-800 mb-1">不可操作原因</div>
+              <ul className="space-y-0.5 list-disc list-inside text-red-700">
+                {getCannotOperateReasons().map((reason, idx) => (
+                  <li key={idx}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!canOperate && evidenceCompleted && (
         <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
           <div className="flex items-start gap-2 text-sm text-gray-500">
             <svg className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

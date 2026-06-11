@@ -152,8 +152,20 @@ export const api = {
   getOverdueQueue: () =>
     apiRequest<{ groups: OverdueQueueItem[] }>("/overdue-queue").then(res => res.groups),
 
-  batchOverduePush: (data: { order_ids: number[]; reason?: string }) =>
-    apiRequest<{ results: { order_id: number; success: boolean; message: string }[] }>("/orders/batch-overdue-push", {
+  batchOverduePush: (data: {
+    items: {
+      order_id: number;
+      version: number;
+      reason?: string;
+    }[];
+  }) =>
+    apiRequest<{
+      results: {
+        order_id: number;
+        success: boolean;
+        message: string;
+      }[];
+    }>("/orders/batch-overdue-push", {
       method: "POST",
       body: data,
     }),
