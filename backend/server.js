@@ -121,7 +121,7 @@ const authMiddleware = (req, res, next) => {
 };
 
 const validateSubmission = (order, userId, userRole, submittedVersion) => {
-  if (order.current_handler !== userRole) {
+  if (order.current_role !== userRole) {
     return { valid: false, error: `越权操作：当前节点处理角色为${roleMap[order.current_role]?.label || order.current_role}，您的角色无操作权限` };
   }
   

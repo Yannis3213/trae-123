@@ -224,12 +224,12 @@ const tx = db.transaction(() => {
 
   insertOrder.run(
     8, 'DD20260601008', 2, formatDate(addDays(now, -2)), formatDate(addDays(now, 1)),
-    'pending_acceptance', 'qc1', 'qc_specialist', 3, 5200.00,
+    'pending_review', 'ops1', 'operations_manager', 3, 5200.00,
     JSON.stringify({ has_invoice: true, material_complete: true }),
-    JSON.stringify({ acceptance_passed: false, inspector: '陈品控' }),
+    JSON.stringify({ acceptance_passed: true, inspector: '陈品控', check_date: formatDate(now) }),
     null,
-    '店长试图在验收环节直接修改已提交的订货材料', 'status_conflict',
-    formatDateTime(normalDeadline), formatDateTime(addHours(now, -2))
+    '店长在验收环节试图修改已提交材料，版本冲突已拦截', 'status_conflict',
+    formatDateTime(normalDeadline), formatDateTime(addHours(now, -1))
   );
 
   insertOrderItem.run(20, 8, '雪花牛肉', '5kg/盒', 4, '盒', 680.00, 4, 4);
