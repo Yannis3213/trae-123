@@ -21,6 +21,17 @@ export const ACTION_LABELS: Record<ProcessAction, string> = {
   rectify: '补正重提',
 };
 
+export const ACTION_TYPE: Record<ProcessAction, 'primary' | 'success' | 'warning' | 'danger'> = {
+  submit: 'success',
+  review: 'success',
+  verify: 'success',
+  confirm: 'success',
+  return: 'warning',
+  reject: 'danger',
+  exception: 'danger',
+  rectify: 'success',
+};
+
 export const STATUS_GROUPS: Record<StatusGroup, ApplicationStatus[]> = {
   pending: ['pending_review', 'verifying', 'confirming'],
   exception: ['exception'],

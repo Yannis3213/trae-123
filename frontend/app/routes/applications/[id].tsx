@@ -8,12 +8,7 @@ import ProcessTimeline from '~/components/ProcessTimeline';
 import FormModal from '~/components/FormModal';
 import { getApplication, processApplication } from '~/api/applications';
 import { user, fetchMe } from '~/store/auth';
-import {
-  getAllowedActions,
-  ACTION_LABELS,
-  getActionButtonClass,
-  REASON_CODE_LABELS,
-} from '~/utils/status';
+import { ACTION_LABELS, getActionButtonClass, REASON_CODE_LABELS } from '~/utils/status';
 import { getRoleLabel } from '~/utils/role';
 import type { Application, ProcessAction } from '~/types';
 import dayjs from 'dayjs';
@@ -56,8 +51,13 @@ const ApplicationDetail: Component = () => {
   });
 
   const allowedActions = (): ProcessAction[] => {
-    if (!application() || !user()) return [];
-    return getAllowedActions(application()!.status, user()!.role);
+    if (!application() || !application()!.allowed_actions) return [];
+    return application()!.allowed_actions!;
+  };
+
+  const getRequirements = (action: ProcessAction) => {
+    if (!application() || !application()!.action_requirements) return null;
+    return application()!.action_requirements![action] || null;
   };
 
   const openModal = (action: ProcessAction) => {
@@ -191,12 +191,30 @@ const ApplicationDetail: Component = () => {
                   >
                     v{application()?.version}
                   </span>
+                  {application()?.exception_summary && (
+                    <span
+                      class="tag"
+                      style={{
+                        background: '#fff1f0',
+                        color: '#ff4d4f',
+                        border: '1px solid #ffa39e',
+                        'max-width': '260px',
+                        overflow: 'hidden',
+                        'text-overflow': 'ellipsis',
+                        'white-space': 'nowrap',
+                      }}
+                      title={application()!.exception_summary}
+                    >
+                      异常: {application()!.exception_summary}
+                    </span>
+                  )}
                 </div>
                 <div style={{ color: '#333', 'font-size': '15px', marginTop: '8px' }}>
                   {application()?.title}
                 </div>
                 <div style={{ color: '#999', 'font-size': '13px', marginTop: '4px' }}>
                   {application()?.applicant_name} · {application()?.type}
+                  {' · '}到期日：{dayjs(application()!.due_date).format('YYYY-MM-DD')}
                   {application()?.current_handler && (
                     <>
                       {' · '}当前处理人：
@@ -230,7 +248,7 @@ const ApplicationDetail: Component = () => {
             <div
               style={{
                 display: 'grid',
-                'grid-template-columns': 'repeat(4, 1fr)',
+                'grid-template-columns': 'repeat(5, 1fr)',
                 gap: '16px',
                 padding: '20px',
                 background: '#fafafa',
@@ -247,7 +265,7 @@ const ApplicationDetail: Component = () => {
               </div>
               <div>
                 <div style={{ color: '#999', 'font-size': '13px', marginBottom: '4px' }}>
-                  申请类型
+                  单据类型
                 </div>
                 <div style={{ color: '#333', 'font-size': '15px', 'font-weight': '500' }}>
                   {application()?.type}
@@ -255,40 +273,55 @@ const ApplicationDetail: Component = () => {
               </div>
               <div>
                 <div style={{ color: '#999', 'font-size': '13px', marginBottom: '4px' }}>
-                  创建时间
+                  附件数
                 </div>
-                <div style={{ color: '#333', 'font-size': '15px' }}>
-                  {dayjs(application()?.created_at).format('YYYY-MM-DD HH:mm')}
+                <div style={{ color: '#333', 'font-size': '15px', 'font-weight': '500' }}>
+                  {application()?.attachment_count || 0}
+                  <span
+                    style={{
+                      color: '#999',
+                      'font-size': '12px',
+                      'margin-left': '6px',
+                      'font-weight': '400',
+                    }}
+                  >
+                    个
+                  </span>
                 </div>
               </div>
               <div>
                 <div style={{ color: '#999', 'font-size': '13px', marginBottom: '4px' }}>
-                  到期日
+                  未解决异常
                 </div>
-                <div style={{ color: '#333', 'font-size': '15px' }}>
-                  {dayjs(application()?.due_date).format('YYYY-MM-DD')}
+                <div
+                  style={{
+                    color: (application()?.unresolved_exception_count || 0) > 0 ? '#ff4d4f' : '#52c41a',
+                    'font-size': '15px',
+                    'font-weight': '500',
+                  }}
+                >
+                  {application()?.unresolved_exception_count || 0}
+                  <span
+                    style={{
+                      color: '#999',
+                      'font-size': '12px',
+                      'margin-left': '6px',
+                      'font-weight': '400',
+                    }}
+                  >
+                    条
+                  </span>
+                </div>
+              </div>
+              <div>
+                <div style={{ color: '#999', 'font-size': '13px', marginBottom: '4px' }}>
+                  创建时间
+                </div>
+                <div style={{ color: '#333', 'font-size': '13px' }}>
+                  {dayjs(application()?.created_at).format('YYYY-MM-DD HH:mm')}
                 </div>
               </div>
             </div>
-
-            {application()?.payment_evidence && (
-              <div
-                style={{
-                  marginTop: '20px',
-                  padding: '16px',
-                  background: '#f6ffed',
-                  'border-radius': '8px',
-                  border: '1px solid #b7eb8f',
-                }}
-              >
-                <div style={{ color: '#389e0d', 'font-size': '13px', marginBottom: '8px' }}>
-                  付款凭证
-                </div>
-                <div style={{ color: '#333', lineHeight: '1.6' }}>
-                  {application()!.payment_evidence}
-                </div>
-              </div>
-            )}
           </div>
 
           <div class="card" style={{ marginBottom: '16px' }}>
@@ -404,13 +437,21 @@ const ApplicationDetail: Component = () => {
                             gap: '8px',
                           }}
                         >
-                          <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              'align-items': 'center',
+                              gap: '10px',
+                              'flex-wrap': 'wrap',
+                            }}
+                          >
                             <span
                               class="tag"
                               style={{
-                                background: exc.resolved ? '#f6ffed' : '#fff1f0',
-                                color: exc.resolved ? '#389e0d' : '#cf1322',
-                                border: `1px solid ${exc.resolved ? '#b7eb8f' : '#ffa39e'}`,
+                                background: '#fff7e6',
+                                color: '#fa8c16',
+                                border: '1px solid #ffd591',
+                                'font-weight': '500',
                               }}
                             >
                               {REASON_CODE_LABELS[exc.reason_code] || exc.reason_code}
@@ -507,6 +548,10 @@ const ApplicationDetail: Component = () => {
                 <span style={{ color: '#1890ff', fontWeight: 500 }}>
                   {user() ? getRoleLabel(user()!.role) : ''}
                 </span>
+                {' · '}后端下发可用动作：
+                <span style={{ color: '#52c41a', fontWeight: 500 }}>
+                  {allowedActions().length}个
+                </span>
               </div>
             </div>
 
@@ -536,22 +581,37 @@ const ApplicationDetail: Component = () => {
                   'border-radius': '8px',
                 }}
               >
-                当前状态下您无可用操作
+                当前状态下您无可用操作（后端未下发 allowed_actions）
               </div>
             </Show>
 
             <Show when={allowedActions().length > 0}>
               <div style={{ display: 'flex', gap: '12px', 'flex-wrap': 'wrap' }}>
                 <For each={allowedActions()}>
-                  {(action) => (
-                    <button
-                      class={getActionButtonClass(action)}
-                      onClick={() => openModal(action)}
-                      style={{ padding: '10px 24px', 'font-size': '14px' }}
-                    >
-                      {ACTION_LABELS[action]}
-                    </button>
-                  )}
+                  {(action) => {
+                    const req = getRequirements(action);
+                    const tips: string[] = [];
+                    if (req?.require_comment) tips.push('需填意见');
+                    if (req?.require_payment_evidence) tips.push('需填付款凭证');
+                    if (req?.require_overdue_note) tips.push('需填逾期说明');
+                    if (req?.require_reason_code) tips.push('需选异常类型');
+                    return (
+                      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+                        <button
+                          class={getActionButtonClass(action)}
+                          onClick={() => openModal(action)}
+                          style={{ padding: '10px 24px', 'font-size': '14px' }}
+                        >
+                          {ACTION_LABELS[action]}
+                        </button>
+                        {tips.length > 0 && (
+                          <div style={{ color: '#999', 'font-size': '11px', 'text-align': 'center' }}>
+                            {tips.join(' · ')}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }}
                 </For>
               </div>
             </Show>
@@ -562,7 +622,7 @@ const ApplicationDetail: Component = () => {
           open={modalOpen()}
           action={currentAction()}
           applicationNo={application()?.application_no}
-          isOverdue={application()?.is_overdue}
+          requirements={getRequirements(currentAction())}
           onClose={() => setModalOpen(false)}
           onConfirm={handleProcess}
           loading={processing()}

@@ -649,14 +649,24 @@ function batchProcess(items, user) {
 function getAllowedActionsBatch(ids, user) {
   const apps = db.prepare(`SELECT * FROM reimbursement_applications WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY id`).all(...ids);
 
-  if (apps.length === 0) return { common_actions: [], actions_by_id: {} };
+  if (apps.length === 0) return { common_actions: [], actions_by_id: {}, requirements_by_action: {} };
 
   let commonActions = null;
   const actionsById = {};
+  const requirementsByAction = {};
 
   for (const app of apps) {
-    const actions = getAllowedActions(app, user).map(a => a.action);
+    const actionsWithReq = getAllowedActions(app, user);
+    const actions = actionsWithReq.map(a => a.action);
     actionsById[app.id] = actions;
+    actionsWithReq.forEach(a => {
+      requirementsByAction[a.action] = {
+        require_comment: a.require_comment,
+        require_payment_evidence: a.require_payment_evidence,
+        require_overdue_note: a.require_overdue_note,
+        require_reason_code: a.require_reason_code
+      };
+    });
     if (commonActions === null) {
       commonActions = new Set(actions);
     } else {
@@ -668,9 +678,17 @@ function getAllowedActionsBatch(ids, user) {
     }
   }
 
+  const commonRequirements = {};
+  Array.from(commonActions || []).forEach(action => {
+    if (requirementsByAction[action]) {
+      commonRequirements[action] = requirementsByAction[action];
+    }
+  });
+
   return {
     common_actions: Array.from(commonActions || []),
-    actions_by_id: actionsById
+    actions_by_id: actionsById,
+    requirements_by_action: commonRequirements
   };
 }
 

@@ -203,6 +203,7 @@ export interface LoginResponse {
 export interface AllowedActionsResponse {
   common_actions: ProcessAction[];
   actions_by_id: Record<number, ProcessAction[]>;
+  requirements_by_action: Record<string, ActionRequirements>;
 }
 
 export type ReasonCode =

@@ -1,12 +1,12 @@
 import { Component, createSignal, Show, createEffect } from 'solid-js';
-import type { ProcessAction, ReasonCode } from '../types';
-import { ACTION_LABELS } from '../utils/status';
+import type { ProcessAction, ReasonCode, ActionRequirements } from '../types';
+import { ACTION_LABELS, ACTION_TYPE } from '../utils/status';
 
 interface FormModalProps {
   open: boolean;
   action: ProcessAction;
   applicationNo?: string;
-  isOverdue?: boolean;
+  requirements?: ActionRequirements | null;
   onClose: () => void;
   onConfirm: (payload: {
     comment?: string;
@@ -17,33 +17,6 @@ interface FormModalProps {
   }) => void;
   loading?: boolean;
 }
-
-interface ActionConfig {
-  title: string;
-  type: 'normal' | 'danger' | 'warning' | 'success';
-  requireComment: boolean;
-  commentMinLength?: number;
-  showExceptionFields: boolean;
-  showPaymentEvidence: boolean;
-  showOverdueNote: boolean;
-}
-
-const getActionConfig = (action: ProcessAction, isOverdue: boolean): ActionConfig => {
-  const base: Record<ProcessAction, Omit<ActionConfig, 'showOverdueNote'>> = {
-    submit: { title: '提交申请', type: 'success', requireComment: false, showExceptionFields: false, showPaymentEvidence: false },
-    review: { title: '审核申请', type: 'success', requireComment: true, commentMinLength: 3, showExceptionFields: false, showPaymentEvidence: false },
-    verify: { title: '复核申请', type: 'success', requireComment: true, commentMinLength: 3, showExceptionFields: false, showPaymentEvidence: false },
-    confirm: { title: '付款确认', type: 'success', requireComment: false, showExceptionFields: false, showPaymentEvidence: true },
-    return: { title: '退回申请', type: 'warning', requireComment: true, commentMinLength: 1, showExceptionFields: false, showPaymentEvidence: false },
-    reject: { title: '拒绝申请', type: 'danger', requireComment: true, commentMinLength: 1, showExceptionFields: false, showPaymentEvidence: false },
-    exception: { title: '标记异常', type: 'danger', requireComment: false, showExceptionFields: true, showPaymentEvidence: false },
-    rectify: { title: '补正重提', type: 'success', requireComment: true, commentMinLength: 1, showExceptionFields: false, showPaymentEvidence: false },
-  };
-  return {
-    ...base[action],
-    showOverdueNote: action === 'confirm' && isOverdue,
-  };
-};
 
 const REASON_CODE_OPTIONS: Array<{ value: ReasonCode; label: string }> = [
   { value: 'missing_evidence', label: '附件缺失' },
@@ -72,10 +45,32 @@ const FormModal: Component<FormModalProps> = (props) => {
     }
   });
 
-  const config = () => getActionConfig(props.action, props.isOverdue || false);
+  const req = () => props.requirements;
+
+  const requireComment = () => {
+    return !!req()?.require_comment;
+  };
+
+  const commentMinLen = () => {
+    if (!req()?.require_comment) return 0;
+    return 3;
+  };
+
+  const showExceptionFields = () => {
+    return !!req()?.require_reason_code;
+  };
+
+  const showPaymentEvidence = () => {
+    return !!req()?.require_payment_evidence;
+  };
+
+  const showOverdueNote = () => {
+    return !!req()?.require_overdue_note;
+  };
 
   const submitBtnClass = () => {
-    switch (config().type) {
+    const type = ACTION_TYPE[props.action] || 'primary';
+    switch (type) {
       case 'danger':
         return 'btn btn-danger';
       case 'warning':
@@ -88,13 +83,11 @@ const FormModal: Component<FormModalProps> = (props) => {
   };
 
   const handleConfirm = () => {
-    const cfg = config();
-
-    if (cfg.requireComment) {
+    if (requireComment()) {
       const trimmed = comment().trim();
-      const minLen = cfg.commentMinLength || 1;
+      const minLen = commentMinLen();
       if (!trimmed) {
-        setError('请填写备注说明');
+        setError('请填写备注说明（后端必填）');
         return;
       }
       if (trimmed.length < minLen) {
@@ -103,9 +96,9 @@ const FormModal: Component<FormModalProps> = (props) => {
       }
     }
 
-    if (cfg.showExceptionFields) {
+    if (showExceptionFields()) {
       if (!reasonCode()) {
-        setError('请选择异常原因');
+        setError('请选择异常原因类型');
         return;
       }
       if (!reasonDetail().trim()) {
@@ -114,15 +107,22 @@ const FormModal: Component<FormModalProps> = (props) => {
       }
     }
 
-    if (cfg.showPaymentEvidence && !paymentEvidence().trim()) {
-      setError('请填写付款凭证');
-      return;
+    if (showPaymentEvidence()) {
+      const p = paymentEvidence().trim();
+      if (!p) {
+        setError('请填写付款凭证/流水号（后端必填，缺付款记录不得放行）');
+        return;
+      }
+      if (p.length < 5) {
+        setError('付款凭证至少需要 5 个字符');
+        return;
+      }
     }
 
-    if (cfg.showOverdueNote) {
+    if (showOverdueNote()) {
       const trimmed = overdueNote().trim();
       if (!trimmed) {
-        setError('请填写逾期说明');
+        setError('请填写逾期说明（后端必填，逾期不可悄悄放行）');
         return;
       }
       if (trimmed.length < 10) {
@@ -140,13 +140,18 @@ const FormModal: Component<FormModalProps> = (props) => {
     });
   };
 
+  const modalTitle = () => {
+    const base = ACTION_LABELS[props.action] || props.action;
+    return `${base}申请`;
+  };
+
   return (
     <Show when={props.open}>
       <div class="modal-mask" onClick={(e) => e.target === e.currentTarget && props.onClose()}>
         <div class="modal-content">
           <div class="modal-header">
             <span class="modal-title">
-              {config().title}
+              {modalTitle()}
               {props.applicationNo && (
                 <span
                   style={{
@@ -165,12 +170,34 @@ const FormModal: Component<FormModalProps> = (props) => {
               ×
             </button>
           </div>
+
+          {req() && (
+            <div
+              style={{
+                padding: '8px 20px',
+                background: '#e6f7ff',
+                'border-bottom': '1px solid #91d5ff',
+                'font-size': '12px',
+                color: '#1890ff',
+              }}
+            >
+              后端下发表单要求：
+              {req().require_comment && <span style={{ marginLeft: '8px' }}>✓意见必填</span>}
+              {req().require_payment_evidence && <span style={{ marginLeft: '8px' }}>✓付款凭证</span>}
+              {req().require_overdue_note && <span style={{ marginLeft: '8px' }}>✓逾期说明</span>}
+              {req().require_reason_code && <span style={{ marginLeft: '8px' }}>✓异常类型</span>}
+              {!req().require_comment && !req().require_payment_evidence && !req().require_overdue_note && !req().require_reason_code && (
+                <span>无额外必填项</span>
+              )}
+            </div>
+          )}
+
           <div class="modal-body">
-            {config().showExceptionFields && (
+            {showExceptionFields() && (
               <>
                 <div class="form-item">
                   <label class="form-label">
-                    异常原因 <span style={{ color: '#ff4d4f' }}>*</span>
+                    异常原因类型 <span style={{ color: '#ff4d4f' }}>*</span>
                   </label>
                   <select
                     class="form-input"
@@ -197,51 +224,54 @@ const FormModal: Component<FormModalProps> = (props) => {
               </>
             )}
 
-            {config().showPaymentEvidence && (
+            {showPaymentEvidence() && (
               <div class="form-item">
                 <label class="form-label">
-                  付款凭证 <span style={{ color: '#ff4d4f' }}>*</span>
+                  付款凭证/流水号 <span style={{ color: '#ff4d4f' }}>*</span>
+                  <span style={{ color: '#999', 'font-weight': 'normal', 'font-size': '12px' }}>
+                    （至少5字，缺付款记录报销申请不得放行）
+                  </span>
                 </label>
                 <input
                   type="text"
                   class="form-input"
                   value={paymentEvidence()}
                   onInput={(e) => setPaymentEvidence(e.target.value)}
-                  placeholder="请填写付款凭证信息，如银行流水号、转账单号等"
+                  placeholder="如：P202406150001、银行流水号20240611..."
                 />
               </div>
             )}
 
-            {config().showOverdueNote && (
+            {showOverdueNote() && (
               <div class="form-item">
                 <label class="form-label">
                   逾期说明 <span style={{ color: '#ff4d4f' }}>*</span>
                   <span style={{ color: '#999', 'font-weight': 'normal', 'font-size': '12px' }}>
-                    （至少10字）
+                    （至少10字，逾期不可悄悄放行）
                   </span>
                 </label>
                 <textarea
                   class="form-input form-textarea"
                   value={overdueNote()}
                   onInput={(e) => setOverdueNote(e.target.value)}
-                  placeholder="请详细说明逾期原因和处理情况..."
+                  placeholder="请详细说明逾期原因、责任人、处理情况..."
                 />
               </div>
             )}
 
             <div class="form-item">
               <label class="form-label">
-                {config().requireComment ? (
+                {requireComment() ? (
                   <>
                     备注说明 <span style={{ color: '#ff4d4f' }}>*</span>
-                    {config().commentMinLength && config().commentMinLength > 1 && (
+                    {commentMinLen() > 1 && (
                       <span style={{ color: '#999', 'font-weight': 'normal', 'font-size': '12px' }}>
-                        （至少{config().commentMinLength}字）
+                        （至少{commentMinLen()}字）
                       </span>
                     )}
                   </>
                 ) : (
-                  '备注'
+                  '备注（可选）'
                 )}
               </label>
               <textarea
@@ -249,7 +279,9 @@ const FormModal: Component<FormModalProps> = (props) => {
                 value={comment()}
                 onInput={(e) => setComment(e.target.value)}
                 placeholder={
-                  config().requireComment ? '请填写备注说明...' : '可选，填写操作备注...'
+                  requireComment()
+                    ? '请填写备注说明（退回原因/复核意见/补正说明等）...'
+                    : '可选，填写操作备注...'
                 }
               />
             </div>
@@ -262,7 +294,7 @@ const FormModal: Component<FormModalProps> = (props) => {
                   marginBottom: '16px',
                 }}
               >
-                {error()}
+                ❌ {error()}
               </div>
             </Show>
           </div>
@@ -271,7 +303,7 @@ const FormModal: Component<FormModalProps> = (props) => {
               取消
             </button>
             <button class={submitBtnClass()} onClick={handleConfirm} disabled={props.loading}>
-              {props.loading ? '处理中...' : '确认'}
+              {props.loading ? '处理中...' : '确认提交'}
             </button>
           </div>
         </div>

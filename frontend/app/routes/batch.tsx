@@ -6,22 +6,8 @@ import BatchResultComponent from '~/components/BatchResult';
 import FormModal from '~/components/FormModal';
 import { getApplications, batchProcess, getAllowedActionsBatch } from '~/api/applications';
 import { user, fetchMe } from '~/store/auth';
-import {
-  getAllowedActions,
-  ACTION_LABELS,
-  STATUS_GROUPS,
-  GROUP_LABELS,
-  getActionButtonClass,
-  REASON_CODE_LABELS,
-} from '~/utils/status';
-import type {
-  Application,
-  ProcessAction,
-  BatchResultItem,
-  BatchProcessItem,
-  StatusGroup,
-} from '~/types';
-import dayjs from 'dayjs';
+import { ACTION_LABELS, GROUP_LABELS, getActionButtonClass } from '~/utils/status';
+import type { Application, ProcessAction, BatchResultItem, StatusGroup } from '~/types';
 
 const BatchCenter: Component = () => {
   const [applications, setApplications] = createSignal<Application[]>([]);
@@ -30,12 +16,15 @@ const BatchCenter: Component = () => {
   const [selectedIds, setSelectedIds] = createSignal<Set<number>>(new Set());
   const [filterStatus, setFilterStatus] = createSignal<StatusGroup>('pending');
   const [keyword, setKeyword] = createSignal('');
-  const [selectedAction, setSelectedAction] = createSignal<ProcessAction>('confirm');
+  const [selectedAction, setSelectedAction] = createSignal<ProcessAction>('review');
   const [showResult, setShowResult] = createSignal(false);
   const [batchResults, setBatchResults] = createSignal<BatchResultItem[]>([]);
   const [modalOpen, setModalOpen] = createSignal(false);
   const [error, setError] = createSignal('');
-  const [allowedBatchActions, setAllowedBatchActions] = createSignal<ProcessAction[]>([]);
+  const [commonActions, setCommonActions] = createSignal<ProcessAction[]>([]);
+  const [loadingActions, setLoadingActions] = createSignal(false);
+  const [actionsById, setActionsById] = createSignal<Record<number, ProcessAction[]>>({});
+  const [requirementsByAction, setRequirementsByAction] = createSignal<Record<string, any>>({});
 
   const loadData = async () => {
     if (!user()) {
@@ -61,31 +50,42 @@ const BatchCenter: Component = () => {
   createEffect(() => {
     const ids = Array.from(selectedIds());
     if (ids.length === 0 || !user()) {
-      setAllowedBatchActions([]);
+      setCommonActions([]);
+      setActionsById({});
       return;
     }
-    getAllowedActionsBatch(ids).then(res => {
-      setAllowedBatchActions(res.allowed_actions);
-    }).catch(() => {
-      const u = user()!;
-      const selApps = filteredApplications().filter(a => ids.includes(a.id));
-      const actions = new Set<ProcessAction>();
-      for (const app of selApps) {
-        for (const a of getAllowedActions(app.status, u.role)) {
-          actions.add(a);
-        }
-      }
-      setAllowedBatchActions(Array.from(actions));
-    });
+
+    setLoadingActions(true);
+    getAllowedActionsBatch(ids)
+      .then((res) => {
+        setCommonActions(res.common_actions || []);
+        setActionsById(res.actions_by_id || {});
+        setRequirementsByAction(res.requirements_by_action || {});
+      })
+      .catch((err) => {
+        console.error('获取共同动作失败:', err);
+        setCommonActions([]);
+        setActionsById({});
+        setRequirementsByAction({});
+      })
+      .finally(() => {
+        setLoadingActions(false);
+      });
   });
 
   const filteredApplications = () => {
     let list = applications();
 
     if (filterStatus() !== 'all') {
-      const groupStatuses = STATUS_GROUPS[filterStatus()];
-      if (groupStatuses) {
-        list = list.filter((a) => groupStatuses.includes(a.status));
+      const groupStatuses = {
+        pending: ['pending_review', 'verifying', 'confirming'],
+        exception: ['exception'],
+        completed: ['completed', 'rejected', 'returned'],
+        all: ['pending_review', 'verifying', 'confirming', 'exception', 'completed', 'rejected', 'returned'],
+      } as const;
+      const statuses = groupStatuses[filterStatus()];
+      if (statuses) {
+        list = list.filter((a) => statuses.includes(a.status));
       }
     }
 
@@ -142,7 +142,7 @@ const BatchCenter: Component = () => {
     overdue_note?: string;
   }) => {
     const apps = selectedApplications();
-    const items: BatchProcessItem[] = apps.map((app) => ({
+    const items = apps.map((app) => ({
       id: app.id,
       action: selectedAction(),
       version: app.version,
@@ -167,6 +167,11 @@ const BatchCenter: Component = () => {
 
   const tabs: StatusGroup[] = ['pending', 'exception', 'completed', 'all'];
 
+  const hasAnyActionForApp = (app: Application) => {
+    const actions = actionsById()[app.id];
+    return (actions?.length || 0) > 0;
+  };
+
   return (
     <Layout>
       <div class="container">
@@ -190,6 +195,14 @@ const BatchCenter: Component = () => {
                 {selectedIds().size}
               </span>{' '}
               条申请
+              {selectedIds().size > 0 && loadingActions() && (
+                <span style={{ marginLeft: '8px', color: '#1890ff' }}>（查询后端共同动作中...）</span>
+              )}
+              {selectedIds().size > 0 && !loadingActions() && (
+                <span style={{ marginLeft: '8px', color: commonActions().length > 0 ? '#52c41a' : '#ff4d4f' }}>
+                  （后端下发共同动作：{commonActions().length}个）
+                </span>
+              )}
             </div>
           </div>
 
@@ -266,32 +279,84 @@ const BatchCenter: Component = () => {
                 }}
               >
                 <div style={{ color: '#1890ff', 'font-weight': '500' }}>
-                  已选择 {selectedIds().size} 条申请，共同可执行操作：
+                  已选择 {selectedIds().size} 条申请，
+                  后端下发共同可执行操作：
                 </div>
                 <div style={{ display: 'flex', gap: '8px', 'flex-wrap': 'wrap' }}>
-                  <Show when={allowedBatchActions().length === 0}>
-                    <span
-                      style={{
-                        color: '#999',
-                        'font-size': '14px',
-                        padding: '8px 0',
-                      }}
-                    >
-                      所选申请无共同可用操作，请调整选择
+                  <Show when={commonActions().length === 0 && !loadingActions()}>
+                    <span style={{ color: '#999', 'font-size': '14px', padding: '8px 0' }}>
+                      ❌ 所选申请无共同可用操作（后端未下发 common_actions）。请减少选择或切换筛选条件。
                     </span>
                   </Show>
-                  <For each={allowedBatchActions()}>
-                    {(action) => (
-                      <button
-                        class={getActionButtonClass(action)}
-                        onClick={() => openBatchModal(action)}
-                      >
-                        批量{ACTION_LABELS[action]}
-                      </button>
-                    )}
+                  <For each={commonActions()}>
+                    {(action) => {
+                      const allSupport = selectedApplications().every(
+                        (a) => actionsById()[a.id]?.includes(action)
+                      );
+                      const unsupportedCount = selectedApplications().filter(
+                        (a) => !actionsById()[a.id]?.includes(action)
+                      ).length;
+                      return (
+                        <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+                          <button
+                            class={getActionButtonClass(action)}
+                            disabled={unsupportedCount > 0}
+                            style={{
+                              padding: '8px 20px',
+                              'font-size': '13px',
+                              opacity: unsupportedCount > 0 ? 0.5 : 1,
+                              cursor: unsupportedCount > 0 ? 'not-allowed' : 'pointer',
+                            }}
+                            onClick={() => openBatchModal(action)}
+                            title={unsupportedCount > 0 ? `${unsupportedCount}条不支持该操作` : `对${selectedApplications().length}条执行${ACTION_LABELS[action]}`}
+                          >
+                            批量{ACTION_LABELS[action]}
+                            {unsupportedCount > 0 && `（${selectedApplications().length - unsupportedCount}/${selectedApplications().length}）`}
+                          </button>
+                          {!allSupport && unsupportedCount === 0 && (
+                            <div style={{ color: '#52c41a', 'font-size': '11px', 'text-align': 'center' }}>
+                              后端全量支持
+                            </div>
+                          )}
+                          {unsupportedCount > 0 && (
+                            <div style={{ color: '#ff4d4f', 'font-size': '11px', 'text-align': 'center' }}>
+                              {unsupportedCount}条不支持
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }}
                   </For>
                 </div>
               </div>
+
+              <Show when={selectedIds().size > 0}>
+                <div
+                  style={{
+                    marginTop: '12px',
+                    padding: '8px 12px',
+                    background: '#fff',
+                    'border-radius': '4px',
+                    'font-size': '12px',
+                    color: '#666',
+                  }}
+                >
+                  <strong style={{ color: '#333' }}>每条的后端可执行动作：</strong>
+                  <span style={{ marginLeft: '8px' }}>
+                    {selectedApplications().slice(0, 5).map((a) => (
+                      <span key={a.id} style={{ marginRight: '16px' }}>
+                        {a.application_no}：
+                        <span style={{ color: '#1890ff', fontWeight: 500 }}>
+                          {(actionsById()[a.id] || []).map((x) => ACTION_LABELS[x]).join('、') || '无'}
+                        </span>
+                      </span>
+                    ))}
+                    {selectedApplications().length > 5 && (
+                      <span style={{ color: '#999' }}>...共{selectedApplications().length}条</span>
+                    )}
+                  </span>
+                </div>
+              </Show>
             </div>
           </Show>
 
@@ -326,13 +391,14 @@ const BatchCenter: Component = () => {
                   <th>处理人</th>
                   <th>附件</th>
                   <th>异常摘要</th>
+                  <th>后端动作</th>
                 </tr>
               </thead>
               <tbody>
                 <Show when={loading()}>
                   <tr>
                     <td
-                      colspan="10"
+                      colspan="11"
                       style={{
                         'text-align': 'center',
                         padding: '48px',
@@ -346,7 +412,7 @@ const BatchCenter: Component = () => {
                 <Show when={!loading() && filteredApplications().length === 0}>
                   <tr>
                     <td
-                      colspan="10"
+                      colspan="11"
                       style={{
                         'text-align': 'center',
                         padding: '48px',
@@ -358,59 +424,76 @@ const BatchCenter: Component = () => {
                   </tr>
                 </Show>
                 <For each={filteredApplications()}>
-                  {(app) => (
-                    <tr
-                      style={{
-                        background: selectedIds().has(app.id)
-                          ? '#f0f8ff'
-                          : undefined,
-                      }}
-                    >
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds().has(app.id)}
-                          style={{
-                            cursor: 'pointer',
-                            width: '16px',
-                            height: '16px',
-                          }}
-                          onChange={() => toggleSelect(app.id)}
-                        />
-                      </td>
-                      <td style={{ color: '#1890ff' }}>{app.application_no}</td>
-                      <td>{app.applicant_name}</td>
-                      <td
+                  {(app) => {
+                    const appActions = actionsById()[app.id] || [];
+                    const disabled = selectedIds().size > 0 && !commonActions().some((a) => appActions.includes(a));
+                    return (
+                      <tr
                         style={{
-                          maxWidth: '160px',
-                          overflow: 'hidden',
-                          'text-overflow': 'ellipsis',
-                          'white-space': 'nowrap',
+                          background: selectedIds().has(app.id)
+                            ? '#f0f8ff'
+                            : disabled
+                            ? '#f9f9f9'
+                            : undefined,
+                          opacity: disabled ? 0.6 : 1,
                         }}
-                        title={app.title}
                       >
-                        {app.title}
-                      </td>
-                      <td style={{ color: '#f5222d', 'font-weight': '500' }}>
-                        ¥{app.amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td>
-                        <StatusBadge status={app.status} />
-                      </td>
-                      <td>
-                        <WarningTag dueDate={app.due_date} isOverdue={app.is_overdue} />
-                      </td>
-                      <td style={{ 'font-size': '13px' }}>
-                        {app.handler_name || '-'}
-                      </td>
-                      <td style={{ 'text-align': 'center' }}>
-                        {app.attachment_count ?? 0}
-                      </td>
-                      <td style={{ maxWidth: '140px', 'font-size': '12px', color: '#ff4d4f', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }} title={app.exception_summary || ''}>
-                        {app.exception_summary || <span style={{ color: '#ccc' }}>-</span>}
-                      </td>
-                    </tr>
-                  )}
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds().has(app.id)}
+                            style={{
+                              cursor: selectedIds().size > 0 && !commonActions().some((a) => appActions.includes(a)) && !selectedIds().has(app.id) ? 'not-allowed' : 'pointer',
+                              width: '16px',
+                              height: '16px',
+                            }}
+                            disabled={selectedIds().size > 0 && !commonActions().some((a) => appActions.includes(a)) && !selectedIds().has(app.id)}
+                            onChange={() => toggleSelect(app.id)}
+                          />
+                        </td>
+                        <td style={{ color: '#1890ff' }}>{app.application_no}</td>
+                        <td>{app.applicant_name}</td>
+                        <td
+                          style={{
+                            maxWidth: '160px',
+                            overflow: 'hidden',
+                            'text-overflow': 'ellipsis',
+                            'white-space': 'nowrap',
+                          }}
+                          title={app.title}
+                        >
+                          {app.title}
+                        </td>
+                        <td style={{ color: '#f5222d', 'font-weight': '500' }}>
+                          ¥{app.amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td>
+                          <StatusBadge status={app.status} />
+                        </td>
+                        <td>
+                          <WarningTag dueDate={app.due_date} isOverdue={app.is_overdue} />
+                        </td>
+                        <td style={{ 'font-size': '13px' }}>
+                          {app.handler_name || '-'}
+                        </td>
+                        <td style={{ 'text-align': 'center' }}>
+                          {app.attachment_count ?? 0}
+                        </td>
+                        <td style={{ maxWidth: '140px', 'font-size': '12px', color: '#ff4d4f', overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' }} title={app.exception_summary || ''}>
+                          {app.exception_summary || <span style={{ color: '#ccc' }}>-</span>}
+                        </td>
+                        <td style={{ 'font-size': '11px', 'text-align': 'center', maxWidth: '140px' }}>
+                          {appActions.length > 0 ? (
+                            <span style={{ color: '#52c41a' }}>
+                              {appActions.map((a) => ACTION_LABELS[a]).join('、')}
+                            </span>
+                          ) : (
+                            <span style={{ color: '#999' }}>无</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  }}
                 </For>
               </tbody>
             </table>
@@ -428,7 +511,7 @@ const BatchCenter: Component = () => {
               }}
             >
               <h3 style={{ 'font-size': '16px', 'font-weight': '600', margin: 0 }}>
-                批量处理结果
+                批量处理结果（成功/失败原因 + 异常摘要 + 补正说明 + 审计备注）
               </h3>
               <button class="btn" onClick={() => setShowResult(false)}>
                 关闭
@@ -442,7 +525,8 @@ const BatchCenter: Component = () => {
       <FormModal
         open={modalOpen()}
         action={selectedAction()}
-        isOverdue={selectedApplications().some((a) => a.is_overdue)}
+        applicationNo={`批量${selectedApplications().length}条`}
+        requirements={requirementsByAction()[selectedAction()]}
         onClose={() => setModalOpen(false)}
         onConfirm={handleBatchProcess}
         loading={processing()}
