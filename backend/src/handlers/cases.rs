@@ -41,6 +41,7 @@ pub async fn list_cases(
         keyword,
         page,
         page_size,
+        &user,
     )
     .await?;
 
@@ -105,6 +106,27 @@ pub async fn add_attachment(
     pool: &State<SqlitePool>,
 ) -> Result<Json<crate::models::Attachment>, AppError> {
     check_role_permission(&user, &[Role::Dispatcher, Role::PoliceOfficer, Role::Reviewer])?;
+
+    match (user.role, req.category.as_str()) {
+        (Role::Dispatcher, "registration") => {}
+        (Role::Dispatcher, _) => {
+            return Err(AppError::Forbidden(
+                format!("无权限: 警情处置登记员只能上传登记材料(registration)，不能上传[{}]", req.category)
+            ));
+        }
+        (Role::PoliceOfficer, "evidence") | (Role::PoliceOfficer, "followup") => {}
+        (Role::PoliceOfficer, _) => {
+            return Err(AppError::Forbidden(
+                format!("无权限: 警情处置审核主管只能上传证据材料(evidence)或回访材料(followup)，不能上传[{}]", req.category)
+            ));
+        }
+        (Role::Reviewer, _) => {}
+    }
+
+    let case = case_service::get_case_by_id(pool.inner(), req.case_id).await?;
+    if case.status == CaseStatus::Completed {
+        return Err(AppError::Forbidden("案件已办结，无法添加附件".into()));
+    }
 
     let result = case_service::add_attachment(
         pool.inner(),

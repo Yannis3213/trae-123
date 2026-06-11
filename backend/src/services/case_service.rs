@@ -101,10 +101,25 @@ pub async fn list_cases(
     keyword: Option<String>,
     page: i64,
     page_size: i64,
+    user: &User,
 ) -> Result<PaginatedResponse<CaseWithDetail>, AppError> {
     let mut sql = "SELECT id FROM cases WHERE 1=1".to_string();
     let mut count_sql = "SELECT COUNT(*) FROM cases WHERE 1=1".to_string();
     let mut params: Vec<String> = Vec::new();
+
+    match user.role {
+        Role::Dispatcher => {
+            sql.push_str(" AND (current_stage = 'registration' OR created_by = ?)");
+            count_sql.push_str(" AND (current_stage = 'registration' OR created_by = ?)");
+            params.push(user.id.to_string());
+        }
+        Role::PoliceOfficer => {
+            sql.push_str(" AND current_stage IN ('dispatch', 'review')");
+            count_sql.push_str(" AND current_stage IN ('dispatch', 'review')");
+        }
+        Role::Reviewer => {
+        }
+    }
 
     if let Some(s) = status {
         sql.push_str(" AND status = ?");
@@ -459,6 +474,38 @@ pub async fn add_attachment(
     .bind(now.to_rfc3339())
     .execute(pool)
     .await?;
+
+    let now = Utc::now().to_rfc3339();
+    match category.as_str() {
+        "registration" => {
+            sqlx::query(
+                "UPDATE cases SET registration_materials_complete = 1, updated_at = ? WHERE id = ? AND registration_materials_complete = 0"
+            )
+            .bind(&now)
+            .bind(case_id.to_string())
+            .execute(pool)
+            .await?;
+        }
+        "evidence" => {
+            sqlx::query(
+                "UPDATE cases SET dispatch_timeline_met = 1, updated_at = ? WHERE id = ? AND dispatch_timeline_met = 0"
+            )
+            .bind(&now)
+            .bind(case_id.to_string())
+            .execute(pool)
+            .await?;
+        }
+        "followup" => {
+            sqlx::query(
+                "UPDATE cases SET followup_evidence_complete = 1, updated_at = ? WHERE id = ? AND followup_evidence_complete = 0"
+            )
+            .bind(&now)
+            .bind(case_id.to_string())
+            .execute(pool)
+            .await?;
+        }
+        _ => {}
+    }
 
     let row = sqlx::query_as::<_, AttachmentRow>(
         "SELECT id, case_id, file_name, file_type, file_size, category, uploaded_by, uploaded_by_name, uploaded_at FROM attachments WHERE id = ?",

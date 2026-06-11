@@ -80,12 +80,26 @@ const CaseList: React.FC = () => {
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
 
-  const [filters, setFilters] = useState({
-    status: undefined as CaseStatus | undefined,
-    stage: undefined as ProcessingStage | undefined,
-    expiry: undefined as ExpiryStatus | undefined,
-    keyword: undefined as string | undefined,
-  });
+  const getDefaultFilters = () => {
+    if (!user) return { status: undefined, stage: undefined, expiry: undefined, keyword: undefined };
+    switch (user.role) {
+      case 'dispatcher':
+        return { status: undefined, stage: 'registration' as ProcessingStage, expiry: undefined, keyword: undefined };
+      case 'police_officer':
+        return { status: 'under_review' as CaseStatus, stage: undefined, expiry: undefined, keyword: undefined };
+      case 'reviewer':
+        return { status: undefined, stage: undefined, expiry: undefined, keyword: undefined };
+      default:
+        return { status: undefined, stage: undefined, expiry: undefined, keyword: undefined };
+    }
+  };
+
+  const [filters, setFilters] = useState<{
+    status?: CaseStatus;
+    stage?: ProcessingStage;
+    expiry?: ExpiryStatus;
+    keyword?: string;
+  }>(getDefaultFilters());
 
   const fetchStatistics = useCallback(async () => {
     try {
@@ -133,13 +147,14 @@ const CaseList: React.FC = () => {
   };
 
   const handleReset = () => {
-    form.resetFields();
-    setFilters({
-      status: undefined,
-      stage: undefined,
-      expiry: undefined,
-      keyword: undefined,
+    const defaults = getDefaultFilters();
+    form.setFieldsValue({
+      status: defaults.status,
+      stage: defaults.stage,
+      expiry: defaults.expiry,
+      keyword: defaults.keyword,
     });
+    setFilters(defaults);
     setPage(1);
   };
 
@@ -564,16 +579,23 @@ const CaseList: React.FC = () => {
 
         <Card
           title={
-            <Space>
-              <span>警情处置单列表</span>
-              {selectedRowKeys.length > 0 && (
-                <Tag color="blue">已选择 {selectedRowKeys.length} 项</Tag>
-              )}
+            <Space direction="vertical" size={0}>
+              <Space>
+                <span>警情处置单列表</span>
+                {selectedRowKeys.length > 0 && (
+                  <Tag color="blue">已选择 {selectedRowKeys.length} 项</Tag>
+                )}
+              </Space>
+              <Text type="secondary">
+                {user?.role === 'dispatcher' && '当前视角：警情处置登记员 - 初始队列（警情登记 / 补正重提）'}
+                {user?.role === 'police_officer' && '当前视角：警情处置审核主管 - 处置中段（派警处置 / 证据核对）'}
+                {user?.role === 'reviewer' && '当前视角：派出所复核负责人 - 复核归档（全量审批 / 办结）'}
+              </Text>
             </Space>
           }
           extra={
             <Space>
-              {selectedRowKeys.length > 0 && (
+              {(user?.role === 'police_officer' || user?.role === 'reviewer') && selectedRowKeys.length > 0 && (
                 <Button
                   type="primary"
                   icon={<ClusterOutlined />}

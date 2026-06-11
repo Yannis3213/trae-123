@@ -130,7 +130,7 @@ pub async fn seed_demo_data(pool: &SqlitePool) -> Result<(), Box<dyn std::error:
 
     let now = Utc::now();
     let cases = vec![
-        ("JQ202606001", "正常流转案件-邻里纠纷调解", "某小区A栋302与402居民因噪音问题发生争执，已报警。", "民事纠纷", "阳光花园A栋", "张三", "13800138001", CaseStatus::Completed, ProcessingStage::Review, false, true, true, now + Duration::days(10), 4, dispatcher_id, "张登记", Some(officer_id), Some("李主管".to_string())),
+        ("JQ202606001", "正常流转案件-邻里纠纷调解", "某小区A栋302与402居民因噪音问题发生争执，已报警。", "民事纠纷", "阳光花园A栋", "张三", "13800138001", CaseStatus::Completed, ProcessingStage::Review, true, true, true, now + Duration::days(10), 4, dispatcher_id, "张登记", Some(officer_id), Some("李主管".to_string())),
         ("JQ202606002", "待补正案件-盗窃案缺少报案笔录", "某便利店被盗现金5000元，监控模糊。", "刑事案件", "幸福路便利店", "李四", "13800138002", CaseStatus::PendingCorrection, ProcessingStage::Registration, false, true, false, now + Duration::days(5), 2, dispatcher_id, "张登记", None, None),
         ("JQ202606003", "临期案件-交通事故理赔未跟进", "两车追尾，无人员伤亡，责任认定已出。", "交通事故", "人民路与建设路交叉口", "王五", "13800138003", CaseStatus::UnderReview, ProcessingStage::Dispatch, true, true, true, now + Duration::days(1), 3, dispatcher_id, "张登记", Some(officer_id), Some("李主管".to_string())),
         ("JQ202606004", "逾期案件-打架斗殴案未办结", "某酒吧门口发生群殴事件，3人受伤。", "治安案件", "夜色酒吧门口", "赵六", "13800138004", CaseStatus::UnderReview, ProcessingStage::Dispatch, true, false, false, now - Duration::days(3), 3, dispatcher_id, "张登记", Some(officer_id), Some("李主管".to_string())),

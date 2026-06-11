@@ -956,9 +956,9 @@ const CaseDetail: React.FC = () => {
                 rules={[{ required: true, message: '请选择附件类别' }]}
               >
                 <Select placeholder="选择类别">
-                  <Option value="registration">登记材料</Option>
-                  <Option value="evidence">证据材料</Option>
-                  <Option value="followup">回访材料</Option>
+                  <Option value="registration" disabled={user?.role === 'police_officer'}>登记材料</Option>
+                  <Option value="evidence" disabled={user?.role === 'dispatcher'}>证据材料</Option>
+                  <Option value="followup" disabled={user?.role === 'dispatcher'}>回访材料</Option>
                 </Select>
               </Form.Item>
             </Col>
