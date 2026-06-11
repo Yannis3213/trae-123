@@ -705,6 +705,138 @@ function initBatchResults() {
   console.log('✅ 批量处理结果数据初始化完成');
 }
 
+function initRectificationScenarios() {
+  const now = dayjs();
+
+  const addAttachments = [
+    {
+      clue_id: 3,
+      file_name: '补正-企业营业执照扫描件.pdf',
+      file_size: 256,
+      attachment_type: 'enterprise_info',
+      file_url: '',
+      uploaded_by: 1,
+      created_at: now.subtract(1, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      clue_id: 4,
+      file_name: '补正-场地使用证明.docx',
+      file_size: 180,
+      attachment_type: 'enterprise_info',
+      file_url: '',
+      uploaded_by: 4,
+      created_at: now.subtract(2, 'day').format('YYYY-MM-DD HH:mm:ss')
+    }
+  ];
+
+  const stmtAttach = db.prepare(`
+    INSERT OR IGNORE INTO attachments (
+      clue_id, file_name, file_size, attachment_type, file_url, uploaded_by, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  addAttachments.forEach(a => {
+    stmtAttach.run(a.clue_id, a.file_name, a.file_size, a.attachment_type, a.file_url, a.uploaded_by, a.created_at);
+  });
+
+  const rectificationRecords = [
+    {
+      clue_id: 3,
+      from_status: 'returned',
+      to_status: 'returned',
+      action: '补充附件',
+      result: 'success',
+      remark: '附件名称：补正-企业营业执照扫描件.pdf，类型：enterprise_info',
+      operator_id: 1,
+      created_at: now.subtract(1, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      clue_id: 4,
+      from_status: 'returned',
+      to_status: 'returned',
+      action: '补充附件',
+      result: 'success',
+      remark: '附件名称：补正-场地使用证明.docx，类型：enterprise_info（仍缺拜访记录）',
+      operator_id: 4,
+      created_at: now.subtract(2, 'day').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      clue_id: 3,
+      from_status: 'returned',
+      to_status: 'resubmitted',
+      action: '重新提交',
+      result: 'success',
+      remark: '已补正企业资料附件，重新提交审核',
+      operator_id: 1,
+      created_at: now.subtract(1, 'day').add(2, 'hour').format('YYYY-MM-DD HH:mm:ss')
+    }
+  ];
+
+  const stmtRecord = db.prepare(`
+    INSERT OR IGNORE INTO processing_records (
+      clue_id, from_status, to_status, action, result, remark, operator_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  rectificationRecords.forEach(r => {
+    stmtRecord.run(r.clue_id, r.from_status, r.to_status, r.action, r.result, r.remark, r.operator_id, r.created_at);
+  });
+
+  const rectificationAuditNotes = [
+    {
+      clue_id: 3,
+      note: '【材料补正】附件补齐：上传附件「补正-企业营业执照扫描件.pdf」后，缺材料异常已解除。随后登记员已重新提交审核。',
+      auditor_id: 1,
+      created_at: now.subtract(1, 'day').add(2, 'hour').format('YYYY-MM-DD HH:mm:ss')
+    },
+    {
+      clue_id: 4,
+      note: '【部分补正】仅上传「补正-场地使用证明.docx」，仍缺拜访记录材料。请继续补充缺失附件后再重新提交。',
+      auditor_id: 4,
+      created_at: now.subtract(2, 'day').add(1, 'hour').format('YYYY-MM-DD HH:mm:ss')
+    }
+  ];
+
+  const stmtNote = db.prepare(`
+    INSERT OR IGNORE INTO audit_notes (
+      clue_id, note, auditor_id, created_at
+    ) VALUES (?, ?, ?, ?)
+  `);
+  rectificationAuditNotes.forEach(n => {
+    stmtNote.run(n.clue_id, n.note, n.auditor_id, n.created_at);
+  });
+
+  const stillMissingAbnormalLogs = [
+    {
+      clue_id: 4,
+      abnormal_type: 'missing_material',
+      description: '补正后仍缺材料：已上传企业资料，但缺少必填附件「拜访记录」，重新提交会被拦截',
+      operator_id: 4,
+      request_data: '{"target_status":"resubmitted","missing":["visit_record"]}',
+      created_at: now.subtract(2, 'day').add(30, 'minute').format('YYYY-MM-DD HH:mm:ss')
+    }
+  ];
+
+  const stmtAbnormal = db.prepare(`
+    INSERT OR IGNORE INTO abnormal_logs (
+      clue_id, abnormal_type, description, operator_id, request_data, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  stillMissingAbnormalLogs.forEach(l => {
+    stmtAbnormal.run(l.clue_id, l.abnormal_type, l.description, l.operator_id, l.request_data, l.created_at);
+  });
+
+  runQuery(
+    "UPDATE clues SET status = 'resubmitted', current_handler_id = 2, abnormal_tags = '[]', version = version + 1, updated_at = ? WHERE id = 3",
+    [now.subtract(1, 'day').add(2, 'hour').format('YYYY-MM-DD HH:mm:ss')]
+  );
+
+  runQuery(
+    "UPDATE clues SET abnormal_tags = '[\"missing_material\"]', updated_at = ? WHERE id = 4",
+    [now.subtract(2, 'day').add(1, 'hour').format('YYYY-MM-DD HH:mm:ss')]
+  );
+
+  console.log('✅ 补正场景演示数据初始化完成');
+}
+
 console.log('🚀 开始初始化数据库...\n');
 
 initDatabase();
@@ -715,6 +847,7 @@ initProcessingRecords();
 initAuditNotes();
 initAbnormalLogs();
 initBatchResults();
+initRectificationScenarios();
 
 console.log('\n🎉 数据库初始化完成！');
 console.log('\n📋 演示账号：');

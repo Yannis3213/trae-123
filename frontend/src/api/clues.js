@@ -31,3 +31,11 @@ export function addAuditNote(id, note) {
 export function getAbnormalLogs(id) {
   return request.get(`/clues/${id}/abnormal-logs`);
 }
+
+export function addAttachment(id, data) {
+  return request.post(`/clues/${id}/attachments`, data);
+}
+
+export function deleteAttachment(id, attachmentId) {
+  return request.delete(`/clues/${id}/attachments/${attachmentId}`);
+}

@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { 
   getClueList, getClueDetail, processClue, processBatch,
-  addAuditNote, getStatistics, getAbnormalLogs, getBatchResults
+  addAuditNote, getStatistics, getAbnormalLogs, getBatchResults,
+  addAttachment, deleteAttachment
 } from '../services/clueService.js';
 import { isAllRoles, isAuditorOrReviewer } from '../middleware/auth.js';
 import { ROLES } from '../config.js';
@@ -116,6 +117,34 @@ clues.get('/config', isAllRoles(), async (c) => {
       roles: ROLES
     }
   });
+});
+
+clues.post('/:id/attachments', isAllRoles(), async (c) => {
+  const user = c.get('user');
+  const clueId = parseInt(c.req.param('id'));
+  const attachmentData = await c.req.json();
+
+  const result = addAttachment(clueId, attachmentData, user);
+
+  if (!result.success) {
+    return c.json({ code: result.code || 400, message: result.message }, result.code || 400);
+  }
+
+  return c.json({ code: 200, message: result.message, data: result.data });
+});
+
+clues.delete('/:id/attachments/:attachmentId', isAllRoles(), async (c) => {
+  const user = c.get('user');
+  const clueId = parseInt(c.req.param('id'));
+  const attachmentId = parseInt(c.req.param('attachmentId'));
+
+  const result = deleteAttachment(clueId, attachmentId, user);
+
+  if (!result.success) {
+    return c.json({ code: result.code || 400, message: result.message }, result.code || 400);
+  }
+
+  return c.json({ code: 200, message: result.message });
 });
 
 export default clues;

@@ -546,3 +546,169 @@ export function getBatchResults(batchNo) {
     success: !!row.success
   }));
 }
+
+export function validateAttachmentPermission(clueId, user) {
+  const clue = getQuery(`
+    SELECT id, status, created_by, current_handler_id, responsible_person_id, abnormal_tags
+    FROM clues WHERE id = ?
+  `, [clueId]);
+
+  if (!clue) {
+    return { valid: false, error: '线索单不存在', code: 404 };
+  }
+
+  if (clue.status === STATUS.ARCHIVED) {
+    return { valid: false, error: '线索单已归档，无法添加附件', code: 400 };
+  }
+
+  if (user.role === ROLES.REGISTRAR) {
+    if (clue.created_by !== user.id) {
+      return { valid: false, error: '您不是该线索单的创建人，无权上传附件', code: 403 };
+    }
+    if (![STATUS.PENDING_SUBMIT, STATUS.RETURNED].includes(clue.status)) {
+      return { valid: false, error: '当前状态下登记员无法上传附件，请在待提交或已退回状态下补正', code: 403 };
+    }
+  } else if (user.role === ROLES.AUDITOR) {
+    if (![STATUS.PENDING_AUDIT, STATUS.RESUBMITTED].includes(clue.status)) {
+      return { valid: false, error: '审核主管只能在待审核或重新提交状态下上传附件', code: 403 };
+    }
+    if (clue.current_handler_id && clue.current_handler_id !== user.id) {
+      return { valid: false, error: '您不是当前处理人，无权上传附件', code: 403 };
+    }
+  } else if (user.role === ROLES.REVIEWER) {
+    if (![STATUS.PENDING_REVIEW, STATUS.APPROVED, STATUS.REJECTED].includes(clue.status)) {
+      return { valid: false, error: '复核负责人只能在待复核、通过、拒绝状态下上传附件', code: 403 };
+    }
+  }
+
+  return { valid: true, clue };
+}
+
+export function addAttachment(clueId, attachmentData, user) {
+  const permCheck = validateAttachmentPermission(clueId, user);
+  if (!permCheck.valid) {
+    return { success: false, message: permCheck.error, code: permCheck.code };
+  }
+
+  const { file_name, file_size, attachment_type, file_url } = attachmentData;
+
+  if (!file_name || !attachment_type) {
+    return { success: false, message: '文件名和附件类型不能为空', code: 400 };
+  }
+
+  const allowedTypes = ['enterprise_info', 'visit_record', 'signing_contract', 'other'];
+  if (!allowedTypes.includes(attachment_type)) {
+    return { success: false, message: '不支持的附件类型', code: 400 };
+  }
+
+  beginTransaction();
+
+  try {
+    const result = runQuery(`
+      INSERT INTO attachments (
+        clue_id, file_name, file_size, attachment_type, file_url, uploaded_by
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      clueId,
+      file_name,
+      file_size || 0,
+      attachment_type,
+      file_url || '',
+      user.id
+    ]);
+
+    runQuery(`
+      INSERT INTO processing_records (
+        clue_id, from_status, to_status, action, result, remark, operator_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      clueId,
+      permCheck.clue.status,
+      permCheck.clue.status,
+      '补充附件',
+      'success',
+      `附件名称：${file_name}，类型：${attachment_type}`,
+      user.id
+    ]);
+
+    const prevTags = JSON.parse(permCheck.clue.abnormal_tags || '[]');
+    updateAbnormalTags(clueId);
+
+    const updatedClue = getQuery('SELECT abnormal_tags FROM clues WHERE id = ?', [clueId]);
+    const newTags = JSON.parse(updatedClue.abnormal_tags || '[]');
+
+    if (prevTags.includes('missing_material') && !newTags.includes('missing_material')) {
+      runQuery(`
+        INSERT INTO audit_notes (clue_id, note, auditor_id)
+        VALUES (?, ?, ?)
+      `, [
+        clueId,
+        `【材料补正】附件补齐：上传附件「${file_name}」后，缺材料异常已解除`,
+        user.id
+      ]);
+    }
+
+    commitTransaction();
+
+    return {
+      success: true,
+      message: '附件上传成功',
+      data: {
+        id: result?.lastInsertRowid,
+        abnormal_tags_updated: {
+          before: prevTags,
+          after: newTags
+        }
+      }
+    };
+  } catch (e) {
+    rollbackTransaction();
+    logAbnormal(clueId, ABNORMAL_TYPES.STATUS_CONFLICT, `附件上传失败: ${e.message}`, user.id);
+    return { success: false, message: '附件上传失败：' + e.message, code: 500 };
+  }
+}
+
+export function deleteAttachment(clueId, attachmentId, user) {
+  const permCheck = validateAttachmentPermission(clueId, user);
+  if (!permCheck.valid) {
+    return { success: false, message: permCheck.error, code: permCheck.code };
+  }
+
+  const attachment = getQuery(
+    'SELECT * FROM attachments WHERE id = ? AND clue_id = ?',
+    [attachmentId, clueId]
+  );
+
+  if (!attachment) {
+    return { success: false, message: '附件不存在', code: 404 };
+  }
+
+  beginTransaction();
+
+  try {
+    runQuery('DELETE FROM attachments WHERE id = ?', [attachmentId]);
+
+    runQuery(`
+      INSERT INTO processing_records (
+        clue_id, from_status, to_status, action, result, remark, operator_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      clueId,
+      permCheck.clue.status,
+      permCheck.clue.status,
+      '删除附件',
+      'success',
+      `删除附件：${attachment.file_name}`,
+      user.id
+    ]);
+
+    updateAbnormalTags(clueId);
+
+    commitTransaction();
+
+    return { success: true, message: '附件删除成功' };
+  } catch (e) {
+    rollbackTransaction();
+    return { success: false, message: '附件删除失败：' + e.message, code: 500 };
+  }
+}

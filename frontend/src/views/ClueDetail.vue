@@ -132,13 +132,42 @@
 
         <el-card class="info-card">
           <template #header>
-            <span class="card-title">
-              <el-icon><Paperclip /></el-icon>
-              附件资料
-              <el-tag size="small" type="info" style="margin-left: 8px;">
-                {{ detail?.attachments?.length || 0 }} 个
-              </el-tag>
-            </span>
+            <div class="card-header-with-action">
+              <span class="card-title">
+                <el-icon><Paperclip /></el-icon>
+                附件资料
+                <el-tag size="small" type="info" style="margin-left: 8px;">
+                  {{ detail?.attachments?.length || 0 }} 个
+                </el-tag>
+                <el-tag
+                  v-if="missingAttachmentTypes.length > 0"
+                  size="small"
+                  type="danger"
+                  effect="plain"
+                  style="margin-left: 8px;"
+                >
+                  缺：{{ missingAttachmentTypes.join('、') }}
+                </el-tag>
+                <el-tag
+                  v-else-if="requiredAttachmentTypes.length > 0"
+                  size="small"
+                  type="success"
+                  effect="plain"
+                  style="margin-left: 8px;"
+                >
+                  必填已齐
+                </el-tag>
+              </span>
+              <el-button
+                v-if="canUploadAttachment"
+                type="primary"
+                size="small"
+                :icon="Upload"
+                @click="openAttachmentDialog"
+              >
+                补充附件
+              </el-button>
+            </div>
           </template>
           
           <el-table :data="detail?.attachments || []" size="small">
@@ -152,7 +181,14 @@
             </el-table-column>
             <el-table-column prop="attachment_type" label="类型" width="120">
               <template #default="{ row }">
-                {{ ATTACHMENT_TYPE_LABELS[row.attachment_type] || '其他' }}
+                <el-tag
+                  size="small"
+                  :type="requiredAttachmentKey(row.attachment_type) ? 'primary' : 'info'"
+                  effect="plain"
+                >
+                  {{ ATTACHMENT_TYPE_LABELS[row.attachment_type] || '其他' }}
+                  {{ requiredAttachmentKey(row.attachment_type) ? '(必填)' : '' }}
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="file_size" label="大小" width="100">
@@ -164,6 +200,20 @@
             <el-table-column prop="created_at" label="上传时间" width="160">
               <template #default="{ row }">
                 {{ formatDate(row.created_at) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="90" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  v-if="canDeleteAttachment(row)"
+                  type="danger"
+                  size="small"
+                  link
+                  @click="handleDeleteAttachment(row)"
+                >
+                  删除
+                </el-button>
+                <span v-else style="color: #c0c4cc;">-</span>
               </template>
             </el-table-column>
           </el-table>
@@ -449,6 +499,16 @@
           </span>
         </el-form-item>
 
+        <el-form-item v-if="missingAttachmentTypes.length > 0 && [STATUS.PENDING_AUDIT, STATUS.PENDING_REVIEW, STATUS.RESUBMITTED, STATUS.APPROVED].includes(processForm.target_status)">
+          <el-alert
+            title="必填附件未齐，提交将被拦截"
+            :description="`缺：${missingAttachmentTypes.join('、')}，请先在附件资料中补充后再操作`"
+            type="error"
+            :closable="false"
+            show-icon
+          />
+        </el-form-item>
+
         <el-form-item 
           v-if="processForm.target_status === STATUS.RETURNED"
           label="退回原因"
@@ -488,6 +548,82 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="attachmentDialogVisible"
+      title="补充附件"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="attachmentForm" label-width="100px">
+        <el-alert
+          v-if="detail?.status === STATUS.RETURNED"
+          title="退回补正提示"
+          :description="detail?.return_reason ? `退回原因：${detail.return_reason}` : '请补充缺失的附件后重新提交'"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 16px;"
+        />
+        <el-form-item label="附件名称" required>
+          <el-input
+            v-model="attachmentForm.file_name"
+            placeholder="请输入附件名称（如：营业执照扫描件）"
+            maxlength="200"
+            show-word-limit
+          />
+        </el-form-item>
+        <el-form-item label="附件类型" required>
+          <el-select v-model="attachmentForm.attachment_type" style="width: 100%;">
+            <el-option
+              v-for="opt in ATTACHMENT_TYPE_OPTIONS"
+              :key="opt.value"
+              :label="opt.label + (opt.required ? '（必填）' : '')"
+              :value="opt.value"
+              :disabled="opt.required && hasAttachmentType(opt.value)"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="文件大小">
+          <el-input-number
+            v-model="attachmentForm.file_size"
+            :min="1"
+            :max="102400"
+            :step="100"
+          />
+          <span style="margin-left: 8px; color: #909399;">KB（模拟）</span>
+        </el-form-item>
+        <el-form-item v-if="missingAttachmentTypes.length > 0">
+          <el-alert
+            title="待补充附件"
+            :description="`尚缺：${missingAttachmentTypes.join('、')}`"
+            type="error"
+            :closable="false"
+            show-icon
+          />
+        </el-form-item>
+        <el-form-item v-else-if="requiredAttachmentTypes.length > 0">
+          <el-alert
+            title="必填附件已齐全"
+            type="success"
+            :closable="false"
+            show-icon
+          />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="attachmentDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="uploadingAttachment"
+          :disabled="!canSubmitAttachment"
+          @click="submitAttachment"
+        >
+          上传附件
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -499,10 +635,10 @@ import {
   ArrowLeft, Document, Warning, EditPen, Paperclip, 
   Tickets, CircleCheck, CircleClose, Clock, ChatDotRound,
   UserFilled, Operation, InfoFilled, Check, RefreshLeft,
-  Delete, Select, View
+  Delete, Select, View, Upload
 } from '@element-plus/icons-vue';
 import dayjs from 'dayjs';
-import { getClueDetail, processClue, addAuditNote } from '../api/clues';
+import { getClueDetail, processClue, addAuditNote, addAttachment, deleteAttachment } from '../api/clues';
 import { useAuthStore } from '../store/auth';
 import {
   STATUS, STATUS_LABELS, STATUS_COLORS,
@@ -659,6 +795,16 @@ const ATTACHMENT_LABELS = {
   signing_contract: '签约合同'
 };
 
+const ATTACHMENT_TYPE_OPTIONS = computed(() => {
+  const required = REQUIRED_ATTACHMENTS[detail.value?.status] || [];
+  return [
+    { value: 'enterprise_info', label: ATTACHMENT_LABELS.enterprise_info, required: required.includes('enterprise_info') },
+    { value: 'visit_record', label: ATTACHMENT_LABELS.visit_record, required: required.includes('visit_record') },
+    { value: 'signing_contract', label: ATTACHMENT_LABELS.signing_contract, required: required.includes('signing_contract') },
+    { value: 'other', label: '其他材料', required: false }
+  ];
+});
+
 const requiredAttachmentTypes = computed(() => {
   const status = detail.value?.status;
   if (!status || !REQUIRED_ATTACHMENTS[status]) return [];
@@ -673,6 +819,16 @@ const missingAttachmentTypes = computed(() => {
     .filter(t => !existing.includes(t))
     .map(t => ATTACHMENT_LABELS[t] || t);
 });
+
+function requiredAttachmentKey(type) {
+  const status = detail.value?.status;
+  if (!status || !REQUIRED_ATTACHMENTS[status]) return false;
+  return REQUIRED_ATTACHMENTS[status].includes(type);
+}
+
+function hasAttachmentType(type) {
+  return (detail.value?.attachments || []).some(a => a.attachment_type === type);
+}
 
 const canSubmitProcess = computed(() => {
   if (!currentAction.value) return false;
@@ -773,6 +929,102 @@ async function submitAuditNote() {
     console.error('添加备注失败:', e);
   } finally {
     submittingNote.value = false;
+  }
+}
+
+const canUploadAttachment = computed(() => {
+  if (!detail.value) return false;
+  const role = authStore.userRole;
+  const status = detail.value.status;
+
+  if (status === STATUS.ARCHIVED) return false;
+
+  if (role === ROLES.REGISTRAR) {
+    return detail.value.created_by === authStore.userId &&
+           [STATUS.PENDING_SUBMIT, STATUS.RETURNED].includes(status);
+  }
+  if (role === ROLES.AUDITOR) {
+    return [STATUS.PENDING_AUDIT, STATUS.RESUBMITTED].includes(status);
+  }
+  if (role === ROLES.REVIEWER) {
+    return [STATUS.PENDING_REVIEW, STATUS.APPROVED, STATUS.REJECTED].includes(status);
+  }
+  return false;
+});
+
+function canDeleteAttachment(row) {
+  if (!canUploadAttachment.value) return false;
+  return row.uploaded_by === authStore.userId;
+}
+
+const attachmentDialogVisible = ref(false);
+const uploadingAttachment = ref(false);
+const attachmentForm = reactive({
+  file_name: '',
+  file_size: 100,
+  attachment_type: 'enterprise_info',
+  file_url: ''
+});
+
+const canSubmitAttachment = computed(() => {
+  return attachmentForm.file_name.trim() && attachmentForm.attachment_type;
+});
+
+function openAttachmentDialog() {
+  const missingKeys = Object.keys(ATTACHMENT_LABELS).filter(t => {
+    const status = detail.value?.status;
+    const req = REQUIRED_ATTACHMENTS[status] || [];
+    return req.includes(t) && !hasAttachmentType(t);
+  });
+  attachmentForm.attachment_type = missingKeys[0] || 'other';
+  attachmentForm.file_name = '';
+  attachmentForm.file_size = 100;
+  attachmentForm.file_url = '';
+  attachmentDialogVisible.value = true;
+}
+
+async function submitAttachment() {
+  if (!canSubmitAttachment.value) return;
+
+  uploadingAttachment.value = true;
+  try {
+    const res = await addAttachment(clueId.value, { ...attachmentForm });
+    if (res.data?.abnormal_tags_updated) {
+      const { before, after } = res.data.abnormal_tags_updated;
+      if (before.includes('missing_material') && !after.includes('missing_material')) {
+        ElMessage.success('附件上传成功，缺材料异常已解除！');
+      } else {
+        ElMessage.success('附件上传成功');
+      }
+    } else {
+      ElMessage.success('附件上传成功');
+    }
+    attachmentDialogVisible.value = false;
+    loadDetail();
+  } catch (e) {
+    console.error('附件上传失败:', e);
+  } finally {
+    uploadingAttachment.value = false;
+  }
+}
+
+async function handleDeleteAttachment(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除附件「${row.file_name}」吗？删除后可能导致缺材料异常。`,
+      '删除附件',
+      { type: 'warning' }
+    );
+  } catch (e) {
+    return;
+  }
+
+  try {
+    await deleteAttachment(clueId.value, row.id);
+    ElMessage.success('附件已删除');
+    loadDetail();
+  } catch (e) {
+    console.error('删除附件失败:', e);
   }
 }
 
