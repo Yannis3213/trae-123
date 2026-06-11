@@ -172,7 +172,9 @@ func main() {
 			r.Post("/process", h.ProcessHazard)
 			r.Post("/audit", h.AddAuditNote)
 			r.Post("/abnormal", h.AddAbnormalReason)
+			r.Post("/attachments", h.AddAttachment)
 		})
+		r.Delete("/attachments/{id}", h.DeleteAttachment)
 	})
 
 	addr := fmt.Sprintf(":%d", BackendPort)

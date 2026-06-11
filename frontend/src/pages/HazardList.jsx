@@ -169,7 +169,23 @@ export default function HazardList({ store, onViewDetail, onCreate, onBatchProce
                 <button
                   key={a.value}
                   className={`btn btn-sm ${a.value === 'return' ? 'btn-danger' : a.value === 'close' ? 'btn-success' : 'btn-primary'}`}
-                  onClick={() => onBatchProcess({ ids: [...selectedIds], action: a.value, toStatus: a.toStatus, label: a.label })}
+                  onClick={() => {
+                    const items = hazards
+                      .filter(h => selectedIds.includes(h.id))
+                      .map(h => ({
+                        id: h.id,
+                        status: h.status,
+                        version: h.version,
+                        hazard_no: h.hazard_no,
+                        title: h.title
+                      }))
+                    onBatchProcess({
+                      items,
+                      action: a.value,
+                      to_status: a.toStatus,
+                      label: a.label
+                    })
+                  }}
                 >
                   批量{a.label}
                 </button>

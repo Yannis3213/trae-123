@@ -1,26 +1,43 @@
 import { useState } from 'preact/hooks'
 import { api } from '../api'
-import { STATUS, STATUS_NAMES, ROLES } from '../types'
+import { STATUS_NAMES, STATUS_COLORS } from '../types'
 
 export default function BatchProcessModal({ config, store, onClose }) {
-  const { ids, label, toStatus, action } = config
-  const { currentUser, showToast, refresh, hazards } = store
+  const { items, label, to_status, action } = config
+  const { showToast, refresh } = store
   const [form, setForm] = useState({
     remark: '',
     return_reason: '',
     rectify_notice: '',
     recheck_result: '',
-    current_handler: ''
+    current_handler: '',
+    attachments: []
   })
+  const [newAttachment, setNewAttachment] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [results, setResults] = useState(null)
 
-  const selectedHazards = hazards.filter(h => ids.includes(h.id))
+  const needReturnReason = to_status === 'returned'
+  const needRectifyNotice = to_status === 'rectifying'
+  const needRecheckResult = to_status === 'rechecking' || to_status === 'closed'
+  const needHandler = to_status === 'assigned' || to_status === 'transferred'
 
-  const needReturnReason = [STATUS.RETURNED].includes(toStatus)
-  const needRectifyNotice = toStatus === STATUS.RECTIFYING
-  const needRecheckResult = [STATUS.RECHECKING, STATUS.CLOSED].includes(toStatus)
-  const needHandler = [STATUS.ASSIGNED, STATUS.TRANSFERRED].includes(toStatus)
+  const addAttachmentLocal = () => {
+    const name = newAttachment.trim()
+    if (!name) return
+    setForm(prev => ({
+      ...prev,
+      attachments: [...prev.attachments, name]
+    }))
+    setNewAttachment('')
+  }
+
+  const removeAttachment = (idx) => {
+    setForm(prev => ({
+      ...prev,
+      attachments: prev.attachments.filter((_, i) => i !== idx)
+    }))
+  }
 
   const handleSubmit = async () => {
     if (needReturnReason && !form.return_reason.trim()) {
@@ -42,18 +59,27 @@ export default function BatchProcessModal({ config, store, onClose }) {
 
     setSubmitting(true)
     try {
-      const res = await api.batchProcess({
-        ids,
+      const payload = {
+        items: items.map(it => ({
+          id: it.id,
+          page_status: it.status,
+          version: it.version
+        })),
         action,
-        to_status: toStatus,
-        ...form
-      })
+        to_status,
+        remark: form.remark,
+        return_reason: form.return_reason,
+        rectify_notice: form.rectify_notice,
+        recheck_result: form.recheck_result,
+        current_handler: form.current_handler,
+        attachments: form.attachments
+      }
+
+      const res = await api.batchProcess(payload)
       if (res.success) {
         setResults(res.data)
         showToast(res.message, res.fail_count > 0 ? 'warning' : 'success')
         refresh()
-      } else {
-        showToast(res.message || '批量处理失败', 'error')
       }
     } catch (e) {
       showToast(e.message || '批量处理失败', 'error')
@@ -62,32 +88,50 @@ export default function BatchProcessModal({ config, store, onClose }) {
     }
   }
 
+  const errorCodeDescriptions = {
+    'version_conflict': '版本号不一致',
+    'status_conflict': '状态不一致',
+    'overdue_blocked': '已逾期',
+    'role_permission': '角色无权限',
+    'invalid_transition': '流转路径不合法',
+    'missing_rectify_notice': '缺整改通知',
+    'missing_recheck_result': '缺复查结果',
+    'missing_return_reason': '缺退回原因',
+    'missing_handler': '缺处理人',
+    'update_conflict': '更新冲突',
+    'not_found': '单据不存在'
+  }
+
   return (
     <div className="modal-mask batch-result-modal" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-header">
-          <div className="modal-title">📦 批量{label}（{ids.length}条）</div>
+          <div className="modal-title">📦 批量{label}（{items.length}条）</div>
           <button className="modal-close" onClick={onClose}>&times;</button>
         </div>
         <div className="modal-body">
           {!results ? (
             <>
               <div style={{marginBottom: '16px', padding: '12px', background: '#eff6ff', borderRadius: '8px', fontSize: '13px'}}>
-                <strong>目标状态：</strong>{STATUS_NAMES[toStatus]}<br/>
-                <strong>当前角色：</strong>{currentUser.roleName}<br/>
-                <strong>处理数量：</strong>{ids.length} 条隐患单
+                <strong>目标状态：</strong>
+                <span className="status-badge" style={{marginLeft: '8px', background: STATUS_COLORS[to_status] + '20', color: STATUS_COLORS[to_status]}}>
+                  {STATUS_NAMES[to_status]}
+                </span>
               </div>
 
               <div style={{marginBottom: '16px'}}>
-                <div style={{fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '8px'}}>涉及的隐患单：</div>
-                <div style={{maxHeight: '140px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '6px'}}>
-                  {selectedHazards.map(h => (
-                    <div key={h.id} style={{padding: '8px 12px', borderBottom: '1px solid #f3f4f6', fontSize: '13px'}}>
-                      <span style={{fontFamily: 'monospace', color: '#2563eb'}}>{h.hazard_no}</span>
-                      <span style={{margin: '0 10px', color: '#6b7280'}}>|</span>
-                      <span>{h.title}</span>
-                      <span style={{margin: '0 10px', color: '#6b7280'}}>|</span>
-                      <span style={{color: STATUS_NAMES[h.status] ? '#6b7280' : '#6b7280'}}>{STATUS_NAMES[h.status]}</span>
+                <div style={{fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '8px'}}>
+                  涉及的隐患单（将逐条校验页面状态和版本）：
+                </div>
+                <div style={{maxHeight: '180px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '6px'}}>
+                  {items.map(it => (
+                    <div key={it.id} style={{padding: '8px 12px', borderBottom: '1px solid #f3f4f6', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '10px'}}>
+                      <span style={{fontFamily: 'monospace', color: '#2563eb', minWidth: '130px'}}>{it.hazard_no}</span>
+                      <span style={{flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{it.title}</span>
+                      <span className="status-badge" style={{background: STATUS_COLORS[it.status] + '20', color: STATUS_COLORS[it.status], fontSize: '11px'}}>
+                        {STATUS_NAMES[it.status]}
+                      </span>
+                      <span style={{color: '#6b7280', fontSize: '12px'}}>v{it.version}</span>
                     </div>
                   ))}
                 </div>
@@ -99,9 +143,9 @@ export default function BatchProcessModal({ config, store, onClose }) {
                   <input
                     type="text"
                     className="input"
-                    placeholder="请输入处理人姓名"
+                    placeholder="请输入处理人姓名，将统一设置"
                     value={form.current_handler}
-                    onChange={e => setForm({...form, current_handler: e.target.value})}
+                    onInput={e => setForm({...form, current_handler: e.target.value})}
                   />
                 </div>
               )}
@@ -113,7 +157,7 @@ export default function BatchProcessModal({ config, store, onClose }) {
                     className="textarea"
                     placeholder="请说明退回补正的原因，将逐条应用"
                     value={form.return_reason}
-                    onChange={e => setForm({...form, return_reason: e.target.value})}
+                    onInput={e => setForm({...form, return_reason: e.target.value})}
                   />
                 </div>
               )}
@@ -123,9 +167,9 @@ export default function BatchProcessModal({ config, store, onClose }) {
                   <label className="form-label required">整改通知内容</label>
                   <textarea
                     className="textarea"
-                    placeholder="请填写整改要求、整改时限等内容"
+                    placeholder="请填写整改要求、整改时限等"
                     value={form.rectify_notice}
-                    onChange={e => setForm({...form, rectify_notice: e.target.value})}
+                    onInput={e => setForm({...form, rectify_notice: e.target.value})}
                   />
                 </div>
               )}
@@ -137,10 +181,39 @@ export default function BatchProcessModal({ config, store, onClose }) {
                     className="textarea"
                     placeholder="请填写现场复查情况"
                     value={form.recheck_result}
-                    onChange={e => setForm({...form, recheck_result: e.target.value})}
+                    onInput={e => setForm({...form, recheck_result: e.target.value})}
                   />
                 </div>
               )}
+
+              <div className="form-group">
+                <label className="form-label">附件/佐证材料（可选）</label>
+                {form.attachments.length > 0 && (
+                  <div style={{marginBottom: '8px'}}>
+                    {form.attachments.map((name, idx) => (
+                      <span key={idx} className="tag" style={{background: '#ecfdf5', color: '#059669', marginRight: '6px', marginBottom: '4px'}}>
+                        📎 {name}
+                        <button
+                          style={{marginLeft: '6px', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px'}}
+                          onClick={() => removeAttachment(idx)}
+                        >✕</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div style={{display: 'flex', gap: '8px'}}>
+                  <input
+                    type="text"
+                    className="input"
+                    style={{flex: 1}}
+                    placeholder="输入附件/佐证名称..."
+                    value={newAttachment}
+                    onInput={e => setNewAttachment(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addAttachmentLocal()}
+                  />
+                  <button className="btn" onClick={addAttachmentLocal}>添加</button>
+                </div>
+              </div>
 
               <div className="form-group">
                 <label className="form-label">办理备注</label>
@@ -148,42 +221,73 @@ export default function BatchProcessModal({ config, store, onClose }) {
                   className="textarea"
                   placeholder="可选：本次批量处理的备注说明"
                   value={form.remark}
-                  onChange={e => setForm({...form, remark: e.target.value})}
+                  onInput={e => setForm({...form, remark: e.target.value})}
                 />
               </div>
 
               <div style={{padding: '10px', background: '#fffbeb', borderRadius: '6px', fontSize: '12px', color: '#92400e', border: '1px solid #fde68a'}}>
-                ⚠️ 系统将逐条校验：当前状态、角色权限、版本号、逾期状态等。
-                状态冲突、已逾期（未走退回补正）、缺证据的单据将被拦截并保留原值，请根据结果补正后重试。
+                ⚠️ 系统将逐条校验：页面状态 vs 后端状态、版本号、角色权限、逾期状态、必填证据。
+                状态冲突、版本不一致、已逾期未走退回、缺材料的单据将被<strong>保留原值</strong>并返回失败原因及补正责任人。
               </div>
             </>
           ) : (
             <>
-              <div style={{marginBottom: '14px', fontSize: '14px'}}>
-                批量处理完成：
-                <span style={{color: '#059669', fontWeight: '600', marginLeft: '6px'}}>成功 {results.filter(r => r.success).length}</span>
-                <span style={{margin: '0 8px', color: '#9ca3af'}}>|</span>
-                <span style={{color: '#dc2626', fontWeight: '600'}}>失败 {results.filter(r => !r.success).length}</span>
+              <div style={{marginBottom: '14px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '16px'}}>
+                <span>批量处理结果：</span>
+                <span style={{color: '#059669', fontWeight: '600'}}>
+                  ✅ 成功 {results.filter(r => r.success).length}
+                </span>
+                <span style={{color: '#dc2626', fontWeight: '600'}}>
+                  ❌ 失败 {results.filter(r => !r.success).length}
+                </span>
               </div>
               <div className="result-list">
-                {results.map(r => {
-                  const h = selectedHazards.find(x => x.id === r.ID) || {}
-                  return (
-                    <div key={r.ID} className={`result-item ${r.Success ? 'success' : 'fail'}`}>
-                      <div className={`result-icon ${r.Success ? 'success' : 'fail'}`}>
-                        {r.Success ? '✓' : '✗'}
-                      </div>
-                      <div className="result-id">{h.hazard_no || ('#' + r.ID)}</div>
-                      <div className="result-msg" style={{flex: 1}}>
-                        {r.Success ? (
-                          <span style={{color: '#059669'}}>处理成功</span>
-                        ) : (
-                          <span>❌ {r.Message}</span>
-                        )}
-                      </div>
+                {results.map(r => (
+                  <div key={r.id} className={`result-item ${r.success ? 'success' : 'fail'}`}>
+                    <div className={`result-icon ${r.success ? 'success' : 'fail'}`}>
+                      {r.success ? '✓' : '✗'}
                     </div>
-                  )
-                })}
+                    <div style={{minWidth: '130px', fontFamily: 'monospace', color: '#2563eb', fontSize: '12px'}}>
+                      {r.hazard_no}
+                    </div>
+                    <div style={{flex: 1, minWidth: 0}}>
+                      <div style={{fontWeight: '500', color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
+                        {r.title}
+                      </div>
+                      <div style={{fontSize: '12px', color: r.success ? '#059669' : '#dc2626', marginTop: '2px'}}>
+                        {r.message}
+                      </div>
+                      {!r.success && r.error_code && (
+                        <div style={{fontSize: '11px', color: '#6b7280', marginTop: '2px'}}>
+                          错误码：{r.error_code}
+                          {errorCodeDescriptions[r.error_code] && `（${errorCodeDescriptions[r.error_code]}）`}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{minWidth: '100px', textAlign: 'right', fontSize: '12px'}}>
+                      {r.from_status_name && r.to_status_name && r.success ? (
+                        <span>{r.from_status_name} → {r.to_status_name}</span>
+                      ) : r.from_status_name ? (
+                        <span className="status-badge" style={{background: STATUS_COLORS[r.from_status] + '20', color: STATUS_COLORS[r.from_status]}}>
+                          {r.from_status_name}
+                        </span>
+                      ) : null}
+                    </div>
+                    {!r.success && r.fix_by_name && (
+                      <div style={{minWidth: '100px', textAlign: 'right', fontSize: '12px'}}>
+                        <span style={{color: '#dc2626'}}>补正：{r.fix_by_name}</span>
+                      </div>
+                    )}
+                    {!r.success && r.current_version && r.page_version && (
+                      <div style={{minWidth: '100px', textAlign: 'right', fontSize: '11px', color: '#6b7280'}}>
+                        页面 v{r.page_version} / 后端 v{r.current_version}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div style={{marginTop: '12px', padding: '10px', background: '#f9fafb', borderRadius: '6px', fontSize: '12px', color: '#6b7280'}}>
+                💡 提示：失败的单据请根据补正责任人回到详情页处理后再批量推进。所有成功和失败都已记录到审计轨迹。
               </div>
             </>
           )}

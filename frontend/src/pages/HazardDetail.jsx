@@ -8,15 +8,20 @@ export default function HazardDetail({ id, store, onClose }) {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState(null)
   const [processForm, setProcessForm] = useState({
-    toStatus: '',
+    to_status: '',
+    page_status: '',
     remark: '',
     return_reason: '',
     rectify_notice: '',
     recheck_result: '',
     current_handler: '',
     action: '',
-    abnormal_tags: []
+    abnormal_tags: [],
+    evidence: [],
+    attachments: [],
+    version: 0
   })
+  const [newAttachment, setNewAttachment] = useState('')
   const [auditText, setAuditText] = useState('')
   const [abnormalText, setAbnormalText] = useState('')
   const [abnormalCategory, setAbnormalCategory] = useState('')
@@ -32,6 +37,13 @@ export default function HazardDetail({ id, store, onClose }) {
       const res = await api.getHazard(id)
       if (res.success) {
         setData(res.data)
+        const h = res.data.hazard
+        setProcessForm(prev => ({
+          ...prev,
+          version: h.version,
+          page_status: h.status,
+          abnormal_tags: h.abnormal_tags || []
+        }))
       }
     } catch (e) {
       showToast(e.message || '加载详情失败', 'error')
@@ -54,7 +66,7 @@ export default function HazardDetail({ id, store, onClose }) {
 
   if (!data) return null
 
-  const { hazard, attachments, process_records, audit_notes, abnormal_reasons } = data
+  const { hazard, attachments, process_records, audit_notes, abnormal_reasons, next_handlers } = data
   const days = daysUntil(hazard.deadline)
 
   const getAvailableActions = () => {
@@ -63,35 +75,35 @@ export default function HazardDetail({ id, store, onClose }) {
 
     if (currentUser.role === ROLES.FIRE_CLERK) {
       if (from === STATUS.DRAFT) {
-        actions.push({ value: 'submit', label: '提交待分派', toStatus: STATUS.PENDING_ASSIGN, require: [] })
+        actions.push({ value: 'submit', label: '提交待分派', to_status: STATUS.PENDING_ASSIGN, require: [] })
       }
       if (from === STATUS.PENDING_ASSIGN) {
-        actions.push({ value: 'assign', label: '分派给监督员', toStatus: STATUS.ASSIGNED, require: ['current_handler'] })
-        actions.push({ value: 'transfer', label: '转办其他部门', toStatus: STATUS.TRANSFERRED, require: ['current_handler'] })
+        actions.push({ value: 'assign', label: '分派给监督员', to_status: STATUS.ASSIGNED, require: ['current_handler'] })
+        actions.push({ value: 'transfer', label: '转办其他部门', to_status: STATUS.TRANSFERRED, require: ['current_handler'] })
       }
     }
 
     if (currentUser.role === ROLES.FIRE_SUPERVISOR) {
       if ([STATUS.ASSIGNED, STATUS.TRANSFERRED, STATUS.RETURNED].includes(from)) {
-        actions.push({ value: 'rectify', label: '下发整改通知', toStatus: STATUS.RECTIFYING, require: ['rectify_notice'] })
+        actions.push({ value: 'rectify', label: '下发整改通知', to_status: STATUS.RECTIFYING, require: ['rectify_notice'] })
       }
       if (from === STATUS.RECTIFYING) {
-        actions.push({ value: 'recheck', label: '提交复查销项', toStatus: STATUS.RECHECKING, require: ['recheck_result'] })
-        actions.push({ value: 'return_rectify', label: '退回补正材料', toStatus: STATUS.RETURNED, require: ['return_reason'] })
+        actions.push({ value: 'recheck', label: '提交复查销项', to_status: STATUS.RECHECKING, require: ['recheck_result'] })
+        actions.push({ value: 'return_rectify', label: '退回补正材料', to_status: STATUS.RETURNED, require: ['return_reason'] })
       }
       if (from === STATUS.RECHECKING) {
-        actions.push({ value: 'return_recheck', label: '退回继续整改', toStatus: STATUS.RETURNED, require: ['return_reason'] })
+        actions.push({ value: 'return_recheck', label: '退回继续整改', to_status: STATUS.RETURNED, require: ['return_reason'] })
       }
     }
 
     if (currentUser.role === ROLES.STATION_CHIEF) {
       if (from === STATUS.RECHECKING) {
-        actions.push({ value: 'revisit', label: '确认已回访', toStatus: STATUS.REVISITED, require: [] })
-        actions.push({ value: 'close', label: '确认销项归档', toStatus: STATUS.CLOSED, require: ['recheck_result'] })
-        actions.push({ value: 'return_chief', label: '退回补正', toStatus: STATUS.RETURNED, require: ['return_reason'] })
+        actions.push({ value: 'revisit', label: '确认已回访', to_status: STATUS.REVISITED, require: [] })
+        actions.push({ value: 'close', label: '确认销项归档', to_status: STATUS.CLOSED, require: ['recheck_result'] })
+        actions.push({ value: 'return_chief', label: '退回补正', to_status: STATUS.RETURNED, require: ['return_reason'] })
       }
       if (from === STATUS.REVISITED) {
-        actions.push({ value: 'close_final', label: '最终销项', toStatus: STATUS.CLOSED, require: [] })
+        actions.push({ value: 'close_final', label: '最终销项', to_status: STATUS.CLOSED, require: [] })
       }
     }
 
@@ -100,19 +112,35 @@ export default function HazardDetail({ id, store, onClose }) {
 
   const actions = getAvailableActions()
 
+  const addAttachmentLocal = () => {
+    const name = newAttachment.trim()
+    if (!name) {
+      showToast('请输入附件名称', 'warning')
+      return
+    }
+    setProcessForm(prev => ({
+      ...prev,
+      attachments: [...prev.attachments, name]
+    }))
+    setNewAttachment('')
+  }
+
+  const removeAttachmentLocal = (idx) => {
+    setProcessForm(prev => ({
+      ...prev,
+      attachments: prev.attachments.filter((_, i) => i !== idx)
+    }))
+  }
+
   const handleProcess = async (action) => {
     setSubmitting(true)
     try {
       const payload = {
         ...processForm,
         action: action.value,
-        toStatus: action.toStatus,
-        version: hazard.version,
-        abnormal_tags: hazard.abnormal_tags || []
-      }
-
-      if (hazard.warning_level === 'overdue' && action.toStatus !== STATUS.RETURNED) {
-        payload.abnormal_tags = [...new Set([...(hazard.abnormal_tags || []), '已逾期'])]
+        to_status: action.to_status,
+        page_status: hazard.status,
+        version: hazard.version
       }
 
       const res = await api.processHazard(id, payload)
@@ -120,11 +148,21 @@ export default function HazardDetail({ id, store, onClose }) {
         showToast('处理成功：' + action.label, 'success')
         refresh()
         onClose()
-      } else {
-        showToast(res.message || '处理失败', 'error')
       }
     } catch (e) {
-      showToast(e.message || '处理失败', 'error')
+      let msg = e.message || '处理失败'
+      if (e.detail) {
+        const d = e.detail
+        const extra = []
+        if (d.fix_by_name) extra.push(`补正责任人：${d.fix_by_name}`)
+        if (d.current_status_name) extra.push(`当前状态：${d.current_status_name}`)
+        if (d.fix_suggestion) extra.push(d.fix_suggestion)
+        if (extra.length > 0) {
+          msg = e.message + '（' + extra.join('；') + '）'
+        }
+      }
+      showToast(msg, 'error')
+      loadData()
     } finally {
       setSubmitting(false)
     }
@@ -165,6 +203,11 @@ export default function HazardDetail({ id, store, onClose }) {
     }
   }
 
+  const showReturnReason = actions.some(a => a.require?.includes('return_reason'))
+  const showHandler = actions.some(a => a.require?.includes('current_handler'))
+  const showRectifyNotice = actions.some(a => a.require?.includes('rectify_notice')) || hazard.status === STATUS.RECTIFYING
+  const showRecheckResult = actions.some(a => a.require?.includes('recheck_result')) || hazard.status === STATUS.RECHECKING
+
   return (
     <div className="modal-mask" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-lg">
@@ -173,6 +216,9 @@ export default function HazardDetail({ id, store, onClose }) {
             📄 {hazard.hazard_no} - {hazard.title}
             <span className="status-badge" style={{marginLeft: '10px', background: STATUS_COLORS[hazard.status] + '20', color: STATUS_COLORS[hazard.status]}}>
               {STATUS_NAMES[hazard.status]}
+            </span>
+            <span style={{marginLeft: '8px', fontSize: '12px', color: '#6b7280'}}>
+              版本 v{hazard.version}
             </span>
           </div>
           <button className="modal-close" onClick={onClose}>&times;</button>
@@ -245,6 +291,18 @@ export default function HazardDetail({ id, store, onClose }) {
                       </span>
                     </div>
                   )}
+                  {next_handlers && next_handlers.length > 0 && (
+                    <div className="info-item full">
+                      <span className="info-label">下一节点责任角色</span>
+                      <span className="info-value">
+                        {next_handlers.map((h, i) => (
+                          <span key={i} className="tag" style={{background: '#dbeafe', color: '#1e40af', marginRight: '6px'}}>
+                            {h.role_name}
+                          </span>
+                        ))}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -252,19 +310,19 @@ export default function HazardDetail({ id, store, onClose }) {
                 <div className="section-title"><span className="dot"></span>整改通知</div>
                 <div className="info-grid">
                   <div className="info-item full">
-                    <span className="info-label">整改通知内容</span>
+                    <span className="info-label">已下发整改通知</span>
                     <span className="info-value" style={{whiteSpace: 'pre-wrap'}}>{hazard.rectify_notice || '-'}</span>
                   </div>
                 </div>
-                {[STATUS.ASSIGNED, STATUS.TRANSFERRED, STATUS.RETURNED].includes(hazard.status) && currentUser.role === ROLES.FIRE_SUPERVISOR && (
+                {showRectifyNotice && currentUser.role === ROLES.FIRE_SUPERVISOR && (
                   <div style={{marginTop: '12px'}}>
                     <div className="form-group">
-                      <label className="form-label required">填写整改通知</label>
+                      <label className="form-label required">填写/更新整改通知</label>
                       <textarea
                         className="textarea"
-                        placeholder="请填写整改要求、整改时限等内容"
+                        placeholder="请填写整改要求、整改时限、整改责任人等内容"
                         value={processForm.rectify_notice}
-                        onChange={e => setProcessForm({...processForm, rectify_notice: e.target.value})}
+                        onInput={e => setProcessForm({...processForm, rectify_notice: e.target.value})}
                       />
                     </div>
                   </div>
@@ -285,15 +343,15 @@ export default function HazardDetail({ id, store, onClose }) {
                     </div>
                   )}
                 </div>
-                {[STATUS.RECTIFYING, STATUS.RECHECKING].includes(hazard.status) && (currentUser.role === ROLES.FIRE_SUPERVISOR || currentUser.role === ROLES.STATION_CHIEF) && (
+                {showRecheckResult && (currentUser.role === ROLES.FIRE_SUPERVISOR || currentUser.role === ROLES.STATION_CHIEF) && (
                   <div style={{marginTop: '12px'}}>
                     <div className="form-group">
                       <label className="form-label">填写复查结果（销项必填）</label>
                       <textarea
                         className="textarea"
-                        placeholder="请填写现场复查情况、整改效果等"
+                        placeholder="请填写现场复查情况、整改效果、是否符合要求等"
                         value={processForm.recheck_result}
-                        onChange={e => setProcessForm({...processForm, recheck_result: e.target.value})}
+                        onInput={e => setProcessForm({...processForm, recheck_result: e.target.value})}
                       />
                     </div>
                   </div>
@@ -301,8 +359,8 @@ export default function HazardDetail({ id, store, onClose }) {
               </div>
 
               <div className="detail-section">
-                <div className="section-title"><span className="dot"></span>附件材料</div>
-                {attachments.length === 0 ? (
+                <div className="section-title"><span className="dot"></span>附件材料与佐证</div>
+                {attachments.length === 0 && processForm.attachments.length === 0 ? (
                   <div className="empty-state" style={{padding: '20px', fontSize: '13px'}}>暂无附件</div>
                 ) : (
                   <div className="attachment-list">
@@ -310,12 +368,34 @@ export default function HazardDetail({ id, store, onClose }) {
                       <div key={a.id} className="attachment-item">
                         <strong>📎 {a.file_name}</strong>
                         <span style={{marginLeft: '10px', color: '#6b7280', fontSize: '12px'}}>
-                          {a.file_type} · {Math.round(a.file_size/1024)}KB · 上传人：{a.uploaded_by} · {formatDate(a.uploaded_at)}
+                          {a.file_type} · 上传人：{a.uploaded_by} · {formatDate(a.uploaded_at)}
                         </span>
+                      </div>
+                    ))}
+                    {processForm.attachments.map((name, idx) => (
+                      <div key={'new-' + idx} className="attachment-item" style={{background: '#ecfdf5', borderColor: '#a7f3d0'}}>
+                        <strong>📎 {name}</strong>
+                        <span style={{marginLeft: '10px', color: '#059669', fontSize: '12px'}}>待提交 · 新增</span>
+                        <button className="link-btn" style={{marginLeft: 'auto', color: '#dc2626'}} onClick={() => removeAttachmentLocal(idx)}>移除</button>
                       </div>
                     ))}
                   </div>
                 )}
+                <div style={{marginTop: '12px', display: 'flex', gap: '8px'}}>
+                  <input
+                    type="text"
+                    className="input"
+                    style={{flex: 1}}
+                    placeholder="输入附件名称/佐证材料描述..."
+                    value={newAttachment}
+                    onInput={e => setNewAttachment(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addAttachmentLocal()}
+                  />
+                  <button className="btn btn-primary" onClick={addAttachmentLocal}>添加佐证</button>
+                </div>
+                <div style={{marginTop: '6px', fontSize: '12px', color: '#6b7280'}}>
+                  💡 提示：新增的佐证材料将随本次办理操作一同提交并记录到审计轨迹中
+                </div>
               </div>
 
               <div className="detail-section">
@@ -348,6 +428,11 @@ export default function HazardDetail({ id, store, onClose }) {
                             操作人：{r.operator}（{ROLE_NAMES[r.operator_role] || r.operator_role}）
                           </div>
                           {r.remark && <div className="timeline-remark">{r.remark}</div>}
+                          {r.evidence && r.evidence.length > 0 && (
+                            <div style={{marginTop: '6px', fontSize: '12px', color: '#6b7280'}}>
+                              📎 佐证材料：{r.evidence.join('、')}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -376,7 +461,7 @@ export default function HazardDetail({ id, store, onClose }) {
                     style={{flex: 1, minHeight: '60px'}}
                     placeholder="添加审计备注..."
                     value={auditText}
-                    onChange={e => setAuditText(e.target.value)}
+                    onInput={e => setAuditText(e.target.value)}
                   />
                   <button className="btn btn-primary" style={{alignSelf: 'flex-start'}} onClick={handleAddAudit}>添加</button>
                 </div>
@@ -405,7 +490,12 @@ export default function HazardDetail({ id, store, onClose }) {
                   <div className="form-group">
                     <label className="form-label">记录异常原因（逾期/缺材料/退回等）</label>
                     <div style={{display: 'flex', gap: '8px'}}>
-                      <select className="input" style={{width: '140px'}} value={abnormalCategory} onChange={e => setAbnormalCategory(e.target.value)}>
+                      <select
+                        className="input"
+                        style={{width: '140px'}}
+                        value={abnormalCategory}
+                        onInput={e => setAbnormalCategory(e.target.value)}
+                      >
                         <option value="">分类</option>
                         <option value="缺材料">缺材料</option>
                         <option value="超时">超时</option>
@@ -413,7 +503,14 @@ export default function HazardDetail({ id, store, onClose }) {
                         <option value="退回补正">退回补正</option>
                         <option value="其他">其他</option>
                       </select>
-                      <input type="text" className="input" style={{flex: 1}} placeholder="请输入异常原因详情..." value={abnormalText} onChange={e => setAbnormalText(e.target.value)} />
+                      <input
+                        type="text"
+                        className="input"
+                        style={{flex: 1}}
+                        placeholder="请输入异常原因详情..."
+                        value={abnormalText}
+                        onInput={e => setAbnormalText(e.target.value)}
+                      />
                       <button className="btn btn-primary" onClick={handleAddAbnormal}>记录</button>
                     </div>
                   </div>
@@ -424,9 +521,10 @@ export default function HazardDetail({ id, store, onClose }) {
             <div className="detail-sidebar">
               <div className="action-panel">
                 <div className="section-title"><span className="dot"></span>办理操作</div>
-                <div style={{marginBottom: '12px', fontSize: '12px', color: '#6b7280'}}>
-                  当前角色：<strong>{currentUser.roleName}</strong><br/>
-                  当前版本：v{hazard.version}
+                <div style={{marginBottom: '12px', fontSize: '12px', color: '#6b7280', lineHeight: '1.8'}}>
+                  当前角色：<strong style={{color: '#1f2937'}}>{currentUser.roleName}</strong><br/>
+                  页面状态：<strong style={{color: STATUS_COLORS[hazard.status]}}>{STATUS_NAMES[hazard.status]}</strong><br/>
+                  页面版本：<strong>v{hazard.version}</strong>
                 </div>
 
                 {actions.length === 0 ? (
@@ -436,18 +534,7 @@ export default function HazardDetail({ id, store, onClose }) {
                   </div>
                 ) : (
                   <>
-                    {actions.some(a => a.require.includes('return_reason')) && (
-                      <div className="form-group">
-                        <label className="form-label required">退回原因</label>
-                        <textarea
-                          className="textarea"
-                          placeholder="请说明退回补正的原因"
-                          value={processForm.return_reason}
-                          onChange={e => setProcessForm({...processForm, return_reason: e.target.value})}
-                        />
-                      </div>
-                    )}
-                    {actions.some(a => a.require.includes('current_handler')) && (
+                    {showHandler && (
                       <div className="form-group">
                         <label className="form-label required">指定处理人</label>
                         <input
@@ -455,7 +542,18 @@ export default function HazardDetail({ id, store, onClose }) {
                           className="input"
                           placeholder="请输入处理人姓名"
                           value={processForm.current_handler}
-                          onChange={e => setProcessForm({...processForm, current_handler: e.target.value})}
+                          onInput={e => setProcessForm({...processForm, current_handler: e.target.value})}
+                        />
+                      </div>
+                    )}
+                    {showReturnReason && (
+                      <div className="form-group">
+                        <label className="form-label required">退回原因</label>
+                        <textarea
+                          className="textarea"
+                          placeholder="请说明退回补正的原因和要求"
+                          value={processForm.return_reason}
+                          onInput={e => setProcessForm({...processForm, return_reason: e.target.value})}
                         />
                       </div>
                     )}
@@ -465,7 +563,7 @@ export default function HazardDetail({ id, store, onClose }) {
                         className="textarea"
                         placeholder="可选：填写本次办理的备注说明"
                         value={processForm.remark}
-                        onChange={e => setProcessForm({...processForm, remark: e.target.value})}
+                        onInput={e => setProcessForm({...processForm, remark: e.target.value})}
                       />
                     </div>
                     <div className="action-btns">
@@ -489,7 +587,9 @@ export default function HazardDetail({ id, store, onClose }) {
                 <div style={{fontSize: '13px', lineHeight: '2'}}>
                   <div>📝 创建时间：{formatDate(hazard.created_at)}</div>
                   <div>🔄 更新时间：{formatDate(hazard.updated_at)}</div>
-                  <div>🏷️ 版本号：v{hazard.version}</div>
+                  <div>🏷️ 当前版本：v{hazard.version}</div>
+                  <div>📎 附件数量：{attachments.length + processForm.attachments.length}</div>
+                  <div>📜 处理记录：{process_records.length}条</div>
                 </div>
               </div>
             </div>

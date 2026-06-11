@@ -18,9 +18,16 @@ async function request(url, options = {}) {
       ...options.headers
     }
   })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok && !data.success) {
-    throw new Error(data.message || `请求失败 (${res.status})`)
+  let data = {}
+  try {
+    data = await res.json()
+  } catch (e) {}
+  if (!res.ok) {
+    const msg = data?.message || `请求失败 (${res.status})`
+    const err = new Error(msg)
+    err.detail = data?.detail || null
+    err.status = res.status
+    throw err
   }
   return data
 }
@@ -28,36 +35,45 @@ async function request(url, options = {}) {
 export const api = {
   getCurrentUser: () => request('/user/current'),
   getStats: () => request('/stats'),
-  
+
   listHazards: (params = {}) => {
     const qs = new URLSearchParams(params).toString()
     return request(`/hazards/${qs ? '?' + qs : ''}`)
   },
-  
+
   getHazard: (id) => request(`/hazards/${id}`),
-  
+
   createHazard: (data) => request('/hazards/', {
     method: 'POST',
     body: JSON.stringify(data)
   }),
-  
+
   processHazard: (id, data) => request(`/hazards/${id}/process`, {
     method: 'POST',
     body: JSON.stringify(data)
   }),
-  
+
   batchProcess: (data) => request('/hazards/batch', {
     method: 'POST',
     body: JSON.stringify(data)
   }),
-  
+
   addAuditNote: (id, content) => request(`/hazards/${id}/audit`, {
     method: 'POST',
     body: JSON.stringify({ content })
   }),
-  
+
   addAbnormalReason: (id, reason, category) => request(`/hazards/${id}/abnormal`, {
     method: 'POST',
     body: JSON.stringify({ reason, category })
+  }),
+
+  addAttachment: (id, fileData) => request(`/hazards/${id}/attachments`, {
+    method: 'POST',
+    body: JSON.stringify(fileData)
+  }),
+
+  deleteAttachment: (id) => request(`/hazards/attachments/${id}`, {
+    method: 'DELETE'
   })
 }
