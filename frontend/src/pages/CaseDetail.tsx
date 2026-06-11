@@ -158,7 +158,7 @@ const CaseDetail: React.FC = () => {
 
     switch (user.role) {
       case 'dispatcher':
-        if (caseData.status === 'pending_correction' && caseData.current_stage === 'registration') {
+        if (caseData.status === 'pending_correction' && caseData.current_stage === 'registration' && caseData.created_by === user.id) {
           const canSubmit = caseData.registration_materials_complete;
           actions.push({
             key: 'under_review',
@@ -193,36 +193,26 @@ const CaseDetail: React.FC = () => {
         break;
 
       case 'reviewer':
-        if (caseData.status === 'under_review') {
-          if (caseData.current_stage === 'registration' || caseData.current_stage === 'dispatch') {
-            actions.push({
-              key: 'pending_correction',
-              label: '退回补正',
-              type: 'default',
-              danger: true,
-            });
-          }
-          if (caseData.current_stage === 'review') {
-            const canComplete =
-              caseData.registration_materials_complete &&
-              caseData.dispatch_timeline_met &&
-              caseData.followup_evidence_complete;
-            actions.push({
-              key: 'pending_correction',
-              label: '退回补正',
-              type: 'default',
-              danger: true,
-            });
-            actions.push({
-              key: 'completed',
-              label: '复核通过，办结归档',
-              type: 'primary',
-              disabled: !canComplete,
-              disabledReason: canComplete
-                ? ''
-                : '请确保登记材料齐全、派及时限达标、回访证据完整',
-            });
-          }
+        if (caseData.status === 'under_review' && caseData.current_stage === 'review') {
+          const canComplete =
+            caseData.registration_materials_complete &&
+            caseData.dispatch_timeline_met &&
+            caseData.followup_evidence_complete;
+          actions.push({
+            key: 'pending_correction',
+            label: '退回补正',
+            type: 'default',
+            danger: true,
+          });
+          actions.push({
+            key: 'completed',
+            label: '复核通过，办结归档',
+            type: 'primary',
+            disabled: !canComplete,
+            disabledReason: canComplete
+              ? ''
+              : '请确保登记材料齐全、派及时限达标、回访证据完整',
+          });
         }
         break;
     }
@@ -597,7 +587,7 @@ const CaseDetail: React.FC = () => {
             返回列表
           </Button>
           <Space>
-            {user?.role !== 'dispatcher' && (
+            {user?.role !== 'dispatcher' && caseData.status !== 'completed' && (
               <Button icon={<EditOutlined />} onClick={() => setNoteModalVisible(true)}>
                 添加备注
               </Button>
@@ -708,12 +698,16 @@ const CaseDetail: React.FC = () => {
         <Card title="处理流程（按时间顺序）">{renderProcessingTimeline()}</Card>
 
         <Card title="案件材料" extra={
-          caseData.status !== 'completed' && (
-            <Button size="small" icon={<PlusOutlined />} onClick={() => { attachForm.resetFields(); setAttachModalVisible(true); }}>
-              添加附件
-            </Button>
-          )
-        }>
+  caseData.status !== 'completed' && (
+    (user?.role === 'dispatcher' && (caseData.current_stage === 'registration' || caseData.created_by === user?.id)) ||
+    (user?.role === 'police_officer' && caseData.current_handler_id === user?.id) ||
+    (user?.role === 'reviewer')
+  ) && (
+    <Button size="small" icon={<PlusOutlined />} onClick={() => { attachForm.resetFields(); setAttachModalVisible(true); }}>
+      添加附件
+    </Button>
+  )
+}>
           <Tabs defaultActiveKey="attachments">
             <TabPane tab={`附件 (${caseData.attachments.length})`} key="attachments">
               {renderAttachments()}

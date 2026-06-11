@@ -111,10 +111,12 @@ pub async fn seed_demo_data(pool: &SqlitePool) -> Result<(), Box<dyn std::error:
     let dispatcher_pw = hash_password("123456").await?;
     let officer_pw = hash_password("123456").await?;
     let reviewer_pw = hash_password("123456").await?;
+    let dispatcher2_pw = hash_password("123456").await?;
 
     let dispatcher_id = Uuid::new_v4();
     let officer_id = Uuid::new_v4();
     let reviewer_id = Uuid::new_v4();
+    let dispatcher2_id = Uuid::new_v4();
 
     sqlx::query(r#"INSERT INTO users (id, username, real_name, role, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#)
         .bind(dispatcher_id.to_string()).bind("dispatcher").bind("张登记").bind(Role::Dispatcher.as_str()).bind(&dispatcher_pw)
@@ -124,6 +126,9 @@ pub async fn seed_demo_data(pool: &SqlitePool) -> Result<(), Box<dyn std::error:
         .execute(pool).await?;
     sqlx::query(r#"INSERT INTO users (id, username, real_name, role, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#)
         .bind(reviewer_id.to_string()).bind("reviewer").bind("王所长").bind(Role::Reviewer.as_str()).bind(&reviewer_pw)
+        .execute(pool).await?;
+    sqlx::query(r#"INSERT INTO users (id, username, real_name, role, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"#)
+        .bind(dispatcher2_id.to_string()).bind("dispatcher2").bind("刘助理").bind(Role::Dispatcher.as_str()).bind(&dispatcher2_pw)
         .execute(pool).await?;
 
     info!("用户数据初始化完成");
@@ -140,6 +145,8 @@ pub async fn seed_demo_data(pool: &SqlitePool) -> Result<(), Box<dyn std::error:
         ("JQ202606008", "批量处理测试1-纠纷调解", "楼上楼下漏水纠纷。", "民事纠纷", "和谐小区5栋", "郑十", "13800138008", CaseStatus::UnderReview, ProcessingStage::Dispatch, true, true, true, now + Duration::days(6), 3, dispatcher_id, "张登记", Some(officer_id), Some("李主管".to_string())),
         ("JQ202606009", "批量处理测试2-超时未处理", "噪音扰民投诉。", "求助", "美食街烧烤摊", "冯十一", "13800138009", CaseStatus::UnderReview, ProcessingStage::Dispatch, true, false, false, now - Duration::days(5), 2, dispatcher_id, "张登记", Some(officer_id), Some("李主管".to_string())),
         ("JQ202606010", "批量处理测试3-材料完整待复核", "宠物伤人事件。", "民事纠纷", "宠物医院门口", "陈十二", "13800138010", CaseStatus::UnderReview, ProcessingStage::Review, true, true, true, now + Duration::days(2), 4, dispatcher_id, "张登记", Some(reviewer_id), Some("王所长".to_string())),
+        ("JQ202606011", "非创建人案件-刘助理待补正", "商场停车场车辆剐蹭纠纷。", "民事纠纷", "万达商场停车场", "马十三", "13800138011", CaseStatus::PendingCorrection, ProcessingStage::Registration, false, true, false, now + Duration::days(4), 2, dispatcher2_id, "刘助理", None, None),
+        ("JQ202606012", "跨岗位越权-刘助理创建已派警", "社区广场舞噪音投诉。", "求助", "幸福社区广场", "杨十四", "13800138012", CaseStatus::UnderReview, ProcessingStage::Dispatch, true, true, true, now + Duration::days(3), 3, dispatcher2_id, "刘助理", Some(officer_id), Some("李主管".to_string())),
     ];
 
     for (case_number, title, description, case_type, location, reporter_name, reporter_phone, status, current_stage, reg_complete, dispatch_met, followup_complete, deadline, version, created_by, created_by_name, handler_id, handler_name) in cases {
@@ -157,15 +164,15 @@ pub async fn seed_demo_data(pool: &SqlitePool) -> Result<(), Box<dyn std::error:
         .bind(completed_at)
         .execute(pool).await?;
 
-        if status != CaseStatus::PendingCorrection || case_number == "JQ202606002" || case_number == "JQ202606005" {
-            seed_processing_records(pool, case_id, case_number, status, current_stage, dispatcher_id, "张登记", officer_id, "李主管", reviewer_id, "王所长").await?;
+        if status != CaseStatus::PendingCorrection || case_number == "JQ202606002" || case_number == "JQ202606005" || case_number == "JQ202606011" {
+            seed_processing_records(pool, case_id, case_number, status, current_stage, created_by, created_by_name, officer_id, "李主管", reviewer_id, "王所长").await?;
         }
 
         if reg_complete {
             let attach_id = Uuid::new_v4();
             sqlx::query(r#"INSERT INTO attachments (id, case_id, file_name, file_type, file_size, category, uploaded_by, uploaded_by_name, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#)
                 .bind(attach_id.to_string()).bind(case_id.to_string()).bind(format!("{}_报案笔录.pdf", case_number))
-                .bind("application/pdf").bind(204800i64).bind("registration").bind(dispatcher_id.to_string()).bind("张登记")
+                .bind("application/pdf").bind(204800i64).bind("registration").bind(created_by.to_string()).bind(created_by_name)
                 .execute(pool).await?;
             if case_number != "JQ202606007" {
                 let attach2_id = Uuid::new_v4();
@@ -184,9 +191,9 @@ pub async fn seed_demo_data(pool: &SqlitePool) -> Result<(), Box<dyn std::error:
                 .execute(pool).await?;
         }
 
-        if case_number == "JQ202606002" || case_number == "JQ202606005" {
+        if case_number == "JQ202606002" || case_number == "JQ202606005" || case_number == "JQ202606011" {
             let note_id = Uuid::new_v4();
-            let reason = if case_number == "JQ202606002" { "缺少报案人签字笔录和现场勘验记录" } else { "银行转账凭证未上传，通话录音不完整" };
+            let reason = if case_number == "JQ202606002" { "缺少报案人签字笔录和现场勘验记录" } else if case_number == "JQ202606005" { "银行转账凭证未上传，通话录音不完整" } else { "缺少事故现场照片和双方签字确认书" };
             sqlx::query(r#"INSERT INTO audit_notes (id, case_id, note, anomaly_reason, noted_by, noted_by_name, noted_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"#)
                 .bind(note_id.to_string()).bind(case_id.to_string()).bind(format!("退回补正：{}", reason)).bind(reason).bind(reviewer_id.to_string()).bind("王所长")
                 .execute(pool).await?;
@@ -201,7 +208,7 @@ pub async fn seed_demo_data(pool: &SqlitePool) -> Result<(), Box<dyn std::error:
         }
     }
 
-    info!("演示警情数据初始化完成，共10条记录");
+    info!("演示警情数据初始化完成，共12条记录");
     Ok(())
 }
 

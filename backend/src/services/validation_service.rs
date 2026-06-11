@@ -71,6 +71,12 @@ pub fn validate_handler_assignment(
                     case.current_stage.display_name()
                 )));
             }
+            if case.created_by != user.id {
+                return Err(AppError::Forbidden(format!(
+                    "你只能操作自己创建的案件，该案件由[{}]创建",
+                    case.created_by_name
+                )));
+            }
         }
         Role::PoliceOfficer => {
             if case.current_stage != ProcessingStage::Dispatch {

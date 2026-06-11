@@ -540,6 +540,35 @@ pub async fn add_audit_note(
     .execute(pool)
     .await?;
 
+    if anomaly_reason.is_some() {
+        let record_id = Uuid::new_v4();
+        let now_str = Utc::now().to_rfc3339();
+        let _ = sqlx::query(
+            r#"INSERT INTO processing_records (id, case_id, stage, action, from_status, to_status, handler_id, handler_name, handler_role, remarks, created_at)
+            VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(record_id.to_string())
+        .bind(case_id.to_string())
+        .bind("registration")
+        .bind("异常标注")
+        .bind("under_review")
+        .bind(user.id.to_string())
+        .bind(&user.real_name)
+        .bind(user.role.as_str())
+        .bind(anomaly_reason.as_deref().unwrap_or(""))
+        .bind(&now_str)
+        .execute(pool)
+        .await;
+
+        let _ = sqlx::query(
+            "UPDATE cases SET updated_at = ? WHERE id = ?"
+        )
+        .bind(&now_str)
+        .bind(case_id.to_string())
+        .execute(pool)
+        .await;
+    }
+
     let row = sqlx::query_as::<_, AuditNoteRow>(
         "SELECT id, case_id, note, anomaly_reason, noted_by, noted_by_name, noted_at FROM audit_notes WHERE id = ?",
     )

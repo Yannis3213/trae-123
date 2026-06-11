@@ -433,7 +433,9 @@ const CaseList: React.FC = () => {
     selectedRowKeys,
     onChange: setSelectedRowKeys,
     getCheckboxProps: (record: CaseWithDetail) => ({
-      disabled: record.status === 'completed',
+      disabled: record.status === 'completed' ||
+        (user?.role === 'police_officer' && record.current_handler_id !== user?.id) ||
+        (user?.role === 'dispatcher'),
     }),
   };
 

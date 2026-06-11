@@ -128,6 +128,24 @@ pub async fn add_attachment(
         return Err(AppError::Forbidden("案件已办结，无法添加附件".into()));
     }
 
+    if user.role == Role::PoliceOfficer {
+        if let Some(handler_id) = case.current_handler_id {
+            if handler_id != user.id {
+                return Err(AppError::Forbidden(format!(
+                    "该案件已分配给[{}]处理，你无权添加附件",
+                    case.current_handler_name.as_deref().unwrap_or("其他民警")
+                )));
+            }
+        }
+    }
+
+    if user.role == Role::Dispatcher && case.created_by != user.id {
+        return Err(AppError::Forbidden(format!(
+            "你只能给自己创建的案件添加附件，该案件由[{}]创建",
+            case.created_by_name
+        )));
+    }
+
     let result = case_service::add_attachment(
         pool.inner(),
         req.case_id,
@@ -148,6 +166,31 @@ pub async fn add_audit_note(
     pool: &State<SqlitePool>,
 ) -> Result<Json<crate::models::AuditNote>, AppError> {
     check_role_permission(&user, &[Role::Reviewer, Role::PoliceOfficer])?;
+
+    let case = case_service::get_case_by_id(pool.inner(), req.case_id).await?;
+    if case.status == CaseStatus::Completed {
+        return Err(AppError::Forbidden("案件已办结，无法添加备注".into()));
+    }
+    match user.role {
+        Role::PoliceOfficer => {
+            if case.current_stage != ProcessingStage::Dispatch {
+                return Err(AppError::Forbidden(format!(
+                    "民警只能在处置派警阶段添加备注，当前处于[{}]阶段",
+                    case.current_stage.display_name()
+                )));
+            }
+            if let Some(handler_id) = case.current_handler_id {
+                if handler_id != user.id {
+                    return Err(AppError::Forbidden(format!(
+                        "该案件已分配给[{}]处理，你无权添加备注",
+                        case.current_handler_name.as_deref().unwrap_or("其他民警")
+                    )));
+                }
+            }
+        }
+        Role::Reviewer => {}
+        _ => {}
+    }
 
     let result = case_service::add_audit_note(
         pool.inner(),
