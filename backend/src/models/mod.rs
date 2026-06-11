@@ -29,7 +29,7 @@ pub struct SamplingTask {
     pub abnormal_tags: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Attachment {
     pub id: String,
     pub task_id: String,

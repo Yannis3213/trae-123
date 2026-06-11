@@ -6,7 +6,6 @@ mod db;
 mod models;
 mod services;
 mod handlers;
-mod middleware as app_middleware;
 
 use db::init_db_with_migrations;
 use handlers::config as route_config;
@@ -21,7 +20,7 @@ async fn main() -> std::io::Result<()> {
         .expect("PORT must be a valid number");
 
     let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:./sampling_tasks.db".to_string());
+        .unwrap_or_else(|_| "sqlite:./data/sampling_tasks.db".to_string());
 
     let frontend_url = env::var("FRONTEND_URL")
         .unwrap_or_else(|_| "http://localhost:3003".to_string());

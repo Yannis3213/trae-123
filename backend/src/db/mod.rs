@@ -1,4 +1,4 @@
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool, Executor};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::path::Path;
 use anyhow::Result;
 
@@ -22,7 +22,9 @@ pub async fn init_db_with_migrations(database_url: &str) -> Result<DbPool> {
         .await?;
 
     let migration_sql = include_str!("../../migrations/001_init.sql");
-    sqlx::query(migration_sql).execute(&pool).await?;
+    for stmt in migration_sql.split(';').filter(|s| !s.trim().is_empty()) {
+        sqlx::query(stmt).execute(&pool).await?;
+    }
 
     Ok(pool)
 }

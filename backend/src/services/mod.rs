@@ -3,7 +3,6 @@ use crate::db::DbPool;
 use anyhow::{Result, anyhow, bail};
 use chrono::{DateTime, Utc, Duration};
 use uuid::Uuid;
-use sqlx::FromRow;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]

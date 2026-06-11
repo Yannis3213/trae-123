@@ -17,7 +17,7 @@ import { useRole } from '@/lib/roleContext';
 
 export default function TaskListPage() {
   const router = useRouter();
-  const { currentRole, setCurrentRole, currentUserName } = useRole();
+  const { currentRole, setCurrentRole, currentUserName, refreshTrigger } = useRole();
 
   const [tasks, setTasks] = useState<SamplingTask[]>([]);
   const [loading, setLoading] = useState(false);
@@ -79,8 +79,6 @@ export default function TaskListPage() {
       console.error('Failed to fetch statistics', e);
     }
   }, [currentRole]);
-
-  const { refreshTrigger } = useRole();
 
   useEffect(() => {
     fetchTasks();
