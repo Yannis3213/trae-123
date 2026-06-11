@@ -319,9 +319,9 @@ export default function OrderDetail() {
                       <Space>
                         <span>{getFileSize(item.size)}</span>
                         <span>·</span>
-                        <UserTag user={item.uploader || item.created_by} showRole={false} />
+                        <UserTag user={item.uploaded_by || item.uploader || item.created_by} />
                         <span>·</span>
-                        <span>{formatDate(item.created_at || item.uploaded_at || item.createdAt)}</span>
+                        <span>{formatDate(item.uploaded_at || item.created_at || item.createdAt)}</span>
                       </Space>
                     }
                   />
@@ -339,9 +339,9 @@ export default function OrderDetail() {
             (order.audit_notes || order.auditRemarks || []).map((item, i) => (
               <div className="audit-remark">
                 <div className="audit-remark-meta">
-                  <UserTag user={item.operator || item.handler || item.created_by} showRole={false} /> · {formatDate(item.created_at || item.createdAt)}
+                  <UserTag user={item.author || item.operator || item.handler || item.created_by} /> · {formatDate(item.created_at || item.createdAt)}
                 </div>
-                <div>{item.remark || item.content || item.note || '-'}</div>
+                <div>{item.note || item.remark || item.content || '-'}</div>
               </div>
             ))
           ) : (

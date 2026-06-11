@@ -1,13 +1,16 @@
+import logging
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 from django.http import HttpRequest
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Prefetch
+
+logger = logging.getLogger(__name__)
 
 from ninja import NinjaAPI, Schema
 
 from api.models import (
-    User, RequirementDeliveryOrder, ProcessingRecord, ExceptionReason, AuditNote,
+    User, RequirementDeliveryOrder, ProcessingRecord, ExceptionReason, AuditNote, Attachment,
     RoleChoices, OrderStatusChoices, RequirementStatusChoices, ModuleTypeChoices, ActionChoices
 )
 from api.schemas import (
@@ -26,8 +29,9 @@ from api.permissions import (
 from api.utils import (
     validate_version, transition_status, generate_order_no,
     get_deadline_warning, VersionConflictError, EvidenceMissingError,
-    PermissionDeniedError, StatusTransitionError
+    PermissionDeniedError, StatusTransitionError, check_evidence_complete
 )
+from api.permissions import SUBMIT_ROLES, AUDIT_ROLES
 
 
 api = NinjaAPI(title='需求交付单管理系统 API', version='1.0.0', csrf=False)
@@ -160,7 +164,10 @@ def get_order_detail(request, order_id: int):
     order = RequirementDeliveryOrder.objects.select_related(
         'current_handler', 'created_by'
     ).prefetch_related(
-        'attachments', 'processing_records', 'audit_notes', 'exception_reasons'
+        Prefetch('attachments', queryset=Attachment.objects.select_related('uploaded_by')),
+        Prefetch('processing_records', queryset=ProcessingRecord.objects.select_related('operator')),
+        Prefetch('audit_notes', queryset=AuditNote.objects.select_related('author')),
+        Prefetch('exception_reasons', queryset=ExceptionReason.objects.select_related('handler')),
     ).get(id=order_id)
     return OrderDetailSchema.from_orm(order)
 
@@ -413,12 +420,101 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
     for order_id in payload.order_ids:
         try:
             order = RequirementDeliveryOrder.objects.get(id=order_id)
+            biz_result = None
+            exception_reason = None
+            failure_reason = None
+
             if order.status not in [OrderStatusChoices.PENDING_VERIFY, OrderStatusChoices.VERIFY_FAILED]:
                 results.append(BatchResultItem(
                     order_id=order_id, order_no=order.order_no,
-                    success=False, message='该单据当前状态不允许核验'
+                    success=False, message='该单据当前状态不允许核验',
+                    failure_reason='该单据当前状态不允许核验'
                 ))
                 continue
+
+            intercept_failed = False
+
+            if not can_verify_order(user):
+                failure_reason = '越权操作：您没有核验权限'
+                intercept_failed = True
+
+            if order.status == OrderStatusChoices.VERIFY_FAILED and not intercept_failed:
+                exception_module_type = get_exception_module_type(order)
+                module_key = exception_module_type.lower()
+                allowed_roles = SUBMIT_ROLES.get(module_key, []) + AUDIT_ROLES.get(module_key, [])
+                if user.role not in allowed_roles:
+                    failure_reason = f'越权操作：您没有操作{exception_module_type}异常模块的权限'
+                    intercept_failed = True
+
+            if not intercept_failed:
+                version = None
+                if payload.order_versions and order_id in payload.order_versions:
+                    version = payload.order_versions[order_id]
+                elif payload.version is not None:
+                    version = payload.version
+
+                if version is not None:
+                    try:
+                        validate_version(order, version)
+                    except VersionConflictError as e:
+                        failure_reason = str(e)
+                        intercept_failed = True
+                else:
+                    logger.warning(f'订单 {order_id} 未传版本号，跳过版本校验')
+
+            if not intercept_failed:
+                if payload.approved:
+                    if order.status == OrderStatusChoices.PENDING_VERIFY:
+                        if order.requirement_status == RequirementStatusChoices.EXCEPTION:
+                            failure_reason = '状态冲突：待核验状态下需求确认模块不能为异常状态'
+                            intercept_failed = True
+                    elif order.status == OrderStatusChoices.VERIFY_FAILED:
+                        has_exception = (
+                            order.requirement_status == RequirementStatusChoices.EXCEPTION
+                            or order.schedule_status == RequirementStatusChoices.EXCEPTION
+                            or order.delivery_status == RequirementStatusChoices.EXCEPTION
+                        )
+                        if not has_exception:
+                            failure_reason = '状态冲突：核验失败状态下核验通过需要有异常模块'
+                            intercept_failed = True
+                else:
+                    if order.status == OrderStatusChoices.VERIFY_FAILED:
+                        has_exception = (
+                            order.requirement_status == RequirementStatusChoices.EXCEPTION
+                            or order.schedule_status == RequirementStatusChoices.EXCEPTION
+                            or order.delivery_status == RequirementStatusChoices.EXCEPTION
+                        )
+                        if not has_exception:
+                            pass
+
+            if not intercept_failed and payload.approved:
+                if order.status == OrderStatusChoices.PENDING_VERIFY:
+                    is_complete, msg = check_evidence_complete('requirement', order.requirement_evidence)
+                    if not is_complete:
+                        failure_reason = f'证据缺失：{msg}'
+                        intercept_failed = True
+                elif order.status == OrderStatusChoices.VERIFY_FAILED:
+                    exception_module_type = get_exception_module_type(order)
+                    module_key = exception_module_type.lower()
+                    evidence_map = {
+                        'requirement': order.requirement_evidence,
+                        'schedule': order.schedule_evidence,
+                        'delivery': order.delivery_evidence,
+                    }
+                    evidence = evidence_map.get(module_key, {})
+                    is_complete, msg = check_evidence_complete(module_key, evidence)
+                    if not is_complete:
+                        failure_reason = f'证据缺失：{msg}'
+                        intercept_failed = True
+
+            if intercept_failed:
+                results.append(BatchResultItem(
+                    order_id=order_id, order_no=order.order_no,
+                    success=False, message=failure_reason,
+                    failure_reason=failure_reason
+                ))
+                continue
+
             if payload.approved:
                 with transaction.atomic():
                     transition_status(
@@ -428,7 +524,11 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
                         operator=user,
                         remark=payload.remark,
                     )
-                msg = '核验通过'
+                if order.status == OrderStatusChoices.REVIEW_PENDING:
+                    biz_result = '核验通过，状态变更为待复核'
+                else:
+                    status_display = dict(OrderStatusChoices.choices).get(order.status, order.status)
+                    biz_result = f'核验通过，状态变更为{status_display}'
             else:
                 with transaction.atomic():
                     from_status = order.status
@@ -437,8 +537,19 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
                     if order.status == OrderStatusChoices.PENDING_VERIFY:
                         order.requirement_status = RequirementStatusChoices.EXCEPTION
                         module_type = ModuleTypeChoices.REQUIREMENT
+                    elif order.status == OrderStatusChoices.VERIFY_FAILED:
+                        has_exception = (
+                            order.requirement_status == RequirementStatusChoices.EXCEPTION
+                            or order.schedule_status == RequirementStatusChoices.EXCEPTION
+                            or order.delivery_status == RequirementStatusChoices.EXCEPTION
+                        )
+                        if has_exception:
+                            module_type = get_exception_module_type(order)
+                        else:
+                            module_type = ModuleTypeChoices.REQUIREMENT
+                            order.requirement_status = RequirementStatusChoices.EXCEPTION
                     else:
-                        module_type = get_exception_module_type(order)
+                        module_type = ModuleTypeChoices.REQUIREMENT
 
                     order.status = OrderStatusChoices.VERIFY_FAILED
                     order.version += 1
@@ -467,20 +578,29 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
                         author=user,
                     )
 
-                msg = '核验失败'
+                    exception_reason = reason
+                    biz_result = '核验失败，已写入异常原因'
+
             results.append(BatchResultItem(
-                order_id=order_id, order_no=order.order_no, success=True, message=msg
+                order_id=order_id, order_no=order.order_no, success=True,
+                message=biz_result or '处理成功',
+                biz_result=biz_result,
+                exception_reason=exception_reason,
+                failure_reason=None
             ))
             success_count += 1
         except RequirementDeliveryOrder.DoesNotExist:
             results.append(BatchResultItem(
-                order_id=order_id, order_no='', success=False, message='单据不存在'
+                order_id=order_id, order_no='', success=False, message='单据不存在',
+                failure_reason='单据不存在'
             ))
         except Exception as e:
             order = RequirementDeliveryOrder.objects.filter(id=order_id).first()
+            failure_reason = str(e)
             results.append(BatchResultItem(
                 order_id=order_id, order_no=order.order_no if order else '',
-                success=False, message=str(e)
+                success=False, message=failure_reason,
+                failure_reason=failure_reason
             ))
     return BatchResult(
         total=len(payload.order_ids),

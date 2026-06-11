@@ -286,6 +286,8 @@ class BatchVerifySchema(BaseModel):
     order_ids: List[int]
     approved: bool
     remark: str = ''
+    version: Optional[int] = None
+    order_versions: Optional[Dict[int, int]] = None
 
 
 class BatchProcessSchema(BaseModel):
@@ -300,6 +302,9 @@ class BatchResultItem(BaseModel):
     order_no: str
     success: bool
     message: str = ''
+    exception_reason: Optional[str] = None
+    failure_reason: Optional[str] = None
+    biz_result: Optional[str] = None
 
 
 class BatchResult(BaseModel):

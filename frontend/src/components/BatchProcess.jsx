@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Modal, Form, Input, Select, Button, Space, message } from 'antd'
+import { Modal, Form, Input, Select, Button, Space, message, Radio } from 'antd'
 import { BATCH_ACTIONS } from '../utils/constants.js'
 import { orderApi } from '../api.js'
 
@@ -10,6 +10,12 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
   const [loading, setLoading] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [results, setResults] = useState(null)
+  const [selectedAction, setSelectedAction] = useState(null)
+
+  const handleActionChange = (value) => {
+    setSelectedAction(value)
+    form.setFieldsValue({ approved: null })
+  }
 
   const handleSubmit = async (values) => {
     if (!selectedOrders || selectedOrders.length === 0) {
@@ -23,12 +29,20 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
 
     try {
       const orderIds = selectedOrders.map((o) => o.id)
+      const orderVersions = {}
+      selectedOrders.forEach((o) => {
+        if (o.id && o.version !== undefined) {
+          orderVersions[o.id] = o.version
+        }
+      })
+
       const payload = {
         order_ids: orderIds,
         action: values.action,
-        remark: values.remark || ''
+        remark: values.remark || '',
+        order_versions: orderVersions
       }
-      if (values.approved !== undefined) {
+      if (values.action === 'verify' && values.approved !== undefined && values.approved !== null) {
         payload.approved = values.approved
       }
 
@@ -49,6 +63,7 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
     if (loading) return
     setResults(null)
     setProcessing(false)
+    setSelectedAction(null)
     form.resetFields()
     if (results && (results.success_count || 0) > 0) {
       onSuccess?.(results)
@@ -57,13 +72,34 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
     }
   }
 
+  const getModalTitle = () => {
+    const count = selectedOrders?.length || 0
+    if (selectedAction === 'verify') {
+      return `批量核验（${count} 条订单）`
+    }
+    if (selectedAction === 'advance') {
+      return `批量推进（${count} 条订单）`
+    }
+    return `批量处理（${count} 条订单）`
+  }
+
+  const getRemarkPlaceholder = () => {
+    if (selectedAction === 'verify') {
+      return '请输入核验备注（选填）'
+    }
+    if (selectedAction === 'advance') {
+      return '请输入推进备注（选填）'
+    }
+    return '请输入处理备注（选填）'
+  }
+
   return (
     <Modal
-      title={`批量处理（${selectedOrders?.length || 0} 条订单）`}
+      title={getModalTitle()}
       open={open}
       onCancel={handleClose}
       footer={null}
-      width={620}
+      width={680}
       maskClosable={!loading}
       destroyOnClose
     >
@@ -73,13 +109,27 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
           label="处理动作"
           rules={[{ required: true, message: '请选择处理动作' }]}
         >
-          <Select options={BATCH_ACTIONS} placeholder="请选择处理动作" />
+          <Select options={BATCH_ACTIONS} placeholder="请选择处理动作" onChange={handleActionChange} />
         </Form.Item>
+
+        {selectedAction === 'verify' && (
+          <Form.Item
+            name="approved"
+            label="核验结果"
+            rules={[{ required: true, message: '请选择核验结果' }]}
+          >
+            <Radio.Group>
+              <Radio value={true}>核验通过</Radio>
+              <Radio value={false}>核验不通过</Radio>
+            </Radio.Group>
+          </Form.Item>
+        )}
+
         <Form.Item
           name="remark"
           label="处理备注"
         >
-          <TextArea rows={3} placeholder="请输入处理备注（选填）" />
+          <TextArea rows={3} placeholder={getRemarkPlaceholder()} />
         </Form.Item>
 
         {results && (results.results || []).length > 0 && (
@@ -91,7 +141,7 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
             </div>
             <div
               style={{
-                maxHeight: 280,
+                maxHeight: 360,
                 overflowY: 'auto',
                 padding: 12,
                 background: '#fafafa',
@@ -99,24 +149,71 @@ export default function BatchProcess({ open, selectedOrders, onCancel, onSuccess
                 border: '1px solid #f0f0f0'
               }}
             >
-              {(results.results || []).map((r, i) => (
-                <div
-                  key={i}
-                  className={`batch-progress-item ${r.success ? 'batch-progress-success' : 'batch-progress-fail'}`}
-                >
-                  <Space>
-                    <span style={{ fontWeight: 500 }}>
-                      {r.success ? '✓' : '✗'}
-                    </span>
-                    <span>订单号：{r.order_no || r.orderNo}</span>
-                    {!r.success && (
-                      <span style={{ color: '#cf1322' }}>
-                        原因：{r.message || '处理失败'}
-                      </span>
+              {(results.results || []).map((r, i) => {
+                const bizResult = r.biz_result || r.bizResult
+                const exceptionReason = r.exception_reason || r.exceptionReason
+                const failureReason = r.failure_reason || r.failureReason
+                const orderNo = r.order_no || r.orderNo
+
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      padding: '12px 0',
+                      borderBottom: i < (results.results || []).length - 1 ? '1px solid #e8e8e8' : 'none'
+                    }}
+                  >
+                    <div style={{ marginBottom: 8, fontWeight: 500 }}>
+                      订单号：{orderNo}
+                    </div>
+
+                    <div
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: 4,
+                        marginBottom: 6,
+                        background: r.success ? '#f6ffed' : '#fff1f0',
+                        border: `1px solid ${r.success ? '#b7eb8f' : '#ffa39e'}`,
+                        color: r.success ? '#389e0d' : '#cf1322'
+                      }}
+                    >
+                      <Space>
+                        <span style={{ fontWeight: 500 }}>{r.success ? '✓' : '✗'}</span>
+                        <span>业务处理结果：{bizResult || (r.success ? '处理成功' : '处理失败')}</span>
+                      </Space>
+                    </div>
+
+                    {exceptionReason && (
+                      <div
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 4,
+                          marginBottom: 6,
+                          background: '#fffbe6',
+                          border: '1px solid #ffe58f',
+                          color: '#d46b08'
+                        }}
+                      >
+                        异常原因：{exceptionReason}
+                      </div>
                     )}
-                  </Space>
-                </div>
-              ))}
+
+                    {!r.success && failureReason && (
+                      <div
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 4,
+                          background: '#fff1f0',
+                          border: '1px solid #ffa39e',
+                          color: '#cf1322'
+                        }}
+                      >
+                        失败原因：{failureReason}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}

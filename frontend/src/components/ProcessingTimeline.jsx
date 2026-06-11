@@ -59,7 +59,7 @@ export default function ProcessingTimeline({ records }) {
         mode="left"
         items={sortedRecords.map((record, index) => {
           const action = record.action || record.action_type
-          const operator = record.handler || record.operator || record.operator_name || record.operatorName || '系统'
+          const operator = record.operator || record.handler || record.operator_name || record.operatorName || '系统'
           const createdAt = record.created_at || record.createdAt
           const remark = record.remark || record.note || record.comment
           return {
@@ -71,7 +71,7 @@ export default function ProcessingTimeline({ records }) {
                   {getActionLabel(action)}
                 </div>
                 <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)', marginTop: 4 }}>
-                  <UserTag user={operator} showRole={false} /> · {formatDate(createdAt)}
+                  <UserTag user={operator} /> · {formatDate(createdAt)}
                 </div>
                 {remark && (
                   <div style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4, fontSize: 13 }}>
