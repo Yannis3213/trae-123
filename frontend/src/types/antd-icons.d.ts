@@ -1,0 +1,24 @@
+declare module '@ant-design/icons' {
+  export const SafetyOutlined: React.ComponentType<any>;
+  export const UserOutlined: React.ComponentType<any>;
+  export const LockOutlined: React.ComponentType<any>;
+  export const ArrowLeftOutlined: React.ComponentType<any>;
+  export const CheckCircleOutlined: React.ComponentType<any>;
+  export const CloseCircleOutlined: React.ComponentType<any>;
+  export const ClockCircleOutlined: React.ComponentType<any>;
+  export const FileTextOutlined: React.ComponentType<any>;
+  export const ExclamationCircleOutlined: React.ComponentType<any>;
+  export const ReloadOutlined: React.ComponentType<any>;
+  export const PaperClipOutlined: React.ComponentType<any>;
+  export const EditOutlined: React.ComponentType<any>;
+  export const AuditOutlined: React.ComponentType<any>;
+  export const RollbackOutlined: React.ComponentType<any>;
+  export const CheckOutlined: React.ComponentType<any>;
+  export const PlusOutlined: React.ComponentType<any>;
+  export const SearchOutlined: React.ComponentType<any>;
+  export const BatchOperationOutlined: React.ComponentType<any>;
+  export const LogoutOutlined: React.ComponentType<any>;
+  export const MenuFoldOutlined: React.ComponentType<any>;
+  export const MenuUnfoldOutlined: React.ComponentType<any>;
+  export const DashboardOutlined: React.ComponentType<any>;
+}

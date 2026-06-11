@@ -1,0 +1,8 @@
+[default]
+address = "0.0.0.0"
+port = 8107
+limits = { form = "64 kB", file = "10 MiB", json = "1 MiB" }
+temp_dir = "tmp"
+
+[default.databases.police_case]
+url = "data/police_case.db"

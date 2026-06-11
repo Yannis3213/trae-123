@@ -1,0 +1,72 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+    'Noto Color Emoji';
+  background-color: #f0f2f5;
+}
+
+.timeline-step {
+  position: relative;
+  padding-left: 24px;
+  margin-bottom: 16px;
+}
+
+.timeline-step::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 24px;
+  bottom: -8px;
+  width: 2px;
+  background: #d9d9d9;
+}
+
+.timeline-step:last-child::before {
+  display: none;
+}
+
+.timeline-dot {
+  position: absolute;
+  left: 0;
+  top: 4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #1890ff;
+  background: #fff;
+}
+
+.timeline-dot.active {
+  background: #1890ff;
+}
+
+.timeline-dot.completed {
+  background: #52c41a;
+  border-color: #52c41a;
+}
+
+.timeline-dot.pending {
+  border-color: #d9d9d9;
+}
+
+.evidence-ok {
+  color: #52c41a;
+}
+
+.evidence-no {
+  color: #ff4d4f;
+}
+
+.batch-result-success {
+  color: #52c41a;
+}
+
+.batch-result-fail {
+  color: #ff4d4f;
+}
