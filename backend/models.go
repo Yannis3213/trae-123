@@ -93,19 +93,28 @@ type UpdateStatusRequest struct {
 	} `json:"attachments"`
 }
 
+type BatchOrderItem struct {
+	OrderID int `json:"order_id"`
+	Version int `json:"version"`
+}
+
 type BatchUpdateRequest struct {
-	OrderIDs []int  `json:"order_ids"`
-	Status   string `json:"status"`
-	Remark   string `json:"remark"`
+	Orders []BatchOrderItem `json:"orders"`
+	Status string           `json:"status"`
+	Remark string           `json:"remark"`
 }
 
 type BatchResultItem struct {
-	OrderID    int    `json:"order_id"`
-	OrderNo    string `json:"order_no"`
-	Success    bool   `json:"success"`
-	Message    string `json:"message"`
-	FromStatus string `json:"from_status"`
-	ToStatus   string `json:"to_status"`
+	OrderID      int    `json:"order_id"`
+	OrderNo      string `json:"order_no"`
+	Success      bool   `json:"success"`
+	Message      string `json:"message"`
+	FromStatus   string `json:"from_status"`
+	ToStatus     string `json:"to_status"`
+	Version      int    `json:"version"`
+	SubmittedVer int    `json:"submitted_version"`
+	TechnicianID int    `json:"technician_id"`
+	ManagerID    int    `json:"manager_id"`
 }
 
 type OrderDetailResponse struct {

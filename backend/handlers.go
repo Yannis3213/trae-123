@@ -625,32 +625,54 @@ func BatchUpdateStatus(c *fiber.Ctx) error {
 		return c.Status(400).JSON(APIResponse{Code: -1, Message: "请求参数错误"})
 	}
 
+	if len(req.Orders) == 0 {
+		return c.Status(400).JSON(APIResponse{Code: -1, Message: "请选择要处理的工单"})
+	}
+
 	role := c.Locals("role").(string)
 	userID := c.Locals("userId").(int)
 
 	results := []BatchResultItem{}
 
-	for _, orderID := range req.OrderIDs {
+	for _, item := range req.Orders {
+		preSnap, _ := getOrderSnapshot(item.OrderID)
+
 		input := transitionInput{
-			OrderID:          orderID,
+			OrderID:          item.OrderID,
 			ToStatus:         req.Status,
-			Version:          0,
+			Version:          item.Version,
 			UserID:           userID,
 			Role:             role,
 			Remark:           req.Remark,
 			ExceptionReason:  "",
 			Attachments:      []Attachment{},
-			SkipVersionCheck: true,
+			SkipVersionCheck: false,
 		}
 
-		ok, msg, snap := executeStatusTransition(input)
+		ok, msg, postSnap := executeStatusTransition(input)
+
+		finalStatus := preSnap.Status
+		finalVersion := preSnap.Version
+		finalTech := preSnap.TechnicianID
+		finalManager := preSnap.ManagerID
+		if ok {
+			finalStatus = postSnap.Status
+			finalVersion = postSnap.Version
+			finalTech = postSnap.TechnicianID
+			finalManager = postSnap.ManagerID
+		}
+
 		results = append(results, BatchResultItem{
-			OrderID:    orderID,
-			OrderNo:    snap.OrderNo,
-			Success:    ok,
-			Message:    msg,
-			FromStatus: snap.Status,
-			ToStatus:   req.Status,
+			OrderID:      item.OrderID,
+			OrderNo:      preSnap.OrderNo,
+			Success:      ok,
+			Message:      msg,
+			FromStatus:   preSnap.Status,
+			ToStatus:     finalStatus,
+			Version:      finalVersion,
+			SubmittedVer: item.Version,
+			TechnicianID: finalTech,
+			ManagerID:    finalManager,
 		})
 	}
 

@@ -85,6 +85,11 @@ export interface Statistics {
   total: number
 }
 
+export interface BatchOrderItem {
+  order_id: number
+  version: number
+}
+
 export interface BatchResult {
   order_id: number
   order_no: string
@@ -92,6 +97,10 @@ export interface BatchResult {
   message: string
   from_status: string
   to_status: string
+  version: number
+  submitted_version: number
+  technician_id: number
+  manager_id: number
 }
 
 export interface APIResponse<T> {

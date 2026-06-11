@@ -539,6 +539,14 @@ tr:hover td {
   color: var(--text-secondary);
 }
 
+tr.row-success {
+  background: #f0fdf4;
+}
+
+tr.row-fail {
+  background: #fef2f2;
+}
+
 .timeline-item::before {
   content: '';
   position: absolute;

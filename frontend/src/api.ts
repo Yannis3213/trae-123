@@ -66,7 +66,7 @@ export async function updateStatus(id: number, data: { status: string; remark?: 
   })
 }
 
-export async function batchUpdate(data: { order_ids: number[]; status: string; remark?: string }) {
+export async function batchUpdate(data: { orders: { order_id: number; version: number }[]; status: string; remark?: string }) {
   return request<BatchResult[]>('/api/orders/batch', {
     method: 'POST',
     body: JSON.stringify(data)
