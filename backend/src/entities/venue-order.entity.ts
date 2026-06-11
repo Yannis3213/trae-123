@@ -51,6 +51,30 @@ export class VenueOrder {
   @Column({ type: 'varchar', length: 200, nullable: true })
   exceptionReason: string | null;
 
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  paymentVerification: string | null;
+
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  admissionConfirmation: string | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  responsibleNode: string | null;
+
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  auditRemark: string | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  paymentAmount: number | null;
+
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  paymentMethod: string | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  paymentStatus: string | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  admissionStatus: string | null;
+
   @Column({ type: 'varchar', length: 50 })
   currentHandler: string;
 

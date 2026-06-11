@@ -62,9 +62,39 @@ export class OrdersService {
     operatorRole: string,
     opinion: string | null,
     auditDetail: string,
+    evidence: {
+      paymentVerification?: string | null;
+      admissionConfirmation?: string | null;
+      paymentAmount?: number | null;
+      paymentMethod?: string | null;
+      paymentStatus?: string | null;
+      admissionStatus?: string | null;
+      correctReason?: string | null;
+      returnOpinion?: string | null;
+      exceptionReason?: string | null;
+      responsibleNode?: string | null;
+      auditRemark?: string | null;
+    } = {},
   ) {
     await this.recordRepo.save(
-      this.recordRepo.create({ orderId, action, operator: operatorId, operatorRole, opinion }),
+      this.recordRepo.create({
+        orderId,
+        action,
+        operator: operatorId,
+        operatorRole,
+        opinion,
+        paymentVerification: evidence.paymentVerification ?? null,
+        admissionConfirmation: evidence.admissionConfirmation ?? null,
+        paymentAmount: evidence.paymentAmount ?? null,
+        paymentMethod: evidence.paymentMethod ?? null,
+        paymentStatus: evidence.paymentStatus ?? null,
+        admissionStatus: evidence.admissionStatus ?? null,
+        correctReason: evidence.correctReason ?? null,
+        returnOpinion: evidence.returnOpinion ?? null,
+        exceptionReason: evidence.exceptionReason ?? null,
+        responsibleNode: evidence.responsibleNode ?? null,
+        auditRemark: evidence.auditRemark ?? null,
+      }),
     );
     await this.auditRepo.save(
       this.auditRepo.create({ orderId, action, operator: operatorId, operatorRole, detail: auditDetail }),
@@ -120,6 +150,15 @@ export class OrdersService {
       currentHandlerRole: 'reviewer',
       warningLevel,
       createdBy: user.id,
+      paymentAmount: data.paymentAmount ?? null,
+      paymentMethod: data.paymentMethod ?? null,
+      paymentStatus: data.paymentStatus ?? null,
+      paymentVerification: data.paymentVerification ?? null,
+      admissionStatus: data.admissionStatus ?? null,
+      admissionConfirmation: data.admissionConfirmation ?? null,
+      exceptionReason: data.exceptionReason ?? null,
+      responsibleNode: data.responsibleNode ?? null,
+      auditRemark: data.auditRemark ?? null,
     });
 
     const saved = await this.orderRepo.save(order);
@@ -131,6 +170,17 @@ export class OrdersService {
       user.role,
       '提交场地预约申请',
       `创建订单 ${orderNo}`,
+      {
+        paymentAmount: saved.paymentAmount,
+        paymentMethod: saved.paymentMethod,
+        paymentStatus: saved.paymentStatus,
+        paymentVerification: saved.paymentVerification,
+        admissionStatus: saved.admissionStatus,
+        admissionConfirmation: saved.admissionConfirmation,
+        exceptionReason: saved.exceptionReason,
+        responsibleNode: saved.responsibleNode,
+        auditRemark: saved.auditRemark,
+      },
     );
 
     return saved;
@@ -153,11 +203,20 @@ export class OrdersService {
     if (order.version !== body.version) {
       throw new ConflictException('版本冲突，订单已被其他人修改');
     }
+    if (order.warningLevel === 'overdue') {
+      throw new ConflictException('订单已逾期，不能直接补正，请先处理逾期问题');
+    }
+    if (!body.correctReason || body.correctReason.trim() === '') {
+      throw new BadRequestException('补正原因不能为空');
+    }
 
     const updateFields: Partial<VenueOrder> = {};
     const allowedFields = [
       'venueName', 'courtName', 'reservationDate', 'timeSlot',
       'applicantName', 'applicantPhone', 'deadline',
+      'paymentAmount', 'paymentMethod', 'paymentStatus', 'paymentVerification',
+      'admissionStatus', 'admissionConfirmation',
+      'exceptionReason', 'responsibleNode', 'auditRemark',
     ];
     for (const field of allowedFields) {
       if (body[field] !== undefined) {
@@ -170,6 +229,23 @@ export class OrdersService {
       ? this.calcWarningLevel(updateFields.deadline)
       : this.calcWarningLevel(order.deadline);
 
+    const paymentStatus = updateFields.paymentStatus ?? order.paymentStatus;
+    if (order.returnOpinion?.includes('支付') && paymentStatus !== '已核销') {
+      if (!body.paymentVerification || !body.paymentAmount || !body.paymentMethod) {
+        throw new BadRequestException('退回原因为支付相关，必须补充支付核销信息（金额、支付方式、核销凭证）');
+      }
+      if (!body.paymentVerification.includes('已支付') && !body.paymentVerification.includes('核销')) {
+        throw new BadRequestException('支付核销未完成，请确认支付状态后再提交');
+      }
+    }
+
+    const admissionStatus = updateFields.admissionStatus ?? order.admissionStatus;
+    if (order.returnOpinion?.includes('入场') && admissionStatus !== '已确认') {
+      if (!body.admissionConfirmation) {
+        throw new BadRequestException('退回原因为入场相关，必须补充入场确认信息');
+      }
+    }
+
     await this.orderRepo.update(id, {
       ...updateFields,
       status: 'pending_review',
@@ -179,6 +255,7 @@ export class OrdersService {
       currentHandlerRole: 'reviewer',
       returnOpinion: null as unknown as string,
       warningLevel,
+      responsibleNode: updateFields.responsibleNode ?? null,
     });
 
     await this.addRecordAndAudit(
@@ -188,12 +265,24 @@ export class OrdersService {
       user.role,
       body.correctReason || '修正后重新提交',
       `修正订单 ${order.orderNo}，重新提交审核`,
+      {
+        paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+        paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+        paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+        paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+        admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+        admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+        correctReason: body.correctReason,
+        exceptionReason: updateFields.exceptionReason ?? order.exceptionReason,
+        responsibleNode: updateFields.responsibleNode ?? order.responsibleNode,
+        auditRemark: updateFields.auditRemark ?? order.auditRemark,
+      },
     );
 
     return this.orderRepo.findOne({ where: { id }, relations: { processingRecords: true, attachments: true, auditLogs: true } });
   }
 
-  async review(id: string, body: { version: number; action: string; opinion: string }) {
+  async review(id: string, body: { version: number; action: string; opinion: string; [key: string]: any }) {
     const user = this.ensureCurrentUser();
     const order = await this.orderRepo.findOne({ where: { id } });
     if (!order) throw new BadRequestException('订单不存在');
@@ -204,14 +293,20 @@ export class OrdersService {
     if (order.currentHandler !== user.id) {
       throw new ForbiddenException('只有当前处理人可以操作此订单');
     }
-    if (order.status !== 'pending_review' && order.status !== 'under_review') {
-      throw new ConflictException('订单状态不允许审核，当前状态：' + order.status);
-    }
     if (order.version !== body.version) {
       throw new ConflictException('版本冲突，订单已被其他人修改');
     }
     if (!body.opinion || body.opinion.trim() === '') {
       throw new BadRequestException('审核意见不能为空');
+    }
+
+    const allowedStatuses = ['pending_review', 'under_review', 'overdue'];
+    if (!allowedStatuses.includes(order.status)) {
+      throw new ConflictException('订单状态不允许审核，当前状态：' + order.status);
+    }
+
+    if (order.warningLevel === 'overdue' && body.action !== 'reject') {
+      throw new ConflictException('订单已逾期，请退回补正并重新设置截止日期');
     }
 
     const lastRecord = await this.recordRepo.findOne({
@@ -222,15 +317,34 @@ export class OrdersService {
       throw new ConflictException('不能重复执行相同操作');
     }
 
+    const updateFields: Partial<VenueOrder> = {};
+    const evidenceFields = ['paymentAmount', 'paymentMethod', 'paymentStatus', 'paymentVerification', 'admissionStatus', 'admissionConfirmation', 'exceptionReason', 'responsibleNode', 'auditRemark'];
+    for (const field of evidenceFields) {
+      if (body[field] !== undefined) {
+        (updateFields as any)[field] = body[field];
+      }
+    }
+
     const newVersion = order.version + 1;
 
     if (body.action === 'approve') {
+      const paymentStatus = updateFields.paymentStatus ?? order.paymentStatus;
+      const paymentVerification = updateFields.paymentVerification ?? order.paymentVerification;
+      if (paymentStatus !== '已核销' || !paymentVerification) {
+        throw new BadRequestException('审核通过前必须确认支付已核销，请核实支付凭证（支付状态、金额、支付方式、核销记录）');
+      }
+      if (!paymentVerification.includes('已支付') && !paymentVerification.includes('核销')) {
+        throw new BadRequestException('支付核销凭证不符合要求，需包含"已支付"或"核销"字样');
+      }
+
       await this.orderRepo.update(id, {
+        ...updateFields,
         status: 'under_approval',
         version: newVersion,
         currentHandler: 'u3',
         currentHandlerRole: 'approver',
         warningLevel: this.calcWarningLevel(order.deadline),
+        responsibleNode: updateFields.responsibleNode ?? 'reviewer_approved',
       });
 
       await this.addRecordAndAudit(
@@ -240,15 +354,30 @@ export class OrdersService {
         user.role,
         body.opinion,
         `审核通过，提交审批：${body.opinion}`,
+        {
+          paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+          paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+          paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+          paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+          admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+          admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+          returnOpinion: body.opinion,
+          exceptionReason: updateFields.exceptionReason ?? order.exceptionReason,
+          responsibleNode: updateFields.responsibleNode ?? 'reviewer_approved',
+          auditRemark: updateFields.auditRemark ?? order.auditRemark,
+        },
       );
     } else if (body.action === 'reject') {
       await this.orderRepo.update(id, {
+        ...updateFields,
         status: 'pending_correction',
         version: newVersion,
         returnOpinion: body.opinion,
         currentHandler: order.createdBy,
         currentHandlerRole: 'registrar',
         warningLevel: this.calcWarningLevel(order.deadline),
+        exceptionReason: body.opinion.includes('支付') ? '支付凭证不全' : (body.opinion.includes('入场') ? '入场确认缺失' : (updateFields.exceptionReason ?? '材料不完整')),
+        responsibleNode: 'reviewer_rejected',
       });
 
       await this.addRecordAndAudit(
@@ -258,6 +387,18 @@ export class OrdersService {
         user.role,
         body.opinion,
         `审核退回：${body.opinion}`,
+        {
+          paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+          paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+          paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+          paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+          admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+          admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+          returnOpinion: body.opinion,
+          exceptionReason: body.opinion.includes('支付') ? '支付凭证不全' : (body.opinion.includes('入场') ? '入场确认缺失' : (updateFields.exceptionReason ?? '材料不完整')),
+          responsibleNode: 'reviewer_rejected',
+          auditRemark: updateFields.auditRemark ?? order.auditRemark,
+        },
       );
     } else {
       throw new BadRequestException('无效的审核操作，必须是 approve 或 reject');
@@ -266,7 +407,7 @@ export class OrdersService {
     return this.orderRepo.findOne({ where: { id }, relations: { processingRecords: true, attachments: true, auditLogs: true } });
   }
 
-  async approve(id: string, body: { version: number; action: string; opinion: string }) {
+  async approve(id: string, body: { version: number; action: string; opinion: string; [key: string]: any }) {
     const user = this.ensureCurrentUser();
     const order = await this.orderRepo.findOne({ where: { id } });
     if (!order) throw new BadRequestException('订单不存在');
@@ -277,14 +418,20 @@ export class OrdersService {
     if (order.currentHandler !== user.id) {
       throw new ForbiddenException('只有当前处理人可以操作此订单');
     }
-    if (order.status !== 'under_approval') {
-      throw new ConflictException('订单状态不允许审批，当前状态：' + order.status);
-    }
     if (order.version !== body.version) {
       throw new ConflictException('版本冲突，订单已被其他人修改');
     }
     if (!body.opinion || body.opinion.trim() === '') {
       throw new BadRequestException('审批意见不能为空');
+    }
+
+    const allowedStatuses = ['under_approval', 'overdue'];
+    if (!allowedStatuses.includes(order.status)) {
+      throw new ConflictException('订单状态不允许审批，当前状态：' + order.status);
+    }
+
+    if (order.warningLevel === 'overdue' && body.action !== 'return') {
+      throw new ConflictException('订单已逾期，请退回重新设置截止日期');
     }
 
     const lastRecord = await this.recordRepo.findOne({
@@ -295,15 +442,36 @@ export class OrdersService {
       throw new ConflictException('不能重复执行相同操作');
     }
 
+    const updateFields: Partial<VenueOrder> = {};
+    const evidenceFields = ['paymentAmount', 'paymentMethod', 'paymentStatus', 'paymentVerification', 'admissionStatus', 'admissionConfirmation', 'exceptionReason', 'responsibleNode', 'auditRemark'];
+    for (const field of evidenceFields) {
+      if (body[field] !== undefined) {
+        (updateFields as any)[field] = body[field];
+      }
+    }
+
     const newVersion = order.version + 1;
 
     if (body.action === 'finalize') {
+      const admissionStatus = updateFields.admissionStatus ?? order.admissionStatus;
+      const admissionConfirmation = updateFields.admissionConfirmation ?? order.admissionConfirmation;
+      if (admissionStatus !== '已确认' || !admissionConfirmation) {
+        throw new BadRequestException('办结归档前必须确认入场情况，请核实入场确认凭证（入场时间、确认人）');
+      }
+
+      const paymentStatus = updateFields.paymentStatus ?? order.paymentStatus;
+      if (paymentStatus !== '已核销') {
+        throw new BadRequestException('办结归档前必须确认支付已核销，当前支付状态：' + (paymentStatus || '未填写'));
+      }
+
       await this.orderRepo.update(id, {
+        ...updateFields,
         status: 'completed',
         version: newVersion,
         currentHandler: '',
         currentHandlerRole: '',
         warningLevel: 'normal',
+        responsibleNode: 'approver_finalized',
       });
 
       await this.addRecordAndAudit(
@@ -313,15 +481,30 @@ export class OrdersService {
         user.role,
         body.opinion,
         `审批通过，订单完成：${body.opinion}`,
+        {
+          paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+          paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+          paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+          paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+          admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+          admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+          returnOpinion: body.opinion,
+          exceptionReason: updateFields.exceptionReason ?? order.exceptionReason,
+          responsibleNode: 'approver_finalized',
+          auditRemark: updateFields.auditRemark ?? order.auditRemark,
+        },
       );
     } else if (body.action === 'return') {
       await this.orderRepo.update(id, {
+        ...updateFields,
         status: 'pending_review',
         version: newVersion,
         returnOpinion: body.opinion,
         currentHandler: 'u2',
         currentHandlerRole: 'reviewer',
         warningLevel: this.calcWarningLevel(order.deadline),
+        exceptionReason: body.opinion.includes('支付') ? '复核时发现支付凭证问题' : (body.opinion.includes('入场') ? '复核时发现入场确认问题' : (updateFields.exceptionReason ?? '复核不通过')),
+        responsibleNode: 'approver_returned',
       });
 
       await this.addRecordAndAudit(
@@ -331,6 +514,18 @@ export class OrdersService {
         user.role,
         body.opinion,
         `审批退回审核：${body.opinion}`,
+        {
+          paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+          paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+          paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+          paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+          admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+          admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+          returnOpinion: body.opinion,
+          exceptionReason: body.opinion.includes('支付') ? '复核时发现支付凭证问题' : (body.opinion.includes('入场') ? '复核时发现入场确认问题' : (updateFields.exceptionReason ?? '复核不通过')),
+          responsibleNode: 'approver_returned',
+          auditRemark: updateFields.auditRemark ?? order.auditRemark,
+        },
       );
     } else {
       throw new BadRequestException('无效的审批操作，必须是 finalize 或 return');
@@ -339,7 +534,7 @@ export class OrdersService {
     return this.orderRepo.findOne({ where: { id }, relations: { processingRecords: true, attachments: true, auditLogs: true } });
   }
 
-  async returnOrder(id: string, body: { version: number; returnOpinion: string }) {
+  async returnOrder(id: string, body: { version: number; returnOpinion: string; [key: string]: any }) {
     const user = this.ensureCurrentUser();
     const order = await this.orderRepo.findOne({ where: { id } });
     if (!order) throw new BadRequestException('订单不存在');
@@ -357,33 +552,47 @@ export class OrdersService {
       throw new BadRequestException('退回意见不能为空');
     }
 
+    const updateFields: Partial<VenueOrder> = {};
+    const evidenceFields = ['paymentAmount', 'paymentMethod', 'paymentStatus', 'paymentVerification', 'admissionStatus', 'admissionConfirmation', 'exceptionReason', 'responsibleNode', 'auditRemark'];
+    for (const field of evidenceFields) {
+      if (body[field] !== undefined) {
+        (updateFields as any)[field] = body[field];
+      }
+    }
+
     const newVersion = order.version + 1;
     let targetStatus: string;
     let targetHandler: string;
     let targetHandlerRole: string;
     let recordAction: string;
+    let exceptionReason: string;
 
     if (user.role === 'reviewer' && (order.status === 'pending_review' || order.status === 'under_review')) {
       targetStatus = 'pending_correction';
       targetHandler = order.createdBy;
       targetHandlerRole = 'registrar';
       recordAction = 'return';
+      exceptionReason = body.returnOpinion.includes('支付') ? '支付凭证不全' : (body.returnOpinion.includes('入场') ? '入场确认缺失' : (updateFields.exceptionReason ?? '材料不完整'));
     } else if (user.role === 'approver' && order.status === 'under_approval') {
       targetStatus = 'pending_review';
       targetHandler = 'u2';
       targetHandlerRole = 'reviewer';
       recordAction = 'return';
+      exceptionReason = body.returnOpinion.includes('支付') ? '复核时发现支付凭证问题' : (body.returnOpinion.includes('入场') ? '复核时发现入场确认问题' : (updateFields.exceptionReason ?? '复核不通过'));
     } else {
       throw new ConflictException('当前订单状态不允许退回');
     }
 
     await this.orderRepo.update(id, {
+      ...updateFields,
       status: targetStatus,
       version: newVersion,
       returnOpinion: body.returnOpinion,
       currentHandler: targetHandler,
       currentHandlerRole: targetHandlerRole,
       warningLevel: this.calcWarningLevel(order.deadline),
+      exceptionReason: updateFields.exceptionReason ?? exceptionReason,
+      responsibleNode: user.role === 'reviewer' ? 'reviewer_returned' : 'approver_returned',
     });
 
     await this.addRecordAndAudit(
@@ -393,12 +602,24 @@ export class OrdersService {
       user.role,
       body.returnOpinion,
       `退回订单：${body.returnOpinion}`,
+      {
+        paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+        paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+        paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+        paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+        admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+        admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+        returnOpinion: body.returnOpinion,
+        exceptionReason: updateFields.exceptionReason ?? exceptionReason,
+        responsibleNode: user.role === 'reviewer' ? 'reviewer_returned' : 'approver_returned',
+        auditRemark: updateFields.auditRemark ?? order.auditRemark,
+      },
     );
 
     return this.orderRepo.findOne({ where: { id }, relations: { processingRecords: true, attachments: true, auditLogs: true } });
   }
 
-  async batchReview(body: { orderIds: string[]; action: string; opinion: string }) {
+  async batchReview(body: { orderIds: string[]; action: string; opinion: string; [key: string]: any }) {
     const user = this.ensureCurrentUser();
     const results: { orderId: string; orderNo: string; success: boolean; reason?: string }[] = [];
 
@@ -417,19 +638,38 @@ export class OrdersService {
         if (order.status !== 'pending_review' && order.status !== 'under_review') {
           throw new ConflictException('订单状态不允许审核');
         }
+        if (order.warningLevel === 'overdue' && body.action !== 'reject') {
+          throw new ConflictException('订单已逾期，请退回补正');
+        }
         if (!body.opinion || body.opinion.trim() === '') {
           throw new BadRequestException('审核意见不能为空');
+        }
+
+        const updateFields: Partial<VenueOrder> = {};
+        const evidenceFields = ['paymentAmount', 'paymentMethod', 'paymentStatus', 'paymentVerification', 'admissionStatus', 'admissionConfirmation', 'exceptionReason', 'responsibleNode', 'auditRemark'];
+        for (const field of evidenceFields) {
+          if (body[field] !== undefined) {
+            (updateFields as any)[field] = body[field];
+          }
         }
 
         const newVersion = order.version + 1;
 
         if (body.action === 'approve') {
+          const paymentStatus = updateFields.paymentStatus ?? order.paymentStatus;
+          const paymentVerification = updateFields.paymentVerification ?? order.paymentVerification;
+          if (paymentStatus !== '已核销' || !paymentVerification) {
+            throw new BadRequestException('缺少支付核销凭证，批量审核不通过');
+          }
+
           await this.orderRepo.update(order.id, {
+            ...updateFields,
             status: 'under_approval',
             version: newVersion,
             currentHandler: 'u3',
             currentHandlerRole: 'approver',
             warningLevel: this.calcWarningLevel(order.deadline),
+            responsibleNode: updateFields.responsibleNode ?? 'reviewer_approved',
           });
 
           await this.addRecordAndAudit(
@@ -439,15 +679,30 @@ export class OrdersService {
             user.role,
             body.opinion,
             `批量审核通过：${body.opinion}`,
+            {
+              paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+              paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+              paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+              paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+              admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+              admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+              returnOpinion: body.opinion,
+              exceptionReason: updateFields.exceptionReason ?? order.exceptionReason,
+              responsibleNode: updateFields.responsibleNode ?? 'reviewer_approved',
+              auditRemark: updateFields.auditRemark ?? order.auditRemark,
+            },
           );
         } else if (body.action === 'reject') {
           await this.orderRepo.update(order.id, {
+            ...updateFields,
             status: 'pending_correction',
             version: newVersion,
             returnOpinion: body.opinion,
             currentHandler: order.createdBy,
             currentHandlerRole: 'registrar',
             warningLevel: this.calcWarningLevel(order.deadline),
+            exceptionReason: body.opinion.includes('支付') ? '支付凭证不全' : (body.opinion.includes('入场') ? '入场确认缺失' : (updateFields.exceptionReason ?? '材料不完整')),
+            responsibleNode: 'reviewer_rejected',
           });
 
           await this.addRecordAndAudit(
@@ -457,6 +712,18 @@ export class OrdersService {
             user.role,
             body.opinion,
             `批量审核退回：${body.opinion}`,
+            {
+              paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+              paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+              paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+              paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+              admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+              admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+              returnOpinion: body.opinion,
+              exceptionReason: body.opinion.includes('支付') ? '支付凭证不全' : (body.opinion.includes('入场') ? '入场确认缺失' : (updateFields.exceptionReason ?? '材料不完整')),
+              responsibleNode: 'reviewer_rejected',
+              auditRemark: updateFields.auditRemark ?? order.auditRemark,
+            },
           );
         } else {
           throw new BadRequestException('无效的审核操作');
@@ -471,7 +738,7 @@ export class OrdersService {
     return results;
   }
 
-  async batchApprove(body: { orderIds: string[]; action: string; opinion: string }) {
+  async batchApprove(body: { orderIds: string[]; action: string; opinion: string; [key: string]: any }) {
     const user = this.ensureCurrentUser();
     const results: { orderId: string; orderNo: string; success: boolean; reason?: string }[] = [];
 
@@ -490,19 +757,43 @@ export class OrdersService {
         if (order.status !== 'under_approval') {
           throw new ConflictException('订单状态不允许审批');
         }
+        if (order.warningLevel === 'overdue' && body.action !== 'return') {
+          throw new ConflictException('订单已逾期，请退回重设');
+        }
         if (!body.opinion || body.opinion.trim() === '') {
           throw new BadRequestException('审批意见不能为空');
+        }
+
+        const updateFields: Partial<VenueOrder> = {};
+        const evidenceFields = ['paymentAmount', 'paymentMethod', 'paymentStatus', 'paymentVerification', 'admissionStatus', 'admissionConfirmation', 'exceptionReason', 'responsibleNode', 'auditRemark'];
+        for (const field of evidenceFields) {
+          if (body[field] !== undefined) {
+            (updateFields as any)[field] = body[field];
+          }
         }
 
         const newVersion = order.version + 1;
 
         if (body.action === 'finalize') {
+          const admissionStatus = updateFields.admissionStatus ?? order.admissionStatus;
+          const admissionConfirmation = updateFields.admissionConfirmation ?? order.admissionConfirmation;
+          if (admissionStatus !== '已确认' || !admissionConfirmation) {
+            throw new BadRequestException('缺少入场确认凭证，批量审批不通过');
+          }
+
+          const paymentStatus = updateFields.paymentStatus ?? order.paymentStatus;
+          if (paymentStatus !== '已核销') {
+            throw new BadRequestException('支付未核销，不能批量办结');
+          }
+
           await this.orderRepo.update(order.id, {
+            ...updateFields,
             status: 'completed',
             version: newVersion,
             currentHandler: '',
             currentHandlerRole: '',
             warningLevel: 'normal',
+            responsibleNode: 'approver_finalized',
           });
 
           await this.addRecordAndAudit(
@@ -512,15 +803,30 @@ export class OrdersService {
             user.role,
             body.opinion,
             `批量审批通过：${body.opinion}`,
+            {
+              paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+              paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+              paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+              paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+              admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+              admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+              returnOpinion: body.opinion,
+              exceptionReason: updateFields.exceptionReason ?? order.exceptionReason,
+              responsibleNode: 'approver_finalized',
+              auditRemark: updateFields.auditRemark ?? order.auditRemark,
+            },
           );
         } else if (body.action === 'return') {
           await this.orderRepo.update(order.id, {
+            ...updateFields,
             status: 'pending_review',
             version: newVersion,
             returnOpinion: body.opinion,
             currentHandler: 'u2',
             currentHandlerRole: 'reviewer',
             warningLevel: this.calcWarningLevel(order.deadline),
+            exceptionReason: body.opinion.includes('支付') ? '复核时发现支付凭证问题' : (body.opinion.includes('入场') ? '复核时发现入场确认问题' : (updateFields.exceptionReason ?? '复核不通过')),
+            responsibleNode: 'approver_returned',
           });
 
           await this.addRecordAndAudit(
@@ -530,6 +836,18 @@ export class OrdersService {
             user.role,
             body.opinion,
             `批量审批退回：${body.opinion}`,
+            {
+              paymentAmount: updateFields.paymentAmount ?? order.paymentAmount,
+              paymentMethod: updateFields.paymentMethod ?? order.paymentMethod,
+              paymentStatus: updateFields.paymentStatus ?? order.paymentStatus,
+              paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
+              admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
+              admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
+              returnOpinion: body.opinion,
+              exceptionReason: body.opinion.includes('支付') ? '复核时发现支付凭证问题' : (body.opinion.includes('入场') ? '复核时发现入场确认问题' : (updateFields.exceptionReason ?? '复核不通过')),
+              responsibleNode: 'approver_returned',
+              auditRemark: updateFields.auditRemark ?? order.auditRemark,
+            },
           );
         } else {
           throw new BadRequestException('无效的审批操作');

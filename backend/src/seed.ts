@@ -36,6 +36,16 @@ export async function seedDatabase(dataSource: DataSource) {
       status: 'pending_correction',
       version: 2,
       correctReason: '缺少支付凭证',
+      returnOpinion: '缺少支付凭证，请补充支付核销信息后重新提交',
+      exceptionReason: '支付凭证不全',
+      responsibleNode: 'registrar_missing_payment',
+      paymentAmount: 200,
+      paymentMethod: '微信支付',
+      paymentStatus: '待核销',
+      paymentVerification: null,
+      admissionStatus: '待确认',
+      admissionConfirmation: null,
+      auditRemark: '订单发起时未同步支付凭证',
       currentHandler: 'u1',
       currentHandlerRole: 'registrar',
       deadline: '2026-06-14',
@@ -53,6 +63,17 @@ export async function seedDatabase(dataSource: DataSource) {
       applicantPhone: '13800000002',
       status: 'under_approval',
       version: 2,
+      correctReason: null,
+      returnOpinion: null,
+      exceptionReason: null,
+      responsibleNode: 'reviewer_approved',
+      paymentAmount: 350,
+      paymentMethod: '支付宝',
+      paymentStatus: '已核销',
+      paymentVerification: '订单号XD20260612002 已支付 核销时间 2026-06-12 10:30',
+      admissionStatus: '待确认',
+      admissionConfirmation: null,
+      auditRemark: '支付核销凭证齐全，待复核入场信息',
       currentHandler: 'u3',
       currentHandlerRole: 'approver',
       deadline: '2026-06-18',
@@ -70,6 +91,17 @@ export async function seedDatabase(dataSource: DataSource) {
       applicantPhone: '13800000003',
       status: 'completed',
       version: 3,
+      correctReason: null,
+      returnOpinion: null,
+      exceptionReason: null,
+      responsibleNode: 'approver_finalized',
+      paymentAmount: 800,
+      paymentMethod: '对公转账',
+      paymentStatus: '已核销',
+      paymentVerification: '订单号XD20260610001 已支付 核销时间 2026-06-10 14:20',
+      admissionStatus: '已确认',
+      admissionConfirmation: '入场时间 2026-06-12 09:55 确认人 王芳',
+      auditRemark: '订单完整归档，支付和入场均已确认',
       currentHandler: '',
       currentHandlerRole: '',
       deadline: '2026-06-10',
@@ -87,6 +119,17 @@ export async function seedDatabase(dataSource: DataSource) {
       applicantPhone: '13800000004',
       status: 'pending_review',
       version: 1,
+      correctReason: null,
+      returnOpinion: null,
+      exceptionReason: null,
+      responsibleNode: null,
+      paymentAmount: 120,
+      paymentMethod: '现金',
+      paymentStatus: '已核销',
+      paymentVerification: '订单号XD20260612003 已支付 核销时间 2026-06-12 09:15',
+      admissionStatus: '待确认',
+      admissionConfirmation: null,
+      auditRemark: '新增订单，支付已完成，待审核主管审核',
       currentHandler: 'u2',
       currentHandlerRole: 'reviewer',
       deadline: '2026-06-18',
@@ -104,7 +147,17 @@ export async function seedDatabase(dataSource: DataSource) {
       applicantPhone: '13800000005',
       status: 'overdue',
       version: 1,
-      exceptionReason: '审核超时未处理',
+      correctReason: null,
+      returnOpinion: null,
+      exceptionReason: '审核超时未处理，节点责任人：李明（审核主管）',
+      responsibleNode: 'reviewer_overdue',
+      paymentAmount: 150,
+      paymentMethod: '微信支付',
+      paymentStatus: '待核销',
+      paymentVerification: null,
+      admissionStatus: '待确认',
+      admissionConfirmation: null,
+      auditRemark: '已逾期3天，责任节点为审核主管',
       currentHandler: 'u2',
       currentHandlerRole: 'reviewer',
       deadline: '2026-06-10',
@@ -122,6 +175,17 @@ export async function seedDatabase(dataSource: DataSource) {
       applicantPhone: '13800000006',
       status: 'under_review',
       version: 1,
+      correctReason: null,
+      returnOpinion: null,
+      exceptionReason: null,
+      responsibleNode: null,
+      paymentAmount: 180,
+      paymentMethod: '会员卡',
+      paymentStatus: '已核销',
+      paymentVerification: '订单号XD20260611001 已支付 核销时间 2026-06-11 16:45',
+      admissionStatus: '待确认',
+      admissionConfirmation: null,
+      auditRemark: '审核中，支付已确认，待审核主管确认',
       currentHandler: 'u2',
       currentHandlerRole: 'reviewer',
       deadline: '2026-06-14',
@@ -136,60 +200,60 @@ export async function seedDatabase(dataSource: DataSource) {
   for (const order of orders) {
     if (order.id === 'o1') {
       records.push(
-        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请' }),
-        recordRepo.create({ orderId: order.id, action: 'return', operator: 'u2', operatorRole: 'reviewer', opinion: '缺少支付凭证，请补充后重新提交' }),
+        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请', paymentAmount: 200, paymentMethod: '微信支付', paymentStatus: '待核销', paymentVerification: null, admissionStatus: '待确认', admissionConfirmation: null, exceptionReason: null, responsibleNode: null, auditRemark: '订单发起时未同步支付凭证' }),
+        recordRepo.create({ orderId: order.id, action: 'return', operator: 'u2', operatorRole: 'reviewer', opinion: '缺少支付凭证，请补充支付核销信息后重新提交', paymentAmount: 200, paymentMethod: '微信支付', paymentStatus: '待核销', paymentVerification: null, admissionStatus: '待确认', admissionConfirmation: null, correctReason: '缺少支付凭证', returnOpinion: '缺少支付凭证，请补充支付核销信息后重新提交', exceptionReason: '支付凭证不全', responsibleNode: 'reviewer_returned', auditRemark: '退回补正，原因：缺少支付核销凭证' }),
       );
       audits.push(
         auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260612001' }),
-        auditRepo.create({ orderId: order.id, action: 'return', operator: 'u2', operatorRole: 'reviewer', detail: '退回修改：缺少支付凭证' }),
+        auditRepo.create({ orderId: order.id, action: 'return', operator: 'u2', operatorRole: 'reviewer', detail: '退回修改：缺少支付凭证，需补充支付金额、支付方式、核销记录' }),
       );
     }
     if (order.id === 'o2') {
       records.push(
-        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请' }),
-        recordRepo.create({ orderId: order.id, action: 'review_approve', operator: 'u2', operatorRole: 'reviewer', opinion: '材料齐全，同意上报审批' }),
+        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请', paymentAmount: 350, paymentMethod: '支付宝', paymentStatus: '已核销', paymentVerification: '订单号XD20260612002 已支付 核销时间 2026-06-12 10:30', admissionStatus: '待确认', admissionConfirmation: null, exceptionReason: null, responsibleNode: null, auditRemark: '新增订单，支付已完成' }),
+        recordRepo.create({ orderId: order.id, action: 'review_approve', operator: 'u2', operatorRole: 'reviewer', opinion: '材料齐全，同意上报审批', paymentAmount: 350, paymentMethod: '支付宝', paymentStatus: '已核销', paymentVerification: '订单号XD20260612002 已支付 核销时间 2026-06-12 10:30', admissionStatus: '待确认', admissionConfirmation: null, returnOpinion: '材料齐全，同意上报审批', exceptionReason: null, responsibleNode: 'reviewer_approved', auditRemark: '审核通过，支付核销凭证齐全' }),
       );
       audits.push(
-        auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260612002' }),
-        auditRepo.create({ orderId: order.id, action: 'review_approve', operator: 'u2', operatorRole: 'reviewer', detail: '审核通过，提交审批' }),
+        auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260612002，支付金额350元' }),
+        auditRepo.create({ orderId: order.id, action: 'review_approve', operator: 'u2', operatorRole: 'reviewer', detail: '审核通过，支付已核销，提交复核' }),
       );
     }
     if (order.id === 'o3') {
       records.push(
-        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请' }),
-        recordRepo.create({ orderId: order.id, action: 'review_approve', operator: 'u2', operatorRole: 'reviewer', opinion: '审核通过' }),
-        recordRepo.create({ orderId: order.id, action: 'approve_finalize', operator: 'u3', operatorRole: 'approver', opinion: '审批通过，订单完成' }),
+        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请', paymentAmount: 800, paymentMethod: '对公转账', paymentStatus: '已核销', paymentVerification: '订单号XD20260610001 已支付 核销时间 2026-06-10 14:20', admissionStatus: '待确认', admissionConfirmation: null, exceptionReason: null, responsibleNode: null, auditRemark: '新增订单，支付已完成' }),
+        recordRepo.create({ orderId: order.id, action: 'review_approve', operator: 'u2', operatorRole: 'reviewer', opinion: '审核通过，支付凭证齐全', paymentAmount: 800, paymentMethod: '对公转账', paymentStatus: '已核销', paymentVerification: '订单号XD20260610001 已支付 核销时间 2026-06-10 14:20', admissionStatus: '待确认', admissionConfirmation: null, returnOpinion: '审核通过，支付凭证齐全', exceptionReason: null, responsibleNode: 'reviewer_approved', auditRemark: '审核通过，支付核销已确认' }),
+        recordRepo.create({ orderId: order.id, action: 'approve_finalize', operator: 'u3', operatorRole: 'approver', opinion: '审批通过，订单完成', paymentAmount: 800, paymentMethod: '对公转账', paymentStatus: '已核销', paymentVerification: '订单号XD20260610001 已支付 核销时间 2026-06-10 14:20', admissionStatus: '已确认', admissionConfirmation: '入场时间 2026-06-12 09:55 确认人 王芳', returnOpinion: '审批通过，订单完成', exceptionReason: null, responsibleNode: 'approver_finalized', auditRemark: '复核通过，入场已确认，订单办结归档' }),
       );
       audits.push(
-        auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260610001' }),
-        auditRepo.create({ orderId: order.id, action: 'review_approve', operator: 'u2', operatorRole: 'reviewer', detail: '审核通过' }),
-        auditRepo.create({ orderId: order.id, action: 'approve_finalize', operator: 'u3', operatorRole: 'approver', detail: '审批完成' }),
+        auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260610001，场地费800元' }),
+        auditRepo.create({ orderId: order.id, action: 'review_approve', operator: 'u2', operatorRole: 'reviewer', detail: '审核通过，支付核销确认' }),
+        auditRepo.create({ orderId: order.id, action: 'approve_finalize', operator: 'u3', operatorRole: 'approver', detail: '审批完成，入场确认，订单办结' }),
       );
     }
     if (order.id === 'o4') {
       records.push(
-        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请' }),
+        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请', paymentAmount: 120, paymentMethod: '现金', paymentStatus: '已核销', paymentVerification: '订单号XD20260612003 已支付 核销时间 2026-06-12 09:15', admissionStatus: '待确认', admissionConfirmation: null, exceptionReason: null, responsibleNode: null, auditRemark: '新增订单，支付已完成，待审核主管审核' }),
       );
       audits.push(
-        auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260612003' }),
+        auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260612003，金额120元，已支付' }),
       );
     }
     if (order.id === 'o5') {
       records.push(
-        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请' }),
-        recordRepo.create({ orderId: order.id, action: 'overdue', operator: 'system', operatorRole: 'system', opinion: '审核超时，订单标记为逾期' }),
+        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请', paymentAmount: 150, paymentMethod: '微信支付', paymentStatus: '待核销', paymentVerification: null, admissionStatus: '待确认', admissionConfirmation: null, exceptionReason: null, responsibleNode: null, auditRemark: '订单发起' }),
+        recordRepo.create({ orderId: order.id, action: 'overdue', operator: 'system', operatorRole: 'system', opinion: '审核超时，订单标记为逾期', paymentAmount: 150, paymentMethod: '微信支付', paymentStatus: '待核销', paymentVerification: null, admissionStatus: '待确认', admissionConfirmation: null, exceptionReason: '审核超时未处理，节点责任人：李明（审核主管）', responsibleNode: 'reviewer_overdue', auditRemark: '系统自动标记逾期，责任节点：审核主管' }),
       );
       audits.push(
         auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260608001' }),
-        auditRepo.create({ orderId: order.id, action: 'overdue', operator: 'system', operatorRole: 'system', detail: '订单逾期' }),
+        auditRepo.create({ orderId: order.id, action: 'overdue', operator: 'system', operatorRole: 'system', detail: '订单已逾期，责任节点：李明（审核主管），逾期3天' }),
       );
     }
     if (order.id === 'o6') {
       records.push(
-        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请' }),
+        recordRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', opinion: '提交场地预约申请', paymentAmount: 180, paymentMethod: '会员卡', paymentStatus: '已核销', paymentVerification: '订单号XD20260611001 已支付 核销时间 2026-06-11 16:45', admissionStatus: '待确认', admissionConfirmation: null, exceptionReason: null, responsibleNode: null, auditRemark: '审核中，支付已确认' }),
       );
       audits.push(
-        auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260611001' }),
+        auditRepo.create({ orderId: order.id, action: 'create', operator: 'u1', operatorRole: 'registrar', detail: '创建订单 VD20260611001，金额180元，已核销' }),
       );
     }
   }

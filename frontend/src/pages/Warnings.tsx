@@ -1,9 +1,21 @@
 import { useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Clock, CreditCard, MapPin, User } from 'lucide-react';
 import { useAppStore } from '@/store';
 import { USER_ROLE_LABELS } from '@/types';
 import type { VenueOrder } from '@/types';
+
+function getPaymentStatusBadge(status: string | null) {
+  if (!status) return <span className="text-gray-300">-</span>;
+  const className = status === '已核销' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800';
+  return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${className}`}>{status}</span>;
+}
+
+function getAdmissionStatusBadge(status: string | null) {
+  if (!status) return <span className="text-gray-300">-</span>;
+  const className = status === '已确认' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800';
+  return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${className}`}>{status}</span>;
+}
 
 const columns = [
   { key: 'normal' as const, label: '正常', icon: CheckCircle, bg: 'bg-green-50', border: 'border-green-200', headerBg: 'bg-green-100', headerText: 'text-green-700' },
@@ -63,7 +75,9 @@ export default function Warnings() {
                       <div
                         key={order.id}
                         onClick={() => navigate(`/orders/${order.id}`)}
-                        className="bg-white rounded-lg p-3 shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow"
+                        className={`bg-white rounded-lg p-3 shadow-sm border cursor-pointer hover:shadow-md transition-shadow ${
+                          col.key === 'overdue' && order.exceptionReason ? 'border-red-300' : 'border-gray-100'
+                        }`}
                       >
                         <div className="flex items-center justify-between mb-1.5">
                           <span className="font-mono text-sm text-primary font-medium">{order.orderNo}</span>
@@ -75,6 +89,38 @@ export default function Warnings() {
                           <p>{order.venueName} · {order.courtName}</p>
                           <p>截止：{order.deadline}</p>
                           <p>处理人：{getHandlerName(order)}</p>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-gray-100 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1">
+                              <CreditCard size={11} className="text-gray-400" />
+                              <span className="text-gray-400 text-[11px]">支付状态</span>
+                            </div>
+                            {getPaymentStatusBadge(order.paymentStatus)}
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1">
+                              <MapPin size={11} className="text-gray-400" />
+                              <span className="text-gray-400 text-[11px]">入场状态</span>
+                            </div>
+                            {getAdmissionStatusBadge(order.admissionStatus)}
+                          </div>
+                          {order.responsibleNode && (
+                            <div className="flex items-center gap-1">
+                              <User size={11} className="text-gray-400" />
+                              <span className="text-gray-400 text-[11px]">责任节点：</span>
+                              <span className="text-gray-600 text-[11px]">{order.responsibleNode}</span>
+                            </div>
+                          )}
+                          {order.exceptionReason && (
+                            <div className="flex items-start gap-1 bg-red-50 p-2 rounded">
+                              <AlertTriangle size={11} className="text-red-500 mt-0.5 flex-shrink-0" />
+                              <div>
+                                <span className="text-red-600 text-[11px] font-medium block">异常原因</span>
+                                <span className="text-red-700 text-[11px]">{order.exceptionReason}</span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );

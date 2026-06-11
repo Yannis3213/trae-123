@@ -1,12 +1,41 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, CheckSquare } from 'lucide-react';
+import { Search, CheckSquare, CreditCard, MapPin, AlertTriangle, User } from 'lucide-react';
 import { useAppStore } from '@/store';
 import StatusBadge from '@/components/StatusBadge';
 import WarningBadge from '@/components/WarningBadge';
 import BatchResultModal from '@/components/BatchResultModal';
 import { USER_ROLE_LABELS } from '@/types';
 import type { VenueOrder } from '@/types';
+
+function getPaymentStatusBadge(status: string | null) {
+  if (!status) return <span className="text-gray-300">-</span>;
+  const className = status === '已核销' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800';
+  return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${className}`}>{status}</span>;
+}
+
+function getAdmissionStatusBadge(status: string | null) {
+  if (!status) return <span className="text-gray-300">-</span>;
+  const className = status === '已确认' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800';
+  return <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${className}`}>{status}</span>;
+}
+
+function getExceptionBadge(reason: string | null, node: string | null) {
+  if (!reason) return <span className="text-gray-300">-</span>;
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 w-fit" title={reason}>
+        <AlertTriangle size={10} className="inline mr-1" />
+        {reason.length > 8 ? reason.substring(0, 8) + '...' : reason}
+      </span>
+      {node && (
+        <span className="text-xs text-gray-500 flex items-center gap-1">
+          <User size={10} />{node}
+        </span>
+      )}
+    </div>
+  );
+}
 
 const STATUS_TABS = [
   { key: '', label: '全部' },
@@ -177,6 +206,9 @@ export default function OrderList() {
                   <th className="text-left px-3 py-3 font-medium text-gray-600">场地</th>
                   <th className="text-left px-3 py-3 font-medium text-gray-600">预约日期</th>
                   <th className="text-left px-3 py-3 font-medium text-gray-600">申请人</th>
+                  <th className="text-center px-3 py-3 font-medium text-gray-600">支付状态</th>
+                  <th className="text-center px-3 py-3 font-medium text-gray-600">入场状态</th>
+                  <th className="text-left px-3 py-3 font-medium text-gray-600">异常原因</th>
                   <th className="text-center px-3 py-3 font-medium text-gray-600">状态</th>
                   <th className="text-center px-3 py-3 font-medium text-gray-600">预警级别</th>
                   <th className="text-left px-3 py-3 font-medium text-gray-600">当前处理人</th>
@@ -194,6 +226,19 @@ export default function OrderList() {
                     <td className="px-3 py-2.5 text-gray-700">{order.courtName}</td>
                     <td className="px-3 py-2.5 text-gray-700">{order.reservationDate}</td>
                     <td className="px-3 py-2.5 text-gray-700">{order.applicantName}</td>
+                    <td className="px-3 py-2.5 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <CreditCard size={12} className="text-gray-400" />
+                        {getPaymentStatusBadge(order.paymentStatus)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <MapPin size={12} className="text-gray-400" />
+                        {getAdmissionStatusBadge(order.admissionStatus)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5">{getExceptionBadge(order.exceptionReason, order.responsibleNode)}</td>
                     <td className="px-3 py-2.5 text-center"><StatusBadge status={order.status} /></td>
                     <td className="px-3 py-2.5 text-center"><WarningBadge level={order.warningLevel} /></td>
                     <td className="px-3 py-2.5 text-gray-700 text-xs">{getHandlerName(order)}</td>

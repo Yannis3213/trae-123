@@ -2,6 +2,18 @@ import { create } from 'zustand';
 import type { User, VenueOrder, AuditLog, BatchResult } from '@/types';
 import * as api from '@/api';
 
+interface EvidenceFields {
+  paymentAmount?: number | null;
+  paymentMethod?: string | null;
+  paymentStatus?: string | null;
+  paymentVerification?: string | null;
+  admissionStatus?: string | null;
+  admissionConfirmation?: string | null;
+  exceptionReason?: string | null;
+  responsibleNode?: string | null;
+  auditRemark?: string | null;
+}
+
 interface AppStore {
   currentUser: User | null;
   orders: VenueOrder[];
@@ -15,13 +27,13 @@ interface AppStore {
   switchRole: (userId: string) => Promise<void>;
   fetchOrders: (filters?: { status?: string; warningLevel?: string; role?: string }) => Promise<void>;
   fetchOrder: (id: string) => Promise<void>;
-  createOrder: (data: Partial<VenueOrder>) => Promise<VenueOrder | null>;
-  correctOrder: (id: string, data: { version: number; correctReason: string; venueName?: string; courtName?: string; reservationDate?: string; timeSlot?: string; applicantName?: string; applicantPhone?: string; deadline?: string }) => Promise<void>;
-  reviewOrder: (id: string, data: { version: number; action: string; opinion: string }) => Promise<void>;
-  approveOrder: (id: string, data: { version: number; action: string; opinion: string }) => Promise<void>;
-  returnOrder: (id: string, data: { version: number; returnOpinion: string }) => Promise<void>;
-  batchReview: (ids: string[], data: { action: string; opinion: string }) => Promise<void>;
-  batchApprove: (ids: string[], data: { action: string; opinion: string }) => Promise<void>;
+  createOrder: (data: Partial<VenueOrder> & EvidenceFields) => Promise<VenueOrder | null>;
+  correctOrder: (id: string, data: { version: number; correctReason: string; venueName?: string; courtName?: string; reservationDate?: string; timeSlot?: string; applicantName?: string; applicantPhone?: string; deadline?: string } & EvidenceFields) => Promise<void>;
+  reviewOrder: (id: string, data: { version: number; action: string; opinion: string } & EvidenceFields) => Promise<void>;
+  approveOrder: (id: string, data: { version: number; action: string; opinion: string } & EvidenceFields) => Promise<void>;
+  returnOrder: (id: string, data: { version: number; returnOpinion: string } & EvidenceFields) => Promise<void>;
+  batchReview: (ids: string[], data: { action: string; opinion: string } & EvidenceFields) => Promise<void>;
+  batchApprove: (ids: string[], data: { action: string; opinion: string } & EvidenceFields) => Promise<void>;
   fetchWarnings: () => Promise<void>;
   fetchAuditLogs: (filters?: { orderId?: string; operator?: string }) => Promise<void>;
   clearError: () => void;

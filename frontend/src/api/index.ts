@@ -38,49 +38,63 @@ export async function getOrder(id: string): Promise<VenueOrder> {
   return request<VenueOrder>(`/api/orders/${id}`);
 }
 
-export async function createOrder(data: Partial<VenueOrder>): Promise<VenueOrder> {
+interface EvidenceFields {
+  paymentAmount?: number | null;
+  paymentMethod?: string | null;
+  paymentStatus?: string | null;
+  paymentVerification?: string | null;
+  admissionStatus?: string | null;
+  admissionConfirmation?: string | null;
+  exceptionReason?: string | null;
+  responsibleNode?: string | null;
+  auditRemark?: string | null;
+  correctReason?: string | null;
+  returnOpinion?: string | null;
+}
+
+export async function createOrder(data: Partial<VenueOrder> & EvidenceFields): Promise<VenueOrder> {
   return request<VenueOrder>('/api/orders', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
-export async function correctOrder(id: string, data: { version: number; correctReason: string; venueName?: string; courtName?: string; reservationDate?: string; timeSlot?: string; applicantName?: string; applicantPhone?: string; deadline?: string }): Promise<VenueOrder> {
+export async function correctOrder(id: string, data: { version: number; correctReason: string; venueName?: string; courtName?: string; reservationDate?: string; timeSlot?: string; applicantName?: string; applicantPhone?: string; deadline?: string } & EvidenceFields): Promise<VenueOrder> {
   return request<VenueOrder>(`/api/orders/${id}/correct`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
 }
 
-export async function reviewOrder(id: string, data: { version: number; action: string; opinion: string }): Promise<VenueOrder> {
+export async function reviewOrder(id: string, data: { version: number; action: string; opinion: string } & EvidenceFields): Promise<VenueOrder> {
   return request<VenueOrder>(`/api/orders/${id}/review`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
 }
 
-export async function approveOrder(id: string, data: { version: number; action: string; opinion: string }): Promise<VenueOrder> {
+export async function approveOrder(id: string, data: { version: number; action: string; opinion: string } & EvidenceFields): Promise<VenueOrder> {
   return request<VenueOrder>(`/api/orders/${id}/approve`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
 }
 
-export async function returnOrder(id: string, data: { version: number; returnOpinion: string }): Promise<VenueOrder> {
+export async function returnOrder(id: string, data: { version: number; returnOpinion: string } & EvidenceFields): Promise<VenueOrder> {
   return request<VenueOrder>(`/api/orders/${id}/return`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
 }
 
-export async function batchReview(data: { orderIds: string[]; action: string; opinion: string }): Promise<BatchResult[]> {
+export async function batchReview(data: { orderIds: string[]; action: string; opinion: string } & EvidenceFields): Promise<BatchResult[]> {
   return request<BatchResult[]>('/api/orders/batch-review', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
-export async function batchApprove(data: { orderIds: string[]; action: string; opinion: string }): Promise<BatchResult[]> {
+export async function batchApprove(data: { orderIds: string[]; action: string; opinion: string } & EvidenceFields): Promise<BatchResult[]> {
   return request<BatchResult[]>('/api/orders/batch-approve', {
     method: 'POST',
     body: JSON.stringify(data),

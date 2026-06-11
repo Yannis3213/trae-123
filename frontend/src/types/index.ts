@@ -40,6 +40,14 @@ export interface VenueOrder {
   correctReason: string | null;
   returnOpinion: string | null;
   exceptionReason: string | null;
+  paymentVerification: string | null;
+  admissionConfirmation: string | null;
+  responsibleNode: string | null;
+  auditRemark: string | null;
+  paymentAmount: number | null;
+  paymentMethod: string | null;
+  paymentStatus: string | null;
+  admissionStatus: string | null;
   currentHandler: string;
   currentHandlerRole: string;
   deadline: string;
@@ -59,6 +67,17 @@ export interface ProcessingRecord {
   operator: string;
   operatorRole: string;
   opinion: string | null;
+  paymentVerification: string | null;
+  admissionConfirmation: string | null;
+  paymentAmount: number | null;
+  paymentMethod: string | null;
+  paymentStatus: string | null;
+  admissionStatus: string | null;
+  correctReason: string | null;
+  returnOpinion: string | null;
+  exceptionReason: string | null;
+  responsibleNode: string | null;
+  auditRemark: string | null;
   createdAt: string;
 }
 
