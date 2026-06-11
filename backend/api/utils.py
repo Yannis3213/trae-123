@@ -5,6 +5,7 @@ from dateutil.relativedelta import relativedelta
 
 from django.db import transaction
 from django.http import HttpRequest
+from django.utils import timezone
 
 from api.models import (
     RequirementDeliveryOrder, ProcessingRecord, ExceptionReason,
@@ -83,6 +84,22 @@ def create_exception_reason(
         reason=reason,
         handler=handler,
     )
+
+
+@transaction.atomic
+def resolve_exception_reason(
+    order: RequirementDeliveryOrder,
+    module_type: ModuleTypeChoices,
+) -> int:
+    updated = ExceptionReason.objects.filter(
+        order=order,
+        module_type=module_type,
+        resolved=False
+    ).update(
+        resolved=True,
+        resolved_at=timezone.now()
+    )
+    return updated
 
 
 def get_deadline_warning(deadline: Optional[date]) -> Optional[Tuple[str, int]]:
@@ -222,6 +239,28 @@ def transition_status(
         order.status = OrderStatusChoices.ARCHIVED
         order.current_handler = None
         create_processing_record(order, ActionChoices.ARCHIVE, operator, from_status, order.status, remark)
+
+    elif action == 'correct':
+        if evidence:
+            is_complete, msg = check_evidence_complete(module_type, evidence)
+            if not is_complete:
+                raise EvidenceMissingError(msg)
+        if module_type == 'requirement':
+            order.requirement_evidence = evidence or {}
+            order.requirement_status = RequirementStatusChoices.IN_PROGRESS
+            order.status = OrderStatusChoices.REQUIREMENT_SUBMITTED
+            resolve_exception_reason(order, ModuleTypeChoices.REQUIREMENT)
+        elif module_type == 'schedule':
+            order.schedule_evidence = evidence or {}
+            order.schedule_status = RequirementStatusChoices.IN_PROGRESS
+            order.status = OrderStatusChoices.SCHEDULE_SUBMITTED
+            resolve_exception_reason(order, ModuleTypeChoices.SCHEDULE)
+        elif module_type == 'delivery':
+            order.delivery_evidence = evidence or {}
+            order.delivery_status = RequirementStatusChoices.IN_PROGRESS
+            order.status = OrderStatusChoices.DELIVERY_SUBMITTED
+            resolve_exception_reason(order, ModuleTypeChoices.DELIVERY)
+        create_processing_record(order, ActionChoices.CORRECT, operator, from_status, order.status, remark)
 
     increment_version(order)
     order.save()

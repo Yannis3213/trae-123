@@ -4,6 +4,7 @@ import { SearchOutlined, ReloadOutlined, BatchProcessOutlined, EyeOutlined, Plus
 import { useNavigate } from 'react-router-dom'
 import { LIST_STATUS_OPTIONS, ROLE_LABELS, ROLE_KEYS } from '../utils/constants.js'
 import { OrderStatusBadge, DueWarningBadge, ModuleStatusBadge } from './StatusBadge.jsx'
+import UserTag from './UserTag.jsx'
 import { formatDate, getWarningLevel, truncateText, getRoleDisplay } from '../utils/helpers.js'
 import { orderApi, userApi } from '../api.js'
 import BatchProcess from './BatchProcess.jsx'
@@ -137,8 +138,14 @@ export default function OrderList({ onRefresh }) {
     {
       title: '当前处理人',
       dataIndex: 'current_handler',
-      width: 120,
-      render: (text) => text || '-'
+      width: 200,
+      render: (handler) => <UserTag user={handler} />
+    },
+    {
+      title: '创建人',
+      dataIndex: 'created_by',
+      width: 200,
+      render: (creator) => <UserTag user={creator} />
     },
     {
       title: '版本',

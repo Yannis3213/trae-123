@@ -8,7 +8,7 @@ django.setup()
 
 from django.db import transaction
 from api.models import (
-    User, RequirementDeliveryOrder, ProcessingRecord, ExceptionReason, Attachment,
+    User, RequirementDeliveryOrder, ProcessingRecord, ExceptionReason, Attachment, AuditNote,
     RoleChoices, OrderStatusChoices, RequirementStatusChoices, ActionChoices, ModuleTypeChoices
 )
 
@@ -195,6 +195,12 @@ def seed():
         created_at=today - timedelta(days=7),
         resolved=False,
     )
+    AuditNote.objects.create(
+        order=order3,
+        note='排期逾期，请尽快补正',
+        author=users[RoleChoices.AUDIT_SUPERVISOR],
+        created_at=today - timedelta(days=3),
+    )
 
     order4 = create_order(
         order_no='XQJF202606010004',
@@ -272,6 +278,105 @@ def seed():
         created_at=today - timedelta(days=11),
         resolved=True,
         resolved_at=today - timedelta(days=8),
+    )
+
+    order5 = create_order(
+        order_no='XQJF202606010005',
+        title='用户中心需求交付单（待补正样例）',
+        project_name='用户中心重构项目',
+        clue='需求研讨会-2026-06-05',
+        status=OrderStatusChoices.VERIFY_FAILED,
+        current_handler=users[RoleChoices.DELIVERY_REGISTRAR],
+        version=3,
+        requirement_status=RequirementStatusChoices.EXCEPTION,
+        schedule_status=RequirementStatusChoices.NOT_STARTED,
+        delivery_status=RequirementStatusChoices.NOT_STARTED,
+        requirement_evidence={
+            'confirmation_document': '用户中心需求说明书_v1.pdf',
+            'stakeholder_signature': '已签字-刘经理',
+        },
+        requirement_deadline=today - timedelta(days=1),
+        schedule_deadline=today + timedelta(days=14),
+        delivery_deadline=today + timedelta(days=28),
+        created_by=users[RoleChoices.DELIVERY_REGISTRAR],
+    )
+    ProcessingRecord.objects.bulk_create([
+        ProcessingRecord(order=order5, action=ActionChoices.SUBMIT, operator=users[RoleChoices.DELIVERY_REGISTRAR],
+                         role=RoleChoices.DELIVERY_REGISTRAR, from_status=OrderStatusChoices.PENDING_VERIFY,
+                         to_status=OrderStatusChoices.REQUIREMENT_SUBMITTED, remark='需求确认提交',
+                         created_at=today - timedelta(days=5)),
+        ProcessingRecord(order=order5, action=ActionChoices.REJECT, operator=users[RoleChoices.AUDIT_SUPERVISOR],
+                         role=RoleChoices.AUDIT_SUPERVISOR, from_status=OrderStatusChoices.REQUIREMENT_SUBMITTED,
+                         to_status=OrderStatusChoices.VERIFY_FAILED, remark='需求描述不够详细，缺少边界条件说明',
+                         created_at=today - timedelta(days=4)),
+    ])
+    ExceptionReason.objects.create(
+        order=order5,
+        module_type=ModuleTypeChoices.REQUIREMENT,
+        reason='需求描述不够详细，缺少边界条件说明',
+        handler=users[RoleChoices.DELIVERY_REGISTRAR],
+        created_at=today - timedelta(days=4),
+        resolved=False,
+    )
+
+    order6 = create_order(
+        order_no='XQJF202606010006',
+        title='数据分析平台需求交付单（状态冲突样例）',
+        project_name='数据分析平台建设',
+        clue='招投标文件-数据分析模块',
+        status=OrderStatusChoices.VERIFY_FAILED,
+        current_handler=users[RoleChoices.DEV_LEAD],
+        version=5,
+        requirement_status=RequirementStatusChoices.COMPLETED,
+        schedule_status=RequirementStatusChoices.EXCEPTION,
+        delivery_status=RequirementStatusChoices.NOT_STARTED,
+        requirement_evidence={
+            'confirmation_document': '数据分析平台需求说明书_v2.pdf',
+            'stakeholder_signature': '已签字-陈总监',
+            'meeting_minutes': '需求评审会议纪要.docx',
+        },
+        schedule_evidence={
+            'schedule_plan': '数据分析平台排期计划_v1.xlsx',
+            'resource_allocation': '',
+        },
+        requirement_deadline=today - timedelta(days=8),
+        schedule_deadline=today - timedelta(days=2),
+        delivery_deadline=today - timedelta(days=3),
+        created_by=users[RoleChoices.PROJECT_ASSISTANT],
+    )
+    ProcessingRecord.objects.bulk_create([
+        ProcessingRecord(order=order6, action=ActionChoices.SUBMIT, operator=users[RoleChoices.DELIVERY_REGISTRAR],
+                         role=RoleChoices.DELIVERY_REGISTRAR, from_status=OrderStatusChoices.PENDING_VERIFY,
+                         to_status=OrderStatusChoices.REQUIREMENT_SUBMITTED, remark='需求确认提交v1',
+                         created_at=today - timedelta(days=15)),
+        ProcessingRecord(order=order6, action=ActionChoices.APPROVE, operator=users[RoleChoices.AUDIT_SUPERVISOR],
+                         role=RoleChoices.AUDIT_SUPERVISOR, from_status=OrderStatusChoices.REQUIREMENT_SUBMITTED,
+                         to_status=OrderStatusChoices.REQUIREMENT_AUDITED, remark='需求确认审核通过',
+                         created_at=today - timedelta(days=14)),
+        ProcessingRecord(order=order6, action=ActionChoices.SUBMIT, operator=users[RoleChoices.DEV_LEAD],
+                         role=RoleChoices.DEV_LEAD, from_status=OrderStatusChoices.REQUIREMENT_AUDITED,
+                         to_status=OrderStatusChoices.SCHEDULE_SUBMITTED, remark='排期评估提交v1',
+                         created_at=today - timedelta(days=10)),
+        ProcessingRecord(order=order6, action=ActionChoices.REJECT, operator=users[RoleChoices.AUDIT_SUPERVISOR],
+                         role=RoleChoices.AUDIT_SUPERVISOR, from_status=OrderStatusChoices.SCHEDULE_SUBMITTED,
+                         to_status=OrderStatusChoices.VERIFY_FAILED, remark='资源分配不完整，且排期过于紧张',
+                         created_at=today - timedelta(days=9)),
+        ProcessingRecord(order=order6, action=ActionChoices.CORRECT, operator=users[RoleChoices.DEV_LEAD],
+                         role=RoleChoices.DEV_LEAD, from_status=OrderStatusChoices.VERIFY_FAILED,
+                         to_status=OrderStatusChoices.SCHEDULE_SUBMITTED, remark='排期补正v2',
+                         created_at=today - timedelta(days=7)),
+        ProcessingRecord(order=order6, action=ActionChoices.REJECT, operator=users[RoleChoices.AUDIT_SUPERVISOR],
+                         role=RoleChoices.AUDIT_SUPERVISOR, from_status=OrderStatusChoices.SCHEDULE_SUBMITTED,
+                         to_status=OrderStatusChoices.VERIFY_FAILED, remark='资源分配仍不符合要求，请重新评估',
+                         created_at=today - timedelta(days=6)),
+    ])
+    ExceptionReason.objects.create(
+        order=order6,
+        module_type=ModuleTypeChoices.SCHEDULE,
+        reason='资源分配不完整，缺少测试人员分配，且开发工期评估不足',
+        handler=users[RoleChoices.DEV_LEAD],
+        created_at=today - timedelta(days=6),
+        resolved=False,
     )
 
     Attachment.objects.bulk_create([

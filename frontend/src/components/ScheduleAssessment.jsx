@@ -10,7 +10,7 @@ import { MODULE_TYPE_KEYS } from '../utils/constants.js'
 
 const { TextArea } = Input
 
-export default function ScheduleAssessment({ order, allowedActions, onRefresh }) {
+export default function ScheduleAssessment({ order, allowedActions, onRefresh, isCorrectMode = false }) {
   const [submitModalOpen, setSubmitModalOpen] = useState(false)
   const [auditModalOpen, setAuditModalOpen] = useState(false)
   const [submitForm] = Form.useForm()
@@ -21,6 +21,7 @@ export default function ScheduleAssessment({ order, allowedActions, onRefresh })
   const moduleType = MODULE_TYPE_KEYS.SCHEDULE
   const canSubmit = canSubmitModule(allowedActions, moduleType)
   const canAudit = canAuditModule(allowedActions, moduleType)
+  const canCorrect = isCorrectMode
 
   const evidence = order?.schedule_evidence || {}
   const moduleStatus = order?.schedule_status
@@ -86,9 +87,9 @@ export default function ScheduleAssessment({ order, allowedActions, onRefresh })
           <ModuleStatusBadge status={moduleStatus} />
         </div>
         <div className="module-actions">
-          {canSubmit && (
+          {(canSubmit || canCorrect) && (
             <Button type="primary" icon={<EditOutlined />} onClick={() => setSubmitModalOpen(true)}>
-              {evidence?.schedule_plan || evidence?.resource_allocation ? '重新提交' : '提交'}
+              {canCorrect ? '补正提交' : (evidence?.schedule_plan || evidence?.resource_allocation ? '重新提交' : '提交')}
             </Button>
           )}
           {canAudit && (
@@ -123,7 +124,7 @@ export default function ScheduleAssessment({ order, allowedActions, onRefresh })
       )}
 
       <Modal
-        title="提交排期评估"
+        title={canCorrect ? '补正 - 排期评估' : '提交排期评估'}
         open={submitModalOpen}
         onCancel={() => setSubmitModalOpen(false)}
         footer={null}
@@ -152,7 +153,7 @@ export default function ScheduleAssessment({ order, allowedActions, onRefresh })
             <Space>
               <Button onClick={() => setSubmitModalOpen(false)}>取消</Button>
               <Button type="primary" htmlType="submit" loading={loading}>
-                提交
+                {canCorrect ? '补正提交' : '提交'}
               </Button>
             </Space>
           </Form.Item>

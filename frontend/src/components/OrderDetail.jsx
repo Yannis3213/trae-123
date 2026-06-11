@@ -17,8 +17,9 @@ import ProcessingTimeline from './ProcessingTimeline.jsx'
 import RequirementConfirm from './RequirementConfirm.jsx'
 import ScheduleAssessment from './ScheduleAssessment.jsx'
 import DeliveryAcceptance from './DeliveryAcceptance.jsx'
+import UserTag from './UserTag.jsx'
 import { orderApi } from '../api.js'
-import { formatDate, formatDateSimple, getWarningLevel, getFileSize, canReview, canArchive } from '../utils/helpers.js'
+import { formatDate, formatDateSimple, getWarningLevel, getFileSize, canReview, canArchive, canCorrectModule } from '../utils/helpers.js'
 import { MODULE_TYPE_KEYS } from '../utils/constants.js'
 
 export default function OrderDetail() {
@@ -134,7 +135,14 @@ export default function OrderDetail() {
           <ModuleStatusBadge status={requirementStatusKey} />
         </Space>
       ),
-      children: <RequirementConfirm order={order} allowedActions={allowedActions} onRefresh={handleRefresh} />
+      children: (
+        <RequirementConfirm
+          order={order}
+          allowedActions={allowedActions}
+          onRefresh={handleRefresh}
+          isCorrectMode={canCorrectModule(allowedActions, MODULE_TYPE_KEYS.REQUIREMENT)}
+        />
+      )
     },
     {
       key: MODULE_TYPE_KEYS.SCHEDULE,
@@ -144,7 +152,14 @@ export default function OrderDetail() {
           <ModuleStatusBadge status={scheduleStatusKey} />
         </Space>
       ),
-      children: <ScheduleAssessment order={order} allowedActions={allowedActions} onRefresh={handleRefresh} />
+      children: (
+        <ScheduleAssessment
+          order={order}
+          allowedActions={allowedActions}
+          onRefresh={handleRefresh}
+          isCorrectMode={canCorrectModule(allowedActions, MODULE_TYPE_KEYS.SCHEDULE)}
+        />
+      )
     },
     {
       key: MODULE_TYPE_KEYS.DELIVERY,
@@ -154,7 +169,14 @@ export default function OrderDetail() {
           <ModuleStatusBadge status={deliveryStatusKey} />
         </Space>
       ),
-      children: <DeliveryAcceptance order={order} allowedActions={allowedActions} onRefresh={handleRefresh} />
+      children: (
+        <DeliveryAcceptance
+          order={order}
+          allowedActions={allowedActions}
+          onRefresh={handleRefresh}
+          isCorrectMode={canCorrectModule(allowedActions, MODULE_TYPE_KEYS.DELIVERY)}
+        />
+      )
     }
   ]
 
@@ -224,8 +246,8 @@ export default function OrderDetail() {
             <Descriptions.Item label="项目名称">{order.project_name || '-'}</Descriptions.Item>
             <Descriptions.Item label="版本">V{order.version || 1}</Descriptions.Item>
             <Descriptions.Item label="需求确认线索">{order.requirement_confirmation_clue || '-'}</Descriptions.Item>
-            <Descriptions.Item label="当前处理人">{order.current_handler || '-'}</Descriptions.Item>
-            <Descriptions.Item label="创建人">{order.created_by || '-'}</Descriptions.Item>
+            <Descriptions.Item label="当前处理人"><UserTag user={order.current_handler} /></Descriptions.Item>
+            <Descriptions.Item label="创建人"><UserTag user={order.created_by} /></Descriptions.Item>
             <Descriptions.Item label="创建时间">{formatDate(order.created_at || order.createdAt)}</Descriptions.Item>
             <Descriptions.Item label="更新时间">{formatDate(order.updated_at || order.updatedAt)}</Descriptions.Item>
             {renderDeadline(order.requirement_deadline, '需求截止日期')}
@@ -260,7 +282,7 @@ export default function OrderDetail() {
                     title={item.reason || item.content || item.description || '-'}
                     description={
                       <Space>
-                        <span>{item.handler || item.operator || item.created_by || '-'}</span>
+                        <UserTag user={item.handler || item.operator || item.created_by} />
                         <span>·</span>
                         <span>{formatDate(item.created_at || item.createdAt)}</span>
                       </Space>
@@ -297,7 +319,7 @@ export default function OrderDetail() {
                       <Space>
                         <span>{getFileSize(item.size)}</span>
                         <span>·</span>
-                        <span>{item.uploader || item.created_by || '-'}</span>
+                        <UserTag user={item.uploader || item.created_by} showRole={false} />
                         <span>·</span>
                         <span>{formatDate(item.created_at || item.uploaded_at || item.createdAt)}</span>
                       </Space>
@@ -315,9 +337,9 @@ export default function OrderDetail() {
           <div className="detail-section-title">审计备注</div>
           {(order.audit_notes || order.auditRemarks || []).length > 0 ? (
             (order.audit_notes || order.auditRemarks || []).map((item, i) => (
-              <div key={i} className="audit-remark">
+              <div className="audit-remark">
                 <div className="audit-remark-meta">
-                  {item.operator || item.handler || item.created_by || '系统'} · {formatDate(item.created_at || item.createdAt)}
+                  <UserTag user={item.operator || item.handler || item.created_by} showRole={false} /> · {formatDate(item.created_at || item.createdAt)}
                 </div>
                 <div>{item.remark || item.content || item.note || '-'}</div>
               </div>

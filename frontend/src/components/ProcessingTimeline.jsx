@@ -3,6 +3,7 @@ import { Timeline, Empty } from 'antd'
 import { CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import { formatDate } from '../utils/helpers.js'
 import { ACTION_LABELS } from '../utils/constants.js'
+import UserTag from './UserTag.jsx'
 
 function getIcon(action) {
   if (!action) return <ClockCircleOutlined style={{ color: '#1677ff' }} />
@@ -70,7 +71,7 @@ export default function ProcessingTimeline({ records }) {
                   {getActionLabel(action)}
                 </div>
                 <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)', marginTop: 4 }}>
-                  {operator} · {formatDate(createdAt)}
+                  <UserTag user={operator} showRole={false} /> · {formatDate(createdAt)}
                 </div>
                 {remark && (
                   <div style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4, fontSize: 13 }}>

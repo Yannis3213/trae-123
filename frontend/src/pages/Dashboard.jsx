@@ -10,6 +10,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import Layout from '../components/Layout.jsx'
 import { OrderStatusBadge, DueWarningBadge, ModuleTypeBadge } from '../components/StatusBadge.jsx'
+import UserTag from '../components/UserTag.jsx'
 import { statisticsApi } from '../api.js'
 import { formatDate, getWarningLevelFromDays } from '../utils/helpers.js'
 
@@ -167,9 +168,7 @@ export default function Dashboard() {
                               剩余：{item.days_left >= 0 ? `${item.days_left}天` : `逾期${Math.abs(item.days_left)}天`}
                             </span>
                           )}
-                          <span style={{ color: 'rgba(0,0,0,0.45)' }}>
-                            处理人：{item.handler || '-'}
-                          </span>
+                          <UserTag user={item.handler} />
                         </Space>
                       }
                     />

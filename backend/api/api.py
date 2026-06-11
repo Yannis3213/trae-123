@@ -7,8 +7,8 @@ from django.db.models import Count, Q
 from ninja import NinjaAPI, Schema
 
 from api.models import (
-    User, RequirementDeliveryOrder,
-    RoleChoices, OrderStatusChoices, RequirementStatusChoices, ModuleTypeChoices
+    User, RequirementDeliveryOrder, ProcessingRecord, ExceptionReason, AuditNote,
+    RoleChoices, OrderStatusChoices, RequirementStatusChoices, ModuleTypeChoices, ActionChoices
 )
 from api.schemas import (
     LoginSchema, LoginResponse, UserSchema,
@@ -21,7 +21,7 @@ from api.schemas import (
 from api.permissions import (
     can_create_order, can_submit_module, can_audit_module,
     can_review_order, can_archive_order, can_advance_order,
-    can_verify_order, get_allowed_actions
+    can_verify_order, get_allowed_actions, is_correct_scenario
 )
 from api.utils import (
     validate_version, transition_status, generate_order_no,
@@ -192,15 +192,18 @@ def submit_requirement(request, order_id: int, payload: RequirementSubmitSchema)
     if not can_submit_module(user, order, 'requirement'):
         raise PermissionDeniedError('您没有提交需求确认的权限')
     validate_version(order, payload.version)
+    is_correct = is_correct_scenario(user, order, 'requirement')
+    action = 'correct' if is_correct else 'submit'
     with transaction.atomic():
         transition_status(
             order=order,
             module_type='requirement',
-            action='submit',
+            action=action,
             operator=user,
             evidence=payload.evidence,
         )
-    return {'success': True, 'message': '需求确认提交成功'}
+    msg = '需求确认补正提交成功' if is_correct else '需求确认提交成功'
+    return {'success': True, 'message': msg}
 
 
 @api.post('/orders/{order_id}/requirement/audit', response=SuccessResponse)
@@ -231,15 +234,18 @@ def submit_schedule(request, order_id: int, payload: ScheduleSubmitSchema):
     if not can_submit_module(user, order, 'schedule'):
         raise PermissionDeniedError('您没有提交排期评估的权限')
     validate_version(order, payload.version)
+    is_correct = is_correct_scenario(user, order, 'schedule')
+    action = 'correct' if is_correct else 'submit'
     with transaction.atomic():
         transition_status(
             order=order,
             module_type='schedule',
-            action='submit',
+            action=action,
             operator=user,
             evidence=payload.evidence,
         )
-    return {'success': True, 'message': '排期评估提交成功'}
+    msg = '排期评估补正提交成功' if is_correct else '排期评估提交成功'
+    return {'success': True, 'message': msg}
 
 
 @api.post('/orders/{order_id}/schedule/audit', response=SuccessResponse)
@@ -270,15 +276,18 @@ def submit_delivery(request, order_id: int, payload: DeliverySubmitSchema):
     if not can_submit_module(user, order, 'delivery'):
         raise PermissionDeniedError('您没有提交交付验收的权限')
     validate_version(order, payload.version)
+    is_correct = is_correct_scenario(user, order, 'delivery')
+    action = 'correct' if is_correct else 'submit'
     with transaction.atomic():
         transition_status(
             order=order,
             module_type='delivery',
-            action='submit',
+            action=action,
             operator=user,
             evidence=payload.evidence,
         )
-    return {'success': True, 'message': '交付验收提交成功'}
+    msg = '交付验收补正提交成功' if is_correct else '交付验收提交成功'
+    return {'success': True, 'message': msg}
 
 
 @api.post('/orders/{order_id}/delivery/audit', response=SuccessResponse)
@@ -384,6 +393,16 @@ def batch_advance_orders(request, payload: BatchAdvanceSchema):
     )
 
 
+def get_exception_module_type(order: RequirementDeliveryOrder) -> ModuleTypeChoices:
+    if order.requirement_status == RequirementStatusChoices.EXCEPTION:
+        return ModuleTypeChoices.REQUIREMENT
+    if order.schedule_status == RequirementStatusChoices.EXCEPTION:
+        return ModuleTypeChoices.SCHEDULE
+    if order.delivery_status == RequirementStatusChoices.EXCEPTION:
+        return ModuleTypeChoices.DELIVERY
+    return ModuleTypeChoices.REQUIREMENT
+
+
 @api.post('/orders/batch-verify', response=BatchResult)
 def batch_verify_orders(request, payload: BatchVerifySchema):
     user = auth_required(request)
@@ -411,9 +430,43 @@ def batch_verify_orders(request, payload: BatchVerifySchema):
                     )
                 msg = '核验通过'
             else:
-                order.status = OrderStatusChoices.VERIFY_FAILED
-                order.version += 1
-                order.save()
+                with transaction.atomic():
+                    from_status = order.status
+                    reason = payload.remark or '批量核验不通过'
+
+                    if order.status == OrderStatusChoices.PENDING_VERIFY:
+                        order.requirement_status = RequirementStatusChoices.EXCEPTION
+                        module_type = ModuleTypeChoices.REQUIREMENT
+                    else:
+                        module_type = get_exception_module_type(order)
+
+                    order.status = OrderStatusChoices.VERIFY_FAILED
+                    order.version += 1
+                    order.save()
+
+                    ProcessingRecord.objects.create(
+                        order=order,
+                        action=ActionChoices.REJECT,
+                        operator=user,
+                        role=user.role,
+                        from_status=from_status,
+                        to_status=OrderStatusChoices.VERIFY_FAILED,
+                        remark=reason,
+                    )
+
+                    ExceptionReason.objects.create(
+                        order=order,
+                        module_type=module_type,
+                        reason=reason,
+                        handler=order.current_handler,
+                    )
+
+                    AuditNote.objects.create(
+                        order=order,
+                        note=reason,
+                        author=user,
+                    )
+
                 msg = '核验失败'
             results.append(BatchResultItem(
                 order_id=order_id, order_no=order.order_no, success=True, message=msg

@@ -16,6 +16,15 @@ export const ROLE_LABELS = {
   [ROLE_KEYS.REVIEW_LEADER]: '软件外包项目组复核负责人'
 }
 
+export const ROLE_COLORS = {
+  [ROLE_KEYS.PROJECT_ASSISTANT]: 'blue',
+  [ROLE_KEYS.DELIVERY_REGISTRAR]: 'cyan',
+  [ROLE_KEYS.DEV_LEAD]: 'green',
+  [ROLE_KEYS.AUDIT_SUPERVISOR]: 'purple',
+  [ROLE_KEYS.DELIVERY_MANAGER]: 'geekblue',
+  [ROLE_KEYS.REVIEW_LEADER]: 'orange'
+}
+
 export const DEMO_ACCOUNTS = [
   { username: 'project_assistant', role: ROLE_KEYS.PROJECT_ASSISTANT, label: ROLE_LABELS[ROLE_KEYS.PROJECT_ASSISTANT] },
   { username: 'delivery_registrar', role: ROLE_KEYS.DELIVERY_REGISTRAR, label: ROLE_LABELS[ROLE_KEYS.DELIVERY_REGISTRAR] },

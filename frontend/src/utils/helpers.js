@@ -6,6 +6,7 @@ import {
   ROLE_KEYS,
   MODULE_TYPE_KEYS,
   ROLE_LABELS,
+  ROLE_COLORS,
   MODULE_STATUS_LABELS,
   MODULE_STATUS_COLORS
 } from './constants.js'
@@ -68,22 +69,24 @@ export function getModuleStatusColor(status) {
 
 export function canSubmitModule(allowedActions, moduleType) {
   if (!allowedActions) return false
+  const typeLower = moduleType ? moduleType.toLowerCase() : ''
   const actionMap = {
     requirement: 'requirement_submit',
     schedule: 'schedule_submit',
     delivery: 'delivery_submit'
   }
-  return allowedActions.includes(actionMap[moduleType])
+  return allowedActions.includes(actionMap[typeLower])
 }
 
 export function canAuditModule(allowedActions, moduleType) {
   if (!allowedActions) return false
+  const typeLower = moduleType ? moduleType.toLowerCase() : ''
   const approveMap = {
     requirement: 'requirement_audit',
     schedule: 'schedule_audit',
     delivery: 'delivery_audit'
   }
-  return allowedActions.includes(approveMap[moduleType])
+  return allowedActions.includes(approveMap[typeLower])
 }
 
 export function canReview(allowedActions) {
@@ -105,4 +108,29 @@ export function generateOrderNo() {
   const now = dayjs()
   const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0')
   return `XQJF${now.format('YYYYMMDD')}${random}`
+}
+
+export function formatUser(user) {
+  if (!user) return '-'
+  if (typeof user === 'string') return user
+  const username = user.username || user.user_name || '-'
+  const roleDisplay = user.role_display || user.roleDisplay || getRoleDisplay(user.role)
+  if (!username || username === '-') return '-'
+  return roleDisplay ? `${username} (${roleDisplay})` : username
+}
+
+export function getUserRoleColor(role) {
+  if (!role) return 'default'
+  return ROLE_COLORS[role] || 'default'
+}
+
+export function canCorrectModule(allowedActions, moduleType) {
+  if (!allowedActions) return false
+  const typeLower = moduleType ? moduleType.toLowerCase() : ''
+  const actionMap = {
+    requirement: 'requirement_correct',
+    schedule: 'schedule_correct',
+    delivery: 'delivery_correct'
+  }
+  return allowedActions.includes(actionMap[typeLower])
 }
