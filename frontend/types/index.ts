@@ -86,6 +86,7 @@ export interface TaskDetailResponse {
 
 export interface BatchResultItem {
   task_id: string;
+  task_name?: string;
   success: boolean;
   message: string;
 }

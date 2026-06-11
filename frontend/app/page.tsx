@@ -80,10 +80,12 @@ export default function TaskListPage() {
     }
   }, [currentRole]);
 
+  const { refreshTrigger } = useRole();
+
   useEffect(() => {
     fetchTasks();
     fetchStatistics();
-  }, [fetchTasks, fetchStatistics]);
+  }, [fetchTasks, fetchStatistics, refreshTrigger]);
 
   useEffect(() => {
     setPage(1);
@@ -657,9 +659,19 @@ export default function TaskListPage() {
                   >
                     <div>
                       <div className="batch-result-task">
-                        {result.success ? '✓ 成功' : '✗ 失败'} - {result.task_id}
+                        {result.success ? '✓ 成功' : '✗ 失败'} - {result.task_name || result.task_id}
                       </div>
                       <div className="batch-result-msg">{result.message}</div>
+                      {!result.success && (
+                        <Link
+                          href={`/task/${result.task_id}`}
+                          className="link"
+                          style={{ marginTop: '8px', display: 'inline-block' }}
+                          onClick={() => setShowBatchResults(false)}
+                        >
+                          → 前往详情页补正
+                        </Link>
+                      )}
                     </div>
                   </div>
                 ))}

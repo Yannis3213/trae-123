@@ -50,6 +50,7 @@ pub struct BatchProcessRequest {
 #[derive(Debug, Serialize)]
 pub struct BatchResultItem {
     pub task_id: String,
+    pub task_name: Option<String>,
     pub success: bool,
     pub message: String,
 }
@@ -177,7 +178,47 @@ impl TaskService {
         if action == "archive" || action == "verify" {
             let has_evidence = req.has_mass_production_evidence.unwrap_or(task.has_mass_production_evidence);
             if !has_evidence {
-                bail!("缺少大货排产证据，无法完成归档/复核，请先补充证据");
+                bail!(
+                    "缺少大货排产证据，无法完成{}，请先补充证据。当前状态：{}，需提供：大货生产计划、排产时间表、产能分配证明等材料",
+                    if action == "archive" { "归档" } else { "复核" },
+                    task.mass_production_evidence.as_deref().unwrap_or("未提供")
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn check_current_handler(role: &str, task: &SamplingTask) -> Result<()> {
+        if task.current_handler != role && task.current_handler != "system" {
+            bail!(
+                "当前处理人为 {}，您的角色为 {}，无权处理该任务。请联系对应处理人或通过转办操作移交权限",
+                task.current_handler,
+                role
+            );
+        }
+        Ok(())
+    }
+
+    fn check_rectify_requirements(task: &SamplingTask, req: &ProcessTaskRequest) -> Result<()> {
+        if req.action == "rectify" {
+            if req.opinion.is_none() || req.opinion.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                bail!("退回补正时必须填写处理意见，请说明补正内容");
+            }
+
+            if task.responsible_person.is_empty() {
+                bail!("退回补正时必须明确责任人");
+            }
+
+            if req.has_mass_production_evidence.is_none() {
+                bail!("退回补正时必须确认大货排产证据是否已提供");
+            }
+
+            if req.audit_note.is_none() || req.audit_note.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                bail!("退回补正时必须填写审计备注，记录补正详情");
+            }
+
+            if req.new_deadline.is_none() && task.is_overdue {
+                bail!("该任务已逾期，补正时必须调整截止时间");
             }
         }
         Ok(())
@@ -443,9 +484,13 @@ impl TaskService {
 
         Self::can_act_on_task(&req.operator_role, &req.action, &task)?;
 
+        Self::check_current_handler(&req.operator_role, &task)?;
+
         Self::check_version(task.version, req.version)?;
 
         Self::check_evidence_requirement(&req.action, &task, &req)?;
+
+        Self::check_rectify_requirements(&task, &req)?;
 
         let from_status = task.status.clone();
         let handler_before = task.current_handler.clone();
@@ -624,6 +669,16 @@ impl TaskService {
         let mut results = vec![];
 
         for task_id in &req.task_ids {
+            let task_name = sqlx::query_as::<_, (String,)>(
+                "SELECT task_name FROM sampling_tasks WHERE id = ?"
+            )
+            .bind(task_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|(name,)| name);
+
             let version = req.version_map
                 .as_ref()
                 .and_then(|m| m.get(task_id))
@@ -651,6 +706,7 @@ impl TaskService {
                 Ok(_) => {
                     results.push(BatchResultItem {
                         task_id: task_id.clone(),
+                        task_name: task_name.clone(),
                         success: true,
                         message: "操作成功".to_string(),
                     });
@@ -658,6 +714,7 @@ impl TaskService {
                 Err(e) => {
                     results.push(BatchResultItem {
                         task_id: task_id.clone(),
+                        task_name,
                         success: false,
                         message: e.to_string(),
                     });

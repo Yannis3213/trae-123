@@ -23,7 +23,7 @@ export default function TaskDetailPage() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
-  const { currentRole, setCurrentRole, currentUserName } = useRole();
+  const { currentRole, setCurrentRole, currentUserName, triggerRefresh } = useRole();
 
   const [task, setTask] = useState<SamplingTask | null>(null);
   const [records, setRecords] = useState<ProcessingRecord[]>([]);
@@ -165,6 +165,7 @@ export default function TaskDetailPage() {
 
       showAlert('success', '操作成功');
       setShowActionModal(false);
+      triggerRefresh();
       fetchDetail();
     } catch (e: any) {
       setActionError(e.message || '操作失败');

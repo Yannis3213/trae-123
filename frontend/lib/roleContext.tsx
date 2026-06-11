@@ -1,12 +1,14 @@
 'use client';
 
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 import { UserRole, ROLE_LABELS } from '@/types';
 
 interface RoleContextType {
   currentRole: UserRole;
   setCurrentRole: (role: UserRole) => void;
   currentUserName: string;
+  refreshTrigger: number;
+  triggerRefresh: () => void;
 }
 
 const RoleContext = createContext<RoleContextType | undefined>(undefined);
@@ -19,11 +21,18 @@ const defaultUserNames: Record<UserRole, string> = {
 
 export function RoleProvider({ children }: { children: ReactNode }) {
   const [currentRole, setCurrentRole] = useState<UserRole>('sampling_registrar');
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  const triggerRefresh = useCallback(() => {
+    setRefreshTrigger((prev) => prev + 1);
+  }, []);
 
   const value = {
     currentRole,
     setCurrentRole,
     currentUserName: defaultUserNames[currentRole],
+    refreshTrigger,
+    triggerRefresh,
   };
 
   return (
