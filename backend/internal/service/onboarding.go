@@ -251,7 +251,7 @@ func ProcessOrder(order *models.OnboardingOrder, user *models.User, action, rema
 	statusLabels := map[string]string{
 		models.StatusPending:    "待派发",
 		models.StatusProcessing: "处理中",
-		models.StatusReturned:   "已关闭",
+		models.StatusReturned:   "处理中",
 		models.StatusCompleted:  "已关闭",
 		models.StatusClosed:     "已关闭",
 	}

@@ -65,9 +65,11 @@ func main() {
 			r.Get("/auth/me", authHandler.Me)
 
 			r.Route("/orders", func(r chi.Router) {
+				r.Post("/", orderHandler.Create)
 				r.Get("/", orderHandler.List)
 				r.Get("/{id}", orderHandler.Get)
 				r.Post("/{id}/process", orderHandler.Process)
+				r.Post("/{id}/attachments", orderHandler.AddAttachment)
 				r.Post("/batch", orderHandler.BatchProcess)
 				r.Post("/{id}/audit-notes", orderHandler.AddAuditNote)
 			})

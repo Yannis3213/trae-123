@@ -313,3 +313,37 @@ func CreateAuditNote(n *models.AuditNote) error {
 	)
 	return err
 }
+
+func CreateOrder(o *models.OnboardingOrder) error {
+	id := uuid.New().String()
+	o.ID = id
+	_, err := DB.Exec(`
+		INSERT INTO onboarding_orders 
+		(id, title, candidate_name, position, department, status, current_node,
+		 current_role, handler_id, handler_name, registrar_id, registrar_name,
+		 due_date, warning_level, version, is_exception, exception_reason,
+		 created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		o.ID, o.Title, o.CandidateName, o.Position, o.Department,
+		o.Status, o.CurrentNode, o.CurrentRole,
+		o.HandlerID, o.HandlerName,
+		o.RegistrarID, o.RegistrarName,
+		o.DueDate, o.WarningLevel, o.Version,
+		o.IsException, o.ExceptionReason,
+		time.Now(), time.Now(),
+	)
+	return err
+}
+
+func CreateAttachment(a *models.Attachment) error {
+	id := uuid.New().String()
+	a.ID = id
+	_, err := DB.Exec(`
+		INSERT INTO attachments (id, order_id, node, type, name, url, uploaded_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		id, a.OrderID, a.Node, a.Type, a.Name, a.URL, a.UploadedBy, time.Now(),
+	)
+	return err
+}

@@ -127,3 +127,17 @@ type ApiError struct {
 	Message string `json:"message"`
 	Detail  string `json:"detail,omitempty"`
 }
+
+type CreateOrderRequest struct {
+	CandidateName string `json:"candidate_name"`
+	Position      string `json:"position"`
+	Department    string `json:"department"`
+	DueDate       string `json:"due_date"`
+}
+
+type CreateAttachmentRequest struct {
+	Node string `json:"node"`
+	Type string `json:"type"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
