@@ -556,7 +556,7 @@ func ActionPatrolOrder(c *gin.Context) {
 		return
 	}
 
-	writeFailAudit := func(action, msg string) {
+	writeFailAudit := func(action, msg, errorType string) {
 		database.DB.Create(&models.OrderHistory{
 			PatrolOrderID:  order.ID,
 			Action:         action,
@@ -565,6 +565,7 @@ func ActionPatrolOrder(c *gin.Context) {
 			OperatorID:     user.UserID,
 			OperatorName:   user.UserName,
 			Remark:         msg,
+			AbnormalReason: fmt.Sprintf("[%s] %s | 处理人:%s", errorType, msg, order.CurrentHandler),
 			Success:        false,
 		})
 		database.DB.Create(&models.AuditNote{
@@ -572,19 +573,19 @@ func ActionPatrolOrder(c *gin.Context) {
 			OperatorID:    user.UserID,
 			OperatorName:  user.UserName,
 			NoteType:      "校验失败",
-			Content:       msg,
+			Content:       fmt.Sprintf("[%s] %s | 处理人:%s | 版本:%d", errorType, msg, order.CurrentHandler, order.Version),
 		})
 	}
 
 	if req.Version > 0 && req.Version != order.Version {
 		msg := fmt.Sprintf("版本冲突：当前版本%d，您提交的版本%d，请刷新后重试", order.Version, req.Version)
-		writeFailAudit(req.Action, msg)
+		writeFailAudit(req.Action, msg, "version_conflict")
 		respondErr(c, http.StatusConflict, NewAPIError(409, "版本冲突", msg))
 		return
 	}
 
 	if err := validateActionPermission(user.Role, req.Action); err != nil {
-		writeFailAudit(req.Action, err.Error())
+		writeFailAudit(req.Action, err.Error(), "role_forbidden")
 		respondErr(c, http.StatusForbidden, NewAPIError(403, err.Error()))
 		return
 	}
@@ -598,7 +599,7 @@ func ActionPatrolOrder(c *gin.Context) {
 			(user.Role == config.RoleBusinessOwner && (order.Status == config.StatusApproved || order.Status == config.StatusSynced))) {
 			if req.Action != config.ActionSupplement && req.Action != config.ActionResubmit {
 				msg := fmt.Sprintf("处理人不匹配：当前处理人为%s，您是%s", order.CurrentHandler, user.UserName)
-				writeFailAudit(req.Action, msg)
+				writeFailAudit(req.Action, msg, "handler_mismatch")
 				respondErr(c, http.StatusForbidden, NewAPIError(403, "当前处理人不匹配", msg))
 				return
 			}
@@ -607,7 +608,7 @@ func ActionPatrolOrder(c *gin.Context) {
 
 	nextStatus, err := validateStatusFlow(order.Status, req.Action)
 	if err != nil {
-		writeFailAudit(req.Action, err.Error())
+		writeFailAudit(req.Action, err.Error(), "status_flow")
 		respondErr(c, http.StatusBadRequest, NewAPIError(400, err.Error()))
 		return
 	}
@@ -634,7 +635,7 @@ func ActionPatrolOrder(c *gin.Context) {
 			}
 			if len(missing) > 0 {
 				missingMsg := fmt.Sprintf("缺少必需证据：%s", strings.Join(missing, "、"))
-				writeFailAudit(req.Action, missingMsg)
+				writeFailAudit(req.Action, missingMsg, "missing_evidence")
 				respondErr(c, http.StatusBadRequest, NewAPIError(400, "缺少必填证据", missingMsg))
 				return
 			}
@@ -643,7 +644,7 @@ func ActionPatrolOrder(c *gin.Context) {
 
 	if (req.Action == config.ActionApprove || req.Action == config.ActionSync) && order.Deadline != nil && order.Deadline.Before(time.Now()) {
 		overdueMsg := fmt.Sprintf("申请已逾期推进，截止日期%s", order.Deadline.Format("2006-01-02"))
-		writeFailAudit(req.Action, overdueMsg)
+		writeFailAudit(req.Action, overdueMsg, "overdue")
 		respondErr(c, http.StatusBadRequest, NewAPIError(400, "申请已逾期推进", overdueMsg))
 		return
 	}
@@ -891,13 +892,17 @@ type BatchActionRequest struct {
 }
 
 type BatchResultItem struct {
-	ID              uint     `json:"id"`
-	OrderNo         string   `json:"order_no,omitempty"`
-	Success         bool     `json:"success"`
-	Message         string   `json:"message,omitempty"`
-	Status          string   `json:"status,omitempty"`
-	MissingEvidence []string `json:"missing_evidence,omitempty"`
-	ErrorType       string   `json:"error_type,omitempty"`
+	ID                uint     `json:"id"`
+	OrderNo           string   `json:"order_no,omitempty"`
+	Success           bool     `json:"success"`
+	Message           string   `json:"message,omitempty"`
+	Status            string   `json:"status,omitempty"`
+	Version           int      `json:"version,omitempty"`
+	CurrentHandler    string   `json:"current_handler,omitempty"`
+	CurrentHandlerID  string   `json:"current_handler_id,omitempty"`
+	MissingEvidence   []string `json:"missing_evidence,omitempty"`
+	ErrorType         string   `json:"error_type,omitempty"`
+	OverdueReason     string   `json:"overdue_reason,omitempty"`
 }
 
 func BatchActionPatrolOrders(c *gin.Context) {
@@ -925,7 +930,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 
 	results := make([]BatchResultItem, 0, len(req.IDs))
 
-	batchWriteFailAudit := func(order models.PatrolOrder, action, msg string) {
+	batchWriteFailAudit := func(order models.PatrolOrder, action, msg, errorType string) {
 		database.DB.Create(&models.OrderHistory{
 			PatrolOrderID:  order.ID,
 			Action:         action,
@@ -934,6 +939,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 			OperatorID:     user.UserID,
 			OperatorName:   user.UserName,
 			Remark:         msg,
+			AbnormalReason: fmt.Sprintf("[%s] %s | 处理人:%s", errorType, msg, order.CurrentHandler),
 			Success:        false,
 		})
 		database.DB.Create(&models.AuditNote{
@@ -941,7 +947,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 			OperatorID:    user.UserID,
 			OperatorName:  user.UserName,
 			NoteType:      "校验失败",
-			Content:       msg,
+			Content:       fmt.Sprintf("[%s] %s | 处理人:%s | 版本:%d", errorType, msg, order.CurrentHandler, order.Version),
 		})
 	}
 
@@ -959,11 +965,18 @@ func BatchActionPatrolOrders(c *gin.Context) {
 
 		item.OrderNo = order.OrderNo
 		item.Status = order.Status
+		item.Version = order.Version
+		item.CurrentHandler = order.CurrentHandler
+		item.CurrentHandlerID = order.CurrentHandlerID
+
+		if order.Deadline != nil && order.Deadline.Before(time.Now()) {
+			item.OverdueReason = fmt.Sprintf("已逾期，截止日期%s", order.Deadline.Format("2006-01-02"))
+		}
 
 		expectVersion, hasVer := req.Version[id]
 		if hasVer && expectVersion != order.Version {
 			msg := fmt.Sprintf("版本冲突：当前版本%d，您提交的版本%d", order.Version, expectVersion)
-			batchWriteFailAudit(order, req.Action, msg)
+			batchWriteFailAudit(order, req.Action, msg, "version_conflict")
 			item.Success = false
 			item.Message = msg
 			item.ErrorType = "version_conflict"
@@ -979,7 +992,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 			if !((user.Role == config.RoleUnderwriter && order.Status == config.StatusPending) ||
 				(user.Role == config.RoleBusinessOwner && (order.Status == config.StatusApproved || order.Status == config.StatusSynced))) {
 				msg := fmt.Sprintf("处理人不匹配：当前处理人%s", order.CurrentHandler)
-				batchWriteFailAudit(order, req.Action, msg)
+				batchWriteFailAudit(order, req.Action, msg, "handler_mismatch")
 				item.Success = false
 				item.Message = msg
 				item.ErrorType = "handler_mismatch"
@@ -990,7 +1003,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 
 		nextStatus, flowErr := validateStatusFlow(order.Status, req.Action)
 		if flowErr != nil {
-			batchWriteFailAudit(order, req.Action, flowErr.Error())
+			batchWriteFailAudit(order, req.Action, flowErr.Error(), "status_flow")
 			item.Success = false
 			item.Message = flowErr.Error()
 			item.ErrorType = "status_flow"
@@ -1017,7 +1030,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 				}
 				if len(missing) > 0 {
 					msg := fmt.Sprintf("缺少必需证据：%s", strings.Join(missing, "、"))
-					batchWriteFailAudit(order, req.Action, msg)
+					batchWriteFailAudit(order, req.Action, msg, "missing_evidence")
 					item.Success = false
 					item.Message = msg
 					item.MissingEvidence = missingKeys
@@ -1030,7 +1043,7 @@ func BatchActionPatrolOrders(c *gin.Context) {
 
 		if (req.Action == config.ActionApprove || req.Action == config.ActionSync) && order.Deadline != nil && order.Deadline.Before(time.Now()) {
 			msg := fmt.Sprintf("申请已逾期推进，截止日期%s", order.Deadline.Format("2006-01-02"))
-			batchWriteFailAudit(order, req.Action, msg)
+			batchWriteFailAudit(order, req.Action, msg, "overdue")
 			item.Success = false
 			item.Message = msg
 			item.ErrorType = "overdue"
@@ -1164,6 +1177,9 @@ func BatchActionPatrolOrders(c *gin.Context) {
 		} else {
 			item.Success = true
 			item.Status = order.Status
+			item.Version = order.Version
+			item.CurrentHandler = order.CurrentHandler
+			item.CurrentHandlerID = order.CurrentHandlerID
 			item.Message = "处理成功"
 		}
 		results = append(results, item)

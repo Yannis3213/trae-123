@@ -11,6 +11,14 @@ export default function BatchResultModal({ data, onClose }) {
     missing_evidence: '缺少证据',
     overdue: '逾期推进',
   }
+  const errorTypeColors = {
+    not_found: '#8c8c8c',
+    version_conflict: '#722ed1',
+    handler_mismatch: '#d4380d',
+    status_flow: '#fa8c16',
+    missing_evidence: '#cf1322',
+    overdue: '#eb2f96',
+  }
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal large" onClick={(e) => e.stopPropagation()}>
@@ -39,29 +47,46 @@ export default function BatchResultModal({ data, onClose }) {
           <div className="batch-result-list">
             {data.results.map(r => (
               <div key={r.id} className={'batch-result-item ' + (r.success ? 'success' : 'fail')}>
-                <span className="batch-id" style={{ fontWeight: 600 }}>{r.order_no || `#${r.id}`}</span>
-                <span>{r.success ? '✅' : '❌'}</span>
-                <span style={{ flex: 1 }}>
-                  {r.message}
-                  {r.missing_evidence && r.missing_evidence.length > 0 && (
-                    <span style={{ marginLeft: 8, fontSize: 12, color: '#cf1322' }}>
-                      （缺 {r.missing_evidence.map(c => EVIDENCE_CATEGORY_LABEL[c] || c).join('、')}）
-                    </span>
-                  )}
-                </span>
-                {r.error_type && (
-                  <span className="tag" style={{
-                    background: r.success ? '#f6ffed' : '#fff1f0',
-                    color: r.success ? '#389e0d' : '#cf1322',
-                    border: `1px solid ${r.success ? '#b7eb8f' : '#ffa39e'}`,
-                    fontSize: 12,
-                  }}>{errorTypeLabels[r.error_type] || r.error_type}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: r.success ? 0 : 6 }}>
+                  <span style={{ fontWeight: 600, minWidth: 120 }}>{r.order_no || `#${r.id}`}</span>
+                  <span>{r.success ? '✅' : '❌'}</span>
+                  <span style={{ flex: 1, fontSize: 13 }}>
+                    {r.message}
+                  </span>
+                </div>
+                {!r.success && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 4, paddingLeft: 130 }}>
+                    {r.error_type && (
+                      <span className="tag" style={{
+                        background: (errorTypeColors[r.error_type] || '#cf1322') + '18',
+                        color: errorTypeColors[r.error_type] || '#cf1322',
+                        border: `1px solid ${errorTypeColors[r.error_type] || '#cf1322'}44`,
+                        fontSize: 11, fontWeight: 600,
+                      }}>{errorTypeLabels[r.error_type] || r.error_type}</span>
+                    )}
+                    {r.missing_evidence && r.missing_evidence.length > 0 && (
+                      <span style={{ fontSize: 12, color: '#cf1322' }}>
+                        缺：{r.missing_evidence.map(c => EVIDENCE_CATEGORY_LABEL[c] || c).join('、')}
+                      </span>
+                    )}
+                    {r.overdue_reason && (
+                      <span style={{ fontSize: 12, color: '#eb2f96' }}>⏰ {r.overdue_reason}</span>
+                    )}
+                    {r.current_handler && (
+                      <span style={{ fontSize: 12, color: '#6b7280' }}>👤 {r.current_handler}</span>
+                    )}
+                    {r.version > 0 && (
+                      <span style={{ fontSize: 12, color: '#8c8c8c' }}>v{r.version}</span>
+                    )}
+                  </div>
                 )}
-                {r.status && (
+                {r.success && r.status && (
                   <span className="tag" style={{
+                    marginLeft: 8,
                     background: STATUS_COLOR[r.status] + '22',
                     color: STATUS_COLOR[r.status],
-                    border: `1px solid ${STATUS_COLOR[r.status]}55`
+                    border: `1px solid ${STATUS_COLOR[r.status]}55`,
+                    fontSize: 12,
                   }}>{r.status}</span>
                 )}
               </div>

@@ -303,6 +303,7 @@ export default function OrderList({ mode }) {
           order={actionModal.order}
           ids={actionModal.ids}
           versions={actionModal.versions}
+          orders={actionModal.orders}
           onClose={() => setActionModal(null)}
           onConfirm={confirmAction}
         />
