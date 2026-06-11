@@ -3,9 +3,9 @@ mod db;
 mod error;
 mod models;
 
-use poem::cors::{Cors, Origin};
 use poem::listener::TcpListener;
 use poem::{EndpointExt, Server};
+use poem_cors::{Cors, Origin};
 use poem_openapi::OpenApiService;
 use std::sync::Arc;
 use tokio::sync::RwLock;

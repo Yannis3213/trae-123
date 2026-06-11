@@ -178,6 +178,8 @@ pub struct Ticket {
     pub responsible_name: String,
     pub current_handler_id: String,
     pub current_handler_name: String,
+    pub next_handler_id: Option<String>,
+    pub next_handler_name: Option<String>,
     pub created_at: DateTime<Utc>,
     pub deadline: DateTime<Utc>,
     pub version: i64,
@@ -216,6 +218,10 @@ pub struct ProcessingRecord {
     pub action: String,
     pub from_status: String,
     pub to_status: String,
+    pub from_handler_id: String,
+    pub from_handler_name: String,
+    pub to_handler_id: String,
+    pub to_handler_name: String,
     pub operator_id: String,
     pub operator_name: String,
     pub operator_role: String,
@@ -284,7 +290,11 @@ pub struct BatchProcessResultItem {
     pub ticket_id: String,
     pub success: bool,
     pub message: String,
+    pub failed_reason: Option<String>,
     pub new_status: Option<String>,
+    pub new_status_key: Option<String>,
+    pub new_handler_id: Option<String>,
+    pub new_handler_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Object)]

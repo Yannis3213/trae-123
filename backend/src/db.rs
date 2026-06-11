@@ -63,6 +63,10 @@ async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), AppError> {
             action TEXT NOT NULL,
             from_status TEXT NOT NULL,
             to_status TEXT NOT NULL,
+            from_handler_id TEXT NOT NULL DEFAULT '',
+            from_handler_name TEXT NOT NULL DEFAULT '',
+            to_handler_id TEXT NOT NULL DEFAULT '',
+            to_handler_name TEXT NOT NULL DEFAULT '',
             operator_id TEXT NOT NULL,
             operator_name TEXT NOT NULL,
             operator_role TEXT NOT NULL,
@@ -97,6 +101,17 @@ async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), AppError> {
     for m in migrations {
         sqlx::query(m).execute(pool).await?;
     }
+
+    let alters = [
+        "ALTER TABLE processing_records ADD COLUMN from_handler_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE processing_records ADD COLUMN from_handler_name TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE processing_records ADD COLUMN to_handler_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE processing_records ADD COLUMN to_handler_name TEXT NOT NULL DEFAULT ''",
+    ];
+    for s in alters {
+        let _ = sqlx::query(s).execute(pool).await;
+    }
+
     Ok(())
 }
 
@@ -109,6 +124,80 @@ fn compute_expiry(deadline: chrono::DateTime<Utc>) -> (String, String) {
         ("near_expiry".to_string(), ExpiryStatus::NearExpiry.display_name().to_string())
     } else {
         ("normal".to_string(), ExpiryStatus::Normal.display_name().to_string())
+    }
+}
+
+pub async fn compute_next_handler(
+    pool: &Pool<Sqlite>,
+    current_status: TicketStatus,
+    target_status: TicketStatus,
+    current_handler_id: &str,
+    current_handler_name: &str,
+    operator_id: &str,
+    operator_name: &str,
+) -> Result<(String, String, Option<(String, String)>), AppError> {
+    match (current_status, target_status) {
+        (TicketStatus::PendingReceipt, TicketStatus::CallRegistered)
+        | (TicketStatus::ExceptionReturned, TicketStatus::CallRegistered) => {
+            Ok((operator_id.to_string(), operator_name.to_string(), None))
+        }
+        (TicketStatus::CallRegistered, TicketStatus::Dispatched) => {
+            let row: Option<(String, String)> = sqlx::query_as(
+                "SELECT id, name FROM users WHERE role = 'supervisor' LIMIT 1",
+            )
+            .fetch_optional(pool)
+            .await?;
+            let (next_id, next_name) = row.unwrap_or_else(|| (operator_id.to_string(), operator_name.to_string()));
+            Ok((next_id.clone(), next_name.clone(), Some(("u_supervisor".to_string(), "客服审核主管-王芳".to_string()))))
+        }
+        (TicketStatus::Dispatched, TicketStatus::CallbackClosed) => {
+            Ok((operator_id.to_string(), operator_name.to_string(), Some(("u_reviewer".to_string(), "复核负责人-张伟".to_string()))))
+        }
+        (TicketStatus::Dispatched, TicketStatus::ReceiptCompleted) => {
+            let row: Option<(String, String)> = sqlx::query_as(
+                "SELECT id, name FROM users WHERE role = 'reviewer' LIMIT 1",
+            )
+            .fetch_optional(pool)
+            .await?;
+            let (next_id, next_name) = row.unwrap_or_else(|| (operator_id.to_string(), operator_name.to_string()));
+            Ok((next_id.clone(), next_name.clone(), None))
+        }
+        (TicketStatus::CallbackClosed, TicketStatus::Archived)
+        | (TicketStatus::ReceiptCompleted, TicketStatus::Archived) => {
+            Ok((operator_id.to_string(), operator_name.to_string(), None))
+        }
+        (_, TicketStatus::ExceptionReturned) => {
+            let row: Option<(String, String)> = sqlx::query_as(
+                "SELECT id, name FROM users WHERE role = 'registrar' LIMIT 1",
+            )
+            .fetch_optional(pool)
+            .await?;
+            let (next_id, next_name) = row.unwrap_or_else(|| (operator_id.to_string(), operator_name.to_string()));
+            Ok((next_id.clone(), next_name.clone(), None))
+        }
+        _ => {
+            Ok((current_handler_id.to_string(), current_handler_name.to_string(), None))
+        }
+    }
+}
+
+pub fn peek_next_handler_hint(
+    status: &str,
+    priority: &str,
+) -> (Option<String>, Option<String>) {
+    match TicketStatus::from_str(status) {
+        Some(TicketStatus::PendingReceipt) => (None, None),
+        Some(TicketStatus::CallRegistered) => (Some("u_supervisor".to_string()), Some("客服审核主管-王芳".to_string())),
+        Some(TicketStatus::Dispatched) => {
+            if priority == "urgent" || priority == "high" {
+                (Some("u_qa_supervisor".to_string()), Some("质检主管-陈强".to_string()))
+            } else {
+                (Some("u_supervisor".to_string()), Some("客服审核主管-王芳".to_string()))
+            }
+        }
+        Some(TicketStatus::ExceptionReturned) => (Some("u_registrar".to_string()), Some("客服登记员-李明".to_string())),
+        Some(TicketStatus::CallbackClosed) | Some(TicketStatus::ReceiptCompleted) => (Some("u_reviewer".to_string()), Some("复核负责人-张伟".to_string())),
+        _ => (None, None),
     }
 }
 
@@ -162,7 +251,7 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         (
             "t_missing",
             "【缺材料】客户退款申请缺少凭证",
-            "客户申请退款，但未上传购买凭证和商品照片，需要补正材料。",
+            "客户申请退款，但未上传购买凭证和商品照片，需要补正材料。登记员补正并上传附件后可继续推进。",
             "周女士", "13800138002",
             TicketStatus::ExceptionReturned, Priority::High,
             "u_registrar", "客服登记员-李明", "u_registrar", "客服登记员-李明",
@@ -172,7 +261,7 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         (
             "t_overdue",
             "【逾期】客户投诉物流超时未送达",
-            "客户投诉物流已超过承诺送达时间3天，商品仍未收到，情绪激动。",
+            "客户投诉物流已超过承诺送达时间3天，商品仍未收到，情绪激动。主管签收后可派单回访。",
             "吴先生", "13800138003",
             TicketStatus::Dispatched, Priority::Urgent,
             "u_supervisor", "客服审核主管-王芳", "u_supervisor", "客服审核主管-王芳",
@@ -182,7 +271,7 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         (
             "t_returned",
             "【退回】质量问题工单被退回补正",
-            "客户反映收到商品有质量问题，前次处理因证据不足被审核主管退回，需重新补充照片和视频证据。",
+            "客户反映收到商品有质量问题，前次处理因证据不足被审核主管退回，需重新补充照片和视频证据。上传证据后可继续推进。",
             "郑女士", "13800138004",
             TicketStatus::ExceptionReturned, Priority::High,
             "u_registrar", "客服登记员-李明", "u_registrar", "客服登记员-李明",
@@ -218,7 +307,7 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
     let exception_seeds = [
         ("t_missing", "缺材料", "缺少购买凭证和商品照片", "u_supervisor", "客服审核主管-王芳"),
         ("t_returned", "退回补正", "证据照片模糊，需要重新上传高清图片和开箱视频", "u_supervisor", "客服审核主管-王芳"),
-        ("t_overdue", "逾期", "已超过承诺处理时效1天", "u_manager", "客服经理-刘洋"),
+        ("t_overdue", "逾期", "已超过承诺处理时效1天，客户多次催单", "u_manager", "客服经理-刘洋"),
     ];
     for (tid, rt, desc, rb, rbn) in exception_seeds {
         sqlx::query(
@@ -235,19 +324,83 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         .await?;
     }
 
+    let record_seeds = [
+        ("t_normal", "创建", "", "pending_receipt", "u_agent", "客服坐席-赵敏", "agent", "系统自动创建，客服坐席负责签收"),
+        ("t_missing", "创建", "", "pending_receipt", "u_registrar", "客服登记员-李明", "registrar", "工单创建"),
+        ("t_missing", "登记来电", "pending_receipt", "call_registered", "u_registrar", "客服登记员-李明", "registrar", "客户来电登记"),
+        ("t_missing", "退回补正", "call_registered", "exception_returned", "u_supervisor", "客服审核主管-王芳", "supervisor", "缺少购买凭证和商品照片，退回补正"),
+        ("t_returned", "创建", "", "pending_receipt", "u_registrar", "客服登记员-李明", "registrar", "工单创建"),
+        ("t_returned", "登记来电", "pending_receipt", "call_registered", "u_registrar", "客服登记员-李明", "registrar", "客户反馈质量问题"),
+        ("t_returned", "退回", "call_registered", "exception_returned", "u_supervisor", "客服审核主管-王芳", "supervisor", "证据不足，退回补正"),
+        ("t_overdue", "创建", "", "pending_receipt", "u_agent", "客服坐席-赵敏", "agent", "工单创建"),
+        ("t_overdue", "登记来电", "pending_receipt", "call_registered", "u_agent", "客服坐席-赵敏", "agent", "客户来电投诉"),
+        ("t_overdue", "派单处理", "call_registered", "dispatched", "u_supervisor", "客服审核主管-王芳", "supervisor", "紧急投诉，优先处理"),
+    ];
+
+    for (tid, action, fs, ts, oid, oname, orole, remark) in record_seeds {
+        let ticket: Option<(String, String)> = sqlx::query_as(
+            "SELECT current_handler_id, current_handler_name FROM tickets WHERE id = ?"
+        )
+        .bind(tid)
+        .fetch_optional(pool)
+        .await?;
+        let (from_hid, from_hname) = ticket.unwrap_or_else(|| (oid.to_string(), oname.to_string()));
+        let (to_hid, to_hname) = match ts {
+            "call_registered" => (oid.to_string(), oname.to_string()),
+            "dispatched" => ("u_supervisor".to_string(), "客服审核主管-王芳".to_string()),
+            "exception_returned" => ("u_registrar".to_string(), "客服登记员-李明".to_string()),
+            _ => (oid.to_string(), oname.to_string()),
+        };
+
+        sqlx::query(
+            r#"INSERT INTO processing_records (id, ticket_id, action, from_status, to_status,
+                from_handler_id, from_handler_name, to_handler_id, to_handler_name,
+                operator_id, operator_name, operator_role, remark)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(tid)
+        .bind(action)
+        .bind(fs)
+        .bind(ts)
+        .bind(&from_hid)
+        .bind(&from_hname)
+        .bind(&to_hid)
+        .bind(&to_hname)
+        .bind(oid)
+        .bind(oname)
+        .bind(orole)
+        .bind(remark)
+        .execute(pool)
+        .await?;
+
+        if fs != "" {
+            sqlx::query(
+                "UPDATE tickets SET current_handler_id = ?, current_handler_name = ? WHERE id = ?"
+            )
+            .bind(&to_hid)
+            .bind(&to_hname)
+            .bind(tid)
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    for tid in ["t_missing", "t_returned"] {
+        sqlx::query(
+            "UPDATE tickets SET return_reason = ? WHERE id = ?"
+        )
+        .bind("证据材料不足，请补充上传后重新提交")
+        .bind(tid)
+        .execute(pool)
+        .await?;
+    }
+
     sqlx::query(
-        r#"INSERT INTO processing_records (id, ticket_id, action, from_status, to_status, operator_id, operator_name, operator_role, remark)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        "UPDATE tickets SET processing_result = ? WHERE id = ?"
     )
-    .bind(Uuid::new_v4().to_string())
-    .bind("t_returned")
-    .bind("退回")
-    .bind(TicketStatus::CallRegistered.as_str())
-    .bind(TicketStatus::ExceptionReturned.as_str())
-    .bind("u_supervisor")
-    .bind("客服审核主管-王芳")
-    .bind(Role::Supervisor.as_str())
-    .bind("证据不足，退回补正")
+    .bind("已联系物流方核实，承诺24小时内安排派送，并电话致歉客户")
+    .bind("t_overdue")
     .execute(pool)
     .await?;
 
@@ -309,6 +462,7 @@ fn map_ticket_row(
     let status_enum = TicketStatus::from_str(&status).unwrap_or(TicketStatus::PendingReceipt);
     let prio_enum = Priority::from_str(&priority).unwrap_or(Priority::Medium);
     let (exp_key, exp_display) = compute_expiry(deadline);
+    let (next_id, next_name) = peek_next_handler_hint(&status, &priority);
 
     Ticket {
         id, title, description, customer_name, customer_phone,
@@ -316,6 +470,8 @@ fn map_ticket_row(
         priority, priority_display: prio_enum.display_name().to_string(),
         responsible_id, responsible_name,
         current_handler_id, current_handler_name,
+        next_handler_id: next_id,
+        next_handler_name: next_name,
         created_at, deadline, version,
         exception_tags: tags,
         expiry_status: exp_key, expiry_display: exp_display,
@@ -459,9 +615,11 @@ pub async fn get_ticket_detail(pool: &Pool<Sqlite>, ticket_id: &str) -> Result<T
         })
         .collect();
 
-    type PrRow = (String, String, String, String, String, String, String, String, Option<String>, chrono::DateTime<Utc>);
+    type PrRow = (String, String, String, String, String, String, String, String, String, String, String, String, Option<String>, chrono::DateTime<Utc>);
     let pr_rows: Vec<PrRow> = sqlx::query_as(
-        r#"SELECT id, ticket_id, action, from_status, to_status, operator_id, operator_name, operator_role, remark, created_at
+        r#"SELECT id, ticket_id, action, from_status, to_status,
+                  from_handler_id, from_handler_name, to_handler_id, to_handler_name,
+                  operator_id, operator_name, operator_role, remark, created_at
            FROM processing_records WHERE ticket_id = ? ORDER BY created_at DESC"#,
     )
     .bind(ticket_id)
@@ -469,8 +627,13 @@ pub async fn get_ticket_detail(pool: &Pool<Sqlite>, ticket_id: &str) -> Result<T
     .await?;
     let processing_records: Vec<ProcessingRecord> = pr_rows
         .into_iter()
-        .map(|(id, ticket_id, action, from_status, to_status, operator_id, operator_name, operator_role, remark, created_at)| {
-            ProcessingRecord { id, ticket_id, action, from_status, to_status, operator_id, operator_name, operator_role, remark, created_at }
+        .map(|(id, ticket_id, action, from_status, to_status, fh_id, fh_name, th_id, th_name, operator_id, operator_name, operator_role, remark, created_at)| {
+            ProcessingRecord {
+                id, ticket_id, action, from_status, to_status,
+                from_handler_id: fh_id, from_handler_name: fh_name,
+                to_handler_id: th_id, to_handler_name: th_name,
+                operator_id, operator_name, operator_role, remark, created_at,
+            }
         })
         .collect();
 
@@ -566,14 +729,20 @@ pub async fn create_ticket(
     .await?;
 
     sqlx::query(
-        r#"INSERT INTO processing_records (id, ticket_id, action, from_status, to_status, operator_id, operator_name, operator_role, remark)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO processing_records (id, ticket_id, action, from_status, to_status,
+            from_handler_id, from_handler_name, to_handler_id, to_handler_name,
+            operator_id, operator_name, operator_role, remark)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(Uuid::new_v4().to_string())
     .bind(&id)
     .bind("创建")
     .bind("")
     .bind(status.as_str())
+    .bind("")
+    .bind("")
+    .bind(&resp_user.id)
+    .bind(&resp_user.name)
     .bind(&user.id)
     .bind(&user.name)
     .bind(&user.role)
@@ -673,6 +842,16 @@ pub async fn process_ticket(
         }
     }
 
+    let (next_handler_id, next_handler_name, _hint) = compute_next_handler(
+        pool,
+        current_status,
+        target_status,
+        &ticket.current_handler_id,
+        &ticket.current_handler_name,
+        &user.id,
+        &user.name,
+    ).await?;
+
     let mut tx = pool.begin().await?;
 
     let new_version = ticket.version + 1;
@@ -685,7 +864,7 @@ pub async fn process_ticket(
         if !new_exception_tags.contains(&"退回补正".to_string()) {
             new_exception_tags.push("退回补正".to_string());
         }
-        if let Some(reason) = &req.return_reason {
+        if let Some(rr) = &req.return_reason {
             sqlx::query(
                 r#"INSERT INTO exception_reasons (id, ticket_id, reason_type, description, reported_by, reported_by_name, resolved)
                    VALUES (?, ?, ?, ?, ?, ?, 0)"#,
@@ -693,7 +872,7 @@ pub async fn process_ticket(
             .bind(Uuid::new_v4().to_string())
             .bind(ticket_id)
             .bind("退回补正")
-            .bind(reason)
+            .bind(rr)
             .bind(&user.id)
             .bind(&user.name)
             .execute(&mut *tx)
@@ -706,40 +885,6 @@ pub async fn process_ticket(
     if matches!(target_status, TicketStatus::CallbackClosed | TicketStatus::ReceiptCompleted) {
         processing_result = req.processing_result.clone();
     }
-
-    let (next_handler_id, next_handler_name) = match (current_status, target_status) {
-        (TicketStatus::PendingReceipt, TicketStatus::CallRegistered)
-        | (TicketStatus::ExceptionReturned, TicketStatus::CallRegistered)
-        | (TicketStatus::Dispatched, TicketStatus::CallbackClosed)
-        | (TicketStatus::CallbackClosed, TicketStatus::Archived)
-        | (TicketStatus::ReceiptCompleted, TicketStatus::Archived) => (user.id.clone(), user.name.clone()),
-
-        (TicketStatus::CallRegistered, TicketStatus::Dispatched) => {
-            let row: Option<(String, String)> = sqlx::query_as(
-                "SELECT id, name FROM users WHERE role = 'supervisor' LIMIT 1",
-            )
-            .fetch_optional(&mut *tx)
-            .await?;
-            row.unwrap_or_else(|| (user.id.clone(), user.name.clone()))
-        }
-        (TicketStatus::Dispatched, TicketStatus::ReceiptCompleted) => {
-            let row: Option<(String, String)> = sqlx::query_as(
-                "SELECT id, name FROM users WHERE role = 'reviewer' LIMIT 1",
-            )
-            .fetch_optional(&mut *tx)
-            .await?;
-            row.unwrap_or_else(|| (user.id.clone(), user.name.clone()))
-        }
-        (_, TicketStatus::ExceptionReturned) => {
-            let row: Option<(String, String)> = sqlx::query_as(
-                "SELECT id, name FROM users WHERE role = 'registrar' LIMIT 1",
-            )
-            .fetch_optional(&mut *tx)
-            .await?;
-            row.unwrap_or_else(|| (user.id.clone(), user.name.clone()))
-        }
-        _ => (user.id.clone(), user.name.clone()),
-    };
 
     let tags_json = serde_json::to_string(&new_exception_tags).unwrap_or_else(|_| "[]".to_string());
 
@@ -759,14 +904,20 @@ pub async fn process_ticket(
     .await?;
 
     sqlx::query(
-        r#"INSERT INTO processing_records (id, ticket_id, action, from_status, to_status, operator_id, operator_name, operator_role, remark)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        r#"INSERT INTO processing_records (id, ticket_id, action, from_status, to_status,
+            from_handler_id, from_handler_name, to_handler_id, to_handler_name,
+            operator_id, operator_name, operator_role, remark)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(Uuid::new_v4().to_string())
     .bind(ticket_id)
     .bind(&req.action)
     .bind(current_status.as_str())
     .bind(target_status.as_str())
+    .bind(&ticket.current_handler_id)
+    .bind(&ticket.current_handler_name)
+    .bind(&next_handler_id)
+    .bind(&next_handler_name)
     .bind(&user.id)
     .bind(&user.name)
     .bind(&user.role)
@@ -833,16 +984,32 @@ pub async fn batch_process_tickets(
                     ticket_id: ticket_id.clone(),
                     success: true,
                     message: "处理成功".to_string(),
+                    failed_reason: None,
                     new_status: Some(detail.ticket.status_display),
+                    new_status_key: Some(detail.ticket.status),
+                    new_handler_id: Some(detail.ticket.current_handler_id),
+                    new_handler_name: Some(detail.ticket.current_handler_name),
                 });
             }
             Err(e) => {
                 failed_count += 1;
+                let msg = e.to_string();
+                let failed_reason = match e {
+                    AppError::VersionConflict(_) => Some("版本冲突，工单已被其他人更新，请刷新后重试".to_string()),
+                    AppError::StatusConflict(_) => Some("状态或处理人冲突，当前身份无权处理此工单".to_string()),
+                    AppError::MissingEvidence(_) => Some("缺少证据材料，请先上传附件".to_string()),
+                    AppError::Forbidden(_) => Some("越权操作，此角色无法执行该动作".to_string()),
+                    _ => Some(msg.clone()),
+                };
                 results.push(BatchProcessResultItem {
                     ticket_id: ticket_id.clone(),
                     success: false,
-                    message: e.to_string(),
+                    message: msg,
+                    failed_reason,
                     new_status: None,
+                    new_status_key: None,
+                    new_handler_id: None,
+                    new_handler_name: None,
                 });
             }
         }
@@ -988,55 +1155,54 @@ pub async fn get_statistics(pool: &Pool<Sqlite>, user: &User) -> Result<TicketSt
     let base_where = if base_conds.is_empty() { String::new() } else { format!("WHERE {}", base_conds.join(" AND ")) };
     let and_where = if base_conds.is_empty() { String::new() } else { format!("AND {}", base_conds.join(" AND ")) };
 
-    let apply_binds = |mut q: sqlx::query::QueryScalar<'_, sqlx::Sqlite, i64, sqlx::sqlite::SqliteArguments<'_>>| {
+    let total: i64 = {
+        let mut q = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM tickets {}", base_where));
         for b in &base_binds { q = q.bind(b); }
-        q
+        q.fetch_one(pool).await?
     };
 
-    let total: i64 = apply_binds(sqlx::query_scalar(&format!("SELECT COUNT(*) FROM tickets {}", base_where))).fetch_one(pool).await?;
-
     let pending_statuses = [TicketStatus::PendingReceipt.as_str(), TicketStatus::ExceptionReturned.as_str()];
-    let pending_sql = format!(
-        "SELECT COUNT(*) FROM tickets WHERE status IN (?, ?) {}",
-        and_where
-    );
-    let mut pq = sqlx::query_scalar::<_, i64>(&pending_sql).bind(pending_statuses[0]).bind(pending_statuses[1]);
-    for b in &base_binds { pq = pq.bind(b); }
-    let pending: i64 = pq.fetch_one(pool).await?;
+    let pending: i64 = {
+        let mut q = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(*) FROM tickets WHERE status IN (?, ?) {}", and_where
+        )).bind(pending_statuses[0]).bind(pending_statuses[1]);
+        for b in &base_binds { q = q.bind(b); }
+        q.fetch_one(pool).await?
+    };
 
     let processing_statuses = [TicketStatus::CallRegistered.as_str(), TicketStatus::Dispatched.as_str()];
-    let proc_sql = format!(
-        "SELECT COUNT(*) FROM tickets WHERE status IN (?, ?) {}",
-        and_where
-    );
-    let mut proc_q = sqlx::query_scalar::<_, i64>(&proc_sql).bind(processing_statuses[0]).bind(processing_statuses[1]);
-    for b in &base_binds { proc_q = proc_q.bind(b); }
-    let processing: i64 = proc_q.fetch_one(pool).await?;
+    let processing: i64 = {
+        let mut q = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(*) FROM tickets WHERE status IN (?, ?) {}", and_where
+        )).bind(processing_statuses[0]).bind(processing_statuses[1]);
+        for b in &base_binds { q = q.bind(b); }
+        q.fetch_one(pool).await?
+    };
 
     let completed_statuses = [TicketStatus::ReceiptCompleted.as_str(), TicketStatus::CallbackClosed.as_str(), TicketStatus::Archived.as_str()];
-    let comp_sql = format!(
-        "SELECT COUNT(*) FROM tickets WHERE status IN (?, ?, ?) {}",
-        and_where
-    );
-    let mut comp_q = sqlx::query_scalar::<_, i64>(&comp_sql).bind(completed_statuses[0]).bind(completed_statuses[1]).bind(completed_statuses[2]);
-    for b in &base_binds { comp_q = comp_q.bind(b); }
-    let completed: i64 = comp_q.fetch_one(pool).await?;
+    let completed: i64 = {
+        let mut q = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(*) FROM tickets WHERE status IN (?, ?, ?) {}", and_where
+        )).bind(completed_statuses[0]).bind(completed_statuses[1]).bind(completed_statuses[2]);
+        for b in &base_binds { q = q.bind(b); }
+        q.fetch_one(pool).await?
+    };
 
-    let overdue_sql = format!(
-        "SELECT COUNT(*) FROM tickets WHERE deadline < ? {}",
-        and_where
-    );
-    let mut over_q = sqlx::query_scalar::<_, i64>(&overdue_sql).bind(Utc::now());
-    for b in &base_binds { over_q = over_q.bind(b); }
-    let overdue: i64 = over_q.fetch_one(pool).await?;
+    let overdue: i64 = {
+        let mut q = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(*) FROM tickets WHERE deadline < ? {}", and_where
+        )).bind(Utc::now());
+        for b in &base_binds { q = q.bind(b); }
+        q.fetch_one(pool).await?
+    };
 
-    let exc_sql = format!(
-        "SELECT COUNT(*) FROM tickets WHERE (exception_tags != '[]' OR status = ?) {}",
-        and_where
-    );
-    let mut exc_q = sqlx::query_scalar::<_, i64>(&exc_sql).bind(TicketStatus::ExceptionReturned.as_str());
-    for b in &base_binds { exc_q = exc_q.bind(b); }
-    let exception: i64 = exc_q.fetch_one(pool).await?;
+    let exception: i64 = {
+        let mut q = sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT COUNT(*) FROM tickets WHERE (exception_tags != '[]' OR status = ?) {}", and_where
+        )).bind(TicketStatus::ExceptionReturned.as_str());
+        for b in &base_binds { q = q.bind(b); }
+        q.fetch_one(pool).await?
+    };
 
     Ok(TicketStatistics {
         total,

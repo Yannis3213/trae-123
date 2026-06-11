@@ -109,6 +109,7 @@
             <th>优先级</th>
             <th>责任人</th>
             <th>当前处理人</th>
+            <th>下一处理人</th>
             <th>截止时间</th>
             <th>到期预警</th>
             <th>异常标签</th>
@@ -129,6 +130,10 @@
             <td><span :class="['priority-tag', 'priority-' + t.priority]">{{ t.priority_display }}</span></td>
             <td>{{ t.responsible_name }}</td>
             <td>{{ t.current_handler_name }}</td>
+            <td>
+              <span v-if="t.next_handler_name" class="info-value" style="color:#2563eb;">{{ t.next_handler_name }}</span>
+              <span v-else style="color:#9ca3af;">-</span>
+            </td>
             <td>{{ formatDate(t.deadline) }}</td>
             <td><span :class="['expiry-tag', 'expiry-' + t.expiry_status]">{{ t.expiry_display }}</span></td>
             <td>
@@ -140,7 +145,7 @@
             </td>
           </tr>
           <tr v-if="tickets.length === 0">
-            <td colspan="11">
+            <td colspan="12">
               <div class="empty">暂无工单数据</div>
             </td>
           </tr>
@@ -214,9 +219,26 @@
         </div>
         <div class="modal-body">
           <div v-if="batchResult" class="batch-results">
+            <div class="batch-summary">
+              <span>总计：{{ batchResult.total }} 条</span>
+              <span style="color:#059669;">成功：{{ batchResult.success_count }} 条</span>
+              <span style="color:#dc2626;">失败：{{ batchResult.failed_count }} 条</span>
+            </div>
             <div v-for="r in batchResult.results" :key="r.ticket_id" :class="['batch-result-item', r.success ? 'success' : 'failed']">
-              <span>{{ r.ticket_id }}</span>
-              <span>{{ r.message }}{{ r.new_status ? ' → ' + r.new_status : '' }}</span>
+              <div class="batch-item-header">
+                <span class="batch-item-id">{{ r.ticket_id }}</span>
+                <span :class="['batch-item-status', r.success ? 'ok' : 'err']">{{ r.success ? '✅ 成功' : '❌ 失败' }}</span>
+              </div>
+              <div class="batch-item-detail">
+                <span>{{ r.message }}</span>
+                <template v-if="r.success">
+                  <span v-if="r.new_status" class="batch-item-meta">状态：{{ r.new_status }}</span>
+                  <span v-if="r.new_handler_name" class="batch-item-meta">下一处理人：{{ r.new_handler_name }}</span>
+                </template>
+                <template v-else>
+                  <span v-if="r.failed_reason" class="batch-item-reason">失败原因：{{ r.failed_reason }}</span>
+                </template>
+              </div>
             </div>
           </div>
           <div v-else>

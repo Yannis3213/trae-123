@@ -714,18 +714,29 @@ body {
 /* Batch result */
 .batch-results {
   margin-top: 14px;
-  max-height: 300px;
+  max-height: 400px;
   overflow-y: auto;
 }
 
-.batch-result-item {
-  padding: 10px 12px;
+.batch-summary {
+  display: flex;
+  gap: 16px;
+  padding: 12px;
+  background: #f9fafb;
   border-radius: 6px;
-  margin-bottom: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.batch-result-item {
+  padding: 12px 14px;
+  border-radius: 8px;
+  margin-bottom: 8px;
   font-size: 13px;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .batch-result-item.success {
@@ -738,6 +749,94 @@ body {
   background: #fef2f2;
   color: #991b1b;
   border: 1px solid #fecaca;
+}
+
+.batch-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+
+.batch-item-id {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.batch-item-status.ok {
+  color: #059669;
+}
+
+.batch-item-status.err {
+  color: #dc2626;
+}
+
+.batch-item-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.batch-item-meta {
+  color: #047857;
+  font-weight: 500;
+}
+
+.batch-item-reason {
+  color: #b91c1c;
+  font-weight: 500;
+  background: rgba(220, 38, 38, 0.08);
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 2px;
+}
+
+/* Handover info */
+.handover-info {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.handover-info-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e40af;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.handover-info-row {
+  display: flex;
+  gap: 24px;
+  font-size: 13px;
+}
+
+.handover-info-row .info-label {
+  color: #3b82f6;
+  font-weight: 500;
+}
+
+.handover-arrow {
+  color: #2563eb;
+  font-weight: 700;
+  padding: 0 8px;
+}
+
+.timeline-handover {
+  font-size: 11px;
+  color: #2563eb;
+  background: #dbeafe;
+  padding: 3px 8px;
+  border-radius: 4px;
+  margin-top: 4px;
+  display: inline-block;
+  font-weight: 500;
 }
 
 /* Alert */

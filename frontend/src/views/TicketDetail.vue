@@ -35,6 +35,22 @@
             </div>
           </div>
 
+          <div class="handover-info">
+            <div class="handover-info-title">🔄 交接流转信息</div>
+            <div class="handover-info-row">
+              <div>
+                <span class="info-label">当前处理人：</span>
+                <span class="info-value" style="font-weight:600;">{{ detail.ticket.current_handler_name }}</span>
+              </div>
+              <span class="handover-arrow">→</span>
+              <div>
+                <span class="info-label">下一处理人：</span>
+                <span v-if="detail.ticket.next_handler_name" class="info-value" style="font-weight:600;color:#2563eb;">{{ detail.ticket.next_handler_name }}</span>
+                <span v-else style="color:#9ca3af;">（待确定）</span>
+              </div>
+            </div>
+          </div>
+
           <div class="info-grid">
             <div class="info-item">
               <span class="info-label">优先级：</span>
@@ -135,6 +151,12 @@
                 </div>
                 <div class="timeline-meta">
                   {{ r.operator_name }} ({{ roleName(r.operator_role) }}) · {{ formatDate(r.created_at) }}
+                </div>
+                <div v-if="r.from_handler_name && r.to_handler_name && r.from_handler_name !== r.to_handler_name" class="timeline-handover">
+                  📤 交接：{{ r.from_handler_name }} → {{ r.to_handler_name }}
+                </div>
+                <div v-else-if="r.to_handler_name" class="timeline-handover">
+                  👤 当前处理人：{{ r.to_handler_name }}
                 </div>
                 <div v-if="r.remark" class="timeline-remark">{{ r.remark }}</div>
               </div>
