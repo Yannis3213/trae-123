@@ -358,6 +358,22 @@ class Command(BaseCommand):
         app6 = AssistanceApplication.objects.filter(application_no='BZDEMO0006').first()
         app3 = AssistanceApplication.objects.filter(application_no='BZDEMO0003').first()
 
+        for app in [x for x in [app3, app4, app5, app6] if x]:
+            ExceptionLog.objects.filter(
+                application=app,
+                batch_id__in=[batch_id_empty_reason, batch_id_mixed],
+            ).delete()
+            ProcessingRecord.objects.filter(
+                application=app,
+                action='return',
+                comment__startswith='批量退回：',
+            ).delete()
+            AuditNote.objects.filter(
+                application=app,
+                note_type='return_reason',
+                content__contains='（批量）',
+            ).delete()
+
         if app4:
             ExceptionLog.objects.create(
                 application=app4,

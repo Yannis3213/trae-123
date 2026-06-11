@@ -129,6 +129,7 @@ def create_new_application(request, payload: ApplicationCreateSchema):
 def process_single_application(request, payload: ApplicationProcessSchema):
     user = request.auth
     application = None
+    comment = (payload.comment or '').strip()
     try:
         application = AssistanceApplication.objects.select_for_update().get(
             id=payload.application_id
@@ -137,7 +138,7 @@ def process_single_application(request, payload: ApplicationProcessSchema):
         raise BusinessException('NOT_FOUND', '帮扶申请不存在')
 
     try:
-        if payload.action == 'return' and not payload.comment:
+        if payload.action == 'return' and not comment:
             raise BusinessException('MISSING_COMMENT', '退回补正必须填写原因')
 
         application, record = process_application_action(
@@ -145,7 +146,7 @@ def process_single_application(request, payload: ApplicationProcessSchema):
             application=application,
             action=payload.action,
             version=payload.version,
-            comment=payload.comment or '',
+            comment=comment,
             evidence_required=payload.evidence_required
         )
     except BusinessException as exc:

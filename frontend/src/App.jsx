@@ -109,6 +109,7 @@ export default function App() {
           currentUser={user()}
           onClose={() => setDetailId(null)}
           onUpdated={handleDataUpdated}
+          refreshTrigger={refreshTrigger()}
         />
       )}
 

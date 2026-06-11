@@ -30,7 +30,7 @@ const evidenceTypeOptions = [
   { value: 'amount_calculation', label: '金额计算表' },
 ];
 
-export default function ApplicationDetail({ applicationId, currentUser, onClose, onUpdated }) {
+export default function ApplicationDetail({ applicationId, currentUser, onClose, onUpdated, refreshTrigger }) {
   const [application, setApplication] = createSignal(null);
   const [loading, setLoading] = createSignal(false);
   const [action, setAction] = createSignal('');
@@ -69,7 +69,7 @@ export default function ApplicationDetail({ applicationId, currentUser, onClose,
     if (applicationId) {
       loadDetail();
     }
-  }, [applicationId]);
+  }, [applicationId, refreshTrigger]);
 
   const getAvailableActions = () => {
     const app = application();

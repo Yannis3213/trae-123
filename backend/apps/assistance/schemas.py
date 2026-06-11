@@ -174,6 +174,10 @@ class BatchResultItem(BaseModel):
     success: bool
     error_code: Optional[str] = None
     error_message: Optional[str] = None
+    status: Optional[str] = None
+    status_name: Optional[str] = None
+    current_handler: Optional[str] = None
+    version: Optional[int] = None
 
 
 class BatchProcessResult(BaseModel):

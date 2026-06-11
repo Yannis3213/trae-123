@@ -283,7 +283,8 @@ def process_application_action(
     action: str,
     version: int,
     comment: str = '',
-    evidence_required: List[str] = None
+    evidence_required: List[str] = None,
+    is_batch: bool = False
 ) -> Tuple[AssistanceApplication, ProcessingRecord]:
     role = get_user_role(user)
     previous_status = application.status
@@ -379,10 +380,11 @@ def process_application_action(
         )
 
     if action == 'return' and comment:
+        prefix = '（批量）' if is_batch else ''
         create_audit_note(
             application=application,
             note_type='return_reason',
-            content=f'退回补正原因：{comment}',
+            content=f'退回补正原因{prefix}：{comment}',
             operator=user
         )
 
@@ -558,7 +560,7 @@ def process_batch_item(
     app_id = item['application_id']
     version = item['version']
     action = item['action']
-    comment = item.get('comment', '')
+    comment = (item.get('comment', '') or '').strip()
 
     exc_type_map = {
         'PERMISSION_DENIED': 'permission_violation',
@@ -577,6 +579,10 @@ def process_batch_item(
         'success': False,
         'error_code': None,
         'error_message': None,
+        'status': None,
+        'status_name': None,
+        'current_handler': None,
+        'version': None,
     }
 
     try:
@@ -591,18 +597,15 @@ def process_batch_item(
             application=application,
             action=action,
             version=version,
-            comment=comment
+            comment=comment,
+            is_batch=True
         )
 
-        if action == 'return' and comment:
-            create_audit_note(
-                application=application,
-                note_type='return_reason',
-                content=f'退回补正原因（批量）：{comment}',
-                operator=user
-            )
-
         result['success'] = True
+        result['status'] = application.status
+        result['status_name'] = get_status_name(application.status)
+        result['current_handler'] = application.current_handler.username if application.current_handler else None
+        result['version'] = application.version
 
     except AssistanceApplication.DoesNotExist:
         result['error_code'] = 'NOT_FOUND'

@@ -106,20 +106,29 @@ export default function BatchProcessModal({ applications, action, onClose, onSuc
               <For each={results().results}>
                 {(result) => (
                   <div class={`batch-result-item ${result.success ? 'success' : 'failure'}`}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                      <div>
-                        <strong>{result.application_no}</strong>
-                        {result.success ? (
-                          <span style={{ color: '#52c41a', marginLeft: '8px' }}>处理成功</span>
-                        ) : (
-                          <span style={{ color: '#ff4d4f', marginLeft: '8px' }}>
-                            [{result.error_code}] {result.error_message}
-                          </span>
-                        )}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', width: '100%', flexDirection: 'column' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                        <div>
+                          <strong>{result.application_no}</strong>
+                          {result.success ? (
+                            <span style={{ color: '#52c41a', marginLeft: '8px' }}>处理成功</span>
+                          ) : (
+                            <span style={{ color: '#ff4d4f', marginLeft: '8px' }}>
+                              [{result.error_code}] {result.error_message}
+                            </span>
+                          )}
+                        </div>
+                        <span class={`badge badge-${result.success ? 'passed' : 'returned'}`}>
+                          {result.success ? '成功' : '失败'}
+                        </span>
                       </div>
-                      <span class={`badge badge-${result.success ? 'passed' : 'returned'}`}>
-                        {result.success ? '成功' : '失败'}
-                      </span>
+                      {result.success && (
+                        <div style={{ marginTop: '8px', padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '4px', fontSize: '13px', color: '#389e0d', width: '100%' }}>
+                          <span>最新状态：<strong>{result.status_name}</strong></span>
+                          <span style={{ marginLeft: '16px' }}>处理人：<strong>{result.current_handler}</strong></span>
+                          <span style={{ marginLeft: '16px' }}>版本：<strong>v{result.version}</strong></span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
