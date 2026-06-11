@@ -327,13 +327,19 @@ pub struct ProcessRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchItem {
+    pub id: String,
+    pub version: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchProcessRequest {
-    pub ids: Vec<String>,
     pub action: String,
     pub operator: String,
     pub operator_role: String,
     pub comment: Option<String>,
     pub exception_reason: Option<String>,
+    pub items: Vec<BatchItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

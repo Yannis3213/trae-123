@@ -14,6 +14,39 @@ pub fn validate_role_action(role: &str, action: &Action) -> Result<(), AppError>
     Ok(())
 }
 
+pub fn validate_current_handler_role(current_handler_role: &str, action: &Action, operator_role: &str) -> Result<(), AppError> {
+    if operator_role != current_handler_role {
+        return Err(AppError::Unauthorized(format!(
+            "当前处理角色为 {}，无权越权操作",
+            match current_handler_role {
+                "pond_admin" => "塘口管理员",
+                "quality_engineer" => "水质工程师",
+                "base_director" => "基地负责人",
+                _ => current_handler_role,
+            }
+        )));
+    }
+
+    let required_role = match action {
+        Action::Submit | Action::Correct => "pond_admin",
+        Action::Approve | Action::Reject => "quality_engineer",
+        Action::ConfirmSync => "base_director",
+    };
+
+    if operator_role != required_role {
+        return Err(AppError::Unauthorized(format!(
+            "此操作需要 {} 角色",
+            match required_role {
+                "pond_admin" => "塘口管理员",
+                "quality_engineer" => "水质工程师",
+                "base_director" => "基地负责人",
+                _ => required_role,
+            }
+        )));
+    }
+    Ok(())
+}
+
 pub fn validate_status_transition(current_status: &str, action: &Action) -> Result<String, AppError> {
     let status = Status::from_str(current_status).ok_or_else(|| AppError::Validation(format!("无效状态: {}", current_status)))?;
     match action {
@@ -42,7 +75,7 @@ pub fn validate_status_transition(current_status: &str, action: &Action) -> Resu
 
 pub fn validate_version(db_version: i32, request_version: i32) -> Result<(), AppError> {
     if db_version != request_version {
-        return Err(AppError::Conflict("版本冲突，请刷新后重试".to_string()));
+        return Err(AppError::Conflict(format!("版本冲突，请刷新后重试（当前版本: {}，请求版本: {}）", db_version, request_version)));
     }
     Ok(())
 }
@@ -70,10 +103,10 @@ pub fn validate_reject_requires_reason(action: &Action, reason: Option<&str>) ->
 
 pub fn get_next_handler(action: &Action) -> (&'static str, &'static str) {
     match action {
-        Action::Submit => ("quality_engineer_default", "quality_engineer"),
-        Action::Approve => ("base_director_default", "base_director"),
-        Action::Reject => ("pond_admin_default", "pond_admin"),
-        Action::Correct => ("quality_engineer_default", "quality_engineer"),
-        Action::ConfirmSync => ("base_director_default", "base_director"),
+        Action::Submit => ("李工", "quality_engineer"),
+        Action::Approve => ("王主任", "base_director"),
+        Action::Reject => ("张三", "pond_admin"),
+        Action::Correct => ("李工", "quality_engineer"),
+        Action::ConfirmSync => ("王主任", "base_director"),
     }
 }

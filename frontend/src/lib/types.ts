@@ -96,12 +96,12 @@ export interface ProcessRequest {
 }
 
 export interface BatchProcessRequest {
-	ids: string[];
 	action: Action;
 	operator: string;
 	operator_role: string;
 	comment?: string;
 	exception_reason?: string;
+	items: { id: string; version: number }[];
 }
 
 export interface BatchResult {

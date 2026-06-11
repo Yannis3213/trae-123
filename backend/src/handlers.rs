@@ -339,6 +339,7 @@ pub async fn process_inspection(
     let conn = db.0.lock().unwrap();
     let ins = query_inspection(&conn, &id)?;
 
+    validate_current_handler_role(&ins.current_handler_role, &action, &req.operator_role)?;
     validate_version(ins.version, req.version)?;
 
     let attachment_count = match &req.attachments {
@@ -350,12 +351,7 @@ pub async fn process_inspection(
 
     let new_status = validate_status_transition(&ins.status, &action)?;
 
-    let (_, next_handler_role) = get_next_handler(&action);
-    let next_handler_name = match action {
-        Action::Submit | Action::Correct => "李工".to_string(),
-        Action::Approve | Action::ConfirmSync => "王主任".to_string(),
-        Action::Reject => "张三".to_string(),
-    };
+    let (next_handler_name, next_handler_role) = get_next_handler(&action);
 
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let new_version = ins.version + 1;
@@ -408,19 +404,19 @@ pub async fn batch_process(
 
     let mut results = Vec::new();
 
-    for id in &req.ids {
-        let result = process_single_batch(&db, &dedup, id, &action, &req);
+    for item in &req.items {
+        let result = process_single_batch(&db, &dedup, item, &action, &req);
         results.push(result);
     }
 
     Ok(Json(ApiResponse::ok(results)))
 }
 
-fn process_single_batch(db: &Db, dedup: &DedupState, id: &str, action: &Action, req: &BatchProcessRequest) -> BatchResult {
-    let dedup_key = format!("{}:{}:{}", id, req.operator, req.action);
+fn process_single_batch(db: &Db, dedup: &DedupState, item: &BatchItem, action: &Action, req: &BatchProcessRequest) -> BatchResult {
+    let dedup_key = format!("{}:{}:{}", item.id, req.operator, req.action);
     if let Err(e) = check_dedup(dedup, &dedup_key) {
         return BatchResult {
-            id: id.to_string(),
+            id: item.id.clone(),
             success: false,
             message: Some(e.message()),
         };
@@ -429,24 +425,32 @@ fn process_single_batch(db: &Db, dedup: &DedupState, id: &str, action: &Action, 
     let conn = match db.0.lock() {
         Ok(c) => c,
         Err(e) => return BatchResult {
-            id: id.to_string(),
+            id: item.id.clone(),
             success: false,
             message: Some(e.to_string()),
         },
     };
 
-    let ins = match query_inspection(&conn, id) {
+    let ins = match query_inspection(&conn, &item.id) {
         Ok(i) => i,
         Err(e) => return BatchResult {
-            id: id.to_string(),
+            id: item.id.clone(),
             success: false,
             message: Some(e.message()),
         },
     };
 
-    if let Err(e) = validate_version(ins.version, ins.version) {
+    if let Err(e) = validate_current_handler_role(&ins.current_handler_role, action, &req.operator_role) {
         return BatchResult {
-            id: id.to_string(),
+            id: item.id.clone(),
+            success: false,
+            message: Some(e.message()),
+        };
+    }
+
+    if let Err(e) = validate_version(ins.version, item.version) {
+        return BatchResult {
+            id: item.id.clone(),
             success: false,
             message: Some(e.message()),
         };
@@ -455,28 +459,45 @@ fn process_single_batch(db: &Db, dedup: &DedupState, id: &str, action: &Action, 
     let new_status = match validate_status_transition(&ins.status, action) {
         Ok(s) => s,
         Err(e) => return BatchResult {
-            id: id.to_string(),
+            id: item.id.clone(),
             success: false,
             message: Some(e.message()),
         },
     };
 
-    let next_handler_name = match action {
-        Action::Submit | Action::Correct => "李工".to_string(),
-        Action::Approve | Action::ConfirmSync => "王主任".to_string(),
-        Action::Reject => "张三".to_string(),
-    };
-    let (_, next_handler_role) = get_next_handler(action);
+    if matches!(action, Action::Submit | Action::Correct) {
+        let att_count: i64 = match conn.query_row(
+            "SELECT COUNT(*) FROM attachment WHERE inspection_id = ?1",
+            [&item.id],
+            |r| r.get(0),
+        ) {
+            Ok(c) => c,
+            Err(e) => return BatchResult {
+                id: item.id.clone(),
+                success: false,
+                message: Some(format!("附件校验失败: {}", e)),
+            },
+        };
+        if let Err(e) = validate_evidence_required(action, att_count as usize) {
+            return BatchResult {
+                id: item.id.clone(),
+                success: false,
+                message: Some(e.message()),
+            };
+        }
+    }
+
+    let (next_handler_name, next_handler_role) = get_next_handler(action);
 
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let new_version = ins.version + 1;
 
     if let Err(e) = conn.execute(
         "UPDATE inspection SET status = ?1, current_handler = ?2, current_handler_role = ?3, version = ?4, updated_at = ?5 WHERE id = ?6",
-        rusqlite::params![new_status, next_handler_name, next_handler_role, new_version, now, id],
+        rusqlite::params![new_status, next_handler_name, next_handler_role, new_version, now, item.id],
     ) {
         return BatchResult {
-            id: id.to_string(),
+            id: item.id.clone(),
             success: false,
             message: Some(e.to_string()),
         };
@@ -485,10 +506,10 @@ fn process_single_batch(db: &Db, dedup: &DedupState, id: &str, action: &Action, 
     let audit_id = format!("aud-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap());
     if let Err(e) = conn.execute(
         "INSERT INTO audit_record (id, inspection_id, action, operator, operator_role, comment, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        rusqlite::params![audit_id, id, action.as_str(), req.operator, req.operator_role, req.comment, now],
+        rusqlite::params![audit_id, item.id, action.as_str(), req.operator, req.operator_role, req.comment, now],
     ) {
         return BatchResult {
-            id: id.to_string(),
+            id: item.id.clone(),
             success: false,
             message: Some(e.to_string()),
         };
@@ -499,13 +520,13 @@ fn process_single_batch(db: &Db, dedup: &DedupState, id: &str, action: &Action, 
             let exc_id = format!("exc-{}", uuid::Uuid::new_v4().to_string().split('-').next().unwrap());
             let _ = conn.execute(
                 "INSERT INTO exception_reason (id, inspection_id, audit_record_id, reason, created_at) VALUES (?1,?2,?3,?4,?5)",
-                rusqlite::params![exc_id, id, audit_id, reason, now],
+                rusqlite::params![exc_id, item.id, audit_id, reason, now],
             );
         }
     }
 
     BatchResult {
-        id: id.to_string(),
+        id: item.id.clone(),
         success: true,
         message: None,
     }
@@ -656,15 +677,34 @@ pub struct OverdueItem {
     pub overdue_type: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OverdueQuery {
+    pub role: Option<String>,
+    pub overdue_type: Option<String>,
+}
+
 pub async fn get_overdue_queue(
     Data(db): Data<&Db>,
+    Query(query): Query<OverdueQuery>,
 ) -> Result<Json<ApiResponse<Vec<OverdueItem>>>, AppError> {
     let conn = db.0.lock().unwrap();
-    let mut stmt = conn.prepare(
-        "SELECT id, pond_id, pond_name, inspector, inspector_role, status, current_handler, current_handler_role, deadline, version, created_at, updated_at FROM inspection WHERE status != 'synced' ORDER BY deadline ASC"
-    )?;
 
-    let rows = stmt.query_map([], |r| Ok(Inspection {
+    let mut sql = String::from(
+        "SELECT id, pond_id, pond_name, inspector, inspector_role, status, current_handler, current_handler_role, deadline, version, created_at, updated_at FROM inspection WHERE status != 'synced'"
+    );
+    let mut sql_params: Vec<String> = Vec::new();
+
+    if let Some(ref role) = query.role {
+        sql.push_str(" AND current_handler_role = ?");
+        sql_params.push(role.clone());
+    }
+
+    sql.push_str(" ORDER BY deadline ASC");
+
+    let mut stmt = conn.prepare(&sql)?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+
+    let rows = stmt.query_map(rusqlite::params_from_iter(param_refs), |r| Ok(Inspection {
         id: r.get(0)?,
         pond_id: r.get(1)?,
         pond_name: r.get(2)?,
@@ -683,12 +723,18 @@ pub async fn get_overdue_queue(
     for row in rows {
         let ins = row?;
         let ot = compute_overdue_type(&ins.deadline);
-        if ot != OverdueType::Normal {
-            items.push(OverdueItem {
-                inspection: ins,
-                overdue_type: ot.as_str().to_string(),
-            });
+        let ot_str = ot.as_str().to_string();
+
+        if let Some(ref filter_type) = query.overdue_type {
+            if &ot_str != filter_type {
+                continue;
+            }
         }
+
+        items.push(OverdueItem {
+            inspection: ins,
+            overdue_type: ot_str,
+        });
     }
 
     Ok(Json(ApiResponse::ok(items)))

@@ -10,7 +10,8 @@
 
 	const navItems = [
 		{ href: '/', label: '工作台', icon: '📊' },
-		{ href: '/inspections', label: '检测单列表', icon: '📋' }
+		{ href: '/inspections', label: '检测单列表', icon: '📋' },
+		{ href: '/inspections/new', label: '登记检测单', icon: '➕', roleRequired: 'pond_admin' }
 	];
 
 	function switchRole(key) {
@@ -22,6 +23,9 @@
 		if (href === '/') return currentPath === '/';
 		return currentPath.startsWith(href);
 	};
+	$: visibleNavItems = navItems.filter(
+		(item) => !item.roleRequired || item.roleRequired === $currentRole
+	);
 </script>
 
 <div class="flex h-screen overflow-hidden">
@@ -31,7 +35,7 @@
 			<p class="text-xs text-white/50 mt-1">水产养殖基地</p>
 		</div>
 		<nav class="flex-1 py-4">
-			{#each navItems as item}
+			{#each visibleNavItems as item}
 				<a
 					href={item.href}
 					class="flex items-center gap-3 px-6 py-3 text-sm transition-colors {isNavActive(item.href)

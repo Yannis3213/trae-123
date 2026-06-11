@@ -18,6 +18,9 @@
 	let filterDateFrom = '';
 	let filterDateTo = '';
 	let showBatchModal = false;
+	let showBatchRejectDialog = false;
+	let batchExceptionReason = '';
+	let pendingBatchAction: string | null = null;
 
 	function showToast(msg) {
 		toast = msg;
@@ -64,16 +67,29 @@
 	async function handleBatch(action) {
 		const selected = items.filter((i) => $selectedInspections.has(i.id));
 		if (selected.length === 0) return;
+		if (action === 'reject' && !showBatchRejectDialog) {
+			pendingBatchAction = action;
+			showBatchRejectDialog = true;
+			return;
+		}
+		if (action === 'reject' && !batchExceptionReason.trim()) {
+			showToast('批量退回请填写异常原因');
+			return;
+		}
 		try {
 			const res = await batchProcess({
-				ids: selected.map((i) => i.id),
 				action,
 				operator: $currentUser,
 				operator_role: $currentRole,
-				comment: ''
+				comment: '',
+				exception_reason: action === 'reject' ? batchExceptionReason : undefined,
+				items: selected.map((i) => ({ id: i.id, version: i.version }))
 			});
 			$batchResults = res.data;
 			showBatchModal = true;
+			showBatchRejectDialog = false;
+			batchExceptionReason = '';
+			pendingBatchAction = null;
 			$selectedInspections = new Set();
 			loadData();
 		} catch (e) {
@@ -353,6 +369,36 @@
 					on:click={() => (showBatchModal = false)}
 					class="w-full bg-primary text-white py-2 rounded-lg text-sm hover:bg-primary/90"
 				>关闭</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if showBatchRejectDialog}
+	<div class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+		<div class="fixed inset-0" on:click={() => { showBatchRejectDialog = false; pendingBatchAction = null; }}></div>
+		<div class="bg-white rounded-xl shadow-xl w-[440px] relative z-10 animate-fade-in">
+			<div class="px-6 py-4 border-b border-gray-100">
+				<h3 class="font-semibold text-gray-800">批量退回 - 填写异常原因</h3>
+			</div>
+			<div class="p-6">
+				<p class="text-sm text-gray-500 mb-3">将对 {$selectedInspections.size} 条检测单执行批量退回</p>
+				<textarea
+					bind:value={batchExceptionReason}
+					rows="4"
+					class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent/30 resize-none"
+					placeholder="请填写批量退回的异常原因（必填）"
+				></textarea>
+			</div>
+			<div class="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end">
+				<button
+					on:click={() => { showBatchRejectDialog = false; pendingBatchAction = null; batchExceptionReason = ''; }}
+					class="border border-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+				>取消</button>
+				<button
+					on:click={() => handleBatch('reject')}
+					class="bg-status-overdue text-white px-5 py-2 rounded-lg text-sm hover:bg-status-overdue/90"
+				>确认批量退回</button>
 			</div>
 		</div>
 	</div>
