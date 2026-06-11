@@ -204,6 +204,7 @@ export interface AllowedActionsResponse {
   common_actions: ProcessAction[];
   actions_by_id: Record<number, ProcessAction[]>;
   requirements_by_action: Record<string, ActionRequirements>;
+  requirements_by_id: Record<number, Record<string, ActionRequirements>>;
 }
 
 export type ReasonCode =

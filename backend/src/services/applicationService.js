@@ -625,12 +625,28 @@ function batchProcess(items, user) {
         audit_note: auditNote
       };
     } catch (err) {
+      const errorMsg = '系统异常: ' + err.message;
+      const auditNote = `批量处理：${item.action}，结果：失败，原因：${errorMsg}`;
+      try {
+        db.prepare(`
+          INSERT INTO audit_notes (application_id, note, operator_id, created_at)
+          VALUES (?, ?, ?, ?)
+        `).run(
+          item.id,
+          auditNote,
+          user.id,
+          dayjs().format('YYYY-MM-DD HH:mm:ss')
+        );
+      } catch (e) {
+        console.error('[batchProcess] 写入audit_notes失败:', e);
+      }
       return {
         id: item.id,
         application_no: appNos[item.id] || '',
         success: false,
         action: item.action,
-        message: '系统异常: ' + err.message
+        message: errorMsg,
+        audit_note: auditNote
       };
     }
   });
@@ -649,46 +665,65 @@ function batchProcess(items, user) {
 function getAllowedActionsBatch(ids, user) {
   const apps = db.prepare(`SELECT * FROM reimbursement_applications WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY id`).all(...ids);
 
-  if (apps.length === 0) return { common_actions: [], actions_by_id: {}, requirements_by_action: {} };
+  if (apps.length === 0) return { common_actions: [], actions_by_id: {}, requirements_by_action: {}, requirements_by_id: {} };
 
   let commonActions = null;
   const actionsById = {};
-  const requirementsByAction = {};
+  const perIdRequirements = {};
+  const mergedRequirements = {};
 
   for (const app of apps) {
     const actionsWithReq = getAllowedActions(app, user);
     const actions = actionsWithReq.map(a => a.action);
     actionsById[app.id] = actions;
+
+    perIdRequirements[app.id] = {};
     actionsWithReq.forEach(a => {
-      requirementsByAction[a.action] = {
-        require_comment: a.require_comment,
-        require_payment_evidence: a.require_payment_evidence,
-        require_overdue_note: a.require_overdue_note,
-        require_reason_code: a.require_reason_code
+      perIdRequirements[app.id][a.action] = {
+        require_comment: !!a.require_comment,
+        require_payment_evidence: !!a.require_payment_evidence,
+        require_overdue_note: !!a.require_overdue_note,
+        require_reason_code: !!a.require_reason_code
       };
     });
+
     if (commonActions === null) {
       commonActions = new Set(actions);
+      actionsWithReq.forEach(a => {
+        mergedRequirements[a.action] = {
+          require_comment: !!a.require_comment,
+          require_payment_evidence: !!a.require_payment_evidence,
+          require_overdue_note: !!a.require_overdue_note,
+          require_reason_code: !!a.require_reason_code
+        };
+      });
     } else {
       const next = new Set();
-      for (const a of actions) {
-        if (commonActions.has(a)) next.add(a);
+      for (const actionName of actions) {
+        if (commonActions.has(actionName)) {
+          next.add(actionName);
+          const existing = mergedRequirements[actionName] || { require_comment: false, require_payment_evidence: false, require_overdue_note: false, require_reason_code: false };
+          const appReq = perIdRequirements[app.id][actionName] || { require_comment: false, require_payment_evidence: false, require_overdue_note: false, require_reason_code: false };
+          mergedRequirements[actionName] = {
+            require_comment: existing.require_comment || appReq.require_comment,
+            require_payment_evidence: existing.require_payment_evidence || appReq.require_payment_evidence,
+            require_overdue_note: existing.require_overdue_note || appReq.require_overdue_note,
+            require_reason_code: existing.require_reason_code || appReq.require_reason_code
+          };
+        }
       }
       commonActions = next;
+      Object.keys(mergedRequirements).forEach(action => {
+        if (!commonActions.has(action)) delete mergedRequirements[action];
+      });
     }
   }
-
-  const commonRequirements = {};
-  Array.from(commonActions || []).forEach(action => {
-    if (requirementsByAction[action]) {
-      commonRequirements[action] = requirementsByAction[action];
-    }
-  });
 
   return {
     common_actions: Array.from(commonActions || []),
     actions_by_id: actionsById,
-    requirements_by_action: commonRequirements
+    requirements_by_action: mergedRequirements,
+    requirements_by_id: perIdRequirements
   };
 }
 

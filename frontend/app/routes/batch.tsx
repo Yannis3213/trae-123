@@ -25,6 +25,7 @@ const BatchCenter: Component = () => {
   const [loadingActions, setLoadingActions] = createSignal(false);
   const [actionsById, setActionsById] = createSignal<Record<number, ProcessAction[]>>({});
   const [requirementsByAction, setRequirementsByAction] = createSignal<Record<string, any>>({});
+  const [requirementsById, setRequirementsById] = createSignal<Record<number, Record<string, any>>>({});
 
   const loadData = async () => {
     if (!user()) {
@@ -61,12 +62,14 @@ const BatchCenter: Component = () => {
         setCommonActions(res.common_actions || []);
         setActionsById(res.actions_by_id || {});
         setRequirementsByAction(res.requirements_by_action || {});
+        setRequirementsById(res.requirements_by_id || {});
       })
       .catch((err) => {
         console.error('获取共同动作失败:', err);
         setCommonActions([]);
         setActionsById({});
         setRequirementsByAction({});
+        setRequirementsById({});
       })
       .finally(() => {
         setLoadingActions(false);
@@ -356,6 +359,56 @@ const BatchCenter: Component = () => {
                     )}
                   </span>
                 </div>
+
+                <Show when={commonActions().length > 0}>
+                  <For each={commonActions()}>
+                    {(action) => {
+                      const merged = requirementsByAction()[action];
+                      if (!merged) return null;
+                      const diffs: string[] = [];
+                      selectedApplications().forEach((a) => {
+                        const req = requirementsById()[a.id]?.[action];
+                        if (!req) return;
+                        const perDiff: string[] = [];
+                        if (req.require_comment && !merged.require_comment) perDiff.push('意见必填');
+                        if (req.require_payment_evidence && !merged.require_payment_evidence) perDiff.push('付款凭证');
+                        if (req.require_overdue_note) perDiff.push('逾期说明');
+                        if (req.require_reason_code && !merged.require_reason_code) perDiff.push('异常类型');
+                        if (perDiff.length > 0) {
+                          diffs.push(`${a.application_no}: ${perDiff.join('、')}`);
+                        }
+                      });
+                      const mergedTags: string[] = [];
+                      if (merged.require_comment) mergedTags.push('意见必填');
+                      if (merged.require_payment_evidence) mergedTags.push('付款凭证');
+                      if (merged.require_overdue_note) mergedTags.push('逾期说明');
+                      if (merged.require_reason_code) mergedTags.push('异常类型');
+                      return (
+                        <div
+                          style={{
+                            marginTop: '8px',
+                            padding: '8px 12px',
+                            background: '#f6ffed',
+                            border: '1px solid #b7eb8f',
+                            'border-radius': '4px',
+                            'font-size': '12px',
+                            color: '#389e0d',
+                          }}
+                        >
+                          <strong>
+                            【{ACTION_LABELS[action]}】合并表单要求：
+                            {mergedTags.length > 0 ? mergedTags.join(' · ') : '无额外必填项'}
+                          </strong>
+                          {diffs.length > 0 && (
+                            <div style={{ marginTop: '4px', color: '#d46b08' }}>
+                              ⚠️ 单据特殊要求（批量提交时须满足所有单据要求）：{diffs.join('；')}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }}
+                  </For>
+                </Show>
               </Show>
             </div>
           </Show>
