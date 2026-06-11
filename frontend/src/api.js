@@ -114,3 +114,16 @@ export const EVIDENCE_CATEGORIES = [
   { value: 'health', label: '健康报告' },
   { value: 'policy_confirm', label: '出单确认单' },
 ]
+
+export const REQUIRED_EVIDENCE_BY_ACTION = {
+  approve: ['application_form', 'id_card', 'income'],
+  sync: ['policy_confirm'],
+}
+
+export const EVIDENCE_CATEGORY_LABEL = {
+  application_form: '投保单',
+  id_card: '身份证明',
+  income: '收入证明',
+  health: '健康报告',
+  policy_confirm: '出单确认单',
+}

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -555,13 +556,35 @@ func ActionPatrolOrder(c *gin.Context) {
 		return
 	}
 
+	writeFailAudit := func(action, msg string) {
+		database.DB.Create(&models.OrderHistory{
+			PatrolOrderID:  order.ID,
+			Action:         action,
+			PreviousStatus: order.Status,
+			CurrentStatus:  order.Status,
+			OperatorID:     user.UserID,
+			OperatorName:   user.UserName,
+			Remark:         msg,
+			Success:        false,
+		})
+		database.DB.Create(&models.AuditNote{
+			PatrolOrderID: order.ID,
+			OperatorID:    user.UserID,
+			OperatorName:  user.UserName,
+			NoteType:      "校验失败",
+			Content:       msg,
+		})
+	}
+
 	if req.Version > 0 && req.Version != order.Version {
-		respondErr(c, http.StatusConflict, NewAPIError(409, "版本冲突",
-			fmt.Sprintf("当前版本为%d，您的操作基于旧版本%d，请刷新后重试", order.Version, req.Version)))
+		msg := fmt.Sprintf("版本冲突：当前版本%d，您提交的版本%d，请刷新后重试", order.Version, req.Version)
+		writeFailAudit(req.Action, msg)
+		respondErr(c, http.StatusConflict, NewAPIError(409, "版本冲突", msg))
 		return
 	}
 
 	if err := validateActionPermission(user.Role, req.Action); err != nil {
+		writeFailAudit(req.Action, err.Error())
 		respondErr(c, http.StatusForbidden, NewAPIError(403, err.Error()))
 		return
 	}
@@ -574,8 +597,9 @@ func ActionPatrolOrder(c *gin.Context) {
 		if !((user.Role == config.RoleUnderwriter && order.Status == config.StatusPending) ||
 			(user.Role == config.RoleBusinessOwner && (order.Status == config.StatusApproved || order.Status == config.StatusSynced))) {
 			if req.Action != config.ActionSupplement && req.Action != config.ActionResubmit {
-				respondErr(c, http.StatusForbidden, NewAPIError(403, "当前处理人不匹配",
-					fmt.Sprintf("当前处理人为%s，您是%s", order.CurrentHandler, user.UserName)))
+				msg := fmt.Sprintf("处理人不匹配：当前处理人为%s，您是%s", order.CurrentHandler, user.UserName)
+				writeFailAudit(req.Action, msg)
+				respondErr(c, http.StatusForbidden, NewAPIError(403, "当前处理人不匹配", msg))
 				return
 			}
 		}
@@ -583,32 +607,45 @@ func ActionPatrolOrder(c *gin.Context) {
 
 	nextStatus, err := validateStatusFlow(order.Status, req.Action)
 	if err != nil {
+		writeFailAudit(req.Action, err.Error())
 		respondErr(c, http.StatusBadRequest, NewAPIError(400, err.Error()))
 		return
 	}
 
 	if req.Action == config.ActionApprove || req.Action == config.ActionSync {
-		hasEvidence := len(order.Attachments) > 0
-		if !hasEvidence && len(req.Attachments) == 0 {
-			respondErr(c, http.StatusBadRequest, NewAPIError(400, "缺少必填证据",
-				"出单确认前必须上传投保单、身份证明等必需附件"))
-			return
-		}
-		if len(req.RequiredEvidence) > 0 {
+		requiredCats := config.RequiredEvidenceByAction[req.Action]
+		if len(requiredCats) > 0 {
 			existingCats := map[string]bool{}
 			for _, a := range order.Attachments {
 				if a.IsEvidence {
 					existingCats[a.Category] = true
 				}
 			}
-			for _, cat := range req.RequiredEvidence {
-				if !existingCats[cat] {
-					respondErr(c, http.StatusBadRequest, NewAPIError(400, "缺少必填证据",
-						fmt.Sprintf("缺少必需的证据类别：%s", cat)))
-					return
+			for _, a := range req.Attachments {
+				if a.IsEvidence {
+					existingCats[a.Category] = true
 				}
 			}
+			var missing []string
+			for _, cat := range requiredCats {
+				if !existingCats[cat] {
+					missing = append(missing, config.EvidenceCategoryNames[cat])
+				}
+			}
+			if len(missing) > 0 {
+				missingMsg := fmt.Sprintf("缺少必需证据：%s", strings.Join(missing, "、"))
+				writeFailAudit(req.Action, missingMsg)
+				respondErr(c, http.StatusBadRequest, NewAPIError(400, "缺少必填证据", missingMsg))
+				return
+			}
 		}
+	}
+
+	if (req.Action == config.ActionApprove || req.Action == config.ActionSync) && order.Deadline != nil && order.Deadline.Before(time.Now()) {
+		overdueMsg := fmt.Sprintf("申请已逾期推进，截止日期%s", order.Deadline.Format("2006-01-02"))
+		writeFailAudit(req.Action, overdueMsg)
+		respondErr(c, http.StatusBadRequest, NewAPIError(400, "申请已逾期推进", overdueMsg))
+		return
 	}
 
 	now := time.Now()
@@ -885,6 +922,26 @@ func BatchActionPatrolOrders(c *gin.Context) {
 
 	results := make([]BatchResultItem, 0, len(req.IDs))
 
+	batchWriteFailAudit := func(order models.PatrolOrder, action, msg string) {
+		database.DB.Create(&models.OrderHistory{
+			PatrolOrderID:  order.ID,
+			Action:         action,
+			PreviousStatus: order.Status,
+			CurrentStatus:  order.Status,
+			OperatorID:     user.UserID,
+			OperatorName:   user.UserName,
+			Remark:         msg,
+			Success:        false,
+		})
+		database.DB.Create(&models.AuditNote{
+			PatrolOrderID: order.ID,
+			OperatorID:    user.UserID,
+			OperatorName:  user.UserName,
+			NoteType:      "校验失败",
+			Content:       msg,
+		})
+	}
+
 	for _, id := range req.IDs {
 		item := BatchResultItem{ID: id}
 
@@ -898,8 +955,10 @@ func BatchActionPatrolOrders(c *gin.Context) {
 
 		expectVersion, hasVer := req.Version[id]
 		if hasVer && expectVersion != order.Version {
+			msg := fmt.Sprintf("版本冲突：当前版本%d，您提交的版本%d", order.Version, expectVersion)
+			batchWriteFailAudit(order, req.Action, msg)
 			item.Success = false
-			item.Message = fmt.Sprintf("版本冲突：当前版本%d，旧版本%d", order.Version, expectVersion)
+			item.Message = msg
 			results = append(results, item)
 			continue
 		}
@@ -911,8 +970,10 @@ func BatchActionPatrolOrders(c *gin.Context) {
 		if !handlerMatch {
 			if !((user.Role == config.RoleUnderwriter && order.Status == config.StatusPending) ||
 				(user.Role == config.RoleBusinessOwner && (order.Status == config.StatusApproved || order.Status == config.StatusSynced))) {
+				msg := fmt.Sprintf("处理人不匹配：当前处理人%s", order.CurrentHandler)
+				batchWriteFailAudit(order, req.Action, msg)
 				item.Success = false
-				item.Message = fmt.Sprintf("处理人不匹配：当前处理人%s", order.CurrentHandler)
+				item.Message = msg
 				results = append(results, item)
 				continue
 			}
@@ -920,31 +981,46 @@ func BatchActionPatrolOrders(c *gin.Context) {
 
 		nextStatus, flowErr := validateStatusFlow(order.Status, req.Action)
 		if flowErr != nil {
+			batchWriteFailAudit(order, req.Action, flowErr.Error())
 			item.Success = false
 			item.Message = flowErr.Error()
 			results = append(results, item)
 			continue
 		}
 
-		if (req.Action == config.ActionApprove || req.Action == config.ActionSync) && len(req.RequiredEvidence) > 0 {
-			cats := map[string]bool{}
-			for _, a := range order.Attachments {
-				if a.IsEvidence {
-					cats[a.Category] = true
+		if req.Action == config.ActionApprove || req.Action == config.ActionSync {
+			requiredCats := config.RequiredEvidenceByAction[req.Action]
+			if len(requiredCats) > 0 {
+				existingCats := map[string]bool{}
+				for _, a := range order.Attachments {
+					if a.IsEvidence {
+						existingCats[a.Category] = true
+					}
+				}
+				var missing []string
+				for _, cat := range requiredCats {
+					if !existingCats[cat] {
+						missing = append(missing, config.EvidenceCategoryNames[cat])
+					}
+				}
+				if len(missing) > 0 {
+					msg := fmt.Sprintf("缺少必需证据：%s", strings.Join(missing, "、"))
+					batchWriteFailAudit(order, req.Action, msg)
+					item.Success = false
+					item.Message = msg
+					results = append(results, item)
+					continue
 				}
 			}
-			missing := []string{}
-			for _, cat := range req.RequiredEvidence {
-				if !cats[cat] {
-					missing = append(missing, cat)
-				}
-			}
-			if len(missing) > 0 {
-				item.Success = false
-				item.Message = fmt.Sprintf("缺少必需证据：%v", missing)
-				results = append(results, item)
-				continue
-			}
+		}
+
+		if (req.Action == config.ActionApprove || req.Action == config.ActionSync) && order.Deadline != nil && order.Deadline.Before(time.Now()) {
+			msg := fmt.Sprintf("申请已逾期推进，截止日期%s", order.Deadline.Format("2006-01-02"))
+			batchWriteFailAudit(order, req.Action, msg)
+			item.Success = false
+			item.Message = msg
+			results = append(results, item)
+			continue
 		}
 
 		now := time.Now()

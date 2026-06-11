@@ -1,10 +1,9 @@
-import React, { useState, useMemo } from 'react'
-import { ACTION_LABEL, EVIDENCE_CATEGORIES } from '../api.js'
+import React, { useState, useMemo, useEffect } from 'react'
+import { ACTION_LABEL, EVIDENCE_CATEGORIES, REQUIRED_EVIDENCE_BY_ACTION, EVIDENCE_CATEGORY_LABEL } from '../api.js'
 
 export default function ActionModal({ type, action, order, ids, versions, onClose, onConfirm }) {
   const [remark, setRemark] = useState('')
   const [reason, setReason] = useState('')
-  const [evidenceCheck, setEvidenceCheck] = useState([])
   const [attachments, setAttachments] = useState([])
   const [fileName, setFileName] = useState('')
   const [fileCat, setFileCat] = useState(EVIDENCE_CATEGORIES[0].value)
@@ -12,7 +11,17 @@ export default function ActionModal({ type, action, order, ids, versions, onClos
 
   const isSupplement = action === 'supplement' || action === 'resubmit'
   const isReject = action === 'reject'
-  const needEvidence = action === 'approve' || action === 'sync'
+  const requiredCats = REQUIRED_EVIDENCE_BY_ACTION[action] || []
+  const needEvidence = requiredCats.length > 0
+
+  useEffect(() => {
+    setRemark('')
+    setReason('')
+    setAttachments([])
+    setFileName('')
+    setFileCat(EVIDENCE_CATEGORIES[0].value)
+    setFileEvidence(true)
+  }, [action, type, order, ids])
 
   const title = useMemo(() => {
     if (type === 'batch') return `批量${ACTION_LABEL[action] || action}（${ids.length} 条）`
@@ -32,17 +41,31 @@ export default function ActionModal({ type, action, order, ids, versions, onClos
     setFileName('')
   }
 
+  const getExistingCategories = () => {
+    const cats = new Set()
+    if (type === 'single' && order?.attachments) {
+      order.attachments.filter(a => a.is_evidence).forEach(a => cats.add(a.category))
+    }
+    attachments.filter(a => a.is_evidence).forEach(a => cats.add(a.category))
+    return cats
+  }
+
   const submit = () => {
     if (isReject && !reason.trim()) return alert('请填写退回/补正原因')
-    if (needEvidence && evidenceCheck.length === 0 && type === 'single' && !order?.evidence_uploaded) {
-      return alert('请勾选必需的证据类别')
+    if (needEvidence) {
+      const existing = getExistingCategories()
+      const missing = requiredCats.filter(c => !existing.has(c))
+      if (missing.length > 0) {
+        const labels = missing.map(c => EVIDENCE_CATEGORY_LABEL[c] || c).join('、')
+        return alert(`缺少必需证据：${labels}，请确认已上传后再处理`)
+      }
     }
     const payload = {
       action,
       remark: remark || undefined,
       reason: reason || undefined,
       attachments: attachments.length > 0 ? attachments : undefined,
-      required_evidence: evidenceCheck.length > 0 ? evidenceCheck : undefined,
+      required_evidence: needEvidence ? requiredCats : undefined,
     }
     if (type === 'single') {
       payload.version = order.version
@@ -111,29 +134,35 @@ export default function ActionModal({ type, action, order, ids, versions, onClos
             </>
           )}
 
-          {needEvidence && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontWeight: 600, marginBottom: 10 }}>🔍 必需证据校验（至少勾选一项已上传类别）</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                {EVIDENCE_CATEGORIES.map(c => (
-                  <label key={c.value} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <input type="checkbox" className="checkbox"
-                      checked={evidenceCheck.includes(c.value)}
-                      onChange={(e) => {
-                        if (e.target.checked) setEvidenceCheck([...evidenceCheck, c.value])
-                        else setEvidenceCheck(evidenceCheck.filter(v => v !== c.value))
-                      }} />
-                    {c.label}
-                  </label>
-                ))}
-              </div>
-              {type === 'single' && order?.evidence_uploaded === false && (
-                <div className="alert alert-warning" style={{ marginTop: 12 }}>
-                  该申请尚未上传任何必需证据，请联系客户经理先补正资料后再处理
+          {needEvidence && (() => {
+            const existing = getExistingCategories()
+            return (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontWeight: 600, marginBottom: 10 }}>🔍 必需证据校验（按业务规则自动校验）</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                  {requiredCats.map(cat => {
+                    const ok = existing.has(cat)
+                    const label = EVIDENCE_CATEGORY_LABEL[cat] || cat
+                    return (
+                      <div key={cat} style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '6px 12px', borderRadius: 6,
+                        background: ok ? '#f6ffed' : '#fff1f0',
+                        border: `1px solid ${ok ? '#b7eb8f' : '#ffa39e'}`,
+                        color: ok ? '#389e0d' : '#cf1322',
+                        fontWeight: 600,
+                      }}>
+                        {ok ? '✅' : '❌'} {label}
+                      </div>
+                    )
+                  })}
                 </div>
-              )}
-            </div>
-          )}
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 10 }}>
+                  校验逻辑：approve 需投保单+身份证明+收入证明；sync 需出单确认单
+                </div>
+              </div>
+            )
+          })()}
 
           <div className="form-item">
             <label>备注说明（可选）</label>

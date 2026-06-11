@@ -19,13 +19,32 @@ const (
 	ActionResubmit     = "resubmit"
 	ActionSync         = "sync"
 	ActionArchive      = "archive"
+)
 
+const (
 	WarningNormal   = "normal"
 	WarningApproaching = "approaching"
 	WarningOverdue  = "overdue"
 
 	ApproachingDays = 3
+
+	EvidenceApplicationForm = "application_form"
+	EvidenceIdCard          = "id_card"
+	EvidenceIncome          = "income"
+	EvidencePolicyConfirm   = "policy_confirm"
 )
+
+var RequiredEvidenceByAction = map[string][]string{
+	ActionApprove: {EvidenceApplicationForm, EvidenceIdCard, EvidenceIncome},
+	ActionSync:    {EvidencePolicyConfirm},
+}
+
+var EvidenceCategoryNames = map[string]string{
+	EvidenceApplicationForm: "投保单",
+	EvidenceIdCard:          "身份证明",
+	EvidenceIncome:          "收入证明",
+	EvidencePolicyConfirm:   "出单确认书",
+}
 
 var ValidRoles = map[string]bool{
 	RoleCustomerManager: true,

@@ -65,6 +65,7 @@ type OrderHistory struct {
 	OperatorRole   string    `gorm:"size:64" json:"operator_role"`
 	Remark         string    `gorm:"type:text" json:"remark"`
 	AbnormalReason string    `gorm:"type:text" json:"abnormal_reason"`
+	Success        bool      `gorm:"not null;default:true" json:"success"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
