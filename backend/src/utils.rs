@@ -6,8 +6,14 @@ use crate::models::{
 use chrono::{DateTime, Duration, Utc};
 use rand::Rng;
 
-pub fn check_version(current: i32, expected: i32) -> Result<()> {
+pub fn check_version(db: &Database, case_id: i64, current: i32, expected: i32, operator_id: Option<i64>) -> Result<()> {
     if current != expected {
+        let reason = format!(
+            "版本冲突：提交版本为{}，当前版本已更新为{}，请刷新后重试",
+            expected, current
+        );
+        record_exception(db, case_id, "version_conflict", &reason, None, operator_id)?;
+        record_audit_note(db, case_id, None, "warning", &reason, operator_id)?;
         Err(AppError::VersionConflict {
             expected,
             actual: current,
@@ -15,6 +21,29 @@ pub fn check_version(current: i32, expected: i32) -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+pub fn record_permission_error(db: &Database, case_id: i64, operator_id: i64, description: &str) -> Result<()> {
+    let reason = format!("权限不足：{}", description);
+    record_exception(db, case_id, "permission_error", &reason, None, Some(operator_id))?;
+    record_audit_note(db, case_id, None, "warning", &reason, Some(operator_id))?;
+    Ok(())
+}
+
+pub fn record_status_transition_error(
+    db: &Database,
+    case_id: i64,
+    operator_id: i64,
+    from: &str,
+    to: &str,
+) -> Result<()> {
+    let reason = format!(
+        "状态流转冲突：从 {} 无法直接流转到 {}，请刷新后重试",
+        from, to
+    );
+    record_exception(db, case_id, "status_conflict", &reason, None, Some(operator_id))?;
+    record_audit_note(db, case_id, None, "warning", &reason, Some(operator_id))?;
+    Ok(())
 }
 
 pub fn check_registration_complete(reg: &CaseRegistration) -> (bool, Vec<String>) {

@@ -94,6 +94,7 @@ export const STATUS_BUTTONS: Array<{
   { status: 'returned', label: '重新提交', action: 'resubmit', type: 'primary', roles: ['registrar', 'supervisor', 'director'] },
   { status: 'submitted', label: '审核', action: 'review', type: 'primary', roles: ['reviewer', 'supervisor', 'director'] },
   { status: 'submitted', label: '退回', action: 'return', type: 'default', roles: ['reviewer', 'supervisor', 'director'] },
+  { status: 'resubmitted', label: '审核', action: 'review', type: 'primary', roles: ['reviewer', 'supervisor', 'director'] },
   { status: 'reviewing', label: '分派', action: 'assign', type: 'primary', roles: ['supervisor', 'director'] },
   { status: 'reviewing', label: '退回', action: 'return', type: 'default', roles: ['reviewer', 'supervisor', 'director'] },
   { status: 'assigned', label: '开始回访', action: 'start_followup', type: 'primary', roles: ['assistant', 'lawyer', 'supervisor', 'director'] },

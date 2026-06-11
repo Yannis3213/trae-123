@@ -83,7 +83,7 @@ fn update_followup(
     }
 
     if let Some(v) = req.version {
-        check_version(case.version, v)?;
+        check_version(db, case_id, case.version, v, Some(auth.user.id))?;
     }
 
     if !matches!(

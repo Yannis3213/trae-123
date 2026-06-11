@@ -388,13 +388,14 @@ fn update_case(
     )?;
 
     if !can_access_case(&auth.user, case.created_by, case.current_handler_id, &case.status) {
+        record_permission_error(db, id, auth.user.id, "更新案件")?;
         return Err(AppError::PermissionError(
             "用户无权更新此案件".to_string(),
         ));
     }
 
     if let Some(v) = req.version {
-        check_version(case.version, v)?;
+        check_version(db, id, case.version, v, Some(auth.user.id))?;
     }
 
     if matches!(case.status, CaseStatus::Archived) {
@@ -516,9 +517,10 @@ fn case_action(
 ) -> Result<(Status, Json<ApiResponse<LegalCase>>)> {
     let case = get_case(db, case_id)?;
 
-    check_version(case.version, req.version)?;
+    check_version(db, case_id, case.version, req.version, Some(auth.user.id))?;
 
     if !can_access_case(&auth.user, case.created_by, case.current_handler_id, &case.status) {
+        record_permission_error(db, case_id, auth.user.id, "操作案件状态")?;
         return Err(AppError::PermissionError(
             "用户无权操作此案件".to_string(),
         ));
@@ -537,6 +539,7 @@ fn case_action(
             } else if matches!(case.status, CaseStatus::Returned) {
                 Some(CaseStatus::Resubmitted)
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "submitted")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "submitted".to_string(),
@@ -552,6 +555,7 @@ fn case_action(
             if matches!(case.status, CaseStatus::Returned) {
                 Some(CaseStatus::Resubmitted)
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "resubmitted")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "resubmitted".to_string(),
@@ -567,6 +571,7 @@ fn case_action(
             if matches!(case.status, CaseStatus::Submitted | CaseStatus::Resubmitted) {
                 Some(CaseStatus::Reviewing)
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "reviewing")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "reviewing".to_string(),
@@ -582,6 +587,7 @@ fn case_action(
             if matches!(case.status, CaseStatus::Reviewing) {
                 Some(CaseStatus::Assigned)
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "assigned")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "assigned".to_string(),
@@ -597,6 +603,7 @@ fn case_action(
             if matches!(case.status, CaseStatus::Assigned) {
                 Some(CaseStatus::Followup)
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "followup")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "followup".to_string(),
@@ -612,6 +619,7 @@ fn case_action(
             if matches!(case.status, CaseStatus::Followup) {
                 Some(CaseStatus::Completed)
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "completed")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "completed".to_string(),
@@ -627,6 +635,7 @@ fn case_action(
             if matches!(case.status, CaseStatus::Completed) {
                 Some(CaseStatus::Archived)
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "archived")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "archived".to_string(),
@@ -642,6 +651,7 @@ fn case_action(
             if matches!(case.status, CaseStatus::Submitted | CaseStatus::Reviewing) {
                 Some(CaseStatus::Returned)
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "returned")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "returned".to_string(),

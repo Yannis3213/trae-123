@@ -44,6 +44,7 @@ export const caseApi = {
   getDetail: (id: number) => api.get(`/cases/${id}`),
   create: (data: any) => api.post('/cases', data),
   update: (id: number, data: any) => api.put(`/cases/${id}`, data),
+  remove: (id: number) => api.delete(`/cases/${id}`),
   action: (id: number, data: any) => api.post(`/cases/${id}/action`, data),
   getRecords: (id: number) => api.get(`/cases/${id}/records`),
   getAuditNotes: (id: number) => api.get(`/cases/${id}/audit-notes`),

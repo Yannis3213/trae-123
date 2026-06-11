@@ -142,9 +142,10 @@ fn process_single_case(
         ))
     })?;
 
-    check_version(case.version, *expected_version)?;
+    check_version(db, case_id, case.version, *expected_version, Some(auth.user.id))?;
 
     if !can_access_case(&auth.user, case.created_by, case.current_handler_id, &case.status) {
+        record_permission_error(db, case_id, auth.user.id, format!("批量{}", get_action_name(action)).as_str())?;
         return Err(AppError::PermissionError(format!(
             "用户无权操作案件 {}",
             case.case_no
@@ -158,6 +159,7 @@ fn process_single_case(
             } else if matches!(case.status, CaseStatus::Returned) {
                 CaseStatus::Resubmitted
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "submitted")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "submitted".to_string(),
@@ -168,9 +170,76 @@ fn process_single_case(
             if matches!(case.status, CaseStatus::Submitted | CaseStatus::Resubmitted) {
                 CaseStatus::Reviewing
             } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "reviewing")?;
                 return Err(AppError::InvalidStatusTransition {
                     from: case.status.as_str().to_string(),
                     to: "reviewing".to_string(),
+                });
+            }
+        }
+        "resubmit" => {
+            if matches!(case.status, CaseStatus::Returned) {
+                CaseStatus::Resubmitted
+            } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "resubmitted")?;
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "resubmitted".to_string(),
+                });
+            }
+        }
+        "assign" => {
+            if matches!(case.status, CaseStatus::Reviewing) {
+                CaseStatus::Assigned
+            } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "assigned")?;
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "assigned".to_string(),
+                });
+            }
+        }
+        "start_followup" => {
+            if matches!(case.status, CaseStatus::Assigned) {
+                CaseStatus::Followup
+            } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "followup")?;
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "followup".to_string(),
+                });
+            }
+        }
+        "complete" => {
+            if matches!(case.status, CaseStatus::Followup) {
+                CaseStatus::Completed
+            } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "completed")?;
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "completed".to_string(),
+                });
+            }
+        }
+        "archive" => {
+            if matches!(case.status, CaseStatus::Completed) {
+                CaseStatus::Archived
+            } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "archived")?;
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "archived".to_string(),
+                });
+            }
+        }
+        "return" => {
+            if matches!(case.status, CaseStatus::Submitted | CaseStatus::Reviewing) {
+                CaseStatus::Returned
+            } else {
+                record_status_transition_error(db, case_id, auth.user.id, case.status.as_str(), "returned")?;
+                return Err(AppError::InvalidStatusTransition {
+                    from: case.status.as_str().to_string(),
+                    to: "returned".to_string(),
                 });
             }
         }

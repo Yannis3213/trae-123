@@ -135,11 +135,11 @@ export default function CaseList({
 
   const handleDelete = async (caseId: number) => {
     try {
-      await caseApi.update(caseId, { status: 'archived' });
+      await caseApi.remove(caseId);
       message.success('删除成功');
       fetchData();
-    } catch (error) {
-      message.error('删除失败');
+    } catch (error: any) {
+      message.error(error.message || error.response?.data?.message || '删除失败');
     }
   };
 
