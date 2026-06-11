@@ -112,6 +112,15 @@ export default function Warnings() {
                               <span className="text-gray-600 text-[11px]">{order.responsibleNode}</span>
                             </div>
                           )}
+                          {order.correctReason && (
+                            <div className="flex items-start gap-1 bg-yellow-50 p-2 rounded">
+                              <AlertTriangle size={11} className="text-yellow-500 mt-0.5 flex-shrink-0" />
+                              <div>
+                                <span className="text-yellow-600 text-[11px] font-medium block">补正原因</span>
+                                <span className="text-yellow-700 text-[11px]">{order.correctReason}</span>
+                              </div>
+                            </div>
+                          )}
                           {order.exceptionReason && (
                             <div className="flex items-start gap-1 bg-red-50 p-2 rounded">
                               <AlertTriangle size={11} className="text-red-500 mt-0.5 flex-shrink-0" />

@@ -161,8 +161,13 @@ export default function OrderList() {
     }
 
     const isReturnAction = batchAction === 'reject' || batchAction === 'return';
+    const isPassAction = batchAction === 'approve' || batchAction === 'finalize';
     if (isReturnAction && !batchEvidence.returnOpinion.trim()) {
       setBatchValidationError('退回操作必须填写退回意见');
+      return;
+    }
+    if (isPassAction && !batchEvidence.correctReason.trim()) {
+      setBatchValidationError('通过/办结操作必须填写补正原因');
       return;
     }
 
@@ -187,7 +192,7 @@ export default function OrderList() {
       exceptionReason: batchEvidence.exceptionReason || null,
       responsibleNode: batchEvidence.responsibleNode || null,
       auditRemark: batchEvidence.auditRemark || null,
-      correctReason: batchEvidence.correctReason || null,
+      correctReason: isPassAction ? batchEvidence.correctReason : (batchEvidence.correctReason || null),
       returnOpinion: isReturnAction ? batchEvidence.returnOpinion : null,
     };
 

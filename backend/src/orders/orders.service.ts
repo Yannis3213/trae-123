@@ -675,7 +675,7 @@ export class OrdersService {
         paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
         admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
         admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
-        correctReason: updateFields.correctReason ?? null,
+        correctReason: evidenceFromBody.correctReason ?? updateFields.correctReason ?? order.correctReason,
         returnOpinion: updateFields.returnOpinion ?? body.opinion ?? order.returnOpinion,
         exceptionReason: updateFields.exceptionReason ?? order.exceptionReason,
         responsibleNode: updateFields.responsibleNode ?? order.responsibleNode,
@@ -716,6 +716,12 @@ export class OrdersService {
           }
         }
 
+        if (body.action === 'approve') {
+          if (!evidenceFromBody.correctReason || (typeof evidenceFromBody.correctReason === 'string' && evidenceFromBody.correctReason.trim() === '')) {
+            throw new BadRequestException('批量审核通过必须填写补正原因');
+          }
+        }
+
         const lastRecord = await this.recordRepo.findOne({
           where: { orderId: order.id },
           order: { createdAt: 'DESC' },
@@ -745,6 +751,7 @@ export class OrdersService {
             currentHandlerRole: 'approver',
             warningLevel: this.calcWarningLevel(order.deadline),
             responsibleNode: updateFields.responsibleNode ?? 'reviewer_approved',
+            correctReason: evidenceFromBody.correctReason ?? order.correctReason,
             returnOpinion: null as unknown as string,
           });
 
@@ -757,6 +764,7 @@ export class OrdersService {
             `批量审核通过：${body.opinion}`,
             {
               ...finalEvidence,
+              correctReason: evidenceFromBody.correctReason ?? order.correctReason,
               responsibleNode: 'reviewer_approved',
               returnOpinion: null,
             },
@@ -925,7 +933,7 @@ export class OrdersService {
         paymentVerification: updateFields.paymentVerification ?? order.paymentVerification,
         admissionStatus: updateFields.admissionStatus ?? order.admissionStatus,
         admissionConfirmation: updateFields.admissionConfirmation ?? order.admissionConfirmation,
-        correctReason: updateFields.correctReason ?? null,
+        correctReason: evidenceFromBody.correctReason ?? updateFields.correctReason ?? order.correctReason,
         returnOpinion: updateFields.returnOpinion ?? body.opinion ?? order.returnOpinion,
         exceptionReason: updateFields.exceptionReason ?? order.exceptionReason,
         responsibleNode: updateFields.responsibleNode ?? order.responsibleNode,
@@ -966,6 +974,12 @@ export class OrdersService {
           }
         }
 
+        if (body.action === 'finalize') {
+          if (!evidenceFromBody.correctReason || (typeof evidenceFromBody.correctReason === 'string' && evidenceFromBody.correctReason.trim() === '')) {
+            throw new BadRequestException('批量审批办结必须填写补正原因');
+          }
+        }
+
         const lastRecord = await this.recordRepo.findOne({
           where: { orderId: order.id },
           order: { createdAt: 'DESC' },
@@ -997,6 +1011,7 @@ export class OrdersService {
             currentHandlerRole: '',
             warningLevel: 'normal',
             responsibleNode: 'approver_finalized',
+            correctReason: evidenceFromBody.correctReason ?? order.correctReason,
             returnOpinion: null as unknown as string,
           });
 
@@ -1009,6 +1024,7 @@ export class OrdersService {
             `批量审批通过：${body.opinion}`,
             {
               ...finalEvidence,
+              correctReason: evidenceFromBody.correctReason ?? order.correctReason,
               responsibleNode: 'approver_finalized',
               returnOpinion: null,
             },
