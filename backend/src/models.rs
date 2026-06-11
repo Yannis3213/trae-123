@@ -281,6 +281,7 @@ pub struct BatchProcessRequest {
     pub action: String,
     pub target_status: String,
     pub remark: Option<String>,
+    pub return_reason: Option<String>,
     pub version_map: Option<std::collections::HashMap<String, i64>>,
     pub evidence: Option<std::collections::HashMap<String, Vec<String>>>,
 }

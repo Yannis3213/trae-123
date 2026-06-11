@@ -835,7 +835,9 @@ pub fn validate_transition(
     current_handler_id: &str,
     user_id: &str,
 ) -> (bool, Option<String>) {
-    if current_handler_id != user_id {
+    let supervisor_can_override = matches!(user_role, Role::Supervisor | Role::QaSupervisor | Role::Reviewer)
+        && matches!(target_status, TicketStatus::ExceptionReturned);
+    if current_handler_id != user_id && !supervisor_can_override {
         return (false, Some("当前处理人为其他账号，您无权处理".to_string()));
     }
 
@@ -1054,7 +1056,7 @@ pub async fn batch_process_tickets(
             target_status: req.target_status.clone(),
             remark: req.remark.clone(),
             processing_result: None,
-            return_reason: None,
+            return_reason: req.return_reason.clone(),
             version,
             evidence_required: None,
             evidence,

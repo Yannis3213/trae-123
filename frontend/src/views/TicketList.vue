@@ -247,26 +247,19 @@
             </div>
             <div class="form-group">
               <label>动作：</label>
-              <select v-model="batchForm.action">
-                <option value="签收">签收登记（按优先级交主管/质检）</option>
-                <option value="派单">派单处理（交客服坐席）</option>
-                <option value="回访关闭">回访关闭（交复核负责人）</option>
-                <option value="签收完成">签收完成（交复核负责人）</option>
-                <option value="复核归档">复核归档</option>
-                <option value="退回补正">退回补正（交登记员）</option>
-                <option value="质检退回补正">质检退回补正（交登记员）</option>
+              <select v-model="batchForm.action" @change="onBatchActionChange">
+                <option v-for="opt in batchActionOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
               </select>
             </div>
             <div class="form-group">
               <label>目标状态：</label>
               <select v-model="batchForm.target_status">
-                <option value="call_registered">来电登记（下一处理人：主管/质检）</option>
-                <option value="dispatched">问题派单（下一处理人：客服坐席）</option>
-                <option value="receipt_completed">签收完成（下一处理人：复核负责人）</option>
-                <option value="callback_closed">回访关闭（下一处理人：复核负责人）</option>
-                <option value="exception_returned">异常回传（下一处理人：登记员）</option>
-                <option value="archived">已归档</option>
+                <option v-for="opt in batchTargetOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
               </select>
+            </div>
+            <div v-if="batchForm.target_status === 'exception_returned'" class="form-group">
+              <label>退回原因 *</label>
+              <textarea v-model="batchForm.return_reason" rows="2" placeholder="请填写退回原因，将记录到工单异常原因"></textarea>
             </div>
             <div class="form-group">
               <label>备注：</label>
@@ -347,7 +340,75 @@ const batchForm = reactive({
   action: '签收',
   target_status: 'call_registered',
   remark: '',
+  return_reason: '',
 })
+
+const batchActionOptions = computed(() => {
+  const role = currentUser.value?.role
+  const options = []
+  switch (role) {
+    case 'registrar':
+    case 'agent':
+      options.push({ value: '签收', label: '签收登记（按优先级交主管/质检）' })
+      options.push({ value: '回访关闭', label: '回访关闭（交复核负责人）' })
+      options.push({ value: '补正重提', label: '补正后重新提交（按优先级交主管/质检）' })
+      break
+    case 'supervisor':
+      options.push({ value: '派单', label: '派单处理（交客服坐席）' })
+      options.push({ value: '签收完成', label: '审核签收完成（交复核负责人）' })
+      options.push({ value: '退回补正', label: '退回补正（交登记员）' })
+      break
+    case 'qa_supervisor':
+      options.push({ value: '派单', label: '派单处理（交客服坐席）' })
+      options.push({ value: '签收完成', label: '质检签收完成（交复核负责人）' })
+      options.push({ value: '质检退回补正', label: '质检退回补正（交登记员）' })
+      break
+    case 'reviewer':
+      options.push({ value: '复核归档', label: '复核归档' })
+      options.push({ value: '复核退回', label: '复核退回（交登记员）' })
+      break
+  }
+  return options
+})
+
+const batchTargetOptions = computed(() => {
+  const role = currentUser.value?.role
+  const action = batchForm.action
+  const options = []
+  switch (role) {
+    case 'registrar':
+    case 'agent':
+      if (action === '签收') options.push({ value: 'call_registered', label: '来电登记（下一处理人：主管/质检）' })
+      if (action === '补正重提') options.push({ value: 'call_registered', label: '来电登记（下一处理人：主管/质检）' })
+      if (action === '回访关闭') options.push({ value: 'callback_closed', label: '回访关闭（下一处理人：复核负责人）' })
+      break
+    case 'supervisor':
+      if (action === '派单') options.push({ value: 'dispatched', label: '问题派单（下一处理人：客服坐席）' })
+      if (action === '签收完成') options.push({ value: 'receipt_completed', label: '签收完成（下一处理人：复核负责人）' })
+      if (action === '退回补正') options.push({ value: 'exception_returned', label: '异常回传（下一处理人：登记员）' })
+      break
+    case 'qa_supervisor':
+      if (action === '派单') options.push({ value: 'dispatched', label: '问题派单（下一处理人：客服坐席）' })
+      if (action === '签收完成') options.push({ value: 'receipt_completed', label: '签收完成（下一处理人：复核负责人）' })
+      if (action === '质检退回补正') options.push({ value: 'exception_returned', label: '异常回传（下一处理人：登记员）' })
+      break
+    case 'reviewer':
+      if (action === '复核归档') options.push({ value: 'archived', label: '已归档' })
+      if (action === '复核退回') options.push({ value: 'exception_returned', label: '异常回传（下一处理人：登记员）' })
+      break
+  }
+  return options
+})
+
+function onBatchActionChange() {
+  const opts = batchTargetOptions.value
+  if (opts.length > 0) {
+    batchForm.target_status = opts[0].value
+  }
+  if (batchForm.target_status !== 'exception_returned') {
+    batchForm.return_reason = ''
+  }
+}
 
 onMounted(async () => {
   try {
@@ -470,15 +531,20 @@ async function onBatchProcess() {
       const t = tickets.value.find(x => x.id === id)
       if (t) version_map[id] = t.version
     })
-    const resp = await api.batchProcess({
+    const payload = {
       ticket_ids: selectedIds.value,
       action: batchForm.action,
       target_status: batchForm.target_status,
       remark: batchForm.remark,
       version_map,
-    })
+    }
+    if (batchForm.target_status === 'exception_returned' && batchForm.return_reason) {
+      payload.return_reason = batchForm.return_reason
+    }
+    const resp = await api.batchProcess(payload)
     batchResult.value = resp
     selectedIds.value = []
+    loadData()
   } catch (e) {
     alert(e.message)
   } finally {

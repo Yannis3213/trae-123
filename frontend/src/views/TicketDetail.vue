@@ -402,7 +402,11 @@ const availableActions = computed(() => {
   const status = detail.value.ticket.status
   const handler = detail.value.ticket.current_handler_id
   const me = currentUser.value?.id
-  if (handler !== me) return []
+
+  const isSupervisorReturn = (role === 'supervisor' || role === 'qa_supervisor' || role === 'reviewer')
+    && status === 'dispatched'
+  const isHandler = handler === me
+  if (!isHandler && !isSupervisorReturn) return []
 
   const actions = []
   const push = (label, target, btnClass, needEvidence, needRemark, needResult, needReturnReason) => {
@@ -417,14 +421,14 @@ const availableActions = computed(() => {
       if (status === 'dispatched') push('回访并关闭工单', 'callback_closed', 'btn-success', true, true, true, false)
       break
     case 'supervisor':
-      if (status === 'call_registered') push('派单处理（交客服坐席）', 'dispatched', 'btn-primary', true, true, false, false)
-      if (status === 'call_registered') push('退回补正（交登记员）', 'exception_returned', 'btn-warning', false, true, false, true)
+      if (status === 'call_registered' && isHandler) push('派单处理（交客服坐席）', 'dispatched', 'btn-primary', true, true, false, false)
+      if (status === 'call_registered' && isHandler) push('退回补正（交登记员）', 'exception_returned', 'btn-warning', false, true, false, true)
       if (status === 'dispatched') push('审核签收完成（交复核）', 'receipt_completed', 'btn-success', true, true, true, false)
       if (status === 'dispatched') push('退回补正（交登记员）', 'exception_returned', 'btn-danger', false, true, false, true)
       break
     case 'qa_supervisor':
-      if (status === 'call_registered') push('派单处理（交客服坐席）', 'dispatched', 'btn-primary', true, true, false, false)
-      if (status === 'call_registered') push('质检退回补正（交登记员）', 'exception_returned', 'btn-warning', false, true, false, true)
+      if (status === 'call_registered' && isHandler) push('派单处理（交客服坐席）', 'dispatched', 'btn-primary', true, true, false, false)
+      if (status === 'call_registered' && isHandler) push('质检退回补正（交登记员）', 'exception_returned', 'btn-warning', false, true, false, true)
       if (status === 'dispatched') push('质检签收完成（交复核）', 'receipt_completed', 'btn-success', true, true, true, false)
       if (status === 'dispatched') push('质检退回补正（交登记员）', 'exception_returned', 'btn-danger', false, true, false, true)
       break
