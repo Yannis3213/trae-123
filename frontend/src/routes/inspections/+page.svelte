@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
 	import { onMount } from 'svelte';
 	import { currentRole, currentUser, selectedInspections, batchResults, refreshTrigger, triggerRefresh } from '$lib/stores';
 	import { fetchInspections, batchProcess } from '$lib/api';
@@ -11,7 +11,7 @@
 	let pageSize = 10;
 	let total = 0;
 	let toast = '';
-	let toastTimer;
+	let toastTimer: any;
 
 	let filterStatus = '';
 	let filterPond = '';
@@ -25,7 +25,7 @@
 	let pendingBatchAction: string | null = null;
 	let batchCorrectionAttachments: File[] = [];
 
-	function showToast(msg) {
+	function showToast(msg: string) {
 		toast = msg;
 		if (toastTimer) clearTimeout(toastTimer);
 		toastTimer = setTimeout(() => (toast = ''), 3000);
@@ -46,13 +46,13 @@
 			});
 			items = res.data.items;
 			total = res.data.pagination.total;
-		} catch (e) {
+		} catch (e: any) {
 			error = e.message || '加载失败';
 		}
 		loading = false;
 	}
 
-	function toggleSelect(id) {
+	function toggleSelect(id: string) {
 		const s = new Set($selectedInspections);
 		if (s.has(id)) s.delete(id);
 		else s.add(id);
@@ -67,7 +67,7 @@
 		}
 	}
 
-	async function handleBatch(action) {
+	async function handleBatch(action: string) {
 		const selected = items.filter((i) => $selectedInspections.has(i.id));
 		if (selected.length === 0) return;
 		if (action === 'reject' && !showBatchRejectDialog) {
@@ -98,7 +98,7 @@
 				: undefined;
 
 			const res = await batchProcess({
-				action,
+				action: action as any,
 				operator: $currentUser,
 				operator_role: $currentRole,
 				comment: action === 'correct' ? batchCorrectComment || undefined : undefined,
@@ -117,13 +117,13 @@
 			$selectedInspections = new Set();
 			triggerRefresh();
 			loadData();
-		} catch (e) {
+		} catch (e: any) {
 			showToast(e.message || '批量操作失败');
 		}
 	}
 
-	function statusLabel(s) {
-		const m = {
+	function statusLabel(s: string): string {
+		const m: Record<string, string> = {
 			pending_review: '待审核',
 			under_review: '审核中',
 			approved: '审核通过',
@@ -133,22 +133,22 @@
 		return m[s] || s;
 	}
 
-	function computeOverdueType(deadline) {
+	function computeOverdueType(deadline: string): string {
 		const now = new Date();
 		now.setHours(0, 0, 0, 0);
 		const dl = new Date(deadline + 'T00:00:00');
-		const diff = (dl - now) / (1000 * 60 * 60 * 24);
+		const diff = (dl.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
 		if (diff < 0) return 'overdue';
 		if (diff <= 3) return 'approaching';
 		return 'normal';
 	}
 
-	function overdueLabel(t) {
-		const m = { normal: '正常', approaching: '临期', overdue: '逾期' };
+	function overdueLabel(t: string): string {
+		const m: Record<string, string> = { normal: '正常', approaching: '临期', overdue: '逾期' };
 		return m[t] || t;
 	}
 
-	function overdueBadgeClass(t) {
+	function overdueBadgeClass(t: string): string {
 		if (t === 'overdue') return 'status-overdue';
 		if (t === 'approaching') return 'status-approaching';
 		return 'status-synced';

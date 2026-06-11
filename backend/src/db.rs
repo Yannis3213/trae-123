@@ -110,13 +110,13 @@ fn seed_data(conn: &Connection) -> Result<(), AppError> {
     let ts_1d = (now - chrono::Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string();
 
     let inspections = vec![
-        ("ins-001", "A1", "A1-东塘", "张三", "pond_admin", "pending_review", "张三", "pond_admin", five_days_later.as_str(), &ts, &ts),
-        ("ins-002", "A2", "A2-西塘", "张三", "pond_admin", "pending_review", "张三", "pond_admin", one_day_later.as_str(), &ts, &ts),
-        ("ins-003", "B1", "B1-南塘", "张三", "pond_admin", "pending_review", "张三", "pond_admin", ten_days_later.as_str(), &ts, &ts),
-        ("ins-004", "B2", "B2-北塘", "张三", "pond_admin", "under_review", "李工", "quality_engineer", two_days_later.as_str(), &ts_1d, &ts_1d),
+        ("ins-001", "A1", "A1-东塘", "张三", "pond_admin", "pending_review", "李工", "quality_engineer", five_days_later.as_str(), &ts, &ts),
+        ("ins-002", "A2", "A2-西塘", "张三", "pond_admin", "pending_review", "李工", "quality_engineer", one_day_later.as_str(), &ts, &ts),
+        ("ins-003", "B1", "B1-南塘", "张三", "pond_admin", "pending_review", "李工", "quality_engineer", ten_days_later.as_str(), &ts, &ts),
+        ("ins-004", "B2", "B2-北塘", "张三", "pond_admin", "pending_review", "李工", "quality_engineer", two_days_later.as_str(), &ts_1d, &ts_1d),
         ("ins-005", "C1", "C1-中心塘", "张三", "pond_admin", "approved", "王主任", "base_director", five_days_later.as_str(), &ts_3d, &ts_2d),
         ("ins-006", "A1", "A1-东塘", "张三", "pond_admin", "approved", "王主任", "base_director", seven_days_ago.as_str(), &ts_5d, &ts_3d),
-        ("ins-007", "A2", "A2-西塘", "张三", "pond_admin", "pending_correction", "张三", "pond_admin", yesterday.as_str(), &ts_3d, &ts_2d),
+        ("ins-007", "A2", "A2-西塘", "张三", "pond_admin", "pending_review", "李工", "quality_engineer", yesterday.as_str(), &ts_3d, &ts_1d),
         ("ins-008", "B1", "B1-南塘", "张三", "pond_admin", "pending_correction", "张三", "pond_admin", two_days_ago.as_str(), &ts_2d, &ts_1d),
         ("ins-009", "B2", "B2-北塘", "张三", "pond_admin", "synced", "王主任", "base_director", seven_days_ago.as_str(), &ts_7d, &ts_5d),
         ("ins-010", "C1", "C1-中心塘", "张三", "pond_admin", "synced", "王主任", "base_director", five_days_ago.as_str(), &ts_5d, &ts_3d),
@@ -195,14 +195,15 @@ fn seed_data(conn: &Connection) -> Result<(), AppError> {
         ("aud-008", "ins-006", "approve", "李工", "quality_engineer", Some("数据合格"), &ts_3d),
         ("aud-009", "ins-007", "submit", "张三", "pond_admin", None::<&str>, &ts_3d),
         ("aud-010", "ins-007", "reject", "李工", "quality_engineer", Some("pH值超标，需补正"), &ts_2d),
-        ("aud-011", "ins-008", "submit", "张三", "pond_admin", None::<&str>, &ts_2d),
-        ("aud-012", "ins-008", "reject", "李工", "quality_engineer", Some("溶解氧不达标"), &ts_1d),
-        ("aud-013", "ins-009", "submit", "张三", "pond_admin", None::<&str>, &ts_7d),
-        ("aud-014", "ins-009", "approve", "李工", "quality_engineer", Some("合格"), &ts_5d),
-        ("aud-015", "ins-009", "confirm_sync", "王主任", "base_director", Some("已同步至监管平台"), &ts_5d),
-        ("aud-016", "ins-010", "submit", "张三", "pond_admin", None::<&str>, &ts_5d),
-        ("aud-017", "ins-010", "approve", "李工", "quality_engineer", Some("合格"), &ts_3d),
-        ("aud-018", "ins-010", "confirm_sync", "王主任", "base_director", Some("已同步"), &ts_3d),
+        ("aud-011", "ins-007", "correct", "张三", "pond_admin", Some("已重新检测并上传新报告"), &ts_1d),
+        ("aud-012", "ins-008", "submit", "张三", "pond_admin", None::<&str>, &ts_2d),
+        ("aud-013", "ins-008", "reject", "李工", "quality_engineer", Some("溶解氧不达标"), &ts_1d),
+        ("aud-014", "ins-009", "submit", "张三", "pond_admin", None::<&str>, &ts_7d),
+        ("aud-015", "ins-009", "approve", "李工", "quality_engineer", Some("合格"), &ts_5d),
+        ("aud-016", "ins-009", "confirm_sync", "王主任", "base_director", Some("已同步至监管平台"), &ts_5d),
+        ("aud-017", "ins-010", "submit", "张三", "pond_admin", None::<&str>, &ts_5d),
+        ("aud-018", "ins-010", "approve", "李工", "quality_engineer", Some("合格"), &ts_3d),
+        ("aud-019", "ins-010", "confirm_sync", "王主任", "base_director", Some("已同步"), &ts_3d),
     ];
 
     let aud_stmt = conn.prepare(
@@ -215,7 +216,7 @@ fn seed_data(conn: &Connection) -> Result<(), AppError> {
 
     let exception_reasons = vec![
         ("exc-001", "ins-007", "aud-010", "pH值8.6超出标准范围6.5-8.5，需重新检测", &ts_2d),
-        ("exc-002", "ins-008", "aud-012", "溶解氧3.5mg/L低于标准5mg/L，需补正", &ts_1d),
+        ("exc-002", "ins-008", "aud-013", "溶解氧3.5mg/L低于标准5mg/L，需补正", &ts_1d),
     ];
 
     let exc_stmt = conn.prepare(

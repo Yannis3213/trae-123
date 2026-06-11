@@ -9,7 +9,7 @@
 	let loading = true;
 	let error = '';
 	let toast = '';
-	let toastTimer;
+	let toastTimer: any;
 
 	let showRejectDialog = false;
 	let exceptionReason = '';
@@ -140,9 +140,8 @@
 		const role = $currentRole;
 		const status = detail.inspection.status;
 		const actions: Action[] = [];
-		if (role === 'pond_admin' && status === 'pending_review') actions.push('submit');
+		if (role === 'quality_engineer' && (status === 'pending_review' || status === 'under_review')) actions.push('approve', 'reject');
 		if (role === 'pond_admin' && status === 'pending_correction') actions.push('correct');
-		if (role === 'quality_engineer' && status === 'under_review') actions.push('approve', 'reject');
 		if (role === 'base_director' && status === 'approved') actions.push('confirm_sync', 'reject');
 		return actions;
 	}

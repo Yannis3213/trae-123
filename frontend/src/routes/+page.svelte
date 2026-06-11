@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
 	import { onMount } from 'svelte';
 	import { currentRole, refreshTrigger } from '$lib/stores';
 	import { fetchStats, fetchOverdueQueue } from '$lib/api';
@@ -27,37 +27,37 @@
 			]);
 			stats = statsRes.data;
 			overdueItems = overdueRes.data;
-		} catch (e) {
+		} catch (e: any) {
 			error = e.message || '加载数据失败';
 		}
 		loading = false;
 	}
 
-	function filterItems(items, filter) {
+	function filterItems(items: OverdueItem[], filter: OverdueType | 'all'): OverdueItem[] {
 		if (filter === 'all') return items;
 		return items.filter((i) => i.overdue_type === filter);
 	}
 
-	function overdueRowClass(type) {
+	function overdueRowClass(type: string): string {
 		if (type === 'overdue') return 'bg-red-50';
 		if (type === 'approaching') return 'bg-orange-50';
 		return 'bg-white';
 	}
 
-	function overdueLabel(type) {
+	function overdueLabel(type: string): string {
 		if (type === 'overdue') return '逾期';
 		if (type === 'approaching') return '临期';
 		return '正常';
 	}
 
-	function overdueBadgeClass(type) {
+	function overdueBadgeClass(type: string): string {
 		if (type === 'overdue') return 'status-overdue';
 		if (type === 'approaching') return 'status-approaching';
 		return 'status-synced';
 	}
 
-	function statusLabel(s) {
-		const m = {
+	function statusLabel(s: string): string {
+		const m: Record<string, string> = {
 			pending_review: '待审核',
 			under_review: '审核中',
 			approved: '审核通过',

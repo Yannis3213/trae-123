@@ -51,15 +51,15 @@ pub fn validate_status_transition(current_status: &str, action: &Action) -> Resu
     let status = Status::from_str(current_status).ok_or_else(|| AppError::Validation(format!("无效状态: {}", current_status)))?;
     match action {
         Action::Submit => match status {
-            Status::PendingReview | Status::UnderReview => Ok("under_review".to_string()),
+            Status::PendingReview => Ok("pending_review".to_string()),
             _ => Err(AppError::Validation(format!("当前状态 {} 不允许提交", current_status))),
         },
         Action::Approve => match status {
-            Status::UnderReview => Ok("approved".to_string()),
+            Status::PendingReview | Status::UnderReview => Ok("approved".to_string()),
             _ => Err(AppError::Validation(format!("当前状态 {} 不允许通过", current_status))),
         },
         Action::Reject => match status {
-            Status::UnderReview | Status::Approved => Ok("pending_correction".to_string()),
+            Status::PendingReview | Status::UnderReview | Status::Approved => Ok("pending_correction".to_string()),
             _ => Err(AppError::Validation(format!("当前状态 {} 不允许退回", current_status))),
         },
         Action::Correct => match status {
