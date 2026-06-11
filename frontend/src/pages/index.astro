@@ -1,0 +1,21 @@
+---
+import '../styles/global.css';
+import LoginForm from '../components/LoginForm';
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录 - 法律服务管理系统</title>
+  </head>
+  <body>
+    <div class="login-container">
+      <div class="login-box">
+        <h1 class="login-title">法律服务管理系统</h1>
+        <LoginForm client:load />
+      </div>
+    </div>
+  </body>
+</html>

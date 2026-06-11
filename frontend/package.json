@@ -1,0 +1,27 @@
+{
+  "name": "legal-service-frontend",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev --port 3003",
+    "start": "astro dev --port 3003",
+    "build": "astro build",
+    "preview": "astro preview --port 3003"
+  },
+  "dependencies": {
+    "astro": "^4.0.0",
+    "@astrojs/react": "^3.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "axios": "^1.6.0",
+    "dayjs": "^1.11.10",
+    "antd": "^5.12.0",
+    "@ant-design/icons": "^5.2.6"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.3.0"
+  }
+}

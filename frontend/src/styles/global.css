@@ -1,0 +1,389 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f0f2f5;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.layout-container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 240px;
+  background: #001529;
+  position: fixed;
+  height: 100vh;
+  left: 0;
+  top: 0;
+  z-index: 100;
+}
+
+.sidebar .logo {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sidebar .menu {
+  padding: 8px 0;
+}
+
+.sidebar .menu-item {
+  display: flex;
+  align-items: center;
+  padding: 12px 24px;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  transition: all 0.3s;
+  text-decoration: none;
+}
+
+.sidebar .menu-item:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar .menu-item.active {
+  color: #fff;
+  background: #1890ff;
+}
+
+.sidebar .menu-item svg {
+  margin-right: 12px;
+  font-size: 18px;
+}
+
+.main-content {
+  margin-left: 240px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  height: 64px;
+  background: #fff;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  position: sticky;
+  top: 0;
+  z-index: 99;
+}
+
+.header .user-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.page-content {
+  padding: 24px;
+  flex: 1;
+}
+
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.login-box {
+  width: 400px;
+  padding: 40px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.login-title {
+  text-align: center;
+  margin-bottom: 32px;
+  font-size: 24px;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.stat-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: #fff;
+  padding: 24px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.stat-card .label {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.stat-card .value {
+  font-size: 32px;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.stat-card .trend {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.trend.up {
+  color: #52c41a;
+}
+
+.trend.down {
+  color: #ff4d4f;
+}
+
+.quick-actions {
+  background: #fff;
+  padding: 24px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.quick-actions h3 {
+  margin-bottom: 16px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.action-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s;
+  text-decoration: none;
+  color: #1f1f1f;
+}
+
+.action-btn:hover {
+  border-color: #1890ff;
+  color: #1890ff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.15);
+}
+
+.action-btn svg {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+.action-btn span {
+  font-size: 14px;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.filter-bar {
+  background: #fff;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.table-container {
+  background: #fff;
+  padding: 16px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.detail-section {
+  background: #fff;
+  padding: 24px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.detail-section h3 {
+  margin-bottom: 16px;
+  font-size: 16px;
+  font-weight: 600;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.detail-item {
+  display: flex;
+}
+
+.detail-item .label {
+  width: 100px;
+  color: rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
+}
+
+.detail-item .value {
+  color: #1f1f1f;
+  flex: 1;
+}
+
+.status-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-draft {
+  background: #f0f0f0;
+  color: #595959;
+}
+
+.status-pending {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.status-processing {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.status-completed {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.status-returned {
+  background: #fff1f0;
+  color: #ff4d4f;
+}
+
+.priority-high {
+  background: #fff1f0;
+  color: #ff4d4f;
+}
+
+.priority-normal {
+  background: #e6f7ff;
+  color: #1890ff;
+}
+
+.priority-low {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.warning-overdue {
+  background: #fff1f0;
+  color: #ff4d4f;
+}
+
+.warning-approaching {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.timeline {
+  position: relative;
+  padding-left: 24px;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #e8e8e8;
+}
+
+.timeline-item {
+  position: relative;
+  padding-bottom: 24px;
+}
+
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #1890ff;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 2px #1890ff;
+}
+
+.timeline-item .time {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.timeline-item .action {
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.timeline-item .operator {
+  color: rgba(0, 0, 0, 0.65);
+  font-size: 13px;
+}
+
+.timeline-item .remark {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border-radius: 4px;
+  font-size: 13px;
+}

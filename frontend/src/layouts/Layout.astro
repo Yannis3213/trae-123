@@ -1,0 +1,37 @@
+---
+import '../styles/global.css';
+import Sidebar from '../components/Sidebar';
+import Header from '../components/Header';
+
+interface Props {
+  title: string;
+  showSidebar?: boolean;
+}
+
+const { title, showSidebar = true } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} - 法律服务管理系统</title>
+  </head>
+  <body>
+    {showSidebar && (
+      <div class="layout-container">
+        <Sidebar client:load />
+        <div class="main-content">
+          <Header client:load />
+          <main class="page-content">
+            <slot />
+          </main>
+        </div>
+      </div>
+    )}
+    {!showSidebar && (
+      <slot />
+    )}
+  </body>
+</html>

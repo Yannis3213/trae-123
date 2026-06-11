@@ -1,0 +1,11 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import CaseDetail from '../../components/CaseDetail';
+
+const { id } = Astro.params;
+const caseId = id ? parseInt(id, 10) : 0;
+---
+
+<Layout title={`案件详情 - ${id}`}>
+  <CaseDetail client:load caseId={caseId} />
+</Layout>

@@ -1,0 +1,11 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import CaseList from '../../components/CaseList';
+---
+
+<Layout title="法律咨询单列表">
+  <div class="page-header">
+    <h1 class="page-title">法律咨询单列表</h1>
+  </div>
+  <CaseList client:load />
+</Layout>

@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+import StatCards from '../components/StatCards';
+import QuickActions from '../components/QuickActions';
+---
+
+<Layout title="控制台">
+  <div class="page-header">
+    <h1 class="page-title">控制台</h1>
+  </div>
+  <StatCards client:load />
+  <QuickActions client:load />
+</Layout>
