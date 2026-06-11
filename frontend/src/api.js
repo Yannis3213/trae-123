@@ -74,4 +74,15 @@ export const api = {
   },
 
   getWarningStats: () => request('/warning/stats'),
+
+  uploadAttachment: (data) => {
+    return request('/applications/attachments', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  getExceptionLogs: (applicationId) => {
+    return request(`/applications/${applicationId}/exceptions`);
+  },
 };

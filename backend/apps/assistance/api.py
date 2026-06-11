@@ -1,20 +1,22 @@
-from typing import Optional
+from typing import Optional, List
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.http import HttpRequest
 from ninja import NinjaAPI, Schema
 from ninja.security import HttpBasicAuth
-from .models import AssistanceApplication, UserProfile
+from .models import AssistanceApplication, UserProfile, Attachment, ExceptionLog as ExceptionLogModel
 from .schemas import (
     UserSchema, LoginSchema, ApplicationListSchema, ApplicationDetailSchema,
     ApplicationCreateSchema, ApplicationProcessSchema, BatchProcessSchema,
-    BatchProcessResult, WarningStatsSchema, ApplicationFilterSchema
+    BatchProcessResult, WarningStatsSchema, ApplicationFilterSchema,
+    AttachmentUploadSchema, ExceptionLogSchema
 )
 from .services import (
     BusinessException, get_user_role, get_role_name,
     build_application_list_schema, build_application_detail_schema,
     create_application, process_application_action, process_batch,
-    get_warning_stats, get_application_list, create_exception_log
+    get_warning_stats, get_application_list, create_exception_log,
+    create_audit_note
 )
 
 
@@ -155,6 +157,74 @@ def batch_process_applications(request, payload: BatchProcessSchema):
 @api.get('/applications/export', auth=auth)
 def export_applications(request):
     raise BusinessException('NOT_IMPLEMENTED', '导出功能暂未开放，请使用主流程功能')
+
+
+@api.post('/applications/attachments', auth=auth, response=ApplicationDetailSchema)
+def upload_attachment(request, payload: AttachmentUploadSchema):
+    user = request.auth
+    role = get_user_role(user)
+
+    try:
+        application = AssistanceApplication.objects.get(id=payload.application_id)
+    except AssistanceApplication.DoesNotExist:
+        raise BusinessException('NOT_FOUND', '帮扶申请不存在')
+
+    if role == 'community_worker' and application.creator_id != user.id:
+        raise BusinessException('PERMISSION_DENIED', '只有申请人可以上传补正材料')
+
+    if application.status not in ['returned', 'pending']:
+        raise BusinessException('STATUS_CONFLICT', '当前状态不允许上传材料，仅退回补正或待接单状态可上传')
+
+    Attachment.objects.create(
+        application=application,
+        file_name=payload.file_name,
+        file_type='application/pdf',
+        file_path=f'/uploads/{application.application_no}/{payload.file_name}',
+        file_size=1024 * 100,
+        uploaded_by=user,
+        evidence_type=payload.evidence_type,
+        is_required=payload.is_required,
+    )
+
+    create_audit_note(
+        application=application,
+        note_type='evidence_upload',
+        content=f'上传补正材料：{payload.file_name}（类型：{payload.evidence_type}）',
+        operator=user,
+    )
+
+    application.version += 1
+    application.save()
+
+    return build_application_detail_schema(application)
+
+
+@api.get('/applications/{application_id}/exceptions', auth=auth, response=List[ExceptionLogSchema])
+def get_application_exceptions(request, application_id: int):
+    user = request.auth
+    try:
+        application = AssistanceApplication.objects.get(id=application_id)
+    except AssistanceApplication.DoesNotExist:
+        raise BusinessException('NOT_FOUND', '帮扶申请不存在')
+
+    role = get_user_role(user)
+    if role == 'community_worker' and application.creator_id != user.id:
+        raise BusinessException('PERMISSION_DENIED', '您无权查看此申请的异常记录')
+
+    logs = application.exception_logs.all()
+    return [
+        {
+            'id': log.id,
+            'application_no': application.application_no,
+            'exception_type': log.exception_type,
+            'error_code': log.error_code,
+            'error_message': log.error_message,
+            'operator': log.operator.username,
+            'resolved': log.resolved,
+            'created_at': log.created_at,
+        }
+        for log in logs
+    ]
 
 
 @api.get('/warning/stats', auth=auth, response=WarningStatsSchema)

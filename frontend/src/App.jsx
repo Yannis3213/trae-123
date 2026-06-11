@@ -98,6 +98,7 @@ export default function App() {
           onViewDetail={handleViewDetail}
           onBatchProcess={handleBatchProcess}
           onCreate={() => setShowCreate(true)}
+          refreshTrigger={refreshTrigger()}
         />
       </main>
 

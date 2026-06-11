@@ -21,6 +21,15 @@ const statusLabels = {
   rejected: '不予通过',
 };
 
+const evidenceTypeOptions = [
+  { value: 'identity_proof', label: '身份证明' },
+  { value: 'difficulty_proof', label: '困难证明' },
+  { value: 'visit_record', label: '走访记录' },
+  { value: 'photo_evidence', label: '照片证据' },
+  { value: 'approval_document', label: '审批文件' },
+  { value: 'amount_calculation', label: '金额计算表' },
+];
+
 export default function ApplicationDetail({ applicationId, onClose, onUpdated }) {
   const [application, setApplication] = createSignal(null);
   const [loading, setLoading] = createSignal(false);
@@ -30,12 +39,25 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
   const [success, setSuccess] = createSignal('');
   const [processing, setProcessing] = createSignal(false);
 
+  const [showUploadArea, setShowUploadArea] = createSignal(false);
+  const [uploadFileName, setUploadFileName] = createSignal('');
+  const [uploadFileType, setUploadFileType] = createSignal('');
+  const [uploading, setUploading] = createSignal(false);
+
+  const [exceptionLogs, setExceptionLogs] = createSignal([]);
+
   const loadDetail = async () => {
     setLoading(true);
     setError('');
     try {
       const data = await api.getApplication(applicationId);
       setApplication(data);
+      try {
+        const logs = await api.getExceptionLogs(applicationId);
+        setExceptionLogs(logs);
+      } catch (e) {
+        setExceptionLogs([]);
+      }
     } catch (err) {
       setError(err.error_message || '加载详情失败');
     } finally {
@@ -74,7 +96,7 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
       if (role === 'street_clerk') {
         actions.push('process', 'return');
       } else if (role === 'leader') {
-        actions.push('approve', 'reject');
+        actions.push('approve', 'reject', 'return');
       }
     }
 
@@ -107,6 +129,31 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
       setError(`${err.error_code}: ${err.error_message}`);
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const handleUploadAttachment = async () => {
+    if (!uploadFileName() || !uploadFileType()) {
+      setError('请填写材料名称和选择材料类型');
+      return;
+    }
+    setUploading(true);
+    setError('');
+    try {
+      const result = await api.uploadAttachment({
+        application_id: applicationId,
+        file_name: uploadFileName(),
+        evidence_type: uploadFileType(),
+        is_required: true,
+      });
+      setApplication(result);
+      setUploadFileName('');
+      setUploadFileType('');
+      setSuccess('材料上传成功');
+    } catch (err) {
+      setError(`${err.error_code}: ${err.error_message}`);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -228,6 +275,55 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
                 </div>
               </div>
 
+              {app.missing_evidence && app.missing_evidence.length > 0 && (
+                <div class="detail-section" style={{ borderLeft: '3px solid #fa8c16', paddingLeft: '12px' }}>
+                  <h4 style={{ color: '#fa8c16' }}>缺少必填材料</h4>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {app.missing_evidence.map((e) => (
+                      <span class="badge badge-returned" style={{ fontSize: '13px' }}>
+                        {evidenceTypeOptions.find(o => o.value === e)?.label || e}
+                      </span>
+                    ))}
+                  </div>
+                  {(app.status === 'returned' || app.status === 'pending') && (
+                    <button
+                      class="btn btn-primary btn-sm"
+                      style={{ marginTop: '8px' }}
+                      onClick={() => setShowUploadArea(!showUploadArea())}
+                    >
+                      {showUploadArea() ? '收起上传' : '上传补正材料'}
+                    </button>
+                  )}
+                  {showUploadArea() && (
+                    <div style={{ marginTop: '12px', padding: '12px', background: '#fafafa', borderRadius: '6px' }}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                        <div class="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                          <label>材料名称</label>
+                          <input
+                            type="text"
+                            value={uploadFileName()}
+                            onInput={(e) => setUploadFileName(e.target.value)}
+                            placeholder="如：走访记录.docx"
+                          />
+                        </div>
+                        <div class="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                          <label>材料类型</label>
+                          <select value={uploadFileType()} onChange={(e) => setUploadFileType(e.target.value)}>
+                            <option value="">请选择</option>
+                            {evidenceTypeOptions.map((opt) => (
+                              <option value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onClick={handleUploadAttachment} disabled={uploading()}>
+                          {uploading() ? '上传中...' : '上传'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div class="detail-section">
                 <h4>附件材料</h4>
                 {app.attachments.length === 0 ? (
@@ -248,7 +344,7 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
                         {(att) => (
                           <tr>
                             <td>{att.file_name}</td>
-                            <td>{att.evidence_type || '-'}</td>
+                            <td>{evidenceTypeOptions.find(o => o.value === att.evidence_type)?.label || att.evidence_type}</td>
                             <td>{att.is_required ? '是' : '否'}</td>
                             <td>{att.uploaded_by}</td>
                             <td>{formatDate(att.created_at)}</td>
@@ -295,11 +391,49 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
                   <h4>审计备注</h4>
                   <For each={app.audit_notes}>
                     {(note) => (
-                      <div style={{ padding: '12px', background: '#fafafa', borderRadius: '6px', marginBottom: '8px' }}>
+                      <div style={{
+                        padding: '12px',
+                        background: note.note_type === 'return_reason' ? '#fff7e6' :
+                                    note.note_type === 'correction' ? '#e6fffb' :
+                                    note.note_type === 'evidence_upload' ? '#f0f5ff' : '#fafafa',
+                        borderRadius: '6px',
+                        marginBottom: '8px',
+                        borderLeft: note.note_type === 'return_reason' ? '3px solid #fa8c16' :
+                                    note.note_type === 'correction' ? '3px solid #13c2c2' :
+                                    note.note_type === 'evidence_upload' ? '3px solid #1890ff' : '3px solid #d9d9d9'
+                      }}>
                         <div style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: '4px' }}>
-                          {formatDate(note.created_at)} | {note.node_name} | {note.operator}
+                          {formatDate(note.created_at)} | {note.node_name} | {note.operator} |
+                          {note.note_type === 'return_reason' ? ' 退回原因' :
+                           note.note_type === 'correction' ? ' 补正记录' :
+                           note.note_type === 'evidence_upload' ? ' 材料上传' : ` ${note.note_type}`}
                         </div>
                         <div style={{ fontSize: '14px' }}>{note.content}</div>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              )}
+
+              {exceptionLogs().length > 0 && (
+                <div class="detail-section" style={{ borderLeft: '3px solid #ff4d4f', paddingLeft: '12px' }}>
+                  <h4 style={{ color: '#ff4d4f' }}>异常记录</h4>
+                  <For each={exceptionLogs()}>
+                    {(log) => (
+                      <div style={{
+                        padding: '10px',
+                        background: log.resolved ? '#f6ffed' : '#fff2f0',
+                        borderRadius: '6px',
+                        marginBottom: '6px',
+                        border: '1px solid ' + (log.resolved ? '#b7eb8f' : '#ffccc7')
+                      }}>
+                        <div style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: '4px' }}>
+                          {formatDate(log.created_at)} | {log.exception_type} | {log.operator}
+                          {log.resolved && <span style={{ color: '#52c41a', marginLeft: '8px' }}>已解决</span>}
+                        </div>
+                        <div style={{ fontSize: '14px' }}>
+                          <span style={{ color: '#ff4d4f', fontWeight: 500 }}>[{log.error_code}]</span> {log.error_message}
+                        </div>
                       </div>
                     )}
                   </For>
@@ -323,16 +457,19 @@ export default function ApplicationDetail({ applicationId, onClose, onUpdated })
                     <textarea
                       value={comment()}
                       onInput={(e) => setComment(e.target.value)}
-                      placeholder="请输入处理意见（可选）"
+                      placeholder={action() === 'return' ? '请填写退回补正的具体原因' : '请输入处理意见（可选）'}
                     />
                   </div>
                   <button
                     class="btn btn-primary"
                     onClick={handleAction}
-                    disabled={processing() || !action()}
+                    disabled={processing() || !action() || (action() === 'return' && !comment())}
                   >
                     {processing() ? '处理中...' : '提交处理'}
                   </button>
+                  {action() === 'return' && !comment() && (
+                    <span style={{ color: '#fa8c16', fontSize: '12px', marginLeft: '8px' }}>退回补正必须填写原因</span>
+                  )}
                 </div>
               )}
             </>

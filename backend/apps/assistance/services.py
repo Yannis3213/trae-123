@@ -38,7 +38,7 @@ VALID_ACTIONS = {
         'leader': ['review'],
     },
     'rescue_confirmation': {
-        'leader': ['accept', 'approve', 'reject', 'confirm'],
+        'leader': ['accept', 'approve', 'reject', 'confirm', 'return'],
     },
 }
 
@@ -304,12 +304,17 @@ def process_application_action(
 
     elif action == 'return':
         check_status(application, ['accepted'])
-        check_required_evidence(application, application.current_node)
         application.status = 'returned'
         application.current_handler = application.creator
+        application.warning_status = 'normal'
 
     elif action in ['process', 'verify']:
         check_status(application, ['accepted'])
+        if application.warning_status == 'overdue':
+            raise BusinessException(
+                'OVERDUE_BLOCKED',
+                '该申请已逾期，不可直接推进，请先退回补正或联系负责人处理'
+            )
         check_required_evidence(application, application.current_node)
 
         next_node = NODE_TRANSITION.get(application.current_node)
@@ -324,6 +329,11 @@ def process_application_action(
 
     elif action in ['approve', 'confirm']:
         check_status(application, ['accepted'])
+        if application.warning_status == 'overdue':
+            raise BusinessException(
+                'OVERDUE_BLOCKED',
+                '该申请已逾期，不可直接审批，请先退回补正或联系负责人处理'
+            )
         check_required_evidence(application, application.current_node)
         application.status = 'passed'
 
@@ -335,6 +345,8 @@ def process_application_action(
     elif action == 'correct':
         check_status(application, ['returned'])
         application.status = 'pending'
+        application.node_deadline = None
+        application.warning_status = 'normal'
 
     elif action == 'submit':
         check_status(application, ['pending'])
@@ -362,6 +374,22 @@ def process_application_action(
             application=application,
             note_type='evidence_requirement',
             content=f'需补充材料：{", ".join(evidence_required)}',
+            operator=user
+        )
+
+    if action == 'return' and comment:
+        create_audit_note(
+            application=application,
+            note_type='return_reason',
+            content=f'退回补正原因：{comment}',
+            operator=user
+        )
+
+    if action == 'correct':
+        create_audit_note(
+            application=application,
+            note_type='correction',
+            content='社区专干已补正材料并重新提交',
             operator=user
         )
 
@@ -427,6 +455,14 @@ def build_application_list_schema(app: AssistanceApplication) -> Dict[str, Any]:
 
 def build_application_detail_schema(app: AssistanceApplication) -> Dict[str, Any]:
     update_warning_status(app)
+    app.save()
+
+    required_evidence = REQUIRED_EVIDENCE.get(app.current_node, [])
+    existing_evidence = set(
+        app.attachments.filter(is_required=True).values_list('evidence_type', flat=True)
+    )
+    missing_evidence = [e for e in required_evidence if e not in existing_evidence]
+
     return {
         'id': app.id,
         'application_no': app.application_no,
@@ -457,6 +493,7 @@ def build_application_detail_schema(app: AssistanceApplication) -> Dict[str, Any
         'version': app.version,
         'created_at': app.created_at,
         'updated_at': app.updated_at,
+        'missing_evidence': missing_evidence,
         'attachments': [
             {
                 'id': att.id,
@@ -495,6 +532,19 @@ def build_application_detail_schema(app: AssistanceApplication) -> Dict[str, Any
                 'created_at': note.created_at,
             }
             for note in app.audit_notes.all()
+        ],
+        'exception_logs': [
+            {
+                'id': log.id,
+                'application_no': app.application_no,
+                'exception_type': log.exception_type,
+                'error_code': log.error_code,
+                'error_message': log.error_message,
+                'operator': log.operator.username,
+                'resolved': log.resolved,
+                'created_at': log.created_at,
+            }
+            for log in app.exception_logs.all()
         ],
     }
 
@@ -621,7 +671,10 @@ def get_application_list(
         queryset = queryset.filter(current_handler=user)
 
     if status:
-        queryset = queryset.filter(status=status)
+        if status == 'pending':
+            queryset = queryset.filter(models.Q(status='pending') | models.Q(status='returned'))
+        else:
+            queryset = queryset.filter(status=status)
     if current_node:
         queryset = queryset.filter(current_node=current_node)
     if warning_status:

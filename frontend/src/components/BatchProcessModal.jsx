@@ -118,10 +118,13 @@ export default function BatchProcessModal({ applications, action, onClose, onSuc
               <button
                 class="btn btn-primary"
                 onClick={handleSubmit}
-                disabled={processing()}
+                disabled={processing() || (action === 'return' && !comment())}
               >
                 {processing() ? '处理中...' : `确认批量${actionLabels[action] || action}`}
               </button>
+              {action === 'return' && !comment() && (
+                <span style={{ color: '#fa8c16', fontSize: '12px', marginLeft: '8px' }}>批量退回补正必须填写原因</span>
+              )}
             </>
           )}
           {results() && (

@@ -127,9 +127,11 @@ class ApplicationDetailSchema(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+    missing_evidence: List[str] = []
     attachments: List[AttachmentSchema] = []
     processing_records: List[ProcessingRecordSchema] = []
     audit_notes: List[AuditNoteSchema] = []
+    exception_logs: List[ExceptionLogSchema] = []
 
     class Config:
         from_attributes = True
@@ -194,3 +196,10 @@ class ApplicationFilterSchema(BaseModel):
     warning_status: Optional[str] = None
     community: Optional[str] = None
     keyword: Optional[str] = None
+
+
+class AttachmentUploadSchema(BaseModel):
+    application_id: int
+    file_name: str
+    evidence_type: str
+    is_required: bool = True
