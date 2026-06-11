@@ -64,7 +64,68 @@ export default function OrderDetail() {
 
   const showToast = (message, type = 'info') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const roleLabels = {
+    store_manager: '门店店长',
+    qc_specialist: '品控专员',
+    operations_manager: '营运经理'
+  };
+
+  const validateBeforeSubmit = (moduleType) => {
+    if (!order || !user) return null;
+
+    if (moduleType === 'material') {
+      if (order.current_role !== user.role) {
+        return `越权操作：当前节点需由${roleLabels[order.current_role] || order.current_role}处理，您的角色为${roleLabels[user.role]}`;
+      }
+      if (order.current_handler !== user.username) {
+        return `处理人不匹配：当前节点处理人为${order.current_handler}，您的账号为${user.username}`;
+      }
+      if (order.version !== order.version) {
+        return `版本冲突：请刷新页面获取最新数据`;
+      }
+      if (!materialForm.has_invoice) {
+        return '缺少必填证据：请勾选"是否有采购发票"';
+      }
+      if (!materialForm.material_complete) {
+        return '材料不完整：请确认所有订货材料已齐全后再提交';
+      }
+      return null;
+    }
+
+    if (moduleType === 'acceptance') {
+      if (order.current_role !== user.role) {
+        return `越权操作：当前节点需由${roleLabels[order.current_role] || order.current_role}处理，您的角色为${roleLabels[user.role]}`;
+      }
+      if (order.current_handler !== user.username) {
+        return `处理人不匹配：当前节点处理人为${order.current_handler}，您的账号为${user.username}`;
+      }
+      if (order.deadline) {
+        const now = new Date();
+        const dl = new Date(order.deadline);
+        if (dl < now && acceptanceForm.acceptance_passed) {
+          return `验收时限已过：截止时间为${order.deadline}，已逾期${Math.floor((now - dl) / (1000 * 60 * 60))}小时，请联系营运经理处理`;
+        }
+      }
+      return null;
+    }
+
+    if (moduleType === 'inventory') {
+      if (order.current_role !== user.role) {
+        return `越权操作：当前节点需由${roleLabels[order.current_role] || order.current_role}处理，您的角色为${roleLabels[user.role]}`;
+      }
+      if (order.current_handler !== user.username) {
+        return `处理人不匹配：当前节点处理人为${order.current_handler}，您的账号为${user.username}`;
+      }
+      if (!reviewForm.inventory_updated && reviewForm.action === 'approve') {
+        return '缺少必填证据：请勾选"库存已回写"后提交';
+      }
+      return null;
+    }
+
+    return null;
   };
 
   useEffect(() => {
@@ -109,8 +170,9 @@ export default function OrderDetail() {
   };
 
   const handleSubmitMaterial = async () => {
-    if (!materialForm.has_invoice) {
-      showToast('请上传采购发票作为必填证据', 'error');
+    const validationError = validateBeforeSubmit('material');
+    if (validationError) {
+      showToast(validationError, 'error');
       return;
     }
 
@@ -125,7 +187,7 @@ export default function OrderDetail() {
         },
         remark: materialForm.remark
       });
-      showToast(result.message, 'success');
+      showToast(result.message + (result.warning ? ` ⚠️ ${result.warning}` : ''), result.warning ? 'warning' : 'success');
       loadOrder();
     } catch (err) {
       showToast(err.message, 'error');
@@ -135,6 +197,12 @@ export default function OrderDetail() {
   };
 
   const handleSubmitAcceptance = async () => {
+    const validationError = validateBeforeSubmit('acceptance');
+    if (validationError) {
+      showToast(validationError, 'error');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const result = await submitAcceptance(order.id, {
@@ -148,7 +216,7 @@ export default function OrderDetail() {
         passed: acceptanceForm.acceptance_passed,
         items: acceptanceForm.items
       });
-      showToast(result.message, 'success');
+      showToast(result.message + (result.warning ? ` ⚠️ ${result.warning}` : ''), result.warning ? 'warning' : 'success');
       loadOrder();
     } catch (err) {
       showToast(err.message, 'error');
@@ -158,8 +226,9 @@ export default function OrderDetail() {
   };
 
   const handleSubmitReview = async () => {
-    if (!reviewForm.inventory_updated) {
-      showToast('请上传库存回写凭证', 'error');
+    const validationError = validateBeforeSubmit('inventory');
+    if (validationError) {
+      showToast(validationError, 'error');
       return;
     }
 

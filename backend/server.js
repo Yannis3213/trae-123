@@ -120,33 +120,56 @@ const authMiddleware = (req, res, next) => {
   next();
 };
 
-const validateSubmission = (order, userId, userRole, submittedVersion) => {
-  if (order.current_role !== userRole) {
-    return { valid: false, error: `越权操作：当前节点处理角色为${roleMap[order.current_role]?.label || order.current_role}，您的角色无操作权限` };
+const validateSubmission = (order, user, submittedVersion) => {
+  const errors = [];
+
+  if (order.current_role !== user.role) {
+    return { valid: false, error: `越权操作：当前节点处理角色为${roleMap[order.current_role]?.label || order.current_role}，您的角色（${roleMap[user.role]?.label || user.role}）无操作权限` };
   }
-  
+
+  if (order.current_handler !== user.username) {
+    return { valid: false, error: `处理人不匹配：当前节点处理人为${order.current_handler}，您的账号为${user.username}，无权操作此订单` };
+  }
+
   if (order.version !== submittedVersion) {
-    return { valid: false, error: `版本冲突：当前版本为v${order.version}，您提交的是v${submittedVersion}，请刷新页面后重试` };
+    return { valid: false, error: `版本冲突：当前版本为v${order.version}，您提交的是v${submittedVersion}，数据已被他人修改，请刷新页面后重试` };
   }
-  
+
   return { valid: true };
 };
 
 const validateEvidence = (status, evidence, type) => {
-  if (type === 'material' && status === 'pending_material') {
+  if (type === 'material' && (status === 'pending_material' || status === 'exception')) {
     if (!evidence || !evidence.has_invoice) {
-      return { valid: false, error: '缺少必填证据：采购发票' };
+      return { valid: false, error: '缺少必填证据：采购发票未上传，请勾选"是否有采购发票"后重试' };
+    }
+    if (!evidence.material_complete) {
+      return { valid: false, error: '材料不完整：请确认所有订货材料已齐全后再提交' };
     }
   }
   if (type === 'acceptance' && (status === 'pending_acceptance' || status === 'recheck_pending')) {
     if (!evidence || typeof evidence.acceptance_passed === 'undefined') {
-      return { valid: false, error: '缺少必填证据：验收结果' };
+      return { valid: false, error: '缺少必填证据：验收结果未填写，请选择"验收通过"或"验收不通过"' };
     }
   }
   if (type === 'inventory' && status === 'pending_review') {
     if (!evidence || !evidence.inventory_updated) {
-      return { valid: false, error: '缺少必填证据：库存回写凭证' };
+      return { valid: false, error: '缺少必填证据：库存回写凭证未确认，请勾选"库存已回写"后重试' };
     }
+  }
+  return { valid: true };
+};
+
+const validateDeadline = (order) => {
+  if (!order.deadline) return { valid: true };
+  const now = new Date();
+  const dl = new Date(order.deadline);
+  if (dl < now) {
+    return { valid: false, error: `验收时限已过：截止时间为${order.deadline}，已逾期${Math.floor((now - dl) / (1000 * 60 * 60))}小时，责任人：${roleMap[order.current_role]?.label || order.current_handler}，请联系营运经理处理` };
+  }
+  const diffHours = (dl - now) / (1000 * 60 * 60);
+  if (diffHours <= 24) {
+    return { valid: true, warning: `注意：距离截止时间仅剩${Math.floor(diffHours)}小时，请尽快处理` };
   }
   return { valid: true };
 };
@@ -433,13 +456,13 @@ app.post('/api/orders/:id/submit-material', authMiddleware, (req, res) => {
     return res.status(404).json({ error: '订单不存在' });
   }
   
-  const validation = validateSubmission(order, req.user.id, req.user.role, version);
-  if (!validation.valid) {
-    return res.status(400).json({ error: validation.error });
-  }
-  
   if (order.status !== 'pending_material' && order.status !== 'exception') {
     return res.status(400).json({ error: `状态冲突：当前状态为${statusMap[order.status]?.label}，不能提交材料` });
+  }
+
+  const validation = validateSubmission(order, req.user, version);
+  if (!validation.valid) {
+    return res.status(400).json({ error: validation.error });
   }
   
   if (req.user.role !== 'store_manager') {
@@ -523,13 +546,13 @@ app.post('/api/orders/:id/submit-acceptance', authMiddleware, (req, res) => {
     return res.status(404).json({ error: '订单不存在' });
   }
   
-  const validation = validateSubmission(order, req.user.id, req.user.role, version);
-  if (!validation.valid) {
-    return res.status(400).json({ error: validation.error });
-  }
-  
   if (order.status !== 'pending_acceptance' && order.status !== 'recheck_pending') {
     return res.status(400).json({ error: `状态冲突：当前状态为${statusMap[order.status]?.label}，不能进行验收` });
+  }
+
+  const validation = validateSubmission(order, req.user, version);
+  if (!validation.valid) {
+    return res.status(400).json({ error: validation.error });
   }
   
   if (req.user.role !== 'qc_specialist') {
@@ -539,6 +562,15 @@ app.post('/api/orders/:id/submit-acceptance', authMiddleware, (req, res) => {
   const evidenceCheck = validateEvidence(order.status, evidence, 'acceptance');
   if (!evidenceCheck.valid) {
     return res.status(400).json({ error: evidenceCheck.error });
+  }
+
+  const deadlineCheck = validateDeadline(order);
+  let deadlineWarning = null;
+  if (!deadlineCheck.valid && passed !== false) {
+    return res.status(400).json({ error: deadlineCheck.error });
+  }
+  if (deadlineCheck.warning) {
+    deadlineWarning = deadlineCheck.warning;
   }
   
   const tx = db.transaction(() => {
@@ -629,7 +661,8 @@ app.post('/api/orders/:id/submit-acceptance', authMiddleware, (req, res) => {
     res.json({
       success: true,
       message: passed !== false ? '验收通过，已进入复核环节' : '验收不通过',
-      newVersion: version + 1
+      newVersion: version + 1,
+      warning: deadlineWarning
     });
   } catch (err) {
     res.status(500).json({ error: '提交失败：' + err.message });
@@ -645,13 +678,13 @@ app.post('/api/orders/:id/submit-review', authMiddleware, (req, res) => {
     return res.status(404).json({ error: '订单不存在' });
   }
   
-  const validation = validateSubmission(order, req.user.id, req.user.role, version);
-  if (!validation.valid) {
-    return res.status(400).json({ error: validation.error });
-  }
-  
   if (order.status !== 'pending_review') {
     return res.status(400).json({ error: `状态冲突：当前状态为${statusMap[order.status]?.label}，不能进行复核` });
+  }
+
+  const validation = validateSubmission(order, req.user, version);
+  if (!validation.valid) {
+    return res.status(400).json({ error: validation.error });
   }
   
   if (req.user.role !== 'operations_manager') {
@@ -754,52 +787,66 @@ app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
       return { id: orderId, success: false, reason: '订单不存在' };
     }
     
-    const validation = validateSubmission(order, req.user.id, req.user.role, data?.version || order.version);
-    if (!validation.valid) {
-      return { id: orderId, order_no: order.order_no, success: false, reason: validation.error };
-    }
-    
     if (action === 'timeout-push') {
       if (order.status === 'completed' || order.status === 'rejected') {
-        return { id: orderId, order_no: order.order_no, success: false, reason: '订单已完成，无需推进' };
+        return { id: orderId, order_no: order.order_no, success: false, reason: `订单已完成（${statusMap[order.status]?.label}），无需推进` };
+      }
+      
+      if (order.current_handler !== req.user.username) {
+        return { id: orderId, order_no: order.order_no, success: false, reason: `处理人不匹配：当前处理人为${order.current_handler}，您的账号为${req.user.username}` };
       }
       
       const now = new Date();
       const dl = new Date(order.deadline);
       
       if ((dl - now) > 0) {
-        return { id: orderId, order_no: order.order_no, success: false, reason: '订单未逾期，不需要强制推进' };
+        return { id: orderId, order_no: order.order_no, success: false, reason: `订单未逾期（截止时间${order.deadline}），不需要强制推进` };
       }
       
       try {
+        const overdueHours = Math.floor((now - dl) / (1000 * 60 * 60));
+        const exceptionDesc = `节点已逾期${overdueHours}小时，责任人：${roleMap[order.current_role]?.label || order.current_handler}（${order.current_handler}）`;
+        
         db.prepare(`
           UPDATE store_orders SET
             exception_reason = ?,
             exception_type = ?,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).run(
-          `节点已逾期${Math.floor((now - dl) / (1000 * 60 * 60))}小时，责任人：${roleMap[order.current_role]?.label}`,
-          'timeout',
-          orderId
-        );
+        `).run(exceptionDesc, 'timeout', orderId);
+        
+        const existing = db.prepare(
+          'SELECT id FROM exception_reasons WHERE order_id = ? AND exception_type = ? AND resolved = 0'
+        ).get(orderId, 'timeout');
+        
+        if (!existing) {
+          db.prepare(`
+            INSERT INTO exception_reasons (
+              order_id, exception_type, description, detected_by
+            ) VALUES (?, ?, ?, ?)
+          `).run(orderId, 'timeout', exceptionDesc, req.user.id);
+        }
         
         db.prepare(`
-          INSERT OR IGNORE INTO exception_reasons (
-            order_id, exception_type, description
-          ) VALUES (?, ?, ?)
+          INSERT INTO processing_records (
+            order_id, action, from_status, to_status, operator_id,
+            operator_role, operator_name, remark, evidence, version
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          orderId, 'timeout',
-          `节点已逾期，责任人：${roleMap[order.current_role]?.label}，系统自动标记`
+          orderId, '逾期批量推进', order.status, order.status,
+          req.user.id, req.user.role, req.user.name,
+          `系统标记逾期：${exceptionDesc}`,
+          JSON.stringify({ overdue_hours: overdueHours, responsible: order.current_handler }),
+          order.version
         );
         
-        return { id: orderId, order_no: order.order_no, success: true, message: '已标记为超时异常' };
+        return { id: orderId, order_no: order.order_no, success: true, message: `已标记为超时异常（逾期${overdueHours}小时）` };
       } catch (err) {
-        return { id: orderId, order_no: order.order_no, success: false, reason: err.message };
+        return { id: orderId, order_no: order.order_no, success: false, reason: `处理失败：${err.message}` };
       }
     }
     
-    return { id: orderId, order_no: order.order_no, success: false, reason: '不支持的批量操作' };
+    return { id: orderId, order_no: order.order_no, success: false, reason: '不支持的批量操作类型' };
   };
   
   const tx = db.transaction(() => {
