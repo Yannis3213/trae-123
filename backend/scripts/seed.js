@@ -250,31 +250,77 @@ const tx = db.transaction(() => {
   insertException.run(3, 8, 'status_conflict', '店长李店长在品控验收环节试图撤回并修改订货材料，版本号不匹配（提交v1，当前v2），已拦截', 2,
     formatDateTime(addHours(now, -2)), 0, null, null, null);
 
-  // ── Order 9: 待确认（新创建测试）
+  // ── Order 11: 【缺库存凭证】pending_review, ops1, 无库存回写证据
+  // 用于测试：营运经理复核时，未勾选"库存已回写"会被拦截
   insertOrder.run(
-    9, 'DD20260601009', 3, formatDate(addDays(now, -1)), formatDate(addDays(now, 3)),
-    'pending_material', 'store3', 'store_manager', 1, 2100.00,
+    11, 'DD20260601011', 2, formatDate(addDays(now, -5)), formatDate(addDays(now, -2)),
+    'pending_review', 'ops1', 'operations_manager', 3, 3560.00,
+    JSON.stringify({ has_invoice: true, invoice_no: 'INV-2026-06011', material_complete: true }),
+    JSON.stringify({ acceptance_passed: true, inspector: '陈品控', check_date: formatDate(addDays(now, -1)) }),
+    null,
+    null, null,
+    formatDateTime(normalDeadline), formatDateTime(addHours(now, -3))
+  );
+  insertOrderItem.run(29, 11, '进口红酒', '750ml*6', 5, '箱', 380.00, 5, 5);
+  insertOrderItem.run(30, 11, '香槟', '750ml/瓶', 8, '瓶', 220.00, 8, 8);
+  insertOrderItem.run(31, 11, '白葡萄酒', '750ml*6', 4, '箱', 280.00, 4, 4);
+  insertAttachment.run(16, 11, '采购发票.pdf', '/uploads/11/invoice.pdf', 'application/pdf', 189000, 2, 'material');
+  insertAttachment.run(17, 11, '验收单.pdf', '/uploads/11/acceptance.pdf', 'application/pdf', 167000, 4, 'acceptance');
+  insertRecord.run(21, 11, '提交订货材料', 'pending_material', 'pending_acceptance', 2, 'store_manager', '李店长',
+    '材料齐全', JSON.stringify({ has_invoice: true, invoice_no: 'INV-2026-06011', material_complete: true }), 1);
+  insertRecord.run(22, 11, '验收通过', 'pending_acceptance', 'pending_review', 4, 'qc_specialist', '陈品控',
+    '酒类验收合格', JSON.stringify({ acceptance_passed: true, inspector: '陈品控' }), 2);
+  insertAuditNote.run(2, 11, '此单为高价值酒类，需确认库存回写凭证后再复核', 5);
+
+  // ── Order 12: 【非处理人批量推进测试】pending_material, store2
+  // 用于测试：store1 店长批量提交材料时，此单因处理人不匹配被拦截
+  insertOrder.run(
+    12, 'DD20260601012', 2, formatDate(addDays(now, -1)), formatDate(addDays(now, 4)),
+    'pending_material', 'store2', 'store_manager', 1, 1680.00,
     null, null, null, null, null,
     formatDateTime(normalDeadline), formatDateTime(now)
   );
-  insertOrderItem.run(23, 9, '面粉', '25kg/袋', 10, '袋', 95.00, 0, 0);
-  insertOrderItem.run(24, 9, '酵母', '500g/包', 8, '包', 35.00, 0, 0);
-  insertOrderItem.run(25, 9, '黄油', '5kg/箱', 3, '箱', 280.00, 0, 0);
-  insertRecord.run(19, 9, '创建订货单', 'pending_material', 'pending_material', 3, 'store_manager', '王店长',
-    '烘焙原料补货', JSON.stringify({ source: 'manual' }), 1);
+  insertOrderItem.run(32, 12, '咖啡豆', '1kg/袋', 20, '袋', 68.00, 0, 0);
+  insertOrderItem.run(33, 12, '牛奶', '1L*12', 3, '箱', 85.00, 0, 0);
+  insertOrderItem.run(34, 12, '白糖', '1kg/包', 10, '包', 12.00, 0, 0);
+  insertRecord.run(23, 12, '创建订货单', 'pending_material', 'pending_material', 2, 'store_manager', '李店长',
+    '咖啡厅原料补货', JSON.stringify({ source: 'manual' }), 1);
 
-  // ── Order 10: 待确认（临期测试）
+  // ── Order 13: 【逾期批量推进测试2】pending_acceptance, qc1, 已逾期1天
+  // 与 Order 5 配合，用于测试批量逾期推进
   insertOrder.run(
-    10, 'DD20260601010', 1, formatDate(addDays(now, -2)), formatDate(addDays(now, 2)),
-    'pending_material', 'store1', 'store_manager', 1, 1850.00,
-    null, null, null, null, null,
-    formatDateTime(nearDeadline), formatDateTime(addHours(now, -6))
+    13, 'DD20260601013', 1, formatDate(addDays(now, -6)), formatDate(addDays(now, -4)),
+    'pending_acceptance', 'qc1', 'qc_specialist', 2, 2980.00,
+    JSON.stringify({ has_invoice: true, invoice_no: 'INV-2026-06013', material_complete: true }),
+    null, null,
+    null, null,
+    formatDateTime(addDays(now, -1)), formatDateTime(addDays(now, -2))
   );
-  insertOrderItem.run(26, 10, '百事可乐', '330ml*24', 15, '箱', 52.00, 0, 0);
-  insertOrderItem.run(27, 10, '矿泉水', '550ml*24', 20, '箱', 28.00, 0, 0);
-  insertOrderItem.run(28, 10, '果汁饮料', '1L*12', 10, '箱', 48.00, 0, 0);
-  insertRecord.run(20, 10, '创建订货单', 'pending_material', 'pending_material', 1, 'store_manager', '张店长',
-    '饮料补货', JSON.stringify({ source: 'manual' }), 1);
+  insertOrderItem.run(35, 13, '蓝莓', '500g/盒', 30, '盒', 45.00, 28, 0);
+  insertOrderItem.run(36, 13, '草莓', '500g/盒', 20, '盒', 38.00, 20, 0);
+  insertOrderItem.run(37, 13, '树莓', '200g/盒', 25, '盒', 32.00, 25, 0);
+  insertAttachment.run(18, 13, '采购发票.pdf', '/uploads/13/invoice.pdf', 'application/pdf', 156000, 1, 'material');
+  insertRecord.run(24, 13, '提交订货材料', 'pending_material', 'pending_acceptance', 1, 'store_manager', '张店长',
+    '材料齐全', JSON.stringify({ has_invoice: true, invoice_no: 'INV-2026-06013', material_complete: true }), 2);
+
+  // ── Order 14: 【旧版本提交测试】pending_material, store1, v2
+  // 用于测试版本冲突：在详情页加载后，另一个会话修改此单，当前会话提交时版本冲突被拦截
+  insertOrder.run(
+    14, 'DD20260601014', 1, formatDate(addDays(now, -2)), formatDate(addDays(now, 3)),
+    'pending_material', 'store1', 'store_manager', 2, 2450.00,
+    JSON.stringify({ has_invoice: false, material_complete: true }),
+    null, null,
+    null, null,
+    formatDateTime(normalDeadline), formatDateTime(addHours(now, -4))
+  );
+  insertOrderItem.run(38, 14, '牛肉馅', '5kg/箱', 8, '箱', 180.00, 0, 0);
+  insertOrderItem.run(39, 14, '猪肉馅', '5kg/箱', 6, '箱', 120.00, 0, 0);
+  insertOrderItem.run(40, 14, '鸡肉馅', '5kg/箱', 5, '箱', 85.00, 0, 0);
+  insertRecord.run(25, 14, '创建订货单', 'pending_material', 'pending_material', 1, 'store_manager', '张店长',
+    '馅料补货', JSON.stringify({ source: 'manual' }), 1);
+  insertRecord.run(26, 14, '修改订货单', 'pending_material', 'pending_material', 1, 'store_manager', '张店长',
+    '补充了鸡肉馅明细', JSON.stringify({ added_items: ['鸡肉馅'] }), 2);
+  insertAuditNote.run(3, 14, '版本冲突测试用例：在两个浏览器窗口同时打开此单详情，先在A窗口提交，再在B窗口提交，验证版本冲突拦截', 4);
 
   console.log('种子数据初始化完成');
   console.log('');
@@ -288,12 +334,18 @@ const tx = db.transaction(() => {
   console.log('四类异常样例:');
   console.log('  1. 缺材料 (DD20260601004): 状态=exception, 处理人=store3');
   console.log('     → store3 补齐材料后重新提交（勾选发票+材料齐全）');
-  console.log('  2. 超时 (DD20260601005): 状态=pending_acceptance, 处理人=qc1, 已逾期');
+  console.log('  2. 超时 (DD20260601005+DD20260601013): 状态=pending_acceptance, 处理人=qc1, 已逾期');
   console.log('     → qc1 在到期预警队列选中后逾期批量推进');
   console.log('  3. 退回补正 (DD20260601006): 状态=recheck_pending, 处理人=qc1');
   console.log('     → qc1 重新验收补正后提交');
   console.log('  4. 状态冲突 (DD20260601008): 状态=pending_review, 处理人=ops1');
-  console.log('     → ops1 可正常复核通过或退回；若店长用旧版本提交会被拦截');
+  console.log('     → ops1 可正常复核通过或退回；版本冲突可在DD20260601014上测试');
+  console.log('');
+  console.log('批量拦截测试订单:');
+  console.log('  - 非处理人批量推进: DD20260601012 (store2的单，store1批量提交会被拦截)');
+  console.log('  - 缺库存凭证: DD20260601011 (待复核，无库存回写证据)');
+  console.log('  - 逾期批量推进: DD20260601005 + DD20260601013 (两张逾期单)');
+  console.log('  - 旧版本提交: DD20260601014 (v2，可在两窗口同时打开测试版本冲突)');
 });
 
 tx();

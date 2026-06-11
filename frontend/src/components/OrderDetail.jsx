@@ -35,6 +35,13 @@ export default function OrderDetail() {
   const [uploading, setUploading] = useState(false);
   const user = getCurrentUser();
 
+  const [snapshot, setSnapshot] = useState({
+    version: null,
+    status: null,
+    current_handler: null,
+    current_role: null
+  });
+
   const [materialForm, setMaterialForm] = useState({
     has_invoice: false,
     invoice_no: '',
@@ -64,7 +71,7 @@ export default function OrderDetail() {
 
   const showToast = (message, type = 'info') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
+    setTimeout(() => setToast(null), 4500);
   };
 
   const roleLabels = {
@@ -73,59 +80,93 @@ export default function OrderDetail() {
     operations_manager: '营运经理'
   };
 
+  const statusLabels = {
+    pending_material: '待确认',
+    pending_acceptance: '待验收',
+    pending_review: '待复核',
+    exception: '异常',
+    recheck_pending: '已复查',
+    completed: '已完成',
+    rejected: '已拒绝'
+  };
+
+  const hasSnapshotChanged = () => {
+    if (!order || snapshot.version === null) return false;
+    return order.version !== snapshot.version ||
+           order.status !== snapshot.status ||
+           order.current_handler !== snapshot.current_handler ||
+           order.current_role !== snapshot.current_role;
+  };
+
   const validateBeforeSubmit = (moduleType) => {
-    if (!order || !user) return null;
+    if (!order || !user) return { error: '订单数据未加载', warning: null };
+
+    if (hasSnapshotChanged()) {
+      return {
+        error: `版本快照不一致：页面加载时为v${snapshot.version}（${statusLabels[snapshot.status]}），当前为v${order.version}（${statusLabels[order.status]}），数据已被修改，请刷新后重试`,
+        warning: null
+      };
+    }
+
+    if (order.current_role !== user.role) {
+      return {
+        error: `越权操作：当前节点处理角色为${roleLabels[order.current_role] || order.current_role}，您的角色为${roleLabels[user.role]}，无操作权限`,
+        warning: null
+      };
+    }
+
+    if (order.current_handler !== user.username) {
+      return {
+        error: `处理人不匹配：当前节点处理人为${order.current_handler}，您的账号为${user.username}，无权操作此订单`,
+        warning: null
+      };
+    }
+
+    if (order.version !== snapshot.version) {
+      return {
+        error: `版本冲突：当前版本为v${order.version}，您加载时为v${snapshot.version}，数据已被他人修改，请刷新页面后重试`,
+        warning: null
+      };
+    }
+
+    let warning = null;
 
     if (moduleType === 'material') {
-      if (order.current_role !== user.role) {
-        return `越权操作：当前节点需由${roleLabels[order.current_role] || order.current_role}处理，您的角色为${roleLabels[user.role]}`;
-      }
-      if (order.current_handler !== user.username) {
-        return `处理人不匹配：当前节点处理人为${order.current_handler}，您的账号为${user.username}`;
-      }
-      if (order.version !== order.version) {
-        return `版本冲突：请刷新页面获取最新数据`;
-      }
       if (!materialForm.has_invoice) {
-        return '缺少必填证据：请勾选"是否有采购发票"';
+        return { error: '缺少必填证据：请勾选"是否有采购发票"后再提交', warning: null };
       }
       if (!materialForm.material_complete) {
-        return '材料不完整：请确认所有订货材料已齐全后再提交';
+        return { error: '材料不完整：请确认所有订货材料已齐全后再提交', warning: null };
       }
-      return null;
     }
 
     if (moduleType === 'acceptance') {
-      if (order.current_role !== user.role) {
-        return `越权操作：当前节点需由${roleLabels[order.current_role] || order.current_role}处理，您的角色为${roleLabels[user.role]}`;
+      if (typeof acceptanceForm.acceptance_passed === 'undefined' || acceptanceForm.acceptance_passed === null) {
+        return { error: '缺少必填证据：请选择"验收通过"或"验收不通过"', warning: null };
       }
-      if (order.current_handler !== user.username) {
-        return `处理人不匹配：当前节点处理人为${order.current_handler}，您的账号为${user.username}`;
-      }
-      if (order.deadline) {
+      if (order.deadline && acceptanceForm.acceptance_passed) {
         const now = new Date();
         const dl = new Date(order.deadline);
-        if (dl < now && acceptanceForm.acceptance_passed) {
-          return `验收时限已过：截止时间为${order.deadline}，已逾期${Math.floor((now - dl) / (1000 * 60 * 60))}小时，请联系营运经理处理`;
+        const diffHours = (dl - now) / (1000 * 60 * 60);
+        if (dl < now) {
+          return {
+            error: `验收时限已过：截止时间为${order.deadline}，已逾期${Math.abs(Math.floor(diffHours))}小时，责任人：${roleLabels[order.current_role]}，请联系营运经理处理`,
+            warning: null
+          };
+        }
+        if (diffHours <= 24) {
+          warning = `注意：距离验收截止时间仅剩${Math.floor(diffHours)}小时，请尽快处理`;
         }
       }
-      return null;
     }
 
     if (moduleType === 'inventory') {
-      if (order.current_role !== user.role) {
-        return `越权操作：当前节点需由${roleLabels[order.current_role] || order.current_role}处理，您的角色为${roleLabels[user.role]}`;
+      if (reviewForm.action === 'approve' && !reviewForm.inventory_updated) {
+        return { error: '缺少必填证据：复核通过前请先勾选"库存已回写"', warning: null };
       }
-      if (order.current_handler !== user.username) {
-        return `处理人不匹配：当前节点处理人为${order.current_handler}，您的账号为${user.username}`;
-      }
-      if (!reviewForm.inventory_updated && reviewForm.action === 'approve') {
-        return '缺少必填证据：请勾选"库存已回写"后提交';
-      }
-      return null;
     }
 
-    return null;
+    return { error: null, warning };
   };
 
   useEffect(() => {
@@ -162,6 +203,12 @@ export default function OrderDetail() {
     try {
       const data = await fetchOrderDetail(route.id);
       setOrder(data);
+      setSnapshot({
+        version: data.version,
+        status: data.status,
+        current_handler: data.current_handler,
+        current_role: data.current_role
+      });
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
@@ -170,9 +217,9 @@ export default function OrderDetail() {
   };
 
   const handleSubmitMaterial = async () => {
-    const validationError = validateBeforeSubmit('material');
-    if (validationError) {
-      showToast(validationError, 'error');
+    const validation = validateBeforeSubmit('material');
+    if (validation.error) {
+      showToast(validation.error, 'error');
       return;
     }
 
@@ -187,7 +234,9 @@ export default function OrderDetail() {
         },
         remark: materialForm.remark
       });
-      showToast(result.message + (result.warning ? ` ⚠️ ${result.warning}` : ''), result.warning ? 'warning' : 'success');
+      const msg = result.message + (result.warning ? ` ⚠️ ${result.warning}` : '') 
+                + (validation.warning ? ` ⚠️ ${validation.warning}` : '');
+      showToast(msg, result.warning || validation.warning ? 'warning' : 'success');
       loadOrder();
     } catch (err) {
       showToast(err.message, 'error');
@@ -197,9 +246,9 @@ export default function OrderDetail() {
   };
 
   const handleSubmitAcceptance = async () => {
-    const validationError = validateBeforeSubmit('acceptance');
-    if (validationError) {
-      showToast(validationError, 'error');
+    const validation = validateBeforeSubmit('acceptance');
+    if (validation.error) {
+      showToast(validation.error, 'error');
       return;
     }
 
@@ -216,7 +265,9 @@ export default function OrderDetail() {
         passed: acceptanceForm.acceptance_passed,
         items: acceptanceForm.items
       });
-      showToast(result.message + (result.warning ? ` ⚠️ ${result.warning}` : ''), result.warning ? 'warning' : 'success');
+      const msg = result.message + (result.warning ? ` ⚠️ ${result.warning}` : '')
+                + (validation.warning ? ` ⚠️ ${validation.warning}` : '');
+      showToast(msg, result.warning || validation.warning ? 'warning' : 'success');
       loadOrder();
     } catch (err) {
       showToast(err.message, 'error');
@@ -226,9 +277,9 @@ export default function OrderDetail() {
   };
 
   const handleSubmitReview = async () => {
-    const validationError = validateBeforeSubmit('inventory');
-    if (validationError) {
-      showToast(validationError, 'error');
+    const validation = validateBeforeSubmit('inventory');
+    if (validation.error) {
+      showToast(validation.error, 'error');
       return;
     }
 
@@ -355,10 +406,26 @@ export default function OrderDetail() {
             <span class="status-tag" style={getStatusStyle(order.status_color)}>
               {order.status_label}
             </span>
-            <span class="version-tag">v{order.version}</span>
+            <span class={`version-tag ${hasSnapshotChanged() ? 'version-conflict' : ''}`} title={hasSnapshotChanged() ? `页面加载时版本: v${snapshot.version} (${statusLabels[snapshot.status]})` : `当前版本 v${order.version}`}>
+              v{order.version}
+              {hasSnapshotChanged() && ' ⚠️'}
+            </span>
+            {hasSnapshotChanged() && (
+              <button class="btn btn-warning btn-sm" onClick={loadOrder}>
+                ↻ 刷新版本
+              </button>
+            )}
           </h1>
         </div>
       </div>
+
+      {hasSnapshotChanged() && (
+        <div class="alert alert-error" style={{ marginBottom: '16px' }}>
+          <strong>⚠️ 版本快照不一致</strong>：页面加载时为 v{snapshot.version}（{statusLabels[snapshot.status]}），当前已变为 v{order.version}（{statusLabels[order.status]}）。
+          数据可能已被他人修改，请确认后再操作。
+          <button class="btn btn-primary btn-sm" style={{ marginLeft: '12px' }} onClick={loadOrder}>刷新获取最新</button>
+        </div>
+      )}
 
       {order.exception_reason && (
         <div class="exception-alert">

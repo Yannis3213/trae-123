@@ -936,6 +936,21 @@ body {
   font-weight: 500;
 }
 
+.version-tag.version-conflict {
+  background: #f5222d;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
 .processing-indicator {
   display: inline-flex;
   align-items: center;

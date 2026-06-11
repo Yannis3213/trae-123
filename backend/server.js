@@ -777,87 +777,494 @@ app.post('/api/orders/batch-process', authMiddleware, (req, res) => {
   if (!ids || ids.length === 0) {
     return res.status(400).json({ error: '请选择要处理的订单' });
   }
+
+  const validActions = ['timeout-push', 'batch-material', 'batch-acceptance', 'batch-review'];
+  if (!validActions.includes(action)) {
+    return res.status(400).json({ error: `不支持的批量操作类型: ${action}` });
+  }
   
   const results = [];
-  
-  const processOrder = (orderId) => {
-    const order = db.prepare('SELECT * FROM store_orders WHERE id = ?').get(orderId);
-    
-    if (!order) {
-      return { id: orderId, success: false, reason: '订单不存在' };
+
+  const validateBatchItem = (order, actionType) => {
+    const errors = [];
+
+    if (order.current_role !== req.user.role) {
+      errors.push(`角色不匹配：当前节点需${roleMap[order.current_role]?.label || order.current_role}处理，您是${roleMap[req.user.role]?.label}`);
     }
-    
-    if (action === 'timeout-push') {
-      if (order.status === 'completed' || order.status === 'rejected') {
-        return { id: orderId, order_no: order.order_no, success: false, reason: `订单已完成（${statusMap[order.status]?.label}），无需推进` };
-      }
-      
-      if (order.current_handler !== req.user.username) {
-        return { id: orderId, order_no: order.order_no, success: false, reason: `处理人不匹配：当前处理人为${order.current_handler}，您的账号为${req.user.username}` };
-      }
-      
-      const now = new Date();
-      const dl = new Date(order.deadline);
-      
-      if ((dl - now) > 0) {
-        return { id: orderId, order_no: order.order_no, success: false, reason: `订单未逾期（截止时间${order.deadline}），不需要强制推进` };
-      }
-      
-      try {
-        const overdueHours = Math.floor((now - dl) / (1000 * 60 * 60));
-        const exceptionDesc = `节点已逾期${overdueHours}小时，责任人：${roleMap[order.current_role]?.label || order.current_handler}（${order.current_handler}）`;
-        
-        db.prepare(`
-          UPDATE store_orders SET
-            exception_reason = ?,
-            exception_type = ?,
-            updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(exceptionDesc, 'timeout', orderId);
-        
-        const existing = db.prepare(
-          'SELECT id FROM exception_reasons WHERE order_id = ? AND exception_type = ? AND resolved = 0'
-        ).get(orderId, 'timeout');
-        
-        if (!existing) {
-          db.prepare(`
-            INSERT INTO exception_reasons (
-              order_id, exception_type, description, detected_by
-            ) VALUES (?, ?, ?, ?)
-          `).run(orderId, 'timeout', exceptionDesc, req.user.id);
-        }
-        
-        db.prepare(`
-          INSERT INTO processing_records (
-            order_id, action, from_status, to_status, operator_id,
-            operator_role, operator_name, remark, evidence, version
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          orderId, '逾期批量推进', order.status, order.status,
-          req.user.id, req.user.role, req.user.name,
-          `系统标记逾期：${exceptionDesc}`,
-          JSON.stringify({ overdue_hours: overdueHours, responsible: order.current_handler }),
-          order.version
-        );
-        
-        return { id: orderId, order_no: order.order_no, success: true, message: `已标记为超时异常（逾期${overdueHours}小时）` };
-      } catch (err) {
-        return { id: orderId, order_no: order.order_no, success: false, reason: `处理失败：${err.message}` };
-      }
+
+    if (order.current_handler !== req.user.username) {
+      errors.push(`处理人不匹配：当前处理人为${order.current_handler}，您的账号是${req.user.username}`);
     }
-    
-    return { id: orderId, order_no: order.order_no, success: false, reason: '不支持的批量操作类型' };
+
+    if (data?.version && order.version !== data.version) {
+      errors.push(`版本冲突：当前版本v${order.version}，提交版本v${data.version}`);
+    }
+
+    if (order.status === 'completed' || order.status === 'rejected') {
+      errors.push(`订单已${statusMap[order.status]?.label}，无需处理`);
+    }
+
+    return errors;
   };
+
+  const handleTimeoutPush = (order) => {
+    const baseErrors = validateBatchItem(order, action);
+    if (baseErrors.length > 0) {
+      return { 
+        id: order.id, 
+        order_no: order.order_no, 
+        success: false, 
+        reason: baseErrors.join('；') 
+      };
+    }
+
+    if (!order.deadline) {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: '订单无截止时间，无法判断是否逾期'
+      };
+    }
+
+    const now = new Date();
+    const dl = new Date(order.deadline);
+    const diffHours = (dl - now) / (1000 * 60 * 60);
+
+    if (diffHours > 0) {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: `订单未逾期（剩余${Math.floor(diffHours)}小时），截止时间${order.deadline}`
+      };
+    }
+
+    const materialEvidence = parseJsonField(order.material_evidence);
+    if (!materialEvidence || !materialEvidence.has_invoice) {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: '缺少材料证据：采购发票未上传，无法推进逾期标记'
+      };
+    }
+    if (!materialEvidence || !materialEvidence.material_complete) {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: '缺少材料证据：订货材料不齐全，需先补齐材料'
+      };
+    }
+
+    const overdueHours = Math.abs(Math.floor(diffHours));
+
+    try {
+      const exceptionDesc = `节点已逾期${overdueHours}小时，责任人：${roleMap[order.current_role]?.label}（${order.current_handler}）`;
+
+      db.prepare(`
+        UPDATE store_orders SET
+          exception_reason = ?,
+          exception_type = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(exceptionDesc, 'timeout', order.id);
+
+      const existing = db.prepare(
+        'SELECT id FROM exception_reasons WHERE order_id = ? AND exception_type = ? AND resolved = 0'
+      ).get(order.id, 'timeout');
+
+      if (!existing) {
+        db.prepare(`
+          INSERT INTO exception_reasons (
+            order_id, exception_type, description, detected_by
+          ) VALUES (?, ?, ?, ?)
+        `).run(order.id, 'timeout', exceptionDesc, req.user.id);
+      }
+
+      db.prepare(`
+        INSERT INTO processing_records (
+          order_id, action, from_status, to_status, operator_id,
+          operator_role, operator_name, remark, evidence, version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        order.id, '逾期批量推进', order.status, order.status,
+        req.user.id, req.user.role, req.user.name,
+        `批量标记逾期：${exceptionDesc}`,
+        JSON.stringify({ 
+          overdue_hours: overdueHours, 
+          responsible: order.current_handler,
+          responsible_role: order.current_role,
+          batch_action: 'timeout-push'
+        }),
+        order.version
+      );
+
+      return { 
+        id: order.id, 
+        order_no: order.order_no, 
+        success: true, 
+        message: `已标记为超时异常（逾期${overdueHours}小时）`,
+        overdue_hours: overdueHours
+      };
+    } catch (err) {
+      return { 
+        id: order.id, 
+        order_no: order.order_no, 
+        success: false, 
+        reason: `处理失败：${err.message}` 
+      };
+    }
+  };
+
+  const handleBatchMaterial = (order) => {
+    const baseErrors = validateBatchItem(order, action);
+    if (baseErrors.length > 0) {
+      return { 
+        id: order.id, 
+        order_no: order.order_no, 
+        success: false, 
+        reason: baseErrors.join('；') 
+      };
+    }
+
+    if (order.status !== 'pending_material' && order.status !== 'exception') {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: `状态不允许：当前状态${statusMap[order.status]?.label}，不能批量提交材料`
+      };
+    }
+
+    const evidence = data?.evidence || {};
+    const evidenceCheck = validateEvidence(order.status, evidence, 'material');
+    if (!evidenceCheck.valid) {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: evidenceCheck.error
+      };
+    }
+
+    try {
+      db.prepare(`
+        UPDATE store_orders SET
+          status = 'pending_acceptance',
+          current_handler = 'qc1',
+          current_role = 'qc_specialist',
+          version = version + 1,
+          material_evidence = ?,
+          exception_reason = NULL,
+          exception_type = NULL,
+          node_started_at = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND version = ?
+      `).run(
+        JSON.stringify(evidence),
+        new Date().toISOString().replace('T', ' ').slice(0, 19),
+        order.id,
+        order.version
+      );
+
+      db.prepare(`
+        INSERT INTO processing_records (
+          order_id, action, from_status, to_status, operator_id,
+          operator_role, operator_name, remark, evidence, version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        order.id, '批量提交材料', order.status, 'pending_acceptance',
+        req.user.id, req.user.role, req.user.name,
+        '批量操作：材料已齐全，进入验收环节',
+        JSON.stringify(evidence),
+        order.version + 1
+      );
+
+      if (order.exception_type) {
+        db.prepare(`
+          UPDATE exception_reasons SET
+            resolved = 1,
+            resolved_by = ?,
+            resolved_at = ?,
+            resolution = ?
+          WHERE order_id = ? AND exception_type = ? AND resolved = 0
+        `).run(
+          req.user.id,
+          new Date().toISOString().replace('T', ' ').slice(0, 19),
+          '批量提交：材料已补齐',
+          order.id,
+          order.exception_type
+        );
+      }
+
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: true,
+        message: '材料提交成功，已进入验收环节',
+        new_version: order.version + 1
+      };
+    } catch (err) {
+      return { id: order.id, order_no: order.order_no, success: false, reason: err.message };
+    }
+  };
+
+  const handleBatchAcceptance = (order) => {
+    const baseErrors = validateBatchItem(order, action);
+    if (baseErrors.length > 0) {
+      return { 
+        id: order.id, 
+        order_no: order.order_no, 
+        success: false, 
+        reason: baseErrors.join('；') 
+      };
+    }
+
+    if (order.status !== 'pending_acceptance' && order.status !== 'recheck_pending') {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: `状态不允许：当前状态${statusMap[order.status]?.label}，不能批量验收`
+      };
+    }
+
+    const deadlineCheck = validateDeadline(order);
+    if (!deadlineCheck.valid) {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: deadlineCheck.error
+      };
+    }
+
+    const evidence = data?.evidence || { acceptance_passed: true, inspector: req.user.name };
+    const evidenceCheck = validateEvidence(order.status, evidence, 'acceptance');
+    if (!evidenceCheck.valid) {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: evidenceCheck.error
+      };
+    }
+
+    try {
+      const nextStatus = evidence.acceptance_passed !== false ? 'pending_review' : 'exception';
+      const nextHandler = evidence.acceptance_passed !== false ? 'ops1' : order.current_handler;
+      const nextRole = evidence.acceptance_passed !== false ? 'operations_manager' : order.current_role;
+
+      db.prepare(`
+        UPDATE store_orders SET
+          status = ?,
+          current_handler = ?,
+          current_role = ?,
+          version = version + 1,
+          acceptance_evidence = ?,
+          exception_reason = ?,
+          exception_type = ?,
+          node_started_at = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND version = ?
+      `).run(
+        nextStatus, nextHandler, nextRole,
+        JSON.stringify(evidence),
+        evidence.acceptance_passed === false ? '批量验收不通过' : null,
+        evidence.acceptance_passed === false ? 'rejection' : null,
+        new Date().toISOString().replace('T', ' ').slice(0, 19),
+        order.id,
+        order.version
+      );
+
+      db.prepare(`
+        INSERT INTO processing_records (
+          order_id, action, from_status, to_status, operator_id,
+          operator_role, operator_name, remark, evidence, version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        order.id, 
+        evidence.acceptance_passed !== false ? '批量验收通过' : '批量验收不通过',
+        order.status, nextStatus,
+        req.user.id, req.user.role, req.user.name,
+        '批量验收操作',
+        JSON.stringify(evidence),
+        order.version + 1
+      );
+
+      if (evidence.acceptance_passed === false) {
+        db.prepare(`
+          INSERT INTO exception_reasons (
+            order_id, exception_type, description, detected_by
+          ) VALUES (?, ?, ?, ?)
+        `).run(order.id, 'rejection', '批量验收不通过', req.user.id);
+      }
+
+      if (order.status === 'recheck_pending') {
+        db.prepare(`
+          UPDATE exception_reasons SET
+            resolved = 1,
+            resolved_by = ?,
+            resolved_at = ?,
+            resolution = ?
+          WHERE order_id = ? AND resolved = 0
+        `).run(
+          req.user.id,
+          new Date().toISOString().replace('T', ' ').slice(0, 19),
+          '批量补正完成，重新验收通过',
+          order.id
+        );
+      }
+
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: true,
+        message: evidence.acceptance_passed !== false ? '验收通过，已进入复核环节' : '验收不通过',
+        new_version: order.version + 1
+      };
+    } catch (err) {
+      return { id: order.id, order_no: order.order_no, success: false, reason: err.message };
+    }
+  };
+
+  const handleBatchReview = (order) => {
+    const baseErrors = validateBatchItem(order, action);
+    if (baseErrors.length > 0) {
+      return { 
+        id: order.id, 
+        order_no: order.order_no, 
+        success: false, 
+        reason: baseErrors.join('；') 
+      };
+    }
+
+    if (order.status !== 'pending_review') {
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: false,
+        reason: `状态不允许：当前状态${statusMap[order.status]?.label}，不能批量复核`
+      };
+    }
+
+    const evidence = data?.evidence || { inventory_updated: true, warehouse: '中心仓' };
+    const reviewAction = data?.action || 'approve';
+
+    if (reviewAction === 'approve') {
+      const evidenceCheck = validateEvidence(order.status, evidence, 'inventory');
+      if (!evidenceCheck.valid) {
+        return {
+          id: order.id,
+          order_no: order.order_no,
+          success: false,
+          reason: evidenceCheck.error
+        };
+      }
+    }
+
+    try {
+      let nextStatus, nextHandler, nextRole, actionName;
+
+      if (reviewAction === 'reject') {
+        nextStatus = 'recheck_pending';
+        nextHandler = 'qc1';
+        nextRole = 'qc_specialist';
+        actionName = '批量退回补正';
+      } else {
+        nextStatus = 'completed';
+        nextHandler = req.user.username;
+        nextRole = req.user.role;
+        actionName = '批量库存回写完成';
+      }
+
+      db.prepare(`
+        UPDATE store_orders SET
+          status = ?,
+          current_handler = ?,
+          current_role = ?,
+          version = version + 1,
+          inventory_evidence = ?,
+          exception_reason = ?,
+          exception_type = ?,
+          node_started_at = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND version = ?
+      `).run(
+        nextStatus, nextHandler, nextRole,
+        JSON.stringify(evidence),
+        reviewAction === 'reject' ? '批量退回补正' : null,
+        reviewAction === 'reject' ? 'rejection' : null,
+        new Date().toISOString().replace('T', ' ').slice(0, 19),
+        order.id,
+        order.version
+      );
+
+      db.prepare(`
+        INSERT INTO processing_records (
+          order_id, action, from_status, to_status, operator_id,
+          operator_role, operator_name, remark, evidence, version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        order.id, actionName, order.status, nextStatus,
+        req.user.id, req.user.role, req.user.name,
+        '批量复核操作',
+        JSON.stringify(evidence),
+        order.version + 1
+      );
+
+      if (reviewAction === 'reject') {
+        db.prepare(`
+          INSERT INTO exception_reasons (
+            order_id, exception_type, description, detected_by
+          ) VALUES (?, ?, ?, ?)
+        `).run(order.id, 'rejection', '批量复核退回补正', req.user.id);
+      }
+
+      return {
+        id: order.id,
+        order_no: order.order_no,
+        success: true,
+        message: reviewAction === 'reject' ? '已退回品控重新验收' : '库存回写完成，流程结束',
+        new_version: order.version + 1
+      };
+    } catch (err) {
+      return { id: order.id, order_no: order.order_no, success: false, reason: err.message };
+    }
+  };
+
+  const actionHandlers = {
+    'timeout-push': handleTimeoutPush,
+    'batch-material': handleBatchMaterial,
+    'batch-acceptance': handleBatchAcceptance,
+    'batch-review': handleBatchReview
+  };
+
+  const handler = actionHandlers[action];
   
   const tx = db.transaction(() => {
     ids.forEach(id => {
-      results.push(processOrder(id));
+      const order = db.prepare('SELECT * FROM store_orders WHERE id = ?').get(id);
+      if (!order) {
+        results.push({ id, success: false, reason: '订单不存在' });
+        return;
+      }
+      results.push(handler(order));
     });
   });
   
   try {
     tx();
-    res.json({ results });
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+    res.json({ 
+      results, 
+      success_count: successCount,
+      fail_count: failCount,
+      total: results.length
+    });
   } catch (err) {
     res.status(500).json({ error: '批量处理失败：' + err.message });
   }
