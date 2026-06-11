@@ -468,13 +468,30 @@ tr.row-clickable { cursor: pointer; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
+  padding: 10px 12px;
   font-size: 14px;
   border-bottom: 1px solid var(--gray-100);
+  border-radius: 4px;
+  margin-bottom: 4px;
 }
 
-.batch-result-success { color: var(--success); }
-.batch-result-failure { color: var(--danger); }
+.batch-result-success { color: var(--success); background: var(--success-light); }
+.batch-result-failure { color: var(--danger); background: var(--danger-light); }
+.batch-result-processing {
+  background: #eff6ff;
+  border-left: 3px solid #3b82f6;
+  color: #1e40af;
+}
+
+.processing-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 .batch-result-reason {
   font-size: 13px;

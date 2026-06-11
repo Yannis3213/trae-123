@@ -490,9 +490,7 @@ function ListingListPage() {
           onSuccess={() => {
             setRowSelection({})
             fetchData()
-            if (tab === 'warnings') {
-              fetchWarnings()
-            }
+            fetchWarnings()
           }}
           currentRole={currentUser?.role || ''}
         />

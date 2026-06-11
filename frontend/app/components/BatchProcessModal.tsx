@@ -41,8 +41,9 @@ export default function BatchProcessModal({
   const handleSubmit = async () => {
     if (!action) return
     setError('')
+    setResults(null)
     setLoading(true)
-    
+
     const missingFields: string[] = []
     items.forEach((item) => {
       const problems: string[] = []
@@ -52,13 +53,13 @@ export default function BatchProcessModal({
         missingFields.push(`${item.application_no || item.id} 缺少${problems.join('、')}`)
       }
     })
-    
+
     if (missingFields.length > 0) {
       setError(`以下条目缺少页面参数，无法提交：\n${missingFields.join('\n')}`)
       setLoading(false)
       return
     }
-    
+
     try {
       const payload = items.map((item) => ({
         application_id: item.id,
@@ -130,7 +131,21 @@ export default function BatchProcessModal({
               </div>
             )
           })()}
-          {!results && (
+          {loading && (
+            <div>
+              {items.map((item, i) => (
+                <div
+                  key={i}
+                  className="batch-result-item batch-result-processing"
+                >
+                  <span className="processing-spinner">⏳</span>
+                  <span>{item.application_no || item.id}</span>
+                  <span className="batch-result-reason">处理中...</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {!loading && !results && (
             <>
               <div className="form-group">
                 <label>操作类型 *</label>
@@ -155,7 +170,7 @@ export default function BatchProcessModal({
               </div>
             </>
           )}
-          {results && (
+          {!loading && results && (
             <div>
               {results.map((r, i) => (
                 <div
@@ -180,13 +195,17 @@ export default function BatchProcessModal({
           )}
         </div>
         <div className="modal-footer">
-          {results ? (
+          {results && !loading ? (
             <button className="btn-primary" onClick={onClose}>
               关闭
             </button>
           ) : (
             <>
-              <button className="btn-outline" onClick={onClose}>
+              <button
+                className="btn-outline"
+                onClick={onClose}
+                disabled={loading}
+              >
                 取消
               </button>
               <button
