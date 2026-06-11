@@ -15,13 +15,13 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
   const onFinish = async (values: { username: string; password: string; remember?: boolean }) => {
     setLoading(true);
     try {
-      const response = await request.post<LoginResponse>('/auth/login', {
+      const result = await request.post<LoginResponse>('/auth/login', {
         username: values.username,
         password: values.password,
       });
 
-      setToken(response.token);
-      setUser(response.user);
+      setToken(result.token);
+      setUser(result.user);
 
       if (values.remember) {
         localStorage.setItem('remember_username', values.username);
@@ -37,7 +37,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
         window.location.href = '/dashboard';
       }
     } catch (error: any) {
-      message.error(error.response?.data?.detail || '登录失败，请检查用户名和密码');
+      message.error(error.message || error.response?.data?.detail || '登录失败，请检查用户名和密码');
     } finally {
       setLoading(false);
     }

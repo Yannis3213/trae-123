@@ -79,9 +79,9 @@ export default function FollowupForm({
   useEffect(() => {
     if (data && mode === 'edit') {
       form.setFieldsValue({
-        followupResult: data.followupResult,
-        clientSatisfaction: data.clientSatisfaction,
-        followupRemark: data.followupRemark,
+        followup_result: data.followup_result,
+        client_satisfaction: data.client_satisfaction,
+        followup_remark: data.followup_remark,
       });
     }
   }, [data, mode, form]);
@@ -89,8 +89,8 @@ export default function FollowupForm({
   const fetchData = async () => {
     setLoading(true);
     try {
-      const response = await followupApi.get(caseId);
-      setData(response.data);
+      const result = await followupApi.get(caseId);
+      setData(result);
     } catch (error) {
       message.error('获取回访确认信息失败');
     } finally {
@@ -111,7 +111,7 @@ export default function FollowupForm({
       if (error.errorFields) {
         message.error('请填写完整的必填项');
       } else {
-        message.error(error.response?.data?.message || '保存失败');
+        message.error(error.message || error.response?.data?.message || '保存失败');
       }
     } finally {
       setSaving(false);
@@ -126,7 +126,7 @@ export default function FollowupForm({
       await fetchData();
       onDataChange?.();
     } catch (error: any) {
-      message.error(error.response?.data?.message || '核验失败');
+      message.error(error.message || error.response?.data?.message || '核验失败');
     } finally {
       setVerifying(false);
     }
@@ -174,7 +174,7 @@ export default function FollowupForm({
         <Space>
           <PhoneOutlined />
           回访确认
-          {data?.isComplete && (
+          {data?.is_complete && (
             <Tag color="success" icon={<CheckCircleOutlined />}>
               已核验
             </Tag>
@@ -192,7 +192,7 @@ export default function FollowupForm({
         )
       }
     >
-      {!data?.isComplete && mode === 'view' && (
+      {!data?.is_complete && mode === 'view' && (
         <Alert
           type="warning"
           showIcon
@@ -205,22 +205,22 @@ export default function FollowupForm({
       {mode === 'view' ? (
         <Descriptions column={3} bordered size="small">
           <Descriptions.Item label="客户满意度" span={3}>
-            {renderSatisfactionStars(data?.clientSatisfaction)}
+            {renderSatisfactionStars(data?.client_satisfaction)}
           </Descriptions.Item>
           <Descriptions.Item label="回访结果" span={3}>
-            {data?.followupResult || '-'}
+            {data?.followup_result || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="回访备注" span={3}>
-            {data?.followupRemark || '-'}
+            {data?.followup_remark || '-'}
           </Descriptions.Item>
-          {data?.followupByName && (
+          {data?.followup_by_name && (
             <Descriptions.Item label="回访人" span={1}>
-              {data.followupByName}
+              {data.followup_by_name}
             </Descriptions.Item>
           )}
-          {data?.followupAt && (
+          {data?.followup_at && (
             <Descriptions.Item label="回访时间" span={2}>
-              {data.followupAt}
+              {data.followup_at}
             </Descriptions.Item>
           )}
         </Descriptions>
@@ -234,7 +234,7 @@ export default function FollowupForm({
           <Row gutter={16}>
             <Col xs={24} sm={12}>
               <Form.Item
-                name="clientSatisfaction"
+                name="client_satisfaction"
                 label={
                   <Space>
                     <StarOutlined />
@@ -252,7 +252,7 @@ export default function FollowupForm({
             </Col>
             <Col span={24}>
               <Form.Item
-                name="followupResult"
+                name="followup_result"
                 label={
                   <Space>
                     <FormOutlined />
@@ -267,7 +267,7 @@ export default function FollowupForm({
             </Col>
             <Col span={24}>
               <Form.Item
-                name="followupRemark"
+                name="followup_remark"
                 label={
                   <Space>
                     <FormOutlined />
@@ -287,7 +287,7 @@ export default function FollowupForm({
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         {mode === 'view' ? (
           <Space>
-            {!data?.isComplete && (
+            {!data?.is_complete && (
               <Button
                 type="primary"
                 icon={<CheckCircleOutlined />}

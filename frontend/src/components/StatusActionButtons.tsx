@@ -48,7 +48,7 @@ export default function StatusActionButtons({
       }
       onActionSuccess?.();
     } catch (error: any) {
-      message.error(error.response?.data?.message || `${buttonLabel}失败`);
+      message.error(error.message || error.response?.data?.message || `${buttonLabel}失败`);
     } finally {
       setLoading(null);
     }

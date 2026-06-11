@@ -428,11 +428,13 @@ pub fn update_case_status(
 
     let queue = get_queue_for_status(new_status).as_str().to_string();
 
-    let conn = db.conn.lock();
-    conn.execute(
-        "UPDATE legal_cases SET status = ?1, queue = ?2, version = version + 1, updated_at = ?3 WHERE id = ?4",
-        (new_status.as_str(), &queue, Utc::now(), case_id),
-    )?;
+    {
+        let conn = db.conn.lock();
+        conn.execute(
+            "UPDATE legal_cases SET status = ?1, queue = ?2, version = version + 1, updated_at = ?3 WHERE id = ?4",
+            (new_status.as_str(), &queue, Utc::now(), case_id),
+        )?;
+    }
 
     record_processing_record(
         db,

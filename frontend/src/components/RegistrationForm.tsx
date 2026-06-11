@@ -63,13 +63,13 @@ export default function RegistrationForm({
   useEffect(() => {
     if (data && mode === 'edit') {
       form.setFieldsValue({
-        clientName: data.clientName,
-        clientPhone: data.clientPhone,
-        clientIdCard: data.clientIdCard,
-        consultationType: data.consultationType,
-        consultationContent: data.consultationContent,
-        evidenceProvided: data.evidenceProvided,
-        registrationRemark: data.registrationRemark,
+        client_name: data.client_name,
+        client_phone: data.client_phone,
+        client_id_card: data.client_id_card,
+        consultation_type: data.consultation_type,
+        consultation_content: data.consultation_content,
+        evidence_provided: data.evidence_provided,
+        registration_remark: data.registration_remark,
       });
     }
   }, [data, mode, form]);
@@ -77,8 +77,8 @@ export default function RegistrationForm({
   const fetchData = async () => {
     setLoading(true);
     try {
-      const response = await registrationApi.get(caseId);
-      setData(response.data);
+      const result = await registrationApi.get(caseId);
+      setData(result);
     } catch (error) {
       message.error('获取咨询登记信息失败');
     } finally {
@@ -99,7 +99,7 @@ export default function RegistrationForm({
       if (error.errorFields) {
         message.error('请填写完整的必填项');
       } else {
-        message.error(error.response?.data?.message || '保存失败');
+        message.error(error.message || error.response?.data?.message || '保存失败');
       }
     } finally {
       setSaving(false);
@@ -114,7 +114,7 @@ export default function RegistrationForm({
       await fetchData();
       onDataChange?.();
     } catch (error: any) {
-      message.error(error.response?.data?.message || '核验失败');
+      message.error(error.message || error.response?.data?.message || '核验失败');
     } finally {
       setVerifying(false);
     }
@@ -145,13 +145,13 @@ export default function RegistrationForm({
   }
 
   const formItems = [
-    { name: 'clientName', label: '客户姓名', icon: <UserOutlined />, required: true, span: 8 },
-    { name: 'clientPhone', label: '联系电话', icon: <PhoneOutlined />, required: true, span: 8 },
-    { name: 'clientIdCard', label: '身份证号', icon: <IdcardOutlined />, required: false, span: 8 },
-    { name: 'consultationType', label: '咨询类型', icon: <FileTextOutlined />, required: true, span: 12 },
-    { name: 'consultationContent', label: '咨询内容', icon: <FormOutlined />, required: true, span: 24, textarea: true },
-    { name: 'evidenceProvided', label: '提供证据', icon: <FileTextOutlined />, required: false, span: 24, textarea: true },
-    { name: 'registrationRemark', label: '备注说明', icon: <FormOutlined />, required: false, span: 24, textarea: true },
+    { name: 'client_name', label: '客户姓名', icon: <UserOutlined />, required: true, span: 8 },
+    { name: 'client_phone', label: '联系电话', icon: <PhoneOutlined />, required: true, span: 8 },
+    { name: 'client_id_card', label: '身份证号', icon: <IdcardOutlined />, required: false, span: 8 },
+    { name: 'consultation_type', label: '咨询类型', icon: <FileTextOutlined />, required: true, span: 12 },
+    { name: 'consultation_content', label: '咨询内容', icon: <FormOutlined />, required: true, span: 24, textarea: true },
+    { name: 'evidence_provided', label: '提供证据', icon: <FileTextOutlined />, required: false, span: 24, textarea: true },
+    { name: 'registration_remark', label: '备注说明', icon: <FormOutlined />, required: false, span: 24, textarea: true },
   ];
 
   return (
@@ -160,7 +160,7 @@ export default function RegistrationForm({
         <Space>
           <FormOutlined />
           咨询登记
-          {data?.isComplete && (
+          {data?.is_complete && (
             <Tag color="success" icon={<CheckCircleOutlined />}>
               已核验
             </Tag>
@@ -178,7 +178,7 @@ export default function RegistrationForm({
         )
       }
     >
-      {!data?.isComplete && mode === 'view' && (
+      {!data?.is_complete && mode === 'view' && (
         <Alert
           type="warning"
           showIcon
@@ -191,34 +191,34 @@ export default function RegistrationForm({
       {mode === 'view' ? (
         <Descriptions column={3} bordered size="small">
           <Descriptions.Item label="客户姓名" span={1}>
-            {data?.clientName || '-'}
+            {data?.client_name || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="联系电话" span={1}>
-            {data?.clientPhone || '-'}
+            {data?.client_phone || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="身份证号" span={1}>
-            {data?.clientIdCard || '-'}
+            {data?.client_id_card || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="咨询类型" span={1}>
-            {data?.consultationType || '-'}
+            {data?.consultation_type || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="咨询内容" span={3}>
-            {data?.consultationContent || '-'}
+            {data?.consultation_content || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="提供证据" span={3}>
-            {data?.evidenceProvided || '-'}
+            {data?.evidence_provided || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="备注说明" span={3}>
-            {data?.registrationRemark || '-'}
+            {data?.registration_remark || '-'}
           </Descriptions.Item>
-          {data?.registeredByName && (
+          {data?.registered_by_name && (
             <Descriptions.Item label="登记人" span={1}>
-              {data.registeredByName}
+              {data.registered_by_name}
             </Descriptions.Item>
           )}
-          {data?.registeredAt && (
+          {data?.registered_at && (
             <Descriptions.Item label="登记时间" span={2}>
-              {data.registeredAt}
+              {data.registered_at}
             </Descriptions.Item>
           )}
         </Descriptions>
@@ -260,7 +260,7 @@ export default function RegistrationForm({
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         {mode === 'view' ? (
           <Space>
-            {!data?.isComplete && (
+            {!data?.is_complete && (
               <Button
                 type="primary"
                 icon={<CheckCircleOutlined />}

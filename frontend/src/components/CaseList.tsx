@@ -71,19 +71,18 @@ export default function CaseList({
     try {
       const params: CaseListRequest = {
         page: pagination.current,
-        pageSize: pagination.pageSize,
+        page_size: pagination.pageSize,
         ...filters,
       };
       if (queue) {
-        params.queue = queue;
+        (params as any).queue = queue;
       }
-      const response = await caseApi.getList(params);
-      const result: CaseListResponse = response.data;
+      const result: CaseListResponse = await caseApi.getList(params);
       setData(result.list);
       setPagination(prev => ({
         ...prev,
         current: result.page,
-        pageSize: result.pageSize,
+        pageSize: result.page_size,
         total: result.total,
       }));
     } catch (error) {
@@ -121,7 +120,7 @@ export default function CaseList({
       message.success('操作成功');
       fetchData();
     } catch (error: any) {
-      message.error(error.response?.data?.message || '操作失败');
+      message.error(error.message || error.response?.data?.message || '操作失败');
     }
   };
 
@@ -153,8 +152,8 @@ export default function CaseList({
   const columns = [
     {
       title: '案号',
-      dataIndex: 'caseNo',
-      key: 'caseNo',
+      dataIndex: 'case_no',
+      key: 'case_no',
       width: 140,
       fixed: 'left' as const,
       render: (text: string, record: LegalCase) => (
@@ -178,8 +177,9 @@ export default function CaseList({
       key: 'priority',
       width: 80,
       render: (priority: string) => {
-        const config = PRIORITY_MAP[priority as keyof typeof PRIORITY_MAP];
-        return <Tag color={config.color}>{config.label}</Tag>;
+        const label = PRIORITY_MAP[priority as keyof typeof PRIORITY_MAP];
+        const color = PRIORITY_COLOR_MAP[priority as keyof typeof PRIORITY_COLOR_MAP];
+        return <Tag color={color as any}>{label}</Tag>;
       },
     },
     {
@@ -188,21 +188,22 @@ export default function CaseList({
       key: 'status',
       width: 100,
       render: (status: CaseStatus) => {
-        const config = STATUS_MAP[status];
-        return <Tag color={config.color as any}>{config.label}</Tag>;
+        const label = STATUS_MAP[status];
+        const color = STATUS_COLOR_MAP[status];
+        return <Tag color={color as any}>{label}</Tag>;
       },
     },
     {
       title: '预警',
-      dataIndex: 'warningStatus',
-      key: 'warningStatus',
+      dataIndex: 'warning_status',
+      key: 'warning_status',
       width: 90,
       render: (status?: string) => <WarningBadge status={status as any} />,
     },
     {
       title: '当前处理人',
-      dataIndex: 'currentHandlerName',
-      key: 'currentHandlerName',
+      dataIndex: 'current_handler_name',
+      key: 'current_handler_name',
       width: 100,
       render: (name?: string) => name || '-',
     },
@@ -215,8 +216,8 @@ export default function CaseList({
     },
     {
       title: '创建时间',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
+      dataIndex: 'created_at',
+      key: 'created_at',
       width: 160,
       render: (date: string) => dayjs(date).format('YYYY-MM-DD HH:mm'),
     },

@@ -23,7 +23,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { caseApi } from '../utils/api';
-import { STATUS_MAP, PRIORITY_MAP } from '../utils/constants';
+import { STATUS_MAP, STATUS_COLOR_MAP, PRIORITY_MAP, PRIORITY_COLOR_MAP } from '../utils/constants';
 import WarningBadge from './WarningBadge';
 import RegistrationForm from './RegistrationForm';
 import AssignmentForm from './AssignmentForm';
@@ -63,8 +63,8 @@ export default function CaseDetailView({ caseId, onBack, onEdit, queue }: CaseDe
   const fetchData = async () => {
     setLoading(true);
     try {
-      const response = await caseApi.getDetail(caseId);
-      setCaseData(response.data);
+      const result = await caseApi.getDetail(caseId);
+      setCaseData(result);
     } catch (error) {
       message.error('获取案件详情失败');
     } finally {
@@ -122,8 +122,10 @@ export default function CaseDetailView({ caseId, onBack, onEdit, queue }: CaseDe
     );
   }
 
-  const statusConfig = STATUS_MAP[caseData.status];
-  const priorityConfig = PRIORITY_MAP[caseData.priority];
+  const statusLabel = STATUS_MAP[caseData.status];
+  const statusColor = STATUS_COLOR_MAP[caseData.status];
+  const priorityLabel = PRIORITY_MAP[caseData.priority];
+  const priorityColor = PRIORITY_COLOR_MAP[caseData.priority];
   const isEditable = ['draft', 'pending_submit', 'returned'].includes(caseData.status);
 
   return (
@@ -138,7 +140,7 @@ export default function CaseDetailView({ caseId, onBack, onEdit, queue }: CaseDe
             )}
             <Breadcrumb style={{ margin: 0 }}>
               <Breadcrumb.Item>案件管理</Breadcrumb.Item>
-              <Breadcrumb.Item>{caseData.caseNo}</Breadcrumb.Item>
+              <Breadcrumb.Item>{caseData.case_no}</Breadcrumb.Item>
             </Breadcrumb>
           </Space>
           <Space>
@@ -164,29 +166,29 @@ export default function CaseDetailView({ caseId, onBack, onEdit, queue }: CaseDe
               <div>
                 <Space size={12} align="center" style={{ marginBottom: 12 }}>
                   <h2 style={{ margin: 0, fontSize: 20 }}>{caseData.title}</h2>
-                  <Tag color={statusConfig.color as any}>{statusConfig.label}</Tag>
-                  <Tag color={priorityConfig.color}>{priorityConfig.label}优先级</Tag>
-                  <WarningBadge status={caseData.warningStatus} />
+                  <Tag color={statusColor as any}>{statusLabel}</Tag>
+                  <Tag color={priorityColor}>{priorityLabel}优先级</Tag>
+                  <WarningBadge status={caseData.warning_status} />
                 </div>
                 <Space size={16} style={{ color: '#666' }}>
                   <Space size={4}>
                     <FileTextOutlined />
-                    <span>案号：{caseData.caseNo}</span>
+                    <span>案号：{caseData.case_no}</span>
                   </Space>
                   <Space size={4}>
                     <UserOutlined />
-                    <span>创建人：{caseData.createdByName || '-'}</span>
+                    <span>创建人：{caseData.created_by_name || '-'}</span>
                   </Space>
                   <Space size={4}>
                     <ClockCircleOutlined />
-                    <span>创建时间：{dayjs(caseData.createdAt).format('YYYY-MM-DD HH:mm')}</span>
+                    <span>创建时间：{dayjs(caseData.created_at).format('YYYY-MM-DD HH:mm')}</span>
                   </Space>
                 </Space>
               </div>
 
               <Descriptions column={3} bordered size="small">
                 <Descriptions.Item label="当前处理人" span={1}>
-                  {caseData.currentHandlerName || '-'}
+                  {caseData.current_handler_name || '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="截止时间" span={1}>
                   {caseData.deadline ? dayjs(caseData.deadline).format('YYYY-MM-DD') : '-'}
@@ -198,7 +200,7 @@ export default function CaseDetailView({ caseId, onBack, onEdit, queue }: CaseDe
                   {caseData.queue}
                 </Descriptions.Item>
                 <Descriptions.Item label="最后更新" span={2}>
-                  {dayjs(caseData.updatedAt).format('YYYY-MM-DD HH:mm:ss')}
+                  {dayjs(caseData.updated_at).format('YYYY-MM-DD HH:mm:ss')}
                 </Descriptions.Item>
               </Descriptions>
             </Space>
@@ -211,20 +213,20 @@ export default function CaseDetailView({ caseId, onBack, onEdit, queue }: CaseDe
             >
               <Space direction="vertical" size="middle" style={{ width: '100%' }}>
                 <div style={{ textAlign: 'center' }}>
-                  <Tag color={statusConfig.color as any} style={{ fontSize: 16, padding: '4px 16px' }}>
-                    {statusConfig.label}
+                  <Tag color={statusColor as any} style={{ fontSize: 16, padding: '4px 16px' }}>
+                    {statusLabel}
                   </Tag>
                 </div>
                 <Divider style={{ margin: 0 }} />
                 <Descriptions column={1} size="small">
                   <Descriptions.Item label="预警状态">
-                    <WarningBadge status={caseData.warningStatus} />
+                    <WarningBadge status={caseData.warning_status} />
                   </Descriptions.Item>
                   <Descriptions.Item label="优先级">
-                    <Tag color={priorityConfig.color}>{priorityConfig.label}</Tag>
+                    <Tag color={priorityColor}>{priorityLabel}</Tag>
                   </Descriptions.Item>
                   <Descriptions.Item label="处理人">
-                    {caseData.currentHandlerName || '待分配'}
+                    {caseData.current_handler_name || '待分配'}
                   </Descriptions.Item>
                   <Descriptions.Item label="截止时间">
                     {caseData.deadline ? dayjs(caseData.deadline).format('YYYY-MM-DD') : '未设置'}
@@ -248,37 +250,37 @@ export default function CaseDetailView({ caseId, onBack, onEdit, queue }: CaseDe
             <Card title="案件基本信息" size="small">
               <Descriptions column={2} bordered size="small">
                 <Descriptions.Item label="案号" span={1}>
-                  {caseData.caseNo}
+                  {caseData.case_no}
                 </Descriptions.Item>
                 <Descriptions.Item label="标题" span={1}>
                   {caseData.title}
                 </Descriptions.Item>
                 <Descriptions.Item label="优先级" span={1}>
-                  <Tag color={priorityConfig.color}>{priorityConfig.label}</Tag>
+                  <Tag color={priorityColor}>{priorityLabel}</Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="状态" span={1}>
-                  <Tag color={statusConfig.color as any}>{statusConfig.label}</Tag>
+                  <Tag color={statusColor as any}>{statusLabel}</Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="预警状态" span={1}>
-                  <WarningBadge status={caseData.warningStatus} />
+                  <WarningBadge status={caseData.warning_status} />
                 </Descriptions.Item>
                 <Descriptions.Item label="当前队列" span={1}>
                   {caseData.queue}
                 </Descriptions.Item>
                 <Descriptions.Item label="当前处理人" span={1}>
-                  {caseData.currentHandlerName || '-'}
+                  {caseData.current_handler_name || '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="截止时间" span={1}>
                   {caseData.deadline ? dayjs(caseData.deadline).format('YYYY-MM-DD') : '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="创建人" span={1}>
-                  {caseData.createdByName || '-'}
+                  {caseData.created_by_name || '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label="创建时间" span={1}>
-                  {dayjs(caseData.createdAt).format('YYYY-MM-DD HH:mm:ss')}
+                  {dayjs(caseData.created_at).format('YYYY-MM-DD HH:mm:ss')}
                 </Descriptions.Item>
                 <Descriptions.Item label="最后更新" span={2}>
-                  {dayjs(caseData.updatedAt).format('YYYY-MM-DD HH:mm:ss')}
+                  {dayjs(caseData.updated_at).format('YYYY-MM-DD HH:mm:ss')}
                 </Descriptions.Item>
               </Descriptions>
             </Card>

@@ -7,7 +7,6 @@ interface AuthContextType {
   currentRole: UserRole | null;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  switchRole: (role: UserRole) => Promise<void>;
   loading: boolean;
 }
 
@@ -38,8 +37,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (username: string, password: string) => {
-    const response = await authApi.login({ username, password });
-    const { token, user: userData } = response.data;
+    const result = await authApi.login({ username, password });
+    const { token, user: userData } = result;
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
@@ -57,18 +56,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const switchRole = async (role: UserRole) => {
-    await authApi.switchRole(role);
-    setCurrentRole(role);
-    if (user) {
-      const updatedUser = { ...user, role };
-      localStorage.setItem('user', JSON.stringify(updatedUser));
-      setUser(updatedUser);
-    }
-  };
-
   return (
-    <AuthContext.Provider value={{ user, currentRole, login, logout, switchRole, loading }}>
+    <AuthContext.Provider value={{ user, currentRole, login, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

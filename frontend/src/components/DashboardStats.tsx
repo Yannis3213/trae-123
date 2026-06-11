@@ -28,8 +28,8 @@ export default function DashboardStats({ onStatClick }: DashboardStatsProps) {
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const response = await statisticsApi.getStats();
-      setStats(response.data);
+      const result = await statisticsApi.getStats();
+      setStats(result);
     } catch (error) {
       message.error('获取统计数据失败');
     } finally {
@@ -59,7 +59,7 @@ export default function DashboardStats({ onStatClick }: DashboardStatsProps) {
     },
     {
       title: '待提交',
-      value: stats.pendingSubmit,
+      value: stats.pending_submit,
       icon: <ClockCircleOutlined style={{ color: '#faad14', fontSize: 24 }} />,
       color: '#faad14',
       onClick: () => onStatClick?.({ status: 'pending_submit' }),

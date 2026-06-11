@@ -26,8 +26,8 @@ export default function CaseFilter({ queue, initialFilters, onFilter }: CaseFilt
     if (initialFilters) {
       form.setFieldsValue({
         ...initialFilters,
-        deadline: initialFilters.deadlineFrom && initialFilters.deadlineTo
-          ? [initialFilters.deadlineFrom, initialFilters.deadlineTo]
+        deadline: initialFilters.deadline_from && initialFilters.deadline_to
+          ? [initialFilters.deadline_from, initialFilters.deadline_to]
           : undefined,
       });
     }
@@ -35,8 +35,9 @@ export default function CaseFilter({ queue, initialFilters, onFilter }: CaseFilt
 
   const fetchUsers = async () => {
     try {
-      const response = await userApi.getList();
-      setUsers(response.data.list || response.data || []);
+      const result = await userApi.getList();
+      const userList: any = result;
+      setUsers(userList.list || userList || []);
     } catch (error) {
       console.error('获取用户列表失败', error);
     }
@@ -45,16 +46,16 @@ export default function CaseFilter({ queue, initialFilters, onFilter }: CaseFilt
   const handleSubmit = (values: any) => {
     const filters: Partial<CaseListRequest> = {
       keyword: values.keyword,
-      handlerId: values.handlerId,
+      handler_id: values.handler_id,
       priority: values.priority,
       status: values.status,
     };
     if (values.deadline && values.deadline.length === 2) {
-      filters.deadlineFrom = values.deadline[0].format('YYYY-MM-DD');
-      filters.deadlineTo = values.deadline[1].format('YYYY-MM-DD');
+      filters.deadline_from = values.deadline[0].format('YYYY-MM-DD');
+      filters.deadline_to = values.deadline[1].format('YYYY-MM-DD');
     }
     if (queue) {
-      filters.queue = queue as any;
+      (filters as any).queue = queue;
     }
     onFilter(filters);
   };
@@ -63,24 +64,24 @@ export default function CaseFilter({ queue, initialFilters, onFilter }: CaseFilt
     form.resetFields();
     const filters: Partial<CaseListRequest> = {};
     if (queue) {
-      filters.queue = queue as any;
+      (filters as any).queue = queue;
     }
     onFilter(filters);
   };
 
-  const statusOptions = Object.entries(STATUS_MAP).map(([value, config]) => ({
+  const statusOptions = Object.entries(STATUS_MAP).map(([value, label]) => ({
     value: value as CaseStatus,
-    label: config.label,
+    label,
   }));
 
-  const priorityOptions = Object.entries(PRIORITY_MAP).map(([value, config]) => ({
+  const priorityOptions = Object.entries(PRIORITY_MAP).map(([value, label]) => ({
     value: value as CasePriority,
-    label: config.label,
+    label,
   }));
 
   const userOptions = users.map(user => ({
     value: user.id,
-    label: `${user.realName} (${user.department})`,
+    label: `${user.real_name} (${user.department})`,
   }));
 
   return (
@@ -110,7 +111,7 @@ export default function CaseFilter({ queue, initialFilters, onFilter }: CaseFilt
               />
             </Form.Item>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
-              <Form.Item name="handlerId" label="责任人" style={{ marginBottom: 0 }}>
+              <Form.Item name="handler_id" label="责任人" style={{ marginBottom: 0 }}>
                 <Select 
                   placeholder="选择责任人" 
                   allowClear

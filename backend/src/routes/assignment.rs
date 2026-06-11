@@ -12,7 +12,7 @@ use rocket::serde::json::Json;
 use rocket::Route;
 
 pub fn routes() -> Vec<Route> {
-    rocket::routes![get_assignment, update_assignment, check_assignment_complete_status]
+    rocket::routes![get_assignment, update_assignment, check_assignment_complete_status, verify_assignment]
 }
 
 #[get("/cases/<case_id>/assignment")]
@@ -90,7 +90,9 @@ fn update_assignment(
         )));
     }
 
-    check_version(case.version, req.version)?;
+    if let Some(v) = req.version {
+        check_version(case.version, v)?;
+    }
 
     if matches!(case.status, CaseStatus::Archived | CaseStatus::Completed | CaseStatus::Followup) {
         return Err(AppError::BadRequest(
@@ -300,5 +302,104 @@ fn check_assignment_complete_status(
     Ok((
         Status::Ok,
         Json(ApiResponse::success(result, "查询成功")),
+    ))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct VerifyResult {
+    pub is_complete: bool,
+    pub missing_fields: Vec<String>,
+}
+
+#[post("/cases/<case_id>/assignment/verify")]
+fn verify_assignment(
+    db: &Database,
+    auth: AuthGuard,
+    case_id: i64,
+) -> Result<(Status, Json<ApiResponse<VerifyResult>>)> {
+    check_permission(
+        &auth.user,
+        &[
+            UserRole::Supervisor,
+            UserRole::Director,
+            UserRole::Reviewer,
+        ],
+        "核验案件分派信息",
+    )?;
+
+    let case = get_case(db, case_id)?;
+
+    if !can_access_case(&auth.user, case.created_by, case.current_handler_id, &case.status) {
+        return Err(AppError::PermissionError(
+            "用户无权核验此案件的分派信息".to_string(),
+        ));
+    }
+
+    let conn = db.conn.lock();
+    let mut stmt = conn.prepare(
+        "SELECT id, case_id, assistant_id, lawyer_id, assignment_reason, assignment_remark, 
+         assigned_by, assigned_at, is_complete, created_at, updated_at FROM case_assignment WHERE case_id = ?1",
+    )?;
+
+    let assignment = stmt.query_row([case_id], |row| {
+        Ok(CaseAssignment {
+            id: row.get(0)?,
+            case_id: row.get(1)?,
+            assistant_id: row.get(2)?,
+            assistant_name: None,
+            lawyer_id: row.get(3)?,
+            lawyer_name: None,
+            assignment_reason: row.get(4)?,
+            assignment_remark: row.get(5)?,
+            assigned_by: row.get(6)?,
+            assigned_at: row.get(7)?,
+            is_complete: row.get(8)?,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
+        })
+    })?;
+
+    drop(conn);
+
+    let (is_complete, missing) = check_assignment_complete(&assignment);
+
+    let content = if is_complete {
+        format!("用户 {} 核验了案件分派信息，结果：信息完整", auth.user.real_name)
+    } else {
+        format!(
+            "用户 {} 核验了案件分派信息，结果：信息不完整，缺少: {}",
+            auth.user.real_name,
+            missing.join(", ")
+        )
+    };
+
+    record_audit_note(
+        db,
+        case_id,
+        Some("assignment"),
+        "assignment_verified",
+        &content,
+        Some(auth.user.id),
+    )?;
+
+    if !is_complete {
+        record_exception(
+            db,
+            case_id,
+            "incomplete_assignment",
+            &format!("案件分派信息不完整，缺少: {}", missing.join(", ")),
+            Some("assignment"),
+            Some(auth.user.id),
+        )?;
+    }
+
+    let result = VerifyResult {
+        is_complete,
+        missing_fields: missing,
+    };
+
+    Ok((
+        Status::Ok,
+        Json(ApiResponse::success(result, if is_complete { "核验通过，信息完整" } else { "核验未通过，信息不完整" })),
     ))
 }

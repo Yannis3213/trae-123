@@ -19,9 +19,18 @@ interface AuditNotesProps {
 }
 
 const auditTypeMap: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+  approve: { label: '通过', color: 'success', icon: <CheckCircleOutlined /> },
   pass: { label: '通过', color: 'success', icon: <CheckCircleOutlined /> },
   reject: { label: '驳回', color: 'error', icon: <CloseCircleOutlined /> },
   warning: { label: '警告', color: 'warning', icon: <ExclamationCircleOutlined /> },
+  incomplete_info: { label: '信息不完整', color: 'warning', icon: <ExclamationCircleOutlined /> },
+  overdue: { label: '逾期', color: 'error', icon: <ExclamationCircleOutlined /> },
+  registration_verified: { label: '登记核验', color: 'processing', icon: <AuditOutlined /> },
+  assignment_verified: { label: '分派核验', color: 'processing', icon: <AuditOutlined /> },
+  followup_verified: { label: '回访核验', color: 'processing', icon: <AuditOutlined /> },
+  status_change: { label: '状态变更', color: 'processing', icon: <AuditOutlined /> },
+  case_created: { label: '案件创建', color: 'default', icon: <AuditOutlined /> },
+  case_updated: { label: '案件更新', color: 'default', icon: <AuditOutlined /> },
   comment: { label: '备注', color: 'default', icon: <AuditOutlined /> },
   info: { label: '信息', color: 'processing', icon: <AuditOutlined /> },
 };
@@ -46,8 +55,8 @@ export default function AuditNotes({ caseId }: AuditNotesProps) {
   const fetchNotes = async () => {
     setLoading(true);
     try {
-      const response = await caseApi.getAuditNotes(caseId);
-      setNotes(response.data || []);
+      const result = await caseApi.getAuditNotes(caseId);
+      setNotes(result || []);
     } catch (error) {
       message.error('获取审计备注失败');
     } finally {
@@ -85,7 +94,7 @@ export default function AuditNotes({ caseId }: AuditNotesProps) {
         <List
           dataSource={notes}
           renderItem={(note) => {
-            const typeConfig = getAuditTypeConfig(note.auditType);
+            const typeConfig = getAuditTypeConfig(note.audit_type);
             return (
               <List.Item
                 key={note.id}
@@ -130,11 +139,11 @@ export default function AuditNotes({ caseId }: AuditNotesProps) {
                       <Space size={16} style={{ fontSize: 12, color: '#999' }}>
                         <Space size={4}>
                           <UserOutlined />
-                          <span>{note.operatorName || '系统'}</span>
+                          <span>{note.operator_name || '系统'}</span>
                         </Space>
                         <Space size={4}>
                           <ClockCircleOutlined />
-                          <span>{dayjs(note.createdAt).format('YYYY-MM-DD HH:mm:ss')}</span>
+                          <span>{dayjs(note.created_at).format('YYYY-MM-DD HH:mm:ss')}</span>
                         </Space>
                       </Space>
                     </div>

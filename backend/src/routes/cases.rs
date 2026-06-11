@@ -384,7 +384,9 @@ fn update_case(
         ));
     }
 
-    check_version(case.version, req.version)?;
+    if let Some(v) = req.version {
+        check_version(case.version, v)?;
+    }
 
     if matches!(case.status, CaseStatus::Archived) {
         return Err(AppError::BadRequest("已归档的案件无法修改".to_string()));
@@ -489,13 +491,23 @@ fn delete_case(
     ))
 }
 
-#[post("/cases/action", data = "<req>")]
+#[derive(Debug, serde::Deserialize)]
+pub struct CaseActionPathRequest {
+    pub action: String,
+    pub remark: Option<String>,
+    pub version: Option<i32>,
+}
+
+#[post("/cases/<case_id>/action", data = "<req>")]
 fn case_action(
     db: &Database,
     auth: AuthGuard,
-    req: Json<CaseActionRequest>,
+    case_id: i64,
+    req: Json<CaseActionPathRequest>,
 ) -> Result<(Status, Json<ApiResponse<LegalCase>>)> {
-    let case = get_case(db, req.case_id)?;
+    if let Some(v) = req.version {
+        let case = get_case(db, case?
+    }
 
     check_version(case.version, req.version)?;
 
@@ -583,7 +595,7 @@ fn case_action(
     if let Some(new_status) = new_status {
         update_case_status(
             db,
-            req.case_id,
+            case_id,
             &case.status,
             &new_status,
             auth.user.id,
@@ -592,7 +604,7 @@ fn case_action(
 
         record_audit_note(
             db,
-            req.case_id,
+            case_id,
             None,
             "status_change",
             &format!(
@@ -605,7 +617,7 @@ fn case_action(
         )?;
     }
 
-    let updated_case = get_case(db, req.case_id)?;
+    let updated_case = get_case(db, case_id)?;
 
     Ok((
         Status::Ok,

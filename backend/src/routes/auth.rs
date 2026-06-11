@@ -136,8 +136,102 @@ pub struct RoleInfo {
     pub description: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct UserListQuery {
+    pub role: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PublicUser {
+    pub id: i64,
+    pub username: String,
+    pub real_name: String,
+    pub role: UserRole,
+    pub department: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[get("/users?<params..>")]
+pub async fn list_users(
+    db: &Database,
+    auth: AuthGuard,
+    params: UserListQuery,
+) -> std::result::Result<Json<ApiResponse<Vec<PublicUser>>>, (Status, Json<ApiResponse<()>>)> {
+    let conn = db.conn.lock();
+
+    let mut where_clauses: Vec<String> = Vec::new();
+    let mut params_vec: Vec<String> = Vec::new();
+
+    if let Some(role) = &params.role {
+        if UserRole::from_str(role).is_some() {
+            where_clauses.push("role = ?".to_string());
+            params_vec.push(role.clone());
+        }
+    }
+
+    let where_sql = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_clauses.join(" AND "))
+    };
+
+    let query_sql = format!(
+        "SELECT id, username, real_name, role, department, created_at, updated_at 
+         FROM users {} ORDER BY created_at DESC",
+        where_sql
+    );
+
+    let mut stmt = match conn.prepare(&query_sql) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("数据库查询错误: {}", e);
+            return Err((
+                Status::InternalServerError,
+                Json(ApiResponse::error("服务器内部错误")),
+            ));
+        }
+    };
+
+    let users_result = stmt.query_map(rusqlite::params_from_iter(&params_vec), |row| {
+        let role_str: String = row.get(3)?;
+        Ok(PublicUser {
+            id: row.get(0)?,
+            username: row.get(1)?,
+            real_name: row.get(2)?,
+            role: UserRole::from_str(&role_str).unwrap_or(UserRole::Registrar),
+            department: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    });
+
+    let mut users: Vec<PublicUser> = Vec::new();
+    match users_result {
+        Ok(rows) => {
+            for user in rows {
+                match user {
+                    Ok(u) => users.push(u),
+                    Err(e) => {
+                        error!("解析用户数据错误: {}", e);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            error!("数据库查询错误: {}", e);
+            return Err((
+                Status::InternalServerError,
+                Json(ApiResponse::error("服务器内部错误")),
+            ));
+        }
+    }
+
+    Ok(Json(ApiResponse::success(users, "查询成功")))
+}
+
 pub fn routes() -> Vec<rocket::Route> {
-    rocket::routes![login, get_current_user, get_roles]
+    rocket::routes![login, get_current_user, get_roles, list_users]
 }
 
 pub fn init_default_users_db(db: &Database) -> Result<()> {

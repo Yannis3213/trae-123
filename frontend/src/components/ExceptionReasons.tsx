@@ -18,10 +18,20 @@ interface ExceptionReasonsProps {
 }
 
 const exceptionTypeMap: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  incomplete: { label: '信息不完整', color: 'warning', icon: <WarningOutlined /> },
-  incorrect: { label: '信息错误', color: 'error', icon: <ExclamationCircleOutlined /> },
+  incomplete_data: { label: '信息不完整', color: 'warning', icon: <WarningOutlined /> },
+  incomplete_registration: { label: '登记信息不完整', color: 'warning', icon: <WarningOutlined /> },
+  incomplete_assignment: { label: '分派信息不完整', color: 'warning', icon: <WarningOutlined /> },
+  incomplete_followup: { label: '回访信息不完整', color: 'warning', icon: <WarningOutlined /> },
+  missing_evidence: { label: '缺少证据材料', color: 'warning', icon: <WarningOutlined /> },
   missing_document: { label: '缺少材料', color: 'warning', icon: <WarningOutlined /> },
+  incomplete: { label: '信息不完整', color: 'warning', icon: <WarningOutlined /> },
+  status_conflict: { label: '状态冲突', color: 'error', icon: <ExclamationCircleOutlined /> },
+  incorrect: { label: '信息错误', color: 'error', icon: <ExclamationCircleOutlined /> },
   invalid: { label: '无效数据', color: 'error', icon: <ExclamationCircleOutlined /> },
+  version_conflict: { label: '版本冲突', color: 'error', icon: <ExclamationCircleOutlined /> },
+  permission_error: { label: '权限不足', color: 'error', icon: <ExclamationCircleOutlined /> },
+  overdue: { label: '已逾期', color: 'error', icon: <ExclamationCircleOutlined /> },
+  duplicate_submit: { label: '重复提交', color: 'error', icon: <ExclamationCircleOutlined /> },
   other: { label: '其他', color: 'default', icon: <InfoCircleOutlined /> },
 };
 
@@ -45,8 +55,8 @@ export default function ExceptionReasons({ caseId }: ExceptionReasonsProps) {
   const fetchReasons = async () => {
     setLoading(true);
     try {
-      const response = await caseApi.getExceptionReasons(caseId);
-      setReasons(response.data || []);
+      const result = await caseApi.getExceptionReasons(caseId);
+      setReasons(result || []);
     } catch (error) {
       message.error('获取异常原因失败');
     } finally {
@@ -112,7 +122,7 @@ export default function ExceptionReasons({ caseId }: ExceptionReasonsProps) {
       <List
         dataSource={reasons}
         renderItem={(reason) => {
-          const typeConfig = getExceptionTypeConfig(reason.exceptionType);
+          const typeConfig = getExceptionTypeConfig(reason.exception_type);
           return (
             <List.Item
               key={reason.id}
@@ -155,11 +165,11 @@ export default function ExceptionReasons({ caseId }: ExceptionReasonsProps) {
                     <Space size={16} style={{ fontSize: 12, color: '#999' }}>
                       <Space size={4}>
                         <UserOutlined />
-                        <span>{reason.operatorName || '系统'}</span>
+                        <span>{reason.operator_name || '系统'}</span>
                       </Space>
                       <Space size={4}>
                         <ClockCircleOutlined />
-                        <span>{dayjs(reason.createdAt).format('YYYY-MM-DD HH:mm:ss')}</span>
+                        <span>{dayjs(reason.created_at).format('YYYY-MM-DD HH:mm:ss')}</span>
                       </Space>
                     </Space>
                   </div>

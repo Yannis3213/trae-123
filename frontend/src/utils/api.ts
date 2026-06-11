@@ -14,7 +14,12 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (!response.data.success) {
+      return Promise.reject(new Error(response.data.message || '请求失败'));
+    }
+    return response.data.data;
+  },
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
@@ -32,7 +37,6 @@ export const authApi = {
     api.post('/auth/login', data),
   logout: () => api.post('/auth/logout'),
   getCurrentUser: () => api.get('/auth/me'),
-  switchRole: (role: string) => api.post('/auth/switch-role', { role }),
 };
 
 export const caseApi = {
@@ -47,30 +51,29 @@ export const caseApi = {
 };
 
 export const registrationApi = {
-  get: (caseId: number) => api.get(`/registration/${caseId}`),
-  save: (caseId: number, data: any) => api.put(`/registration/${caseId}`, data),
-  verify: (caseId: number) => api.post(`/registration/${caseId}/verify`),
+  get: (caseId: number) => api.get(`/cases/${caseId}/registration`),
+  save: (caseId: number, data: any) => api.put(`/cases/${caseId}/registration`, data),
+  verify: (caseId: number) => api.post(`/cases/${caseId}/registration/verify`),
 };
 
 export const assignmentApi = {
-  get: (caseId: number) => api.get(`/assignment/${caseId}`),
-  save: (caseId: number, data: any) => api.put(`/assignment/${caseId}`, data),
-  verify: (caseId: number) => api.post(`/assignment/${caseId}/verify`),
+  get: (caseId: number) => api.get(`/cases/${caseId}/assignment`),
+  save: (caseId: number, data: any) => api.put(`/cases/${caseId}/assignment`, data),
+  verify: (caseId: number) => api.post(`/cases/${caseId}/assignment/verify`),
 };
 
 export const followupApi = {
-  get: (caseId: number) => api.get(`/followup/${caseId}`),
-  save: (caseId: number, data: any) => api.put(`/followup/${caseId}`, data),
-  verify: (caseId: number) => api.post(`/followup/${caseId}/verify`),
+  get: (caseId: number) => api.get(`/cases/${caseId}/followup`),
+  save: (caseId: number, data: any) => api.put(`/cases/${caseId}/followup`, data),
+  verify: (caseId: number) => api.post(`/cases/${caseId}/followup/verify`),
 };
 
 export const batchApi = {
-  process: (data: any) => api.post('/batch/process', data),
+  process: (data: any) => api.post('/cases/batch', data),
 };
 
 export const statisticsApi = {
   getStats: () => api.get('/statistics'),
-  getDashboard: () => api.get('/statistics/dashboard'),
 };
 
 export const userApi = {

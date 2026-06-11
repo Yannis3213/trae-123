@@ -1,15 +1,16 @@
 import React from 'react';
 import { Tag } from 'antd';
-import { WARNING_MAP } from '../utils/constants';
+import { WARNING_MAP, WARNING_COLOR_MAP } from '../utils/constants';
 import type { LegalCase } from '../../types';
 
 interface WarningBadgeProps {
-  status?: LegalCase['warningStatus'];
+  status?: LegalCase['warning_status'];
   showLabel?: boolean;
 }
 
 export default function WarningBadge({ status = 'normal', showLabel = true }: WarningBadgeProps) {
-  const config = WARNING_MAP[status] || WARNING_MAP.normal;
+  const label = WARNING_MAP[status] || WARNING_MAP.normal;
+  const color = WARNING_COLOR_MAP[status] || WARNING_COLOR_MAP.normal;
 
   const iconMap: Record<string, React.ReactNode> = {
     normal: <span style={{ color: '#52c41a' }}>●</span>,
@@ -19,7 +20,7 @@ export default function WarningBadge({ status = 'normal', showLabel = true }: Wa
 
   return (
     <Tag 
-      color={config.color as any}
+      color={color as any}
       icon={iconMap[status]}
       style={{ 
         display: 'inline-flex', 
@@ -31,7 +32,7 @@ export default function WarningBadge({ status = 'normal', showLabel = true }: Wa
         lineHeight: '22px'
       }}
     >
-      {showLabel && config.label}
+      {showLabel && label}
     </Tag>
   );
 }

@@ -627,24 +627,24 @@ pub struct CreateCaseRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateCaseRequest {
-    pub case_id: i64,
+    pub case_id: Option<i64>,
     pub title: Option<String>,
     pub priority: Option<String>,
     pub deadline: Option<DateTime<Utc>>,
-    pub version: i32,
+    pub version: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CaseActionRequest {
-    pub case_id: i64,
+    pub case_id: Option<i64>,
     pub action: String,
     pub remark: Option<String>,
-    pub version: i32,
+    pub version: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RegistrationUpdateRequest {
-    pub case_id: i64,
+    pub case_id: Option<i64>,
     pub client_name: Option<String>,
     pub client_phone: Option<String>,
     pub client_id_card: Option<String>,
@@ -652,26 +652,26 @@ pub struct RegistrationUpdateRequest {
     pub consultation_content: Option<String>,
     pub evidence_provided: Option<String>,
     pub registration_remark: Option<String>,
-    pub version: i32,
+    pub version: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AssignmentUpdateRequest {
-    pub case_id: i64,
+    pub case_id: Option<i64>,
     pub assistant_id: Option<i64>,
     pub lawyer_id: Option<i64>,
     pub assignment_reason: Option<String>,
     pub assignment_remark: Option<String>,
-    pub version: i32,
+    pub version: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FollowupUpdateRequest {
-    pub case_id: i64,
+    pub case_id: Option<i64>,
     pub followup_result: Option<String>,
     pub client_satisfaction: Option<String>,
     pub followup_remark: Option<String>,
-    pub version: i32,
+    pub version: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize)]

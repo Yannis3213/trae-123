@@ -111,7 +111,6 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
       setActionLoading(true);
 
       await request.post(`/cases/${caseId}/action`, {
-        caseId,
         action: currentAction,
         remark: values.remark,
         version: caseData?.version,
@@ -122,7 +121,7 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
       fetchCaseDetail();
       fetchRecords();
     } catch (error: any) {
-      message.error(error.response?.data?.detail || '操作失败');
+      message.error(error.message || error.response?.data?.detail || '操作失败');
     } finally {
       setActionLoading(false);
     }
@@ -177,39 +176,39 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
               <div className="detail-grid">
                 <div className="detail-item">
                   <span className="label">当事人姓名：</span>
-                  <span className="value">{caseData.registration.clientName || '-'}</span>
+                  <span className="value">{caseData.registration.client_name || '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">联系电话：</span>
-                  <span className="value">{caseData.registration.clientPhone || '-'}</span>
+                  <span className="value">{caseData.registration.client_phone || '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">身份证号：</span>
-                  <span className="value">{caseData.registration.clientIdCard || '-'}</span>
+                  <span className="value">{caseData.registration.client_id_card || '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">咨询类型：</span>
-                  <span className="value">{caseData.registration.consultationType || '-'}</span>
+                  <span className="value">{caseData.registration.consultation_type || '-'}</span>
                 </div>
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <span className="label">咨询内容：</span>
-                  <span className="value">{caseData.registration.consultationContent || '-'}</span>
+                  <span className="value">{caseData.registration.consultation_content || '-'}</span>
                 </div>
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <span className="label">证据材料：</span>
-                  <span className="value">{caseData.registration.evidenceProvided || '-'}</span>
+                  <span className="value">{caseData.registration.evidence_provided || '-'}</span>
                 </div>
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <span className="label">立案备注：</span>
-                  <span className="value">{caseData.registration.registrationRemark || '-'}</span>
+                  <span className="value">{caseData.registration.registration_remark || '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">立案人：</span>
-                  <span className="value">{caseData.registration.registeredAt ? caseData.createdByName : '-'}</span>
+                  <span className="value">{caseData.registration.registered_at ? caseData.created_by_name : '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">立案时间：</span>
-                  <span className="value">{caseData.registration.registeredAt ? dayjs(caseData.registration.registeredAt).format('YYYY-MM-DD HH:mm') : '-'}</span>
+                  <span className="value">{caseData.registration.registered_at ? dayjs(caseData.registration.registered_at).format('YYYY-MM-DD HH:mm') : '-'}</span>
                 </div>
               </div>
             </div>
@@ -221,27 +220,27 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
               <div className="detail-grid">
                 <div className="detail-item">
                   <span className="label">律师助理：</span>
-                  <span className="value">{caseData.assignment.assistantName || '-'}</span>
+                  <span className="value">{caseData.assignment.assistant_name || '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">主办律师：</span>
-                  <span className="value">{caseData.assignment.lawyerName || '-'}</span>
+                  <span className="value">{caseData.assignment.lawyer_name || '-'}</span>
                 </div>
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <span className="label">分案理由：</span>
-                  <span className="value">{caseData.assignment.assignmentReason || '-'}</span>
+                  <span className="value">{caseData.assignment.assignment_reason || '-'}</span>
                 </div>
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <span className="label">分案备注：</span>
-                  <span className="value">{caseData.assignment.assignmentRemark || '-'}</span>
+                  <span className="value">{caseData.assignment.assignment_remark || '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">分案人：</span>
-                  <span className="value">{caseData.assignment.assignedAt ? caseData.createdByName : '-'}</span>
+                  <span className="value">{caseData.assignment.assigned_at ? caseData.created_by_name : '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">分案时间：</span>
-                  <span className="value">{caseData.assignment.assignedAt ? dayjs(caseData.assignment.assignedAt).format('YYYY-MM-DD HH:mm') : '-'}</span>
+                  <span className="value">{caseData.assignment.assigned_at ? dayjs(caseData.assignment.assigned_at).format('YYYY-MM-DD HH:mm') : '-'}</span>
                 </div>
               </div>
             </div>
@@ -253,23 +252,23 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
               <div className="detail-grid">
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <span className="label">跟进结果：</span>
-                  <span className="value">{caseData.followup.followupResult || '-'}</span>
+                  <span className="value">{caseData.followup.followup_result || '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">客户满意度：</span>
-                  <span className="value">{caseData.followup.clientSatisfaction || '-'}</span>
+                  <span className="value">{caseData.followup.client_satisfaction || '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">跟进人：</span>
-                  <span className="value">{caseData.followup.followupAt ? caseData.createdByName : '-'}</span>
+                  <span className="value">{caseData.followup.followup_at ? caseData.created_by_name : '-'}</span>
                 </div>
                 <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                   <span className="label">跟进备注：</span>
-                  <span className="value">{caseData.followup.followupRemark || '-'}</span>
+                  <span className="value">{caseData.followup.followup_remark || '-'}</span>
                 </div>
                 <div className="detail-item">
                   <span className="label">跟进时间：</span>
-                  <span className="value">{caseData.followup.followupAt ? dayjs(caseData.followup.followupAt).format('YYYY-MM-DD HH:mm') : '-'}</span>
+                  <span className="value">{caseData.followup.followup_at ? dayjs(caseData.followup.followup_at).format('YYYY-MM-DD HH:mm') : '-'}</span>
                 </div>
               </div>
             </div>
@@ -286,9 +285,9 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
           <div className="timeline">
             {records.map((record) => (
               <div key={record.id} className="timeline-item">
-                <div className="time">{dayjs(record.createdAt).format('YYYY-MM-DD HH:mm')}</div>
+                <div className="time">{dayjs(record.created_at).format('YYYY-MM-DD HH:mm')}</div>
                 <div className="action">{record.action}</div>
-                <div className="operator">操作人：{record.operatorName || '-'}</div>
+                <div className="operator">操作人：{record.operator_name || '-'}</div>
                 {record.remark && <div className="remark">{record.remark}</div>}
               </div>
             ))}
@@ -307,9 +306,9 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {attachments.map((att) => (
                 <div key={att.id} style={{ padding: 12, background: '#f5f5f5', borderRadius: 4 }}>
-                  <div style={{ fontWeight: 500 }}>{att.fileName}</div>
+                  <div style={{ fontWeight: 500 }}>{att.file_name}</div>
                   <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-                    {att.fileType} · {att.fileSize ? `${(att.fileSize / 1024).toFixed(2)} KB` : '-'} · 上传于 {dayjs(att.createdAt).format('YYYY-MM-DD HH:mm')}
+                    {att.file_type} · {att.file_size ? `${(att.file_size / 1024).toFixed(2)} KB` : '-'} · 上传于 {dayjs(att.created_at).format('YYYY-MM-DD HH:mm')}
                   </div>
                 </div>
               ))}
@@ -331,9 +330,9 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
               {auditNotes.map((note) => (
                 <div key={note.id} style={{ padding: 12, background: '#f5f5f5', borderRadius: 4 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontWeight: 500 }}>{note.auditType}</span>
+                    <span style={{ fontWeight: 500 }}>{note.audit_type}</span>
                     <span style={{ fontSize: 12, color: '#999' }}>
-                      {note.operatorName || '-'} · {dayjs(note.createdAt).format('YYYY-MM-DD HH:mm')}
+                      {note.operator_name || '-'} · {dayjs(note.created_at).format('YYYY-MM-DD HH:mm')}
                     </span>
                   </div>
                   <div>{note.content}</div>
@@ -357,9 +356,9 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
               {exceptions.map((exc) => (
                 <div key={exc.id} style={{ padding: 12, background: '#fff1f0', borderRadius: 4, border: '1px solid #ffccc7' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontWeight: 500, color: '#ff4d4f' }}>{exc.exceptionType}</span>
+                    <span style={{ fontWeight: 500, color: '#ff4d4f' }}>{exc.exception_type}</span>
                     <span style={{ fontSize: 12, color: '#999' }}>
-                      {exc.operatorName || '-'} · {dayjs(exc.createdAt).format('YYYY-MM-DD HH:mm')}
+                      {exc.operator_name || '-'} · {dayjs(exc.created_at).format('YYYY-MM-DD HH:mm')}
                     </span>
                   </div>
                   <div>{exc.reason}</div>
@@ -385,7 +384,7 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
           >
             返回列表
           </Button>
-          <span className="page-title">{caseData.caseNo} - {caseData.title}</span>
+          <span className="page-title">{caseData.case_no} - {caseData.title}</span>
         </div>
         <Space>
           {actions.map((action) => (
@@ -405,7 +404,7 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
 
       <div className="detail-section">
         <Descriptions column={2} bordered size="middle">
-          <Descriptions.Item label="案件编号">{caseData.caseNo}</Descriptions.Item>
+          <Descriptions.Item label="案件编号">{caseData.case_no}</Descriptions.Item>
           <Descriptions.Item label="案件标题">{caseData.title}</Descriptions.Item>
           <Descriptions.Item label="优先级">
             <Tag className={getPriorityClass(caseData.priority)}>{getPriorityName(caseData.priority)}</Tag>
@@ -414,13 +413,13 @@ const CaseDetailComponent: React.FC<CaseDetailProps> = ({ caseId }) => {
             <Tag className={getStatusClass(caseData.status)}>{getStatusName(caseData.status)}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="当前队列">{getQueueName(caseData.queue)}</Descriptions.Item>
-          <Descriptions.Item label="当前处理人">{caseData.currentHandlerName || '-'}</Descriptions.Item>
+          <Descriptions.Item label="当前处理人">{caseData.current_handler_name || '-'}</Descriptions.Item>
           <Descriptions.Item label="截止日期">
             {caseData.deadline ? dayjs(caseData.deadline).format('YYYY-MM-DD') : '-'}
           </Descriptions.Item>
           <Descriptions.Item label="版本号">v{caseData.version}</Descriptions.Item>
-          <Descriptions.Item label="创建人">{caseData.createdByName || '-'}</Descriptions.Item>
-          <Descriptions.Item label="创建时间">{dayjs(caseData.createdAt).format('YYYY-MM-DD HH:mm')}</Descriptions.Item>
+          <Descriptions.Item label="创建人">{caseData.created_by_name || '-'}</Descriptions.Item>
+          <Descriptions.Item label="创建时间">{dayjs(caseData.created_at).format('YYYY-MM-DD HH:mm')}</Descriptions.Item>
         </Descriptions>
       </div>
 

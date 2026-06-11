@@ -27,16 +27,16 @@ export default function BatchProcessModal({
   const handleSubmit = async (values: { action: string; remark?: string }) => {
     setLoading(true);
     try {
-      const response = await batchApi.process({
-        caseIds: selectedCases.map(c => c.id),
+      const result = await batchApi.process({
+        case_ids: selectedCases.map(c => c.id),
         action: values.action,
         remark: values.remark,
         versions: Object.fromEntries(selectedCases.map(c => [c.id, c.version])),
       });
-      setResults(response.data.results || response.data);
+      setResults(result as BatchResult[]);
       message.success('批量处理完成');
     } catch (error: any) {
-      message.error(error.response?.data?.message || '批量处理失败');
+      message.error(error.message || '批量处理失败');
     } finally {
       setLoading(false);
     }
@@ -66,8 +66,8 @@ export default function BatchProcessModal({
   const resultColumns = [
     {
       title: '案号',
-      dataIndex: 'caseNo',
-      key: 'caseNo',
+      dataIndex: 'case_no',
+      key: 'case_no',
     },
     {
       title: '处理结果',
@@ -132,7 +132,7 @@ export default function BatchProcessModal({
                   <ul>
                     {invalidCases.map(c => (
                       <li key={c.id}>
-                        {c.caseNo} - {c.title} ({STATUS_MAP[c.status].label})
+                        {c.case_no} - {c.title} ({STATUS_MAP[c.status]})
                       </li>
                     ))}
                   </ul>
@@ -188,7 +188,7 @@ export default function BatchProcessModal({
             >
               {validCases.map(c => (
                 <div key={c.id} style={{ padding: '4px 8px' }}>
-                  {c.caseNo} - {c.title}
+                  {c.case_no} - {c.title}
                 </div>
               ))}
             </div>
@@ -198,7 +198,7 @@ export default function BatchProcessModal({
         <Table
           columns={resultColumns}
           dataSource={results}
-          rowKey="caseId"
+          rowKey="case_id"
           pagination={false}
           size="small"
         />

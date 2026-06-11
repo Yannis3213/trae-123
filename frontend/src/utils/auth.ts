@@ -1,7 +1,7 @@
 import type { User, UserRole } from '../../types';
 
-const TOKEN_KEY = 'legal_service_token';
-const USER_KEY = 'legal_service_user';
+const TOKEN_KEY = 'token';
+const USER_KEY = 'user';
 
 export const setToken = (token: string): void => {
   localStorage.setItem(TOKEN_KEY, token);

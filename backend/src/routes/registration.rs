@@ -14,7 +14,7 @@ use rocket::serde::json::Json;
 use rocket::Route;
 
 pub fn routes() -> Vec<Route> {
-    rocket::routes![get_registration, update_registration, check_registration_complete_status]
+    rocket::routes![get_registration, update_registration, check_registration_complete_status, verify_registration]
 }
 
 #[get("/cases/<case_id>/registration")]
@@ -88,7 +88,9 @@ fn update_registration(
         ));
     }
 
-    check_version(case.version, req.version)?;
+    if let Some(v) = req.version {
+        check_version(case.version, v)?;
+    }
 
     if matches!(case.status, CaseStatus::Archived | CaseStatus::Completed) {
         return Err(AppError::BadRequest(
@@ -292,5 +294,107 @@ fn check_registration_complete_status(
     Ok((
         Status::Ok,
         Json(ApiResponse::success(result, "查询成功")),
+    ))
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct VerifyResult {
+    pub is_complete: bool,
+    pub missing_fields: Vec<String>,
+}
+
+#[post("/cases/<case_id>/registration/verify")]
+fn verify_registration(
+    db: &Database,
+    auth: AuthGuard,
+    case_id: i64,
+) -> Result<(Status, Json<ApiResponse<VerifyResult>>)> {
+    check_permission(
+        &auth.user,
+        &[
+            UserRole::Registrar,
+            UserRole::Supervisor,
+            UserRole::Director,
+            UserRole::Reviewer,
+        ],
+        "核验咨询登记信息",
+    )?;
+
+    let case = get_case(db, case_id)?;
+
+    if !can_access_case(&auth.user, case.created_by, case.current_handler_id, &case.status) {
+        return Err(AppError::PermissionError(
+            "用户无权核验此案件的登记信息".to_string(),
+        ));
+    }
+
+    let conn = db.conn.lock();
+    let mut stmt = conn.prepare(
+        "SELECT id, case_id, client_name, client_phone, client_id_card, consultation_type, 
+         consultation_content, evidence_provided, registration_remark, registered_by, registered_at, 
+         is_complete, created_at, updated_at FROM case_registration WHERE case_id = ?1",
+    )?;
+
+    let registration = stmt.query_row([case_id], |row| {
+        Ok(CaseRegistration {
+            id: row.get(0)?,
+            case_id: row.get(1)?,
+            client_name: row.get(2)?,
+            client_phone: row.get(3)?,
+            client_id_card: row.get(4)?,
+            consultation_type: row.get(5)?,
+            consultation_content: row.get(6)?,
+            evidence_provided: row.get(7)?,
+            registration_remark: row.get(8)?,
+            registered_by: row.get(9)?,
+            registered_at: row.get(10)?,
+            is_complete: row.get(11)?,
+            created_at: row.get(12)?,
+            updated_at: row.get(13)?,
+        })
+    })?;
+
+    drop(conn);
+
+    let (is_complete, missing) = check_registration_complete(&registration);
+
+    let content = if is_complete {
+        format!("用户 {} 核验了咨询登记信息，结果：信息完整", auth.user.real_name)
+    } else {
+        format!(
+            "用户 {} 核验了咨询登记信息，结果：信息不完整，缺少: {}",
+            auth.user.real_name,
+            missing.join(", ")
+        )
+    };
+
+    record_audit_note(
+        db,
+        case_id,
+        Some("registration"),
+        "registration_verified",
+        &content,
+        Some(auth.user.id),
+    )?;
+
+    if !is_complete {
+        record_exception(
+            db,
+            case_id,
+            "incomplete_registration",
+            &format!("咨询登记信息不完整，缺少: {}", missing.join(", ")),
+            Some("registration"),
+            Some(auth.user.id),
+        )?;
+    }
+
+    let result = VerifyResult {
+        is_complete,
+        missing_fields: missing,
+    };
+
+    Ok((
+        Status::Ok,
+        Json(ApiResponse::success(result, if is_complete { "核验通过，信息完整" } else { "核验未通过，信息不完整" })),
     ))
 }

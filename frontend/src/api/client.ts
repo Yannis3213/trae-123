@@ -25,7 +25,10 @@ client.interceptors.request.use(
 
 client.interceptors.response.use(
   (response) => {
-    return response.data;
+    if (!response.data.success) {
+      return Promise.reject(new Error(response.data.message || '请求失败'));
+    }
+    return response.data.data;
   },
   (error) => {
     if (error.response?.status === 401) {

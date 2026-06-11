@@ -2,7 +2,7 @@ import client from './client';
 import type { StatisticsData } from '../../types';
 
 export const statisticsApi = {
-  getStatistics: (): Promise<StatisticsData> => {
+  getStats: (): Promise<StatisticsData> => {
     return client.get('/statistics');
   },
 };

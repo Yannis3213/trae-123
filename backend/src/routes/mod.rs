@@ -1,7 +1,9 @@
 pub mod assignment;
+pub mod audit;
 pub mod auth;
 pub mod batch;
 pub mod cases;
+pub mod exceptions;
 pub mod followup;
 pub mod registration;
 pub mod statistics;
@@ -19,6 +21,8 @@ pub fn routes() -> Vec<rocket::Route> {
     all_routes.extend(followup::routes());
     all_routes.extend(batch::routes());
     all_routes.extend(statistics::routes());
+    all_routes.extend(audit::routes());
+    all_routes.extend(exceptions::routes());
 
     all_routes.extend(rocket::routes![health_check, options_handler]);
 

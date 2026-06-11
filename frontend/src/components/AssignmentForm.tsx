@@ -67,18 +67,19 @@ export default function AssignmentForm({
   useEffect(() => {
     if (data && mode === 'edit') {
       form.setFieldsValue({
-        assistantId: data.assistantId,
-        lawyerId: data.lawyerId,
-        assignmentReason: data.assignmentReason,
-        assignmentRemark: data.assignmentRemark,
+        assistant_id: data.assistant_id,
+        lawyer_id: data.lawyer_id,
+        assignment_reason: data.assignment_reason,
+        assignment_remark: data.assignment_remark,
       });
     }
   }, [data, mode, form]);
 
   const fetchUsers = async () => {
     try {
-      const response = await userApi.getList();
-      setUsers(response.data.list || response.data || []);
+      const result = await userApi.getList();
+      const userList: any = result;
+      setUsers(userList.list || userList || []);
     } catch (error) {
       console.error('获取用户列表失败', error);
     }
@@ -87,8 +88,8 @@ export default function AssignmentForm({
   const fetchData = async () => {
     setLoading(true);
     try {
-      const response = await assignmentApi.get(caseId);
-      setData(response.data);
+      const result = await assignmentApi.get(caseId);
+      setData(result);
     } catch (error) {
       message.error('获取案件分派信息失败');
     } finally {
@@ -109,7 +110,7 @@ export default function AssignmentForm({
       if (error.errorFields) {
         message.error('请填写完整的必填项');
       } else {
-        message.error(error.response?.data?.message || '保存失败');
+        message.error(error.message || error.response?.data?.message || '保存失败');
       }
     } finally {
       setSaving(false);
@@ -124,7 +125,7 @@ export default function AssignmentForm({
       await fetchData();
       onDataChange?.();
     } catch (error: any) {
-      message.error(error.response?.data?.message || '核验失败');
+      message.error(error.message || error.response?.data?.message || '核验失败');
     } finally {
       setVerifying(false);
     }
@@ -148,14 +149,14 @@ export default function AssignmentForm({
     .filter(u => ['assistant', 'lawyer'].includes(u.role))
     .map(u => ({
       value: u.id,
-      label: `${u.realName} (${u.department})`,
+      label: `${u.real_name} (${u.department})`,
     }));
 
   const lawyerOptions = users
     .filter(u => u.role === 'lawyer')
     .map(u => ({
       value: u.id,
-      label: `${u.realName} (${u.department})`,
+      label: `${u.real_name} (${u.department})`,
     }));
 
   if (loading) {
@@ -174,7 +175,7 @@ export default function AssignmentForm({
         <Space>
           <UserSwitchOutlined />
           案件分派
-          {data?.isComplete && (
+          {data?.is_complete && (
             <Tag color="success" icon={<CheckCircleOutlined />}>
               已核验
             </Tag>
@@ -192,7 +193,7 @@ export default function AssignmentForm({
         )
       }
     >
-      {!data?.isComplete && mode === 'view' && (
+      {!data?.is_complete && mode === 'view' && (
         <Alert
           type="warning"
           showIcon
@@ -205,25 +206,25 @@ export default function AssignmentForm({
       {mode === 'view' ? (
         <Descriptions column={3} bordered size="small">
           <Descriptions.Item label="助理" span={1}>
-            {data?.assistantName || '-'}
+            {data?.assistant_name || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="主办律师" span={1}>
-            {data?.lawyerName || '-'}
+            {data?.lawyer_name || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="分派原因" span={1}>
-            {data?.assignmentReason || '-'}
+            {data?.assignment_reason || '-'}
           </Descriptions.Item>
           <Descriptions.Item label="分派备注" span={3}>
-            {data?.assignmentRemark || '-'}
+            {data?.assignment_remark || '-'}
           </Descriptions.Item>
-          {data?.assignedByName && (
+          {data?.assigned_by_name && (
             <Descriptions.Item label="分派人" span={1}>
-              {data.assignedByName}
+              {data.assigned_by_name}
             </Descriptions.Item>
           )}
-          {data?.assignedAt && (
+          {data?.assigned_at && (
             <Descriptions.Item label="分派时间" span={2}>
-              {data.assignedAt}
+              {data.assigned_at}
             </Descriptions.Item>
           )}
         </Descriptions>
@@ -237,7 +238,7 @@ export default function AssignmentForm({
           <Row gutter={16}>
             <Col xs={24} sm={12} md={8}>
               <Form.Item
-                name="assistantId"
+                name="assistant_id"
                 label={
                   <Space>
                     <UserOutlined />
@@ -257,7 +258,7 @@ export default function AssignmentForm({
             </Col>
             <Col xs={24} sm={12} md={8}>
               <Form.Item
-                name="lawyerId"
+                name="lawyer_id"
                 label={
                   <Space>
                     <UserOutlined />
@@ -277,7 +278,7 @@ export default function AssignmentForm({
             </Col>
             <Col xs={24} sm={24} md={8}>
               <Form.Item
-                name="assignmentReason"
+                name="assignment_reason"
                 label={
                   <Space>
                     <FormOutlined />
@@ -292,7 +293,7 @@ export default function AssignmentForm({
             </Col>
             <Col span={24}>
               <Form.Item
-                name="assignmentRemark"
+                name="assignment_remark"
                 label={
                   <Space>
                     <FormOutlined />
@@ -312,7 +313,7 @@ export default function AssignmentForm({
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         {mode === 'view' ? (
           <Space>
-            {!data?.isComplete && (
+            {!data?.is_complete && (
               <Button
                 type="primary"
                 icon={<CheckCircleOutlined />}

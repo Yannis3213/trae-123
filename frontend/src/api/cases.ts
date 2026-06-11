@@ -6,6 +6,8 @@ import type {
   CaseListResponse,
   CaseActionRequest,
   ProcessingRecord,
+  AuditNote,
+  ExceptionReason,
 } from '../../types';
 
 export interface CreateCaseRequest {
@@ -42,12 +44,20 @@ export const casesApi = {
     return client.delete(`/cases/${id}`);
   },
 
-  action: (data: CaseActionRequest): Promise<LegalCase> => {
-    return client.post('/cases/action', data);
+  action: (id: number, data: CaseActionRequest): Promise<LegalCase> => {
+    return client.post(`/cases/${id}/action`, data);
   },
 
   getProcessingRecords: (id: number): Promise<ProcessingRecord[]> => {
     return client.get(`/cases/${id}/records`);
+  },
+
+  getAuditNotes: (id: number): Promise<AuditNote[]> => {
+    return client.get(`/cases/${id}/audit-notes`);
+  },
+
+  getExceptionReasons: (id: number): Promise<ExceptionReason[]> => {
+    return client.get(`/cases/${id}/exceptions`);
   },
 };
 

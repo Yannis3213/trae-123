@@ -48,8 +48,8 @@ export default function ProcessingRecords({ caseId }: ProcessingRecordsProps) {
   const fetchRecords = async () => {
     setLoading(true);
     try {
-      const response = await caseApi.getRecords(caseId);
-      setRecords(response.data || []);
+      const result = await caseApi.getRecords(caseId);
+      setRecords(result || []);
     } catch (error) {
       message.error('获取处理记录失败');
     } finally {
@@ -67,8 +67,7 @@ export default function ProcessingRecords({ caseId }: ProcessingRecordsProps) {
 
   const getStatusLabel = (status?: string | null) => {
     if (!status) return '-';
-    const config = STATUS_MAP[status as keyof typeof STATUS_MAP];
-    return config ? config.label : status;
+    return STATUS_MAP[status as keyof typeof STATUS_MAP] || status;
   };
 
   if (loading) {
@@ -98,10 +97,10 @@ export default function ProcessingRecords({ caseId }: ProcessingRecordsProps) {
             label: (
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontWeight: 500 }}>
-                  {dayjs(record.createdAt).format('YYYY-MM-DD')}
+                  {dayjs(record.created_at).format('YYYY-MM-DD')}
                 </div>
                 <div style={{ color: '#999', fontSize: 12 }}>
-                  {dayjs(record.createdAt).format('HH:mm:ss')}
+                  {dayjs(record.created_at).format('HH:mm:ss')}
                 </div>
               </div>
             ),
@@ -109,18 +108,18 @@ export default function ProcessingRecords({ caseId }: ProcessingRecordsProps) {
               <div style={{ paddingBottom: index === records.length - 1 ? 0 : 16 }}>
                 <Space size={8} wrap>
                   <strong>{record.action}</strong>
-                  {record.fromStatus && (
+                  {record.from_status && (
                     <span>
-                      {getStatusLabel(record.fromStatus)} 
+                      {getStatusLabel(record.from_status)} 
                       <span style={{ color: '#999', margin: '0 4px' }}>→</span> 
-                      {getStatusLabel(record.toStatus)}
+                      {getStatusLabel(record.to_status)}
                     </span>
                   )}
                 </Space>
                 <div style={{ marginTop: 4, color: '#666' }}>
                   <Space size={8}>
                     <UserOutlined />
-                    <span>{record.operatorName || '系统'}</span>
+                    <span>{record.operator_name || '系统'}</span>
                   </Space>
                 </div>
                 {record.remark && (
@@ -135,12 +134,12 @@ export default function ProcessingRecords({ caseId }: ProcessingRecordsProps) {
                     {record.remark}
                   </div>
                 )}
-                {record.toStatus && (
+                {record.to_status && (
                   <Tag 
-                    color={STATUS_MAP[record.toStatus as keyof typeof STATUS_MAP]?.color as any}
+                    color={STATUS_COLOR_MAP[record.to_status as keyof typeof STATUS_COLOR_MAP] as any}
                     style={{ marginTop: 8 }}
                   >
-                    {getStatusLabel(record.toStatus)}
+                    {getStatusLabel(record.to_status)}
                   </Tag>
                 )}
               </div>
