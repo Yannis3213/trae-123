@@ -12,6 +12,7 @@ import {
   parseErrorMessage,
   formatDateTime,
   getResponsiblePerson,
+  VALID_EXCEPTION_TYPES,
 } from '@/lib/api';
 import Link from 'next/link';
 
@@ -24,7 +25,7 @@ export default function BatchPage() {
   const [action, setAction] = useState('');
   const [remark, setRemark] = useState('');
   const [evidence, setEvidence] = useState('');
-  const [exceptionType, setExceptionType] = useState('缺材料');
+  const [exceptionType, setExceptionType] = useState<string>(VALID_EXCEPTION_TYPES[0]);
   const [exceptionReason, setExceptionReason] = useState('');
   const [processing, setProcessing] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchProcessResponse | null>(null);
@@ -198,10 +199,9 @@ export default function BatchPage() {
               disabled={processing}
               style={{ width: '140px' }}
             >
-              <option value="缺材料">缺材料</option>
-              <option value="材料有误">材料有误</option>
-              <option value="信息不符">信息不符</option>
-              <option value="其他">其他</option>
+              {VALID_EXCEPTION_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
             </select>
             <input
               type="text"

@@ -331,3 +331,6 @@ export const ROLE_LABELS: Record<string, string> = {
   '运营主管': '运营主管',
   '支行行长': '支行行长',
 };
+
+export const VALID_EXCEPTION_TYPES = ['缺材料', '材料有误', '信息不符', '其他'] as const;
+export type ExceptionType = typeof VALID_EXCEPTION_TYPES[number];

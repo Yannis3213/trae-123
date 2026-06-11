@@ -13,6 +13,8 @@ from schemas import (
     LoginRequest, ProcessRequest, BatchProcessRequest,
 )
 
+VALID_EXCEPTION_TYPES = ["缺材料", "材料有误", "信息不符", "其他"]
+
 
 def get_due_status(due_date_str: str) -> str:
     today = date.today()
@@ -342,6 +344,12 @@ async def _validate_and_process(db, app_id, action, version, user, remark="", ev
     if action == "退回补正" and not exception_reason.strip():
         return None, f"E012: 缺少退回原因，「退回补正」必须填写需要补正的具体内容", 400
 
+    if action == "退回补正":
+        et = (exception_type or "缺材料").strip()
+        if et not in VALID_EXCEPTION_TYPES:
+            return None, f"E014: 异常类型不合法，{app_no} 的异常类型「{et}」不在允许范围 {VALID_EXCEPTION_TYPES} 内", 400
+        exception_type = et
+
     new_status = rule["to"]
     new_handler = user["real_name"]
     new_handler_role = current_stage_role
@@ -465,10 +473,15 @@ async def batch_process(request: Request):
     if not data.items:
         return JSONResponse({"detail": "批量处理项不能为空"}, status_code=400)
 
-    if data.action == "退回补正" and not (data.exception_reason or "").strip():
-        return JSONResponse({"detail": "E012: 批量退回补正必须填写退回原因"}, status_code=400)
-
-    exception_type = (data.exception_type or "缺材料").strip() or "缺材料"
+    if data.action == "退回补正":
+        if not (data.exception_reason or "").strip():
+            return JSONResponse({"detail": "E012: 批量退回补正必须填写退回原因"}, status_code=400)
+        et = (data.exception_type or "缺材料").strip() or "缺材料"
+        if et not in VALID_EXCEPTION_TYPES:
+            return JSONResponse({"detail": f"E014: 异常类型不合法，「{et}」不在允许范围 {VALID_EXCEPTION_TYPES} 内"}, status_code=400)
+        exception_type = et
+    else:
+        exception_type = ""
     exception_reason = (data.exception_reason or "").strip()
 
     results = []
