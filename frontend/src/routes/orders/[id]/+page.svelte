@@ -232,6 +232,12 @@
     return order.attachments.filter(a => a.step === step);
   }
 
+  const STEP_LABEL_MAP: Record<string, string> = {
+    home_inspection: '入户安检',
+    hazard_rectification: '隐患整改',
+    recheck_closure: '复查关闭'
+  };
+
   function getErrorType(err: string): 'auth' | 'version' | 'expiry' | 'validation' | 'other' {
     if (!err) return 'other';
     if (err.includes('越权') || err.includes('不匹配')) return 'auth';
@@ -807,7 +813,7 @@
             </div>
             <div class="flex justify-between">
               <dt class="text-gray-500">当前处理人</dt>
-              <dd class="text-gray-800">{order.current_handler}</dd>
+              <dd class="text-gray-800">{order.current_handler} <span class="text-xs text-gray-400">({order.current_handler_role})</span></dd>
             </div>
             <div class="py-1">
               <div class="flex justify-between items-center mb-1">
@@ -846,7 +852,7 @@
                   <div class="absolute left-0 top-0.5 w-2.5 h-2.5 rounded-full bg-orange-400 -translate-x-[4.5px]"></div>
                   <div class="text-xs font-medium text-gray-700">{record.action}</div>
                   <div class="text-xs text-gray-500 mt-0.5">
-                    <span class="font-medium">{record.handler}</span> · {STEP_LABEL_MAP[record.step] || record.step}
+                    <span class="font-medium">{record.handler}</span> <span class="text-gray-400">({record.handler_role})</span> · {STEP_LABEL_MAP[record.step] || record.step}
                   </div>
                   {#if record.remark}
                     <div class="text-xs text-gray-500 mt-0.5">备注: {record.remark}</div>
@@ -854,7 +860,7 @@
                   {#if record.anomaly_reason}
                     <div class="text-xs text-red-500 mt-0.5">异常: {record.anomaly_reason}</div>
                   {/if}
-                  <div class="text-xs text-gray-400 mt-0.5">{formatDate(record.timestamp)}</div>
+                  <div class="text-xs text-gray-400 mt-0.5">{formatDate(record.created_at)}</div>
                 </div>
               {/each}
             </div>

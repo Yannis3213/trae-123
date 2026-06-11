@@ -40,9 +40,10 @@ export interface ProcessingRecord {
   step: Step;
   action: string;
   handler: string;
-  remark: string;
-  anomaly_reason: string;
-  timestamp: string;
+  handler_role: string;
+  remark: string | null;
+  anomaly_reason: string | null;
+  created_at: string;
 }
 
 export interface SafetyOrder {
@@ -52,6 +53,7 @@ export interface SafetyOrder {
   status: Status;
   current_step: Step;
   current_handler: string;
+  current_handler_role: string;
   deadline: string;
   expiry_status: ExpiryStatus;
   home_inspection: HomeInspection | null;
@@ -106,6 +108,7 @@ export interface BatchActionData {
   role: string;
   handler: string;
   remark?: string;
+  anomaly_reason?: string;
   attachments?: Attachment[];
 }
 

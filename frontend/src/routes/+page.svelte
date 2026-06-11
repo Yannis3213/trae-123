@@ -471,16 +471,20 @@
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">
             异常原因
-            {(batchActionName() === 'reject' || batchActionName() === 'return') && <span class="text-red-500"> *</span>}
+            {#if batchActionName() === 'reject' || batchActionName() === 'return'}
+              <span class="text-red-500"> *</span>
+            {/if}
           </label>
           <textarea
             bind:value={batchAnomalyReason}
             rows="2"
-            placeholder={(batchActionName() === 'reject' || batchActionName() === 'return') ? '驳回/退回原因（必填）' : '如有异常情况可填写（选填）'}
+            placeholder={batchActionName() === 'reject' || batchActionName() === 'return' ? '驳回/退回原因（必填）' : '如有异常情况可填写（选填）'}
             class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none resize-none"
           />
           <div class="mt-1 text-xs text-yellow-600">
-            {(batchActionName() === 'reject' || batchActionName() === 'return') && !batchAnomalyReason.trim() && '⚠️ 驳回/退回操作必须填写异常原因'}
+            {#if (batchActionName() === 'reject' || batchActionName() === 'return') && !batchAnomalyReason.trim()}
+              ⚠️ 驳回/退回操作必须填写异常原因
+            {/if}
           </div>
         </div>
 

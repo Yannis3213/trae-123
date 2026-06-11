@@ -205,9 +205,9 @@ function mapProcessingRecord(row: any) {
     action: row.action,
     handler: row.handler,
     handler_role: row.handler_role,
-    remark: row.remark || '',
-    anomaly_reason: row.anomaly_reason || '',
-    timestamp: row.created_at,
+    remark: row.remark,
+    anomaly_reason: row.anomaly_reason,
+    created_at: row.created_at,
   }
 }
 
