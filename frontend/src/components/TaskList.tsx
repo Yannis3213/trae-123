@@ -8,7 +8,7 @@ export default function TaskList() {
   const [statistics, setStatistics] = createSignal<any>({});
   const [statusFilter, setStatusFilter] = createSignal('');
   const [keyword, setKeyword] = createSignal('');
-  const [overdueFilter, setOverdueFilter] = useSignal('');
+  const [overdueFilter, setOverdueFilter] = createSignal('');
   const [loading, setLoading] = createSignal(true);
   const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
   const [batchResult, setBatchResult] = createSignal<any>(null);
@@ -291,9 +291,4 @@ export default function TaskList() {
       </div>
     </div>
   );
-}
-
-function useSignal(initial: string): [() => string, (v: string) => void] {
-  const [get, set] = createSignal(initial);
-  return [get, set];
 }

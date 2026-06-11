@@ -102,9 +102,25 @@ export const api = {
     batchAdvance: (data: any) => request('/overdue-queue/batch-advance', { method: 'POST', body: JSON.stringify(data) }),
   },
   export: {
-    tasks: (params?: Record<string, string>) => {
+    tasks: async (params?: Record<string, string>) => {
       const query = params ? '?' + new URLSearchParams(params).toString() : '';
-      window.open(`${API_BASE}/export/planting-tasks${query}`, '_blank');
+      const res = await fetch(`${API_BASE}/export/planting-tasks${query}`, {
+        headers: getHeaders(),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ message: '导出失败' }));
+        throw { status: res.status, ...data };
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const timestamp = new Date().toISOString().slice(0, 10);
+      a.download = `种植任务_${timestamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
     },
   },
 };

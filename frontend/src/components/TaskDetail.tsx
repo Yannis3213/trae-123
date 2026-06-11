@@ -19,8 +19,8 @@ export default function TaskDetail(props: { id: string }) {
   const [selectedAssignee, setSelectedAssignee] = createSignal('');
   const [returnReason, setReturnReason] = createSignal('');
   const [processEvidence, setProcessEvidence] = createSignal('');
-  const [transferTarget, setTransferTarget] = useSignal('');
-  const [transferRemarks, setTransferRemarks] = useSignal('');
+  const [transferTarget, setTransferTarget] = createSignal('');
+  const [transferRemarks, setTransferRemarks] = createSignal('');
   const [followUpResult, setFollowUpResult] = createSignal('');
 
   const user = () => getCurrentUser();
@@ -101,13 +101,51 @@ export default function TaskDetail(props: { id: string }) {
     await api.tasks.returnForCorrection(task().id, { reason: returnReason(), version: task().version });
   }, setShowReturnModal);
 
-  const canAssign = () => task()?.status === 'pending_assign';
-  const canProcess = () => task()?.status === 'assigned' && task()?.assigneeId === user()?.id;
-  const canCompleteProcessing = () => task()?.status === 'processing' && task()?.assigneeId === user()?.id;
-  const canTransfer = () => task()?.status === 'processing';
-  const canFollowUp = () => task()?.status === 'transferred';
-  const canArchive = () => task()?.status === 'followed_up' && user()?.role === 'cooperative_director';
-  const canReturn = () => task()?.status !== 'archived' && task()?.status !== 'returned_for_correction';
+  const isDirector = () => user()?.role === 'cooperative_director';
+  const isTechnician = () => user()?.role === 'agricultural_technician';
+  const isFieldManager = () => user()?.role === 'field_manager';
+  const isAssignee = () => task()?.assigneeId === user()?.id;
+
+  const canAssign = () => {
+    if (!isDirector()) return false;
+    const s = task()?.status;
+    return s === 'pending_assign' || s === 'returned_for_correction' || s === 'assigned';
+  };
+
+  const canProcess = () => {
+    const s = task()?.status;
+    if (s !== 'assigned') return false;
+    if (isFieldManager() && !isAssignee()) return false;
+    return isAssignee() || isDirector();
+  };
+
+  const canCompleteProcessing = () => {
+    const s = task()?.status;
+    if (s !== 'processing') return false;
+    if (isFieldManager() && !isAssignee()) return false;
+    return isAssignee() || isDirector();
+  };
+
+  const canTransfer = () => {
+    const s = task()?.status;
+    if (!['assigned', 'processing', 'transferred'].includes(s)) return false;
+    if (isFieldManager() && !isAssignee()) return false;
+    return isAssignee() || isDirector();
+  };
+
+  const canFollowUp = () => {
+    if (task()?.status !== 'transferred') return false;
+    if (isFieldManager()) return false;
+    return isDirector() || isTechnician();
+  };
+
+  const canArchive = () => task()?.status === 'followed_up' && isDirector();
+
+  const canReturn = () => {
+    const s = task()?.status;
+    if (s === 'archived' || s === 'returned_for_correction') return false;
+    return isDirector() || isTechnician();
+  };
 
   return (
     <div class="p-6">
@@ -421,9 +459,4 @@ export default function TaskDetail(props: { id: string }) {
       </Show>
     </div>
   );
-}
-
-function useSignal(initial: string): [() => string, (v: string) => void] {
-  const [get, set] = createSignal(initial);
-  return [get, set];
 }
