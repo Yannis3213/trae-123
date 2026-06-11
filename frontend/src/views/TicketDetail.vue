@@ -424,7 +424,9 @@ const availableActions = computed(() => {
       break
     case 'qa_supervisor':
       if (status === 'call_registered') push('派单处理（交客服坐席）', 'dispatched', 'btn-primary', true, true, false, false)
+      if (status === 'call_registered') push('质检退回补正（交登记员）', 'exception_returned', 'btn-warning', false, true, false, true)
       if (status === 'dispatched') push('质检签收完成（交复核）', 'receipt_completed', 'btn-success', true, true, true, false)
+      if (status === 'dispatched') push('质检退回补正（交登记员）', 'exception_returned', 'btn-danger', false, true, false, true)
       break
     case 'reviewer':
       if (status === 'callback_closed') push('复核归档', 'archived', 'btn-primary', false, true, false, false)

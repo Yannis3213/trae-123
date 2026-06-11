@@ -261,13 +261,13 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         ),
         (
             "t_missing",
-            "【缺材料】客户退款申请缺少凭证",
-            "客户申请退款，但未上传购买凭证和商品照片，需要补正材料。登记员补正并上传附件后提交，高优工单转交质检主管审核。",
+            "【缺材料·质检退回】客户退款申请缺少凭证",
+            "客户申请退款，但未上传购买凭证和商品照片，被质检主管退回补正。登记员补正并上传附件后重新提交，高优工单转交质检主管审核。",
             "周女士", "13800138002",
             TicketStatus::ExceptionReturned, Priority::High,
             "u_registrar", "客服登记员-李明", "u_registrar", "客服登记员-李明",
-            now + Duration::days(1), 3,
-            vec!["缺材料".to_string()],
+            now + Duration::days(1), 4,
+            vec!["缺材料".to_string(), "质检退回".to_string()],
         ),
         (
             "t_overdue",
@@ -281,13 +281,23 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         ),
         (
             "t_returned",
-            "【退回】质量问题工单被退回补正",
-            "客户反映收到商品有质量问题，前次处理因证据不足被审核主管退回，需重新补充照片和视频证据。高优工单上传证据后提交质检主管审核。",
+            "【退回·主管退回】质量问题工单被审核主管退回补正",
+            "客户反映收到商品有质量问题，前次处理因证据不足被审核主管退回，需重新补充照片和视频证据。中优工单上传证据后提交主管审核。",
             "郑女士", "13800138004",
-            TicketStatus::ExceptionReturned, Priority::High,
+            TicketStatus::ExceptionReturned, Priority::Medium,
             "u_registrar", "客服登记员-李明", "u_registrar", "客服登记员-李明",
             now + Duration::hours(20), 3,
             vec!["退回补正".to_string()],
+        ),
+        (
+            "t_qa_dispatch_return",
+            "【质检退回·派单状态】紧急投诉被质检退回补正",
+            "客户紧急投诉商品破损，已派单给坐席处理，但质检主管审核发现缺少商品破损照片，退回给登记员补正。登记员上传证据后重新提交质检审核。",
+            "王先生", "13800138005",
+            TicketStatus::ExceptionReturned, Priority::Urgent,
+            "u_registrar", "客服登记员-李明", "u_registrar", "客服登记员-李明",
+            now + Duration::hours(12), 5,
+            vec!["质检退回".to_string(), "缺材料".to_string()],
         ),
     ];
 
@@ -317,10 +327,13 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
     }
 
     let exception_seeds = [
-        ("t_missing", "缺材料", "缺少购买凭证和商品照片，客户仅提供了订单截图，无法证明商品问题", "u_supervisor", "客服审核主管-王芳"),
+        ("t_missing", "缺材料", "缺少购买凭证和商品照片，客户仅提供了订单截图，无法证明商品问题", "u_qa", "质检主管-陈强"),
+        ("t_missing", "质检退回", "质检审核发现材料不完整，退回给登记员补充购买凭证和商品问题照片", "u_qa", "质检主管-陈强"),
         ("t_returned", "退回补正", "证据照片模糊，无法辨认商品问题，需要重新上传高清图片和开箱视频", "u_supervisor", "客服审核主管-王芳"),
         ("t_overdue", "逾期", "已超过承诺处理时效1天，客户已3次来电催单，要求今天内给出明确答复", "u_manager", "客服经理-刘洋"),
         ("t_overdue", "物流异常", "物流信息显示已签收，但客户称未收到商品，疑似快递员虚假签收", "u_supervisor", "客服审核主管-王芳"),
+        ("t_qa_dispatch_return", "质检退回", "派单后质检审核发现缺少商品破损照片，退回给登记员补充证据", "u_qa", "质检主管-陈强"),
+        ("t_qa_dispatch_return", "缺材料", "商品破损投诉缺少破损部位照片和开箱视频，需要补充上传", "u_qa", "质检主管-陈强"),
     ];
     for (tid, rt, desc, rb, rbn) in exception_seeds {
         sqlx::query(
@@ -338,9 +351,12 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
     }
 
     let audit_seeds = [
-        ("t_missing", "首次审核发现材料不完整，退回后已通知客户补充", "u_supervisor", "客服审核主管-王芳", "supervisor"),
+        ("t_missing", "质检审核发现材料不完整，已退回给登记员补充，并电话通知客户准备购买凭证", "u_qa", "质检主管-陈强", "qa_supervisor"),
+        ("t_missing", "首次登记时客户仅提供了订单截图，缺少商品实物照片和问题部位照片", "u_registrar", "客服登记员-李明", "registrar"),
         ("t_returned", "质量问题证据不足，已电话告知登记员需要补充的材料类型", "u_supervisor", "客服审核主管-王芳", "supervisor"),
         ("t_overdue", "逾期工单已升级处理，客服经理正在跟进，承诺24小时内解决", "u_manager", "客服经理-刘洋", "cs_manager"),
+        ("t_qa_dispatch_return", "派单后质检审核发现缺少商品破损照片，退回给登记员补充", "u_qa", "质检主管-陈强", "qa_supervisor"),
+        ("t_qa_dispatch_return", "紧急投诉优先派单，但质检环节发现证据不足需补充破损照片和开箱视频", "u_qa", "质检主管-陈强", "qa_supervisor"),
     ];
     for (tid, content, oid, oname, orole) in audit_seeds {
         sqlx::query(
@@ -361,24 +377,27 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         ("t_normal", "创建工单", "", "pending_receipt",
             "", "", "u_agent", "客服坐席-赵敏",
             "u_agent", "客服坐席-赵敏", "agent", "系统自动创建，客服坐席负责签收登记"),
+
         ("t_missing", "创建工单", "", "pending_receipt",
             "", "", "u_registrar", "客服登记员-李明",
-            "u_registrar", "客服登记员-李明", "registrar", "客户来电申请退款，创建工单"),
+            "u_registrar", "客服登记员-李明", "registrar", "客户来电申请退款，创建高优工单"),
         ("t_missing", "登记来电", "pending_receipt", "call_registered",
-            "u_registrar", "客服登记员-李明", "u_supervisor", "客服审核主管-王芳",
-            "u_registrar", "客服登记员-李明", "registrar", "客户来电登记，中优工单转交主管审核"),
-        ("t_missing", "退回补正", "call_registered", "exception_returned",
-            "u_supervisor", "客服审核主管-王芳", "u_registrar", "客服登记员-李明",
-            "u_supervisor", "客服审核主管-王芳", "supervisor", "缺少购买凭证和商品照片，退回补正"),
+            "u_registrar", "客服登记员-李明", "u_qa", "质检主管-陈强",
+            "u_registrar", "客服登记员-李明", "registrar", "客户来电登记，高优工单转交质检主管审核"),
+        ("t_missing", "质检退回补正", "call_registered", "exception_returned",
+            "u_qa", "质检主管-陈强", "u_registrar", "客服登记员-李明",
+            "u_qa", "质检主管-陈强", "qa_supervisor", "缺少购买凭证和商品照片，质检退回补正"),
+
         ("t_returned", "创建工单", "", "pending_receipt",
             "", "", "u_registrar", "客服登记员-李明",
-            "u_registrar", "客服登记员-李明", "registrar", "客户反馈商品质量问题，创建工单"),
+            "u_registrar", "客服登记员-李明", "registrar", "客户反馈商品质量问题，创建中优工单"),
         ("t_returned", "登记来电", "pending_receipt", "call_registered",
             "u_registrar", "客服登记员-李明", "u_supervisor", "客服审核主管-王芳",
             "u_registrar", "客服登记员-李明", "registrar", "客户来电登记，中优工单转交主管审核"),
-        ("t_returned", "退回补正", "call_registered", "exception_returned",
+        ("t_returned", "主管退回补正", "call_registered", "exception_returned",
             "u_supervisor", "客服审核主管-王芳", "u_registrar", "客服登记员-李明",
-            "u_supervisor", "客服审核主管-王芳", "supervisor", "证据照片模糊，无法辨认，退回补正"),
+            "u_supervisor", "客服审核主管-王芳", "supervisor", "证据照片模糊，无法辨认，主管退回补正"),
+
         ("t_overdue", "创建工单", "", "pending_receipt",
             "", "", "u_agent", "客服坐席-赵敏",
             "u_agent", "客服坐席-赵敏", "agent", "客户投诉物流超时，创建紧急工单"),
@@ -387,7 +406,20 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
             "u_agent", "客服坐席-赵敏", "agent", "客户来电登记，紧急工单转交质检主管"),
         ("t_overdue", "派单处理", "call_registered", "dispatched",
             "u_qa", "质检主管-陈强", "u_agent", "客服坐席-赵敏",
-            "u_supervisor", "客服审核主管-王芳", "supervisor", "紧急投诉优先处理，派单给客服坐席回访"),
+            "u_qa", "质检主管-陈强", "qa_supervisor", "紧急投诉优先处理，质检主管派单给客服坐席回访"),
+
+        ("t_qa_dispatch_return", "创建工单", "", "pending_receipt",
+            "", "", "u_registrar", "客服登记员-李明",
+            "u_registrar", "客服登记员-李明", "registrar", "客户紧急投诉商品破损，创建工单"),
+        ("t_qa_dispatch_return", "登记来电", "pending_receipt", "call_registered",
+            "u_registrar", "客服登记员-李明", "u_qa", "质检主管-陈强",
+            "u_registrar", "客服登记员-李明", "registrar", "客户来电登记，紧急工单转交质检主管"),
+        ("t_qa_dispatch_return", "派单处理", "call_registered", "dispatched",
+            "u_qa", "质检主管-陈强", "u_agent", "客服坐席-赵敏",
+            "u_qa", "质检主管-陈强", "qa_supervisor", "紧急投诉优先派单，质检主管派单给客服坐席"),
+        ("t_qa_dispatch_return", "质检退回补正", "dispatched", "exception_returned",
+            "u_qa", "质检主管-陈强", "u_registrar", "客服登记员-李明",
+            "u_qa", "质检主管-陈强", "qa_supervisor", "缺少商品破损照片，质检在派单状态退回给登记员补正"),
     ];
 
     for (tid, action, fs, ts, fh_id, fh_name, th_id, th_name, oid, oname, orole, remark) in record_seeds {
@@ -414,15 +446,29 @@ pub async fn seed_data(pool: &Pool<Sqlite>) -> Result<(), AppError> {
         .await?;
     }
 
-    for tid in ["t_missing", "t_returned"] {
-        sqlx::query(
-            "UPDATE tickets SET return_reason = ? WHERE id = ?"
-        )
-        .bind("证据材料不足，请补充购买凭证、商品问题照片和开箱视频后重新提交")
-        .bind(tid)
-        .execute(pool)
-        .await?;
-    }
+    sqlx::query(
+        "UPDATE tickets SET return_reason = ? WHERE id = ?"
+    )
+    .bind("质检退回：缺少购买凭证和商品问题照片，请补充上传后重新提交")
+    .bind("t_missing")
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "UPDATE tickets SET return_reason = ? WHERE id = ?"
+    )
+    .bind("主管退回：证据照片模糊，请补充高清图片和开箱视频后重新提交")
+    .bind("t_returned")
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "UPDATE tickets SET return_reason = ? WHERE id = ?"
+    )
+    .bind("质检退回：缺少商品破损照片和开箱视频，请补充上传后重新提交")
+    .bind("t_qa_dispatch_return")
+    .execute(pool)
+    .await?;
 
     sqlx::query(
         "UPDATE tickets SET processing_result = ? WHERE id = ?"
@@ -797,8 +843,8 @@ pub fn validate_transition(
         (Role::Registrar | Role::Agent, TicketStatus::PendingReceipt, TicketStatus::CallRegistered) => true,
         (Role::Registrar | Role::Agent, TicketStatus::ExceptionReturned, TicketStatus::CallRegistered) => true,
         (Role::Supervisor | Role::QaSupervisor, TicketStatus::CallRegistered, TicketStatus::Dispatched) => true,
-        (Role::Supervisor, TicketStatus::CallRegistered, TicketStatus::ExceptionReturned) => true,
-        (Role::Supervisor, TicketStatus::Dispatched, TicketStatus::ExceptionReturned) => true,
+        (Role::Supervisor | Role::QaSupervisor, TicketStatus::CallRegistered, TicketStatus::ExceptionReturned) => true,
+        (Role::Supervisor | Role::QaSupervisor, TicketStatus::Dispatched, TicketStatus::ExceptionReturned) => true,
         (Role::Supervisor | Role::QaSupervisor, TicketStatus::Dispatched, TicketStatus::ReceiptCompleted) => true,
         (Role::Agent | Role::Registrar, TicketStatus::Dispatched, TicketStatus::CallbackClosed) => true,
         (Role::Reviewer, TicketStatus::CallbackClosed, TicketStatus::Archived) => true,
@@ -891,17 +937,24 @@ pub async fn process_ticket(
 
     if target_status == TicketStatus::ExceptionReturned {
         return_reason = req.return_reason.clone();
-        if !new_exception_tags.contains(&"退回补正".to_string()) {
-            new_exception_tags.push("退回补正".to_string());
+        if user_role == Role::QaSupervisor {
+            if !new_exception_tags.contains(&"质检退回".to_string()) {
+                new_exception_tags.push("质检退回".to_string());
+            }
+        } else {
+            if !new_exception_tags.contains(&"退回补正".to_string()) {
+                new_exception_tags.push("退回补正".to_string());
+            }
         }
         if let Some(rr) = &req.return_reason {
+            let reason_type = if user_role == Role::QaSupervisor { "质检退回" } else { "退回补正" };
             sqlx::query(
                 r#"INSERT INTO exception_reasons (id, ticket_id, reason_type, description, reported_by, reported_by_name, resolved)
                    VALUES (?, ?, ?, ?, ?, ?, 0)"#,
             )
             .bind(Uuid::new_v4().to_string())
             .bind(ticket_id)
-            .bind("退回补正")
+            .bind(reason_type)
             .bind(rr)
             .bind(&user.id)
             .bind(&user.name)

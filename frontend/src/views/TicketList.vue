@@ -254,6 +254,7 @@
                 <option value="签收完成">签收完成（交复核负责人）</option>
                 <option value="复核归档">复核归档</option>
                 <option value="退回补正">退回补正（交登记员）</option>
+                <option value="质检退回补正">质检退回补正（交登记员）</option>
               </select>
             </div>
             <div class="form-group">
