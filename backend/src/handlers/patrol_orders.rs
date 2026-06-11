@@ -927,11 +927,29 @@ impl PatrolOrdersApi {
             return Err(AppError::bad_request(reason));
         }
 
+        let unverified_sql = "SELECT defect_no FROM defect_reports WHERE patrol_order_id = ?1 AND status NOT IN ('verified', 'rejected')";
+        let mut missing_defects: Vec<String> = Vec::new();
+        {
+            let mut unverified_stmt = conn.prepare(unverified_sql)?;
+            let unverified_rows = unverified_stmt.query_map([id], |row| row.get::<_, String>(0))?;
+            let unverified_defects: Vec<String> = unverified_rows.filter_map(|r| r.ok()).collect();
+            for defect_no in &unverified_defects {
+                if !req.defect_evidences.contains_key(defect_no) {
+                    missing_defects.push(defect_no.clone());
+                }
+            }
+        }
+        if !missing_defects.is_empty() {
+            let reason = format!("未覆盖的缺陷: {}", missing_defects.join(", "));
+            record_anomaly(&conn, &order, "办理失败", x_user_id.0, &ctx.user_role, &reason, None)?;
+            return Err(AppError::bad_request(&reason));
+        }
+
         for (defect_no, evidence) in &req.defect_evidences {
             if evidence.is_empty() {
                 let reason = format!("缺陷 {} 缺少消缺证据", defect_no);
                 record_anomaly(&conn, &order, "办理失败", x_user_id.0, &ctx.user_role, &reason, None)?;
-                return Err(AppError::bad_request(reason));
+                return Err(AppError::bad_request(&reason));
             }
         }
 
@@ -1278,6 +1296,50 @@ impl PatrolOrdersApi {
                     continue;
                 }
             };
+
+            {
+                let unverified_sql = "SELECT defect_no FROM defect_reports WHERE patrol_order_id = ?1 AND status NOT IN ('verified', 'rejected')";
+                let mut unverified_stmt = match conn.prepare(unverified_sql) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        results.push(BatchResultItem {
+                            id,
+                            success: false,
+                            message: e.to_string(),
+                        });
+                        continue;
+                    }
+                };
+                let unverified_rows = match unverified_stmt.query_map([id], |row| row.get::<_, String>(0)) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        results.push(BatchResultItem {
+                            id,
+                            success: false,
+                            message: e.to_string(),
+                        });
+                        continue;
+                    }
+                };
+                let unverified_defects: Vec<String> = unverified_rows.filter_map(|r| r.ok()).collect();
+
+                let mut missing_defects: Vec<String> = Vec::new();
+                for defect_no in &unverified_defects {
+                    if !evidences.contains_key(defect_no) {
+                        missing_defects.push(defect_no.clone());
+                    }
+                }
+                if !missing_defects.is_empty() {
+                    let reason = format!("未覆盖的缺陷: {}", missing_defects.join(", "));
+                    let _ = record_anomaly(&conn, &order, "批量办理失败", x_user_id.0, &ctx.user_role, &reason, None);
+                    results.push(BatchResultItem {
+                        id,
+                        success: false,
+                        message: reason,
+                    });
+                    continue;
+                }
+            }
 
             let mut has_evidence_error = false;
             for (defect_no, evidence) in evidences {

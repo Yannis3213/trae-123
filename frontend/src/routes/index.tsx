@@ -210,36 +210,44 @@ export default component$(() => {
       const orderNo = order?.order_no || String(id);
 
       if (!order?.version) {
-        console.warn(`巡检单 ${orderNo} 缺少 version，使用默认值 1`);
+        results.push({
+          order_no: orderNo,
+          success: false,
+          message: `巡检单 ${orderNo} 处理失败：缺少版本信息，请刷新列表后重试`,
+        });
+        continue;
       }
 
-      let defectNos: string[] = [];
+      let unverifiedNos: string[] = [];
       try {
         const detailRes = await api.get<any>(`/api/patrol-orders/${id}`);
         if (detailRes.success && detailRes.data) {
           const defects = detailRes.data.defects || detailRes.data.order?.defects || [];
-          defectNos = defects.map((d: any) => d.defect_no).filter(Boolean);
+          const unverifiedDefects = defects.filter(
+            (d: any) => d.status !== 'verified' && d.status !== 'rejected'
+          );
+          unverifiedNos = unverifiedDefects.map((d: any) => d.defect_no).filter(Boolean);
         }
       } catch {
       }
 
-      if (defectNos.length === 0) {
+      if (unverifiedNos.length === 0) {
         results.push({
           order_no: orderNo,
           success: false,
-          message: '该巡检单无缺陷，无需办理',
+          message: `巡检单 ${orderNo} 处理失败：该巡检单无待消缺缺陷，无需办理`,
         });
         continue;
       }
 
       const defect_evidences: Record<string, string[]> = {};
-      defectNos.forEach((defect_no: string) => {
+      unverifiedNos.forEach((defect_no: string) => {
         defect_evidences[defect_no] = [`消缺证据_${defect_no}.pdf`];
       });
 
       processItems.push({
         id,
-        version: order?.version || 1,
+        version: order.version,
         opinion: '批量办理',
         defect_evidences,
       });
@@ -251,30 +259,35 @@ export default component$(() => {
         if (res.success && res.data) {
           const mapped: BatchResultItem[] = (res.data as any[]).map((r: any) => {
             const order = orders.value.find(o => o.id === r.id);
+            const orderNo = order?.order_no || String(r.id);
             return {
-              order_no: order?.order_no || String(r.id),
+              order_no: orderNo,
               success: r.success,
-              message: r.message,
+              message: r.success
+                ? `巡检单 ${orderNo} 处理成功`
+                : `巡检单 ${orderNo} 处理失败：${r.message || '未知原因'}`,
             };
           });
           results.push(...mapped);
         } else {
           for (const item of processItems) {
             const order = orders.value.find(o => o.id === item.id);
+            const orderNo = order?.order_no || String(item.id);
             results.push({
-              order_no: order?.order_no || String(item.id),
+              order_no: orderNo,
               success: false,
-              message: res.message || '处理失败',
+              message: `巡检单 ${orderNo} 处理失败：${res.message || '处理失败'}`,
             });
           }
         }
       } catch (e: any) {
         for (const item of processItems) {
           const order = orders.value.find(o => o.id === item.id);
+          const orderNo = order?.order_no || String(item.id);
           results.push({
-            order_no: order?.order_no || String(item.id),
+            order_no: orderNo,
             success: false,
-            message: e?.message || '网络错误',
+            message: `巡检单 ${orderNo} 处理失败：${e?.message || '网络错误'}`,
           });
         }
       }
@@ -297,7 +310,7 @@ export default component$(() => {
     try {
       const items = overdueIds.map(id => {
         const order = orders.value.find(o => o.id === id);
-        return { id, version: order?.version || 1, remark: '月底批量关闭逾期单' };
+        return { id, version: order?.version ?? 1, remark: '月底批量关闭逾期单' };
       });
       const res = await api.post<any>('/api/patrol-orders/batch-close', { items });
       if (res.success && res.data) {

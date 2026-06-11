@@ -225,7 +225,7 @@ export default component$(() => {
           processRecords.value = detailRes.data.process_records || [];
           defects.value = detailRes.data.defects || [];
           attachments.value = detailRes.data.attachments || [];
-          acceptanceRecords.value = detailRes.data.acceptance_records || detailRes.data.order.acceptance_records || [];
+          acceptanceRecords.value = detailRes.data.acceptance_records || detailRes.data.order?.acceptance_records || [];
         } else {
           order.value = detailRes.data;
           acceptanceRecords.value = detailRes.data.acceptance_records || [];
@@ -1093,7 +1093,7 @@ export default component$(() => {
                     )}
                   </div>
 
-                  {acceptanceRecords.value.length === 0 && o.status !== 'closed' ? (
+                  {acceptanceRecords.value.length === 0 ? (
                     <div class="text-sm text-gray-500 py-8 text-center">暂无验收记录</div>
                   ) : (
                     <div class="overflow-x-auto">

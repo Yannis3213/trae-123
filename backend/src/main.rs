@@ -7,7 +7,7 @@ mod handlers;
 use std::sync::Arc;
 use poem::{listener::TcpListener, Route, Server, EndpointExt};
 use poem::http::Method;
-use poem::middleware::{Cors, CorsConfig};
+use poem::middleware::Cors;
 use poem_openapi::OpenApiService;
 
 use db::AppState;
@@ -37,11 +37,11 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api/docs", ui)
         .nest("/api/openapi.json", spec)
         .with(
-            Cors::new(CorsConfig::new()
+            Cors::new()
                 .allow_origin("http://localhost:3001")
                 .allow_methods(vec![Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
                 .allow_headers(vec!["Content-Type", "X-User-ID", "X-User-Role", "Authorization"])
-                .allow_credentials(true))
+                .allow_credentials(true)
         )
         .data(state.clone());
 
