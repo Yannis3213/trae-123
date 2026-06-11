@@ -704,56 +704,77 @@ function processSingleOrder(order: any, action: string, role: string, handler: s
   }
 
   const mergedBody = { ...(body || {}) }
-  const nowStr = fmt(new Date())
 
-  if ((action === 'submit_inspection' || action === 'submit') && !mergedBody.home_inspection) {
-    const hi = db.prepare('SELECT * FROM home_inspections WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
-    if (hi) {
-      mergedBody.home_inspection = {
-        inspector: hi.inspector,
-        inspection_date: hi.inspection_date || nowStr,
-        inspection_result: hi.inspection_result || 'qualified',
-        anomalies: hi.anomalies || '',
-      }
-    } else {
-      mergedBody.home_inspection = {
-        inspector: handler,
-        inspection_date: nowStr,
-        inspection_result: 'qualified',
-        anomalies: '',
-      }
+  if (action === 'submit_inspection' || action === 'submit') {
+    const existing = db.prepare('SELECT * FROM home_inspections WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
+    const submitted = (body && body.home_inspection) || {}
+    const existingAttachments = db.prepare('SELECT * FROM attachments WHERE order_id = ? AND step = ?').all(order.id, 'home_inspection') as any[]
+    mergedBody.home_inspection = {
+      inspector: submitted.inspector || (existing ? existing.inspector : undefined),
+      inspection_date: submitted.inspection_date || (existing ? existing.inspection_date : undefined),
+      inspection_result: submitted.inspection_result || (existing ? existing.inspection_result : undefined),
+      anomalies: submitted.anomalies !== undefined ? submitted.anomalies : (existing ? existing.anomalies : undefined),
+      evidence_photos: (submitted.evidence_photos && submitted.evidence_photos.length > 0)
+        ? submitted.evidence_photos
+        : (existingAttachments && existingAttachments.length > 0 ? existingAttachments : undefined),
+    }
+    if (body && body.attachments && body.attachments.length > 0) {
+      mergedBody.attachments = body.attachments
+    } else if (existingAttachments && existingAttachments.length > 0) {
+      mergedBody.attachments = existingAttachments
     }
   }
 
-  if (action === 'approve' && !mergedBody.hazard_rectification) {
-    const hr = db.prepare('SELECT * FROM hazard_rectifications WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
-    if (hr) {
-      mergedBody.hazard_rectification = {
-        hazard_level: hr.hazard_level || 'medium',
-        rectification_measures: hr.rectification_measures || '已审批通过',
-        rectification_date: hr.rectification_date || nowStr,
-      }
-    } else {
-      mergedBody.hazard_rectification = {
-        hazard_level: 'medium',
-        rectification_measures: '已审批通过',
-        rectification_date: nowStr,
-      }
+  if (action === 'approve') {
+    const existingHi = db.prepare('SELECT * FROM home_inspections WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
+    if (!existingHi || !existingHi.submitted) {
+      return { ok: false, error: '入户安检尚未提交，缺少安检证据，无法审批' }
+    }
+    const existing = db.prepare('SELECT * FROM hazard_rectifications WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
+    const submitted = (body && body.hazard_rectification) || {}
+    const existingAttachments = db.prepare('SELECT * FROM attachments WHERE order_id = ? AND step = ?').all(order.id, 'hazard_rectification') as any[]
+    mergedBody.hazard_rectification = {
+      hazard_level: submitted.hazard_level || (existing ? existing.hazard_level : undefined),
+      rectification_measures: submitted.rectification_measures || (existing ? existing.rectification_measures : undefined),
+      rectification_date: submitted.rectification_date || (existing ? existing.rectification_date : undefined),
+      evidence_photos: (submitted.evidence_photos && submitted.evidence_photos.length > 0)
+        ? submitted.evidence_photos
+        : (existingAttachments && existingAttachments.length > 0 ? existingAttachments : undefined),
+    }
+    if (body && body.attachments && body.attachments.length > 0) {
+      mergedBody.attachments = body.attachments
+    } else if (existingAttachments && existingAttachments.length > 0) {
+      mergedBody.attachments = existingAttachments
     }
   }
 
-  if (action === 'confirm' && !mergedBody.recheck_closure) {
-    const rc = db.prepare('SELECT * FROM recheck_closures WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
-    if (rc) {
-      mergedBody.recheck_closure = {
-        recheck_result: rc.recheck_result || 'pass',
-        recheck_date: rc.recheck_date || nowStr,
-      }
-    } else {
-      mergedBody.recheck_closure = {
-        recheck_result: 'pass',
-        recheck_date: nowStr,
-      }
+  if (action === 'confirm') {
+    const existingHr = db.prepare('SELECT * FROM hazard_rectifications WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
+    if (!existingHr || !existingHr.completed) {
+      return { ok: false, error: '隐患整改尚未完成，缺少整改证据，无法确认' }
+    }
+    const existing = db.prepare('SELECT * FROM recheck_closures WHERE order_id = ? ORDER BY id DESC LIMIT 1').get(order.id) as any
+    const submitted = (body && body.recheck_closure) || {}
+    const existingAttachments = db.prepare('SELECT * FROM attachments WHERE order_id = ? AND step = ?').all(order.id, 'recheck_closure') as any[]
+    mergedBody.recheck_closure = {
+      recheck_result: submitted.recheck_result || (existing ? existing.recheck_result : undefined),
+      recheck_date: submitted.recheck_date || (existing ? existing.recheck_date : undefined),
+      evidence_photos: (submitted.evidence_photos && submitted.evidence_photos.length > 0)
+        ? submitted.evidence_photos
+        : (existingAttachments && existingAttachments.length > 0 ? existingAttachments : undefined),
+    }
+    if (body && body.attachments && body.attachments.length > 0) {
+      mergedBody.attachments = body.attachments
+    } else if (existingAttachments && existingAttachments.length > 0) {
+      mergedBody.attachments = existingAttachments
+    }
+  }
+
+  if (action === 'reject' || action === 'return') {
+    const hasReason = (body && body.anomaly_reason && String(body.anomaly_reason).trim() !== '') ||
+      (body && body.remark && String(body.remark).trim() !== '')
+    if (!hasReason) {
+      return { ok: false, error: action === 'reject' ? '驳回必须填写原因' : '退回必须填写原因' }
     }
   }
 

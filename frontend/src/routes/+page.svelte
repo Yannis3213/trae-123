@@ -16,6 +16,9 @@
   let keyword = $state('');
   let showCreateModal = $state(false);
   let showBatchModal = $state(false);
+  let showBatchConfirm = $state(false);
+  let batchRemark = $state('');
+  let batchAnomalyReason = $state('');
   let batchResult = $state<BatchResult | null>(null);
   let batchLoading = $state(false);
   let createLoading = $state(false);
@@ -106,15 +109,25 @@
     await loadData();
   }
 
+  function openBatchConfirm() {
+    batchRemark = '';
+    batchAnomalyReason = '';
+    showBatchConfirm = true;
+  }
+
   async function handleBatchAction() {
     if (selectedOrders.value.size === 0) return;
+    showBatchConfirm = false;
     batchLoading = true;
+    error = '';
     try {
       const result = await batchAction({
         order_ids: Array.from(selectedOrders.value),
         action: batchActionName(),
         role: currentRole.value,
-        handler: currentHandler.value
+        handler: currentHandler.value,
+        remark: batchRemark.trim() || undefined,
+        anomaly_reason: batchAnomalyReason.trim() || undefined,
       });
       batchResult = result;
       showBatchModal = true;
@@ -416,7 +429,7 @@
       </div>
       <div class="flex items-center gap-2">
         <button
-          onclick={handleBatchAction}
+          onclick={openBatchConfirm}
           disabled={batchLoading}
           class="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-800 text-white text-sm rounded-md transition-colors flex items-center gap-1"
         >
@@ -424,6 +437,78 @@
             <Loader2 class="w-4 h-4 animate-spin" />
           {/if}
           {batchActionLabel()}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Batch confirm modal -->
+{#if showBatchConfirm}
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onclick={() => (showBatchConfirm = false)}>
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4" onclick={(e) => e.stopPropagation()}>
+      <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h3 class="text-lg font-semibold text-gray-800">批量{batchActionLabel()}</h3>
+        <button onclick={() => (showBatchConfirm = false)} class="text-gray-400 hover:text-gray-600">
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+      <div class="p-5 space-y-4">
+        <div class="text-sm text-gray-600 bg-blue-50 border border-blue-100 rounded-md px-3 py-2">
+          即将对 <span class="font-bold text-blue-700">{selectedCount}</span> 条工单执行「<span class="font-bold text-blue-700">{batchActionLabel()}</span>」操作
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">审计备注</label>
+          <textarea
+            bind:value={batchRemark}
+            rows="2"
+            placeholder="可填写本次批量操作的说明（可选）"
+            class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none resize-none"
+          />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            异常原因
+            {(batchActionName() === 'reject' || batchActionName() === 'return') && <span class="text-red-500"> *</span>}
+          </label>
+          <textarea
+            bind:value={batchAnomalyReason}
+            rows="2"
+            placeholder={(batchActionName() === 'reject' || batchActionName() === 'return') ? '驳回/退回原因（必填）' : '如有异常情况可填写（选填）'}
+            class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none resize-none"
+          />
+          <div class="mt-1 text-xs text-yellow-600">
+            {(batchActionName() === 'reject' || batchActionName() === 'return') && !batchAnomalyReason.trim() && '⚠️ 驳回/退回操作必须填写异常原因'}
+          </div>
+        </div>
+
+        <div class="text-xs text-gray-500 bg-gray-50 rounded-md px-3 py-2">
+          <div class="font-medium text-gray-600 mb-1">💡 提示</div>
+          <ul class="space-y-0.5 list-disc list-inside">
+            <li>系统将逐条校验每条工单的状态、角色、处理人和证据完整性</li>
+            <li>证据不全、越权、版本冲突、逾期等情况会被逐条拦截</li>
+            <li>操作完成后可在结果弹窗中查看每条工单的成功/失败原因</li>
+          </ul>
+        </div>
+      </div>
+      <div class="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
+        <button
+          onclick={() => (showBatchConfirm = false)}
+          class="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm rounded-md transition-colors"
+        >
+          取消
+        </button>
+        <button
+          onclick={handleBatchAction}
+          disabled={batchLoading || ((batchActionName() === 'reject' || batchActionName() === 'return') && !batchAnomalyReason.trim())}
+          class="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white text-sm rounded-md transition-colors flex items-center gap-1"
+        >
+          {#if batchLoading}
+            <Loader2 class="w-4 h-4 animate-spin" />
+          {/if}
+          确认执行
         </button>
       </div>
     </div>

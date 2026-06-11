@@ -179,6 +179,7 @@
     try {
       const updated = await submitAction(order.id, data);
       order = updated;
+      activeTab = updated.current_step;
       populateForm(updated);
       remark = '';
       anomalyReason = '';
