@@ -66,17 +66,30 @@ async function routes(fastify) {
 
     const statusStats = {};
     const nodeStats = {};
+    const deadlineStats = { normal: 0, near: 0, overdue: 0 };
     statsRaw.forEach(s => {
       statusStats[s.status] = (statusStats[s.status] || 0) + s.count;
       nodeStats[s.current_node] = (nodeStats[s.current_node] || 0) + s.count;
     });
+
+    const deadlineSql = `
+      SELECT
+        SUM(CASE WHEN deadline IS NOT NULL AND deadline < datetime('now') AND status != ? THEN 1 ELSE 0 END) as overdue,
+        SUM(CASE WHEN deadline IS NOT NULL AND deadline >= datetime('now') AND deadline <= datetime('now', '+1 day') AND status != ? THEN 1 ELSE 0 END) as near,
+        SUM(CASE WHEN (deadline IS NULL OR deadline > datetime('now', '+1 day')) AND status != ? THEN 1 ELSE 0 END) as normal
+      FROM merchant_entry_forms ${whereClause}
+    `;
+    const deadlineResult = db.prepare(deadlineSql).get(...params, STATUSES.ARCHIVED, STATUSES.ARCHIVED, STATUSES.ARCHIVED);
+    deadlineStats.overdue = deadlineResult.overdue || 0;
+    deadlineStats.near = deadlineResult.near || 0;
+    deadlineStats.normal = deadlineResult.normal || 0;
 
     return {
       success: true,
       data: {
         list: enhancedForms,
         pagination: { page: parseInt(page), pageSize: parseInt(pageSize), total, totalPages: Math.ceil(total / pageSize) },
-        stats: { byStatus: statusStats, byNode: nodeStats }
+        stats: { byStatus: statusStats, byNode: nodeStats, byDeadline: deadlineStats }
       }
     };
   });
@@ -242,7 +255,8 @@ async function routes(fastify) {
           recordException(db, {
             formId: id, exceptionType: EXCEPTION_TYPES.EVIDENCE_MISSING,
             exceptionDetail: `当前节点缺少必要证据: ${postAttachEvidenceCheck.missingLabels.join(', ')}`,
-            exceptionNode: form.current_node, createdBy: user.username
+            exceptionNode: form.current_node, createdBy: user.username,
+            missingTypes: postAttachEvidenceCheck.missing.join(',')
           });
           throw new Error(`缺少必要证据材料: ${postAttachEvidenceCheck.missingLabels.join(', ')}，请先补正`);
         }
@@ -446,7 +460,28 @@ async function routes(fastify) {
         }
       };
     } catch (err) {
-      return reply.status(500).send({ success: false, error: { type: EXCEPTION_TYPES.STATUS_CONFLICT, message: `操作失败: ${err.message}` } });
+      const errMsg = err.message || '';
+      let errorType = EXCEPTION_TYPES.STATUS_CONFLICT;
+      let statusCode = 500;
+
+      if (errMsg.includes('缺少必要证据材料') || errMsg.includes('证据缺失')) {
+        errorType = EXCEPTION_TYPES.EVIDENCE_MISSING;
+        statusCode = 400;
+      } else if (errMsg.includes('版本冲突') || errMsg.includes('VersionConflict')) {
+        errorType = EXCEPTION_TYPES.VERSION_CONFLICT;
+        statusCode = 409;
+      } else if (errMsg.includes('无权操作') || errMsg.includes('权限') || errMsg.includes('角色')) {
+        errorType = EXCEPTION_TYPES.PERMISSION_DENIED;
+        statusCode = 403;
+      } else if (errMsg.includes('重复提交')) {
+        errorType = EXCEPTION_TYPES.DUPLICATE_SUBMIT;
+        statusCode = 400;
+      }
+
+      return reply.status(statusCode).send({
+        success: false,
+        error: { type: errorType, message: `操作失败: ${errMsg}` }
+      });
     }
   });
 

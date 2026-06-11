@@ -42,12 +42,13 @@ async function routes(fastify) {
           return;
         }
 
-        const evidenceCheck = checkEvidence(formId, currentForm.current_node);
-        if (!evidenceCheck.complete) {
-          recordException(db, { formId, exceptionType: EXCEPTION_TYPES.EVIDENCE_MISSING, exceptionDetail: `批量处理缺少证据: ${evidenceCheck.missingLabels.join(', ')}`, exceptionNode: currentForm.current_node, createdBy: user.username });
-          results.push({ formId, formNo: currentForm.form_no, success: false, errorType: EXCEPTION_TYPES.EVIDENCE_MISSING, errorMessage: `缺少证据: ${evidenceCheck.missingLabels.join(', ')}` });
+        const matrix = OPERATION_MATRIX[operation];
+        if (!matrix) {
+          results.push({ formId, formNo: currentForm.form_no, success: false, errorType: EXCEPTION_TYPES.STATUS_CONFLICT, errorMessage: `不支持的批量操作: ${operation}` });
           return;
         }
+
+        const skipEvidenceCheck = [OPERATION_TYPES.SIGN, OPERATION_TYPES.AUDIT_REJECT, OPERATION_TYPES.FINAL_REVIEW_REJECT].includes(operation);
 
         try {
           const fromNode = currentForm.current_node;
@@ -58,8 +59,14 @@ async function routes(fastify) {
           let newHandler = currentForm.current_handler;
           let newDeadline = currentForm.deadline;
 
-          const matrix = OPERATION_MATRIX[operation];
-          if (!matrix) throw new Error(`不支持的批量操作: ${operation}`);
+          if (!skipEvidenceCheck) {
+            const evidenceCheck = checkEvidence(formId, currentForm.current_node);
+            if (!evidenceCheck.complete) {
+              recordException(db, { formId, exceptionType: EXCEPTION_TYPES.EVIDENCE_MISSING, exceptionDetail: `批量处理缺少证据: ${evidenceCheck.missingLabels.join(', ')}`, exceptionNode: currentForm.current_node, createdBy: user.username });
+              results.push({ formId, formNo: currentForm.form_no, success: false, errorType: EXCEPTION_TYPES.EVIDENCE_MISSING, errorMessage: `缺少证据: ${evidenceCheck.missingLabels.join(', ')}` });
+              return;
+            }
+          }
 
           switch (operation) {
             case OPERATION_TYPES.SIGN: {
@@ -144,9 +151,12 @@ async function routes(fastify) {
             fromNode, fromStatus,
             newNode: toNode, newStatus: toStatus,
             newNodeLabel: NODE_LABELS[toNode],
-            newStatusLabel: STATUS_LABELS[toStatus]
+            newStatusLabel: STATUS_LABELS[toStatus],
+            newVersion,
+            newHandler
           });
         } catch (err) {
+          recordException(db, { formId, exceptionType: EXCEPTION_TYPES.STATUS_CONFLICT, exceptionDetail: `批量处理异常: ${err.message}`, exceptionNode: currentForm.current_node, createdBy: user.username });
           results.push({ formId, formNo: currentForm.form_no, success: false, errorType: EXCEPTION_TYPES.STATUS_CONFLICT, errorMessage: err.message });
         }
       });

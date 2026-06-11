@@ -19,7 +19,7 @@ import { useAuth } from '../../../context/AuthContext';
 import {
   formatDate, getStatusTag, getNodeLabel, getDeadlineStatus,
   getRoleLabel, getEvidenceTypeLabel, getExceptionTypeLabel,
-  getAvailableOperations, getBusinessTypes
+  getAvailableOperations, getBusinessTypes, OPERATION_MATRIX
 } from '../../../lib/utils';
 
 const { Title, Text, Paragraph } = Typography;
@@ -120,6 +120,13 @@ export default function FormDetailPage() {
     operationForm.resetFields();
     setNewAttachments([]);
     setOperationModalVisible(true);
+  };
+
+  const shouldShowAttachments = (operationKey) => {
+    if (!operationKey) return false;
+    const matrix = OPERATION_MATRIX[operationKey];
+    if (!matrix) return false;
+    return ['return_supplement', 'supplement', 'audit_pass', 'register', 'submit_audit', 'submit_final_review', 'final_review_pass'].includes(operationKey);
   };
 
   const handleConfirmOperation = async (values) => {
@@ -623,7 +630,7 @@ export default function FormDetailPage() {
         <Form form={operationForm} layout="vertical" onFinish={handleConfirmOperation}>
           <Alert
             message={`当前单据：${form?.form_no}`}
-            description={`当前状态：${statusTag?.label} | 当前节点：${getNodeLabel(form?.current_node)}`}
+            description={`当前状态：${statusTag?.label} | 当前节点：${getNodeLabel(form?.current_node)} | 当前处理人：${form?.current_handler || '未分配'}`}
             type="info" showIcon style={{ marginBottom: 16 }}
           />
 
@@ -637,11 +644,19 @@ export default function FormDetailPage() {
             </>
           )}
 
-          {!['supplement', 'return_supplement'].includes(currentOperation?.key) &&
-            newAttachments.length > 0 && renderAttachmentFields()}
+          {shouldShowAttachments(currentOperation?.key) && currentOperation?.key !== 'return_supplement' && (
+            <>
+              <Alert
+                message="支持上传材料"
+                description="请上传与本次操作相关的证据材料，确保材料完整后再提交"
+                type="info" showIcon style={{ marginBottom: 16 }}
+              />
+              {renderAttachmentFields()}
+            </>
+          )}
 
           {!['sign'].includes(currentOperation?.key) && (
-            <Form.Item name="opinion" label="处理意见" rules={currentOperation?.key === 'sign' ? [] : [{ required: true, message: '请输入处理意见' }]}>
+            <Form.Item name="opinion" label="处理意见" rules={[{ required: true, message: '请输入处理意见' }]}>
               <TextArea rows={4} placeholder="请输入处理意见..." />
             </Form.Item>
           )}

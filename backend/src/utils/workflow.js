@@ -245,11 +245,24 @@ const recordException = (tx, params) => {
     formId, exceptionType, exceptionDetail, exceptionNode, createdBy,
     missingTypes, resolutionNote
   } = params;
+  const columns = ['form_id', 'exception_type', 'exception_detail', 'exception_node', 'created_by'];
+  const values = [formId, exceptionType, exceptionDetail, exceptionNode, createdBy];
+  const placeholders = ['?', '?', '?', '?', '?'];
+
+  if (missingTypes) {
+    columns.push('missing_types');
+    values.push(missingTypes);
+    placeholders.push('?');
+  }
+  if (resolutionNote) {
+    columns.push('resolution_note');
+    values.push(resolutionNote);
+    placeholders.push('?');
+  }
+
   tx.prepare(`
-    INSERT INTO exception_reasons (
-      form_id, exception_type, exception_detail, exception_node, created_by
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(formId, exceptionType, exceptionDetail, exceptionNode, createdBy);
+    INSERT INTO exception_reasons (${columns.join(', ')}) VALUES (${placeholders.join(', ')})
+  `).run(...values);
 };
 
 const resolveExceptions = (tx, formId, username, resolutionNote) => {

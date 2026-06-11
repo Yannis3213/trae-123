@@ -95,19 +95,19 @@ export const getEvidenceTypeLabel = (type) => {
   return typeMap[type] || type;
 };
 
-const OPERATION_MATRIX = {
+export const OPERATION_MATRIX = {
   sign: {
-    allowedNodes: ['entry_registration'],
+    allowedNodes: ['entry_registration', 'entry_form_registration'],
     allowedStatuses: ['pending_sign', 'abnormal_return', 'supplement_required'],
     allowedRoles: ['merchant_registrar'],
-    requireHandler: false,
+    requireHandler: true,
     label: '签收', type: 'primary',
   },
   submit_audit: {
     allowedNodes: ['entry_registration'],
     allowedStatuses: ['sign_completed'],
     allowedRoles: ['merchant_registrar'],
-    requireHandler: false,
+    requireHandler: true,
     label: '提交审核', type: 'primary',
   },
   audit_pass: {
@@ -125,8 +125,8 @@ const OPERATION_MATRIX = {
     label: '审核拒绝', type: 'danger',
   },
   return_supplement: {
-    allowedNodes: ['qualification_audit', 'final_review'],
-    allowedStatuses: ['pending_audit', 'pending_final_review'],
+    allowedNodes: ['qualification_audit', 'entry_form_registration', 'final_review'],
+    allowedStatuses: ['pending_audit', 'pending_registration', 'pending_final_review'],
     allowedRoles: ['audit_supervisor', 'platform_leader'],
     requireHandler: true,
     label: '退回补正', type: 'warning',
@@ -142,7 +142,7 @@ const OPERATION_MATRIX = {
     allowedNodes: ['entry_form_registration'],
     allowedStatuses: ['registration_completed'],
     allowedRoles: ['merchant_registrar'],
-    requireHandler: false,
+    requireHandler: true,
     label: '提交复核', type: 'primary',
   },
   final_review_pass: {
@@ -170,7 +170,7 @@ const OPERATION_MATRIX = {
     allowedNodes: ['final_review'],
     allowedStatuses: ['final_review_passed'],
     allowedRoles: ['platform_leader'],
-    requireHandler: false,
+    requireHandler: true,
     label: '归档', type: 'primary',
   },
 };
