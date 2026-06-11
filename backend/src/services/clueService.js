@@ -28,7 +28,7 @@ export function getClueList(user, filters = {}) {
     params.push(user.id);
   } else if (user.role === ROLES.AUDITOR) {
     sql += ' AND (c.current_handler_id = ? OR c.status IN (?, ?))';
-    params.push(user.id, STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED);
+    params.push(user.id, STATUS.PENDING_AUDIT, STATUS.RESUBMITTED);
   } else if (user.role === ROLES.REVIEWER) {
     sql += ' AND c.status IN (?, ?, ?, ?)';
     params.push(STATUS.PENDING_REVIEW, STATUS.APPROVED, STATUS.REJECTED, STATUS.ARCHIVED);
@@ -175,7 +175,7 @@ export function processClue(clueId, actionData, user) {
       return { success: false, message: '退回操作必须填写退回原因', code: 400 };
     }
 
-    const nextHandlerId = getNextHandler(user.role, target_status);
+    const nextHandlerId = getNextHandler(user.role, target_status, clue);
 
     runQuery(`
       UPDATE clues 
@@ -189,7 +189,7 @@ export function processClue(clueId, actionData, user) {
     `, [
       target_status,
       currentVersion + 1,
-      nextHandlerId || (target_status === STATUS.RETURNED ? clue.responsible_person_id : null),
+      nextHandlerId,
       return_reason || null,
       remark || null,
       clueId
@@ -406,7 +406,7 @@ export function getStatistics(user) {
     params.push(user.id);
   } else if (user.role === ROLES.AUDITOR) {
     baseSql += ' AND (current_handler_id = ? OR status IN (?, ?))';
-    params.push(user.id, STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED);
+    params.push(user.id, STATUS.PENDING_AUDIT, STATUS.RESUBMITTED);
   } else if (user.role === ROLES.REVIEWER) {
     baseSql += ' AND status IN (?, ?, ?, ?)';
     params.push(STATUS.PENDING_REVIEW, STATUS.APPROVED, STATUS.REJECTED, STATUS.ARCHIVED);

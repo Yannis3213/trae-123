@@ -39,9 +39,10 @@ export function validateVersion(clueId, submittedVersion) {
   return { valid: true, currentVersion: clue.version };
 }
 
-export function validateHandler(clueId, userId) {
+export function validateHandler(clueId, userId, userRole) {
   const clue = getQuery(`
-    SELECT c.current_handler_id, c.status, u.name as handler_name
+    SELECT c.current_handler_id, c.status, c.created_by, c.responsible_person_id,
+           u.name as handler_name
     FROM clues c
     LEFT JOIN users u ON c.current_handler_id = u.id
     WHERE c.id = ?
@@ -49,6 +50,15 @@ export function validateHandler(clueId, userId) {
 
   if (!clue) {
     return { valid: false, error: '线索单不存在' };
+  }
+
+  if (userRole === ROLES.REGISTRAR) {
+    if (clue.created_by !== userId) {
+      return {
+        valid: false,
+        error: '您不是该线索单的创建人，无权操作'
+      };
+    }
   }
 
   if (clue.current_handler_id && clue.current_handler_id !== userId) {
@@ -132,7 +142,7 @@ export function validateAction(clueId, userId, userRole, submittedVersion, targe
     return { ...versionValidation, clue };
   }
 
-  const handlerValidation = validateHandler(clueId, userId);
+  const handlerValidation = validateHandler(clueId, userId, userRole);
   if (!handlerValidation.valid) {
     return { ...handlerValidation, clue };
   }
@@ -166,12 +176,33 @@ export function logAbnormal(clueId, abnormalType, description, operatorId, reque
   }
 }
 
-export function getNextHandler(role, targetStatus) {
-  if (targetStatus === STATUS.PENDING_AUDIT || targetStatus === STATUS.RETURNED) {
+export function getNextHandler(role, targetStatus, clue = null) {
+  if (targetStatus === STATUS.PENDING_AUDIT) {
+    const auditors = allQuery("SELECT id FROM users WHERE role = ?", [ROLES.AUDITOR]);
+    return auditors.length > 0 ? auditors[0].id : null;
+  }
+
+  if (targetStatus === STATUS.PENDING_REVIEW) {
+    const reviewers = allQuery("SELECT id FROM users WHERE role = ?", [ROLES.REVIEWER]);
+    return reviewers.length > 0 ? reviewers[0].id : null;
+  }
+
+  if (targetStatus === STATUS.RETURNED) {
+    if (clue && clue.responsible_person_id) {
+      return clue.responsible_person_id;
+    }
+    if (clue && clue.created_by) {
+      return clue.created_by;
+    }
     return null;
   }
-  
-  if (targetStatus === STATUS.PENDING_REVIEW) {
+
+  if (targetStatus === STATUS.RESUBMITTED) {
+    const auditors = allQuery("SELECT id FROM users WHERE role = ?", [ROLES.AUDITOR]);
+    return auditors.length > 0 ? auditors[0].id : null;
+  }
+
+  if (targetStatus === STATUS.APPROVED || targetStatus === STATUS.REJECTED) {
     const reviewers = allQuery("SELECT id FROM users WHERE role = ?", [ROLES.REVIEWER]);
     return reviewers.length > 0 ? reviewers[0].id : null;
   }
