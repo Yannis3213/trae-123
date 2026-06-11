@@ -67,6 +67,26 @@ export class LoanService {
     return this.http.post<BatchResult>(`${API_URL}/batch/approve`, { ids, action, remark }, this.getOptions());
   }
 
+  batchArchive(ids: number[], remark?: string): Observable<BatchResult> {
+    return this.http.post<BatchResult>(`${API_URL}/batch/archive`, { ids, remark }, this.getOptions());
+  }
+
+  archiveApplication(id: number, version?: number): Observable<any> {
+    return this.http.post(`${API_URL}/applications/${id}/archive`, { version }, this.getOptions());
+  }
+
+  unarchiveApplication(id: number, version?: number): Observable<any> {
+    return this.http.post(`${API_URL}/applications/${id}/unarchive`, { version }, this.getOptions());
+  }
+
+  resolveException(appId: number, excId: number, resolution: string, version?: number): Observable<any> {
+    return this.http.post(`${API_URL}/applications/${appId}/exception/${excId}/resolve`, { resolution, version }, this.getOptions());
+  }
+
+  addReview(id: number, note: string, version?: number): Observable<any> {
+    return this.http.post(`${API_URL}/applications/${id}/review`, { note, version }, this.getOptions());
+  }
+
   getAttachments(id: number): Observable<Attachment[]> {
     return this.http.get<Attachment[]>(`${API_URL}/applications/${id}/attachments`, this.getOptions());
   }

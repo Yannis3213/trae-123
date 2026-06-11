@@ -14,7 +14,8 @@ const STATUS_NAMES: { [key: string]: string } = {
   CORRECTION_REQUIRED: '退回补正',
   APPROVED: '审批通过',
   REJECTED: '已拒绝',
-  COMPLETED: '已完成'
+  COMPLETED: '已完成',
+  ARCHIVED: '已归档'
 };
 
 const NODE_NAMES: { [key: string]: string } = {
@@ -54,6 +55,10 @@ const NODE_NAMES: { [key: string]: string } = {
           <div class="stat-value">{{ stats.byDue?.overdue || 0 }}</div>
           <div class="stat-label">逾期</div>
         </div>
+        <div class="stat-card archived" (click)="filterByArchived('true')">
+          <div class="stat-value">{{ stats.archived || 0 }}</div>
+          <div class="stat-label">📁 已归档</div>
+        </div>
         <div class="stat-card total" (click)="clearDueFilter()">
           <div class="stat-value">{{ stats.total || 0 }}</div>
           <div class="stat-label">全部单据</div>
@@ -86,6 +91,14 @@ const NODE_NAMES: { [key: string]: string } = {
             <option value="overdue">逾期</option>
           </select>
         </div>
+        <div class="filter-group">
+          <label>归档状态:</label>
+          <select [(ngModel)]="filterArchived" (change)="loadApplications()">
+            <option value="">全部</option>
+            <option value="false">未归档</option>
+            <option value="true">已归档</option>
+          </select>
+        </div>
         <div class="filter-group search">
           <input type="text" [(ngModel)]="keyword" (input)="onSearch()" placeholder="搜索姓名/申请单号/身份证">
         </div>
@@ -108,6 +121,7 @@ const NODE_NAMES: { [key: string]: string } = {
                   <th>当前节点</th>
                   <th>状态</th>
                   <th>到期状态</th>
+                  <th>归档状态</th>
                   <th>核验到期日</th>
                   <th>创建人</th>
                   <th>操作</th>
@@ -117,6 +131,7 @@ const NODE_NAMES: { [key: string]: string } = {
                 <tr *ngFor="let app of applications"
                     [class.due-overdue]="app.dueStatus === 'overdue'"
                     [class.due-approaching]="app.dueStatus === 'approaching'"
+                    [class.row-archived]="app.is_archived === 1"
                     (click)="goToDetail(app.id)">
                   <td (click)="$event.stopPropagation()">
                     <input type="checkbox" [checked]="selectedIds.includes(app.id)"
@@ -137,6 +152,12 @@ const NODE_NAMES: { [key: string]: string } = {
                       {{ dueLabel(app.dueStatus) }}
                     </span>
                   </td>
+                  <td>
+                    <span *ngIf="app.is_archived === 1" class="status-badge small status-ARCHIVED">
+                      📁 已归档
+                    </span>
+                    <span *ngIf="app.is_archived !== 1" class="text-muted">未归档</span>
+                  </td>
                   <td>{{ app.verification_due_date | slice:0:10 }}</td>
                   <td>{{ app.created_by }}</td>
                   <td (click)="$event.stopPropagation()">
@@ -144,7 +165,7 @@ const NODE_NAMES: { [key: string]: string } = {
                   </td>
                 </tr>
                 <tr *ngIf="applications.length === 0">
-                  <td colspan="11" class="empty">暂无数据</td>
+                  <td colspan="12" class="empty">暂无数据</td>
                 </tr>
               </tbody>
             </table>
@@ -265,7 +286,8 @@ const NODE_NAMES: { [key: string]: string } = {
                 <option *ngIf="isRiskAuditor" value="RETURN">批量退回补正</option>
                 <option *ngIf="isSupervisor" value="APPROVE">批量审批通过</option>
                 <option *ngIf="isSupervisor" value="REJECT">批量审批拒绝</option>
-                <option *ngIf="isSupervisor" value="RETURN">批量退回补正</option>
+                <option *ngIf="isSupervisor" value="APPROVE_RETURN">批量退回补正</option>
+                <option *ngIf="isSupervisor" value="ARCHIVE">📁 批量月底归档</option>
               </select>
             </div>
             <div class="form-row">
@@ -289,7 +311,7 @@ const NODE_NAMES: { [key: string]: string } = {
     .page-header { display: flex; justify-content: space-between; align-items: center; }
     .page-header h2 { margin: 0; color: #1e3a5f; }
 
-    .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
     .stat-card {
       background: white; padding: 20px; border-radius: 8px;
       cursor: pointer; transition: all 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
@@ -301,6 +323,7 @@ const NODE_NAMES: { [key: string]: string } = {
     .stat-card.approaching .stat-value { color: #dd6b20; }
     .stat-card.overdue .stat-value { color: #e53e3e; }
     .stat-card.total .stat-value { color: #2c5282; }
+    .stat-card.archived .stat-value { color: #4a5568; }
 
     .filter-bar {
       background: white; padding: 12px 16px; border-radius: 8px;
@@ -336,6 +359,7 @@ const NODE_NAMES: { [key: string]: string } = {
     .data-table tbody tr:hover { background: #f7fafc; }
     .data-table tbody tr.due-overdue { background: #fff5f5; }
     .data-table tbody tr.due-approaching { background: #fffaf0; }
+    .data-table tbody tr.row-archived { background: #edf2f7; opacity: 0.85; }
     .data-table .mono { font-family: monospace; }
     .data-table .amount { text-align: right; font-weight: 500; }
     .data-table .empty { text-align: center; padding: 40px; color: #999; }
@@ -355,6 +379,7 @@ const NODE_NAMES: { [key: string]: string } = {
     .status-APPROVED { background: #c6f6d5; color: #276749; }
     .status-REJECTED { background: #fed7d7; color: #c53030; }
     .status-COMPLETED { background: #e9d8fd; color: #553c9a; }
+    .status-ARCHIVED { background: #4a5568 !important; color: #fff !important; }
 
     .due-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
     .due-normal { background: #c6f6d5; color: #276749; }
@@ -430,16 +455,18 @@ const NODE_NAMES: { [key: string]: string } = {
     }
     .form-row textarea { resize: vertical; }
     .tip { font-size: 12px; color: #dd6b20; background: #fffaf0; padding: 8px; border-radius: 4px; }
+    .text-muted { color: #a0aec0; font-size: 12px; }
   `]
 })
 export class ApplicationListComponent implements OnInit {
   applications: LoanApplication[] = [];
-  stats: Stats = { byStatus: {}, byDue: { normal: 0, approaching: 0, overdue: 0 }, total: 0 };
+  stats: Stats = { byStatus: {}, byDue: { normal: 0, approaching: 0, overdue: 0 }, total: 0, archived: 0 };
   selectedIds: number[] = [];
 
   filterStatus = '';
   filterNode = '';
   filterDue = '';
+  filterArchived = '';
   keyword = '';
 
   showCreateModal = false;
@@ -499,6 +526,7 @@ export class ApplicationListComponent implements OnInit {
     if (this.filterStatus) params.status = this.filterStatus;
     if (this.filterNode) params.node = this.filterNode;
     if (this.filterDue) params.due_status = this.filterDue;
+    if (this.filterArchived) params.is_archived = this.filterArchived;
     if (this.keyword) params.keyword = this.keyword;
 
     this.loanService.getApplications(params).subscribe({
@@ -519,11 +547,19 @@ export class ApplicationListComponent implements OnInit {
 
   filterByDue(status: string): void {
     this.filterDue = status;
+    this.filterArchived = '';
+    this.loadApplications();
+  }
+
+  filterByArchived(archived: string): void {
+    this.filterDue = '';
+    this.filterArchived = archived;
     this.loadApplications();
   }
 
   clearDueFilter(): void {
     this.filterDue = '';
+    this.filterArchived = '';
     this.loadApplications();
   }
 
@@ -531,6 +567,7 @@ export class ApplicationListComponent implements OnInit {
     this.filterStatus = '';
     this.filterNode = '';
     this.filterDue = '';
+    this.filterArchived = '';
     this.keyword = '';
     this.loadApplications();
   }
@@ -591,9 +628,15 @@ export class ApplicationListComponent implements OnInit {
     const ids = [...this.selectedIds];
     const remark = this.batchRemark;
 
-    const request$ = this.isRiskAuditor
-      ? this.loanService.batchVerify(ids, action, remark)
-      : this.loanService.batchApprove(ids, action, remark);
+    let request$;
+    if (action === 'ARCHIVE') {
+      request$ = this.loanService.batchArchive(ids, remark);
+    } else if (this.isRiskAuditor) {
+      request$ = this.loanService.batchVerify(ids, action, remark);
+    } else {
+      const approveAction = action === 'APPROVE_RETURN' ? 'RETURN' : action;
+      request$ = this.loanService.batchApprove(ids, approveAction, remark);
+    }
 
     request$.subscribe({
       next: (result) => {

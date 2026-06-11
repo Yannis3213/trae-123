@@ -27,6 +27,12 @@ export interface LoanApplication {
   due_date: string;
   remark: string;
   dueStatus: string;
+  is_archived: number;
+  archived_at?: string | null;
+  archived_by?: string | null;
+  review_note?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
   attachments?: Attachment[];
   records?: ProcessingRecord[];
   auditNotes?: AuditNote[];
@@ -77,6 +83,7 @@ export interface ExceptionReason {
   detected_at: string;
   resolved_at: string | null;
   resolution: string | null;
+  resolved_by: string | null;
 }
 
 export interface BatchResult {
@@ -97,4 +104,5 @@ export interface Stats {
   byStatus: { [key: string]: number };
   byDue: { normal: number; approaching: number; overdue: number };
   total: number;
+  archived: number;
 }

@@ -26,8 +26,11 @@ STATUSES = {
     'CORRECTION_REQUIRED': '退回补正',
     'APPROVED': '审批通过',
     'REJECTED': '已拒绝',
-    'COMPLETED': '已完成'
+    'COMPLETED': '已完成',
+    'ARCHIVED': '已归档'
 }
+
+TERMINAL_STATUSES = ['COMPLETED', 'VERIFICATION_FAILED', 'REJECTED', 'ARCHIVED']
 
 NODES = {
     'APPLICATION': '借款申请',
@@ -111,6 +114,12 @@ def validate_application_action(db, app, user, action_type, version=None, allow_
 
     if not app:
         return False, '申请单不存在', 'NOT_FOUND', []
+
+    ARCHIVE_WRITE_ACTIONS = ['SUBMIT', 'VERIFY_PASS', 'VERIFY_FAIL', 'VERIFY_RETURN',
+                              'APPROVE', 'REJECT', 'APPROVE_RETURN', 'COMPLETE',
+                              'RESOLVE_EXCEPTION', 'REVIEW']
+    if app.get('is_archived') and action_type in ARCHIVE_WRITE_ACTIONS:
+        return False, '该单据已归档，不可编辑，请先解除归档', 'ARCHIVED', []
 
     if version is None and not allow_no_version:
         return False, '缺少版本号，请刷新页面后重试', 'VERSION_CONFLICT', []
@@ -231,6 +240,35 @@ def validate_application_action(db, app, user, action_type, version=None, allow_
             return False, f'当前状态 {STATUSES.get(status, status)} 不允许完成操作', 'STATUS', []
         return True, '', '', []
 
+    if action_type == 'ARCHIVE':
+        if role != 'LOAN_SUPERVISOR':
+            return False, '只有贷后主管可以归档', 'ROLE', []
+        if status not in ['COMPLETED', 'VERIFICATION_FAILED', 'REJECTED', 'CORRECTION_REQUIRED',
+                          'VERIFICATION_PASSED', 'APPROVED', 'PENDING_VERIFICATION', 'DRAFT']:
+            return False, f'当前状态 {STATUSES.get(status, status)} 不允许归档', 'STATUS', []
+        return True, '', '', []
+
+    if action_type == 'UNARCHIVE':
+        if role != 'LOAN_SUPERVISOR':
+            return False, '只有贷后主管可以解除归档', 'ROLE', []
+        if not app.get('is_archived'):
+            return False, '该单据未归档，无需解除', 'STATUS', []
+        return True, '', '', []
+
+    if action_type == 'RESOLVE_EXCEPTION':
+        if role != 'LOAN_SUPERVISOR':
+            return False, '只有贷后主管可以解除异常', 'ROLE', []
+        if app.get('is_archived'):
+            return False, '已归档单据不可解除异常', 'STATUS', []
+        return True, '', '', []
+
+    if action_type == 'REVIEW':
+        if role != 'LOAN_SUPERVISOR':
+            return False, '只有贷后主管可以添加复核备注', 'ROLE', []
+        if app.get('is_archived'):
+            return False, '已归档单据不可添加复核备注', 'STATUS', []
+        return True, '', '', []
+
     return False, '未知操作类型', 'UNKNOWN', []
 
 
@@ -264,6 +302,54 @@ def update_application_status(db, app_id, new_status, new_node=None, new_handler
         params.append(new_handler)
 
     params.append(app_id)
+    where = ['id = ?']
+    if version is not None:
+        where.append('version = ?')
+        params.append(version)
+
+    query = f"UPDATE loan_applications SET {', '.join(updates)} WHERE {' AND '.join(where)}"
+    cursor = db.execute(query, params)
+    return cursor.rowcount > 0
+
+
+def update_application_archive(db, app_id, is_archived, handler, version=None):
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    if is_archived:
+        updates = ['is_archived = 1', 'archived_at = ?', 'archived_by = ?',
+                   'updated_at = datetime("now", "localtime")', 'version = version + 1']
+        params = [now, handler]
+    else:
+        updates = ['is_archived = 0', 'archived_at = NULL', 'archived_by = NULL',
+                   'updated_at = datetime("now", "localtime")', 'version = version + 1']
+        params = []
+
+    params.append(app_id)
+    where = ['id = ?']
+    if version is not None:
+        where.append('version = ?')
+        params.append(version)
+
+    query = f"UPDATE loan_applications SET {', '.join(updates)} WHERE {' AND '.join(where)}"
+    cursor = db.execute(query, params)
+    return cursor.rowcount > 0
+
+
+def resolve_exception(db, exc_id, resolution, handler):
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cursor = db.execute(
+        '''UPDATE exception_reasons
+           SET resolved_at = ?, resolution = ?, resolved_by = ?
+           WHERE id = ? AND resolved_at IS NULL''',
+        (now, resolution, handler, exc_id)
+    )
+    return cursor.rowcount > 0
+
+
+def add_review_note(db, app_id, note, handler, version=None):
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    updates = ['review_note = ?', 'reviewed_by = ?', 'reviewed_at = ?',
+               'updated_at = datetime("now", "localtime")', 'version = version + 1']
+    params = [note, handler, now, app_id]
     where = ['id = ?']
     if version is not None:
         where.append('version = ?')
@@ -315,6 +401,7 @@ def list_applications():
     node = request.args.get('node')
     keyword = request.args.get('keyword')
     due_status = request.args.get('due_status')
+    is_archived = request.args.get('is_archived')
 
     query = "SELECT * FROM loan_applications WHERE 1=1"
     params = []
@@ -325,6 +412,9 @@ def list_applications():
     if node:
         query += " AND current_node = ?"
         params.append(node)
+    if is_archived is not None and is_archived != '':
+        query += " AND is_archived = ?"
+        params.append(1 if is_archived == 'true' or is_archived == '1' else 0)
     if keyword:
         query += " AND (applicant_name LIKE ? OR application_no LIKE ? OR id_card LIKE ?)"
         kw = f'%{keyword}%'
@@ -358,21 +448,26 @@ def application_stats():
 
     for status in STATUSES:
         count = db.execute(
-            "SELECT COUNT(*) as cnt FROM loan_applications WHERE status = ?",
+            "SELECT COUNT(*) as cnt FROM loan_applications WHERE status = ? AND is_archived = 0",
             (status,)
         ).fetchone()['cnt']
         stats[status] = count
 
-    rows = db.execute("SELECT * FROM loan_applications").fetchall()
+    rows = db.execute("SELECT * FROM loan_applications WHERE is_archived = 0").fetchall()
     due_stats = {'normal': 0, 'approaching': 0, 'overdue': 0}
     for row in rows:
         ds = get_due_status(row['verification_due_date'] or row['due_date'])
         due_stats[ds] += 1
 
+    archived_count = db.execute(
+        "SELECT COUNT(*) as cnt FROM loan_applications WHERE is_archived = 1"
+    ).fetchone()['cnt']
+
     return jsonify({
         'byStatus': stats,
         'byDue': due_stats,
-        'total': len(rows)
+        'total': len(rows),
+        'archived': archived_count
     })
 
 
@@ -395,6 +490,12 @@ def get_application(app_id):
     d['statusName'] = STATUSES.get(d['status'], d['status'])
     d['nodeName'] = NODES.get(d['current_node'], d['current_node'])
     d['dueStatus'] = get_due_status(d.get('verification_due_date') or d.get('due_date'))
+    d['is_archived'] = d.get('is_archived', 0)
+    d['archived_at'] = d.get('archived_at')
+    d['archived_by'] = d.get('archived_by')
+    d['review_note'] = d.get('review_note')
+    d['reviewed_by'] = d.get('reviewed_by')
+    d['reviewed_at'] = d.get('reviewed_at')
 
     attachments = db.execute(
         "SELECT * FROM attachments WHERE loan_application_id = ? ORDER BY uploaded_at",
@@ -905,6 +1006,9 @@ def add_attachment(app_id):
     if not app:
         return jsonify({'error': '申请单不存在'}), 404
 
+    if app.get('is_archived'):
+        return jsonify({'error': '该单据已归档，不可上传附件'}), 400
+
     rules = NODE_ATTACHMENT_RULES.get(node)
     if not rules:
         return jsonify({'error': f'无效的证据节点: {node}'}), 400
@@ -960,6 +1064,9 @@ def add_audit_note(app_id):
     if not app:
         return jsonify({'error': '申请单不存在'}), 404
 
+    if app.get('is_archived'):
+        return jsonify({'error': '该单据已归档，不可添加审计备注'}), 400
+
     cursor = db.execute(
         '''INSERT INTO audit_notes (loan_application_id, note, created_by)
            VALUES (?, ?, ?)''',
@@ -992,6 +1099,186 @@ def get_meta():
         'nodes': NODES,
         'attachmentNames': ATTACHMENT_NAMES,
         'requiredAttachments': REQUIRED_ATTACHMENTS
+    })
+
+
+@app.route('/api/applications/<int:app_id>/archive', methods=['POST'])
+def archive_application(app_id):
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': '未登录'}), 401
+
+    data = request.get_json() or {}
+    version = data.get('version')
+
+    db = get_db()
+    app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
+
+    ok, err_msg, err_type, _ = validate_application_action(db, app, user, 'ARCHIVE', version)
+    if not ok:
+        db.commit()
+        status_code = 409 if err_type == 'VERSION_CONFLICT' else 400
+        return jsonify({'error': err_msg}), status_code
+
+    success = update_application_archive(db, app_id, True, user['username'], version=version)
+    if not success:
+        db.rollback()
+        return jsonify({'error': '更新失败，请刷新重试'}), 409
+
+    record_process(db, app_id, 'ARCHIVE', app['status'], app['status'],
+                   user['username'], user['role'], app['current_node'], '月底归档')
+    db.commit()
+    return jsonify({'success': True, 'id': app_id})
+
+
+@app.route('/api/applications/<int:app_id>/unarchive', methods=['POST'])
+def unarchive_application(app_id):
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': '未登录'}), 401
+
+    data = request.get_json() or {}
+    version = data.get('version')
+
+    db = get_db()
+    app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
+
+    ok, err_msg, err_type, _ = validate_application_action(db, app, user, 'UNARCHIVE', version)
+    if not ok:
+        db.commit()
+        status_code = 409 if err_type == 'VERSION_CONFLICT' else 400
+        return jsonify({'error': err_msg}), status_code
+
+    success = update_application_archive(db, app_id, False, user['username'], version=version)
+    if not success:
+        db.rollback()
+        return jsonify({'error': '更新失败，请刷新重试'}), 409
+
+    record_process(db, app_id, 'UNARCHIVE', app['status'], app['status'],
+                   user['username'], user['role'], app['current_node'], '解除归档')
+    db.commit()
+    return jsonify({'success': True, 'id': app_id})
+
+
+@app.route('/api/applications/<int:app_id>/exception/<int:exc_id>/resolve', methods=['POST'])
+def resolve_exception(app_id, exc_id):
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': '未登录'}), 401
+
+    data = request.get_json() or {}
+    resolution = data.get('resolution', '')
+    version = data.get('version')
+
+    db = get_db()
+    app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
+
+    ok, err_msg, err_type, _ = validate_application_action(db, app, user, 'RESOLVE_EXCEPTION', version)
+    if not ok:
+        db.commit()
+        status_code = 409 if err_type == 'VERSION_CONFLICT' else 400
+        return jsonify({'error': err_msg}), status_code
+
+    exc = db.execute("SELECT * FROM exception_reasons WHERE id = ? AND loan_application_id = ?",
+                     (exc_id, app_id)).fetchone()
+    if not exc:
+        return jsonify({'error': '异常记录不存在'}), 404
+    if exc['resolved_at']:
+        return jsonify({'error': '该异常已解除'}), 400
+
+    success = resolve_exception(db, exc_id, resolution, user['username'])
+    if not success:
+        db.rollback()
+        return jsonify({'error': '解除异常失败'}), 400
+
+    record_process(db, app_id, 'RESOLVE_EXCEPTION', app['status'], app['status'],
+                   user['username'], user['role'], app['current_node'],
+                   f'解除异常[{exc["reason"]}]: {resolution}')
+    db.commit()
+    return jsonify({'success': True, 'id': exc_id})
+
+
+@app.route('/api/applications/<int:app_id>/review', methods=['POST'])
+def add_review(app_id):
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': '未登录'}), 401
+
+    data = request.get_json() or {}
+    note = data.get('note', '')
+    version = data.get('version')
+
+    if not note or not note.strip():
+        return jsonify({'error': '复核备注不能为空'}), 400
+
+    db = get_db()
+    app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
+
+    ok, err_msg, err_type, _ = validate_application_action(db, app, user, 'REVIEW', version)
+    if not ok:
+        db.commit()
+        status_code = 409 if err_type == 'VERSION_CONFLICT' else 400
+        return jsonify({'error': err_msg}), status_code
+
+    success = add_review_note(db, app_id, note, user['username'], version=version)
+    if not success:
+        db.rollback()
+        return jsonify({'error': '更新失败，请刷新重试'}), 409
+
+    record_process(db, app_id, 'REVIEW', app['status'], app['status'],
+                   user['username'], user['role'], app['current_node'], note)
+    db.commit()
+    return jsonify({'success': True, 'id': app_id})
+
+
+@app.route('/api/batch/archive', methods=['POST'])
+def batch_archive():
+    user = get_current_user()
+    if not user:
+        return jsonify({'error': '未登录'}), 401
+    if user['role'] != 'LOAN_SUPERVISOR':
+        return jsonify({'error': '只有贷后主管可以批量归档'}), 403
+
+    data = request.get_json() or {}
+    ids = data.get('ids', [])
+    remark = data.get('remark', '月底批量归档')
+
+    results = []
+    for app_id in ids:
+        try:
+            db = get_db()
+            app = db.execute("SELECT * FROM loan_applications WHERE id = ?", (app_id,)).fetchone()
+
+            ok, err_msg, err_type, _ = validate_application_action(
+                db, app, user, 'ARCHIVE', allow_no_version=True)
+            if not ok:
+                results.append({'id': app_id, 'success': False, 'reason': err_msg})
+                db.commit()
+                continue
+
+            if app.get('is_archived'):
+                results.append({'id': app_id, 'success': False, 'reason': '该单据已归档'})
+                continue
+
+            success = update_application_archive(
+                db, app_id, True, user['username'], version=app['version'])
+            if not success:
+                results.append({'id': app_id, 'success': False, 'reason': '更新失败'})
+                continue
+
+            record_process(db, app_id, 'BATCH_ARCHIVE', app['status'], app['status'],
+                           user['username'], user['role'], app['current_node'],
+                           remark + ' (批量处理)')
+            results.append({'id': app_id, 'success': True, 'status': 'ARCHIVED'})
+            db.commit()
+        except Exception as e:
+            results.append({'id': app_id, 'success': False, 'reason': str(e)})
+
+    return jsonify({
+        'total': len(ids),
+        'successCount': sum(1 for r in results if r['success']),
+        'failCount': sum(1 for r in results if not r['success']),
+        'results': results
     })
 
 

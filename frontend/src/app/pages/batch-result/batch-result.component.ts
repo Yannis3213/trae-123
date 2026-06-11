@@ -11,7 +11,8 @@ const STATUS_NAMES: { [key: string]: string } = {
   CORRECTION_REQUIRED: '退回补正',
   APPROVED: '审批通过',
   REJECTED: '已拒绝',
-  COMPLETED: '已完成'
+  COMPLETED: '已完成',
+  ARCHIVED: '已归档'
 };
 
 @Component({
@@ -49,6 +50,7 @@ const STATUS_NAMES: { [key: string]: string } = {
               <th>申请单ID</th>
               <th>处理结果</th>
               <th>新状态</th>
+              <th>归档状态</th>
               <th>失败原因</th>
               <th style="width: 100px;">操作</th>
             </tr>
@@ -67,6 +69,11 @@ const STATUS_NAMES: { [key: string]: string } = {
                       [ngClass]="'status-' + item.status">
                   {{ STATUS_NAMES[item.status] || item.status }}
                 </span>
+                <span *ngIf="!item.success">-</span>
+              </td>
+              <td>
+                <span *ngIf="item.is_archived" class="status-badge status-ARCHIVED">已归档</span>
+                <span *ngIf="!item.is_archived && item.success">未归档</span>
                 <span *ngIf="!item.success">-</span>
               </td>
               <td class="fail-reason">
@@ -147,6 +154,7 @@ const STATUS_NAMES: { [key: string]: string } = {
     .status-APPROVED { background: #c6f6d5; color: #276749; }
     .status-REJECTED { background: #fed7d7; color: #c53030; }
     .status-COMPLETED { background: #e9d8fd; color: #553c9a; }
+    .status-ARCHIVED { background: #4a5568 !important; color: #fff !important; }
 
     .fail-reason { color: #c53030; }
     .reason-text { font-size: 12px; }

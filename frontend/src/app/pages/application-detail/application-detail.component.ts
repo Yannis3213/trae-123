@@ -21,7 +21,8 @@ const STATUS_NAMES: { [key: string]: string } = {
   CORRECTION_REQUIRED: '退回补正',
   APPROVED: '审批通过',
   REJECTED: '已拒绝',
-  COMPLETED: '已完成'
+  COMPLETED: '已完成',
+  ARCHIVED: '已归档'
 };
 
 const NODE_NAMES: { [key: string]: string } = {
@@ -40,11 +41,16 @@ const ACTION_NAMES: { [key: string]: string } = {
   APPROVE: '审批通过',
   REJECT: '审批拒绝',
   COMPLETE: '放款完成',
+  ARCHIVE: '归档',
+  UNARCHIVE: '解除归档',
+  RESOLVE_EXCEPTION: '解除异常',
+  REVIEW: '复核备注',
   BATCH_VERIFY_PASS: '批量核验通过',
   BATCH_VERIFY_FAIL: '批量核验不通过',
   BATCH_APPROVE: '批量审批通过',
   BATCH_REJECT: '批量审批拒绝',
-  BATCH_RETURN: '批量退回'
+  BATCH_RETURN: '批量退回',
+  BATCH_ARCHIVE: '批量归档'
 };
 
 const EXCEPTION_NAMES: { [key: string]: string } = {
@@ -85,6 +91,9 @@ const ROLE_NAMES: { [key: string]: string } = {
         <div class="header-status">
           <span class="status-badge large" [ngClass]="'status-' + application.status">
             {{ STATUS_NAMES[application.status] || application.status }}
+          </span>
+          <span *ngIf="isArchived" class="status-badge large status-ARCHIVED">
+            📁 已归档
           </span>
           <span class="due-badge" [ngClass]="'due-' + application.dueStatus">
             {{ dueLabel(application.dueStatus) }}
@@ -159,6 +168,32 @@ const ROLE_NAMES: { [key: string]: string } = {
                 <label>更新时间</label>
                 <span>{{ application.updated_at | slice:0:19 }}</span>
               </div>
+              <div class="info-item" *ngIf="isArchived">
+                <label>归档时间</label>
+                <span>{{ application.archived_at | slice:0:19 }}</span>
+              </div>
+              <div class="info-item" *ngIf="isArchived">
+                <label>归档人</label>
+                <span>{{ application.archived_by }}</span>
+              </div>
+              <div class="info-item" *ngIf="application.review_note">
+                <label>复核人</label>
+                <span>{{ application.reviewed_by }}</span>
+              </div>
+              <div class="info-item" *ngIf="application.review_note">
+                <label>复核时间</label>
+                <span>{{ application.reviewed_at | slice:0:19 }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" *ngIf="application.review_note">
+            <div class="card-title">复核备注</div>
+            <div class="review-note">
+              <p>{{ application.review_note }}</p>
+              <p class="review-meta">
+                复核人：{{ application.reviewed_by }} · {{ application.reviewed_at | slice:0:19 }}
+              </p>
             </div>
           </div>
 
@@ -200,6 +235,35 @@ const ROLE_NAMES: { [key: string]: string } = {
                 <p class="action-desc">确认放款，完成整个借款流程</p>
                 <button class="btn-primary" (click)="doComplete()">确认放款完成</button>
               </div>
+            </div>
+          </div>
+
+          <div class="card" *ngIf="canArchive || canUnarchive">
+            <div class="card-title">月底归档操作</div>
+            <div class="action-section">
+              <p *ngIf="isArchived" class="tip">
+                📁 该单据已归档，所有编辑操作已冻结。如需修改，请先解除归档。
+              </p>
+              <p *ngIf="!isArchived" class="action-desc">
+                归档后，单据将被冻结，不可进行提交、核验、审批、上传附件、添加备注等操作。
+              </p>
+              <div class="action-buttons">
+                <button *ngIf="canArchive" class="btn-secondary" (click)="doArchive()">
+                  📁 月底归档
+                </button>
+                <button *ngIf="canUnarchive" class="btn-secondary" (click)="doUnarchive()">
+                  🔓 解除归档
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" *ngIf="canReview">
+            <div class="card-title">复核备注</div>
+            <div class="action-section">
+              <p class="action-desc">贷后主管月底复核时添加的备注，将永久留痕。</p>
+              <textarea [(ngModel)]="newReviewNote" rows="3" placeholder="请输入复核备注..."></textarea>
+              <button class="btn-secondary" (click)="doAddReview()">保存复核备注</button>
             </div>
           </div>
 
@@ -417,14 +481,25 @@ const ROLE_NAMES: { [key: string]: string } = {
           <div class="card">
             <div class="card-title">异常原因</div>
             <div class="exception-list">
-              <div *ngFor="let exc of exceptions" class="exception-item">
+              <div *ngFor="let exc of exceptions" class="exception-item"
+                   [class.resolved]="!!exc.resolved_at">
                 <div class="exc-header">
                   <span class="exc-type">{{ EXCEPTION_NAMES[exc.exception_type] || exc.exception_type }}</span>
                   <span class="exc-time">{{ exc.detected_at | slice:0:10 }}</span>
+                  <span *ngIf="exc.resolved_at" class="exc-resolved">✓ 已解除</span>
                 </div>
                 <div class="exc-reason">{{ exc.reason }}</div>
                 <div *ngIf="exc.detail" class="exc-detail">{{ exc.detail }}</div>
                 <div class="exc-meta">发现人：{{ exc.detected_by }}</div>
+                <div *ngIf="exc.resolved_at" class="exc-resolution">
+                  <span class="text-success">解除：{{ exc.resolution }}</span>
+                  <span class="exc-meta">解除人：{{ exc.resolved_by }} · {{ exc.resolved_at | slice:0:19 }}</span>
+                </div>
+                <div *ngIf="isSupervisor && !isArchived && !exc.resolved_at" class="exc-resolve-form">
+                  <textarea [(ngModel)]="resolutionMap[exc.id]" rows="2"
+                            placeholder="请输入解除异常的说明..."></textarea>
+                  <button class="btn-secondary" (click)="doResolveException(exc)">解除异常</button>
+                </div>
               </div>
               <div *ngIf="exceptions.length === 0" class="empty">暂无异常记录</div>
             </div>
@@ -654,6 +729,55 @@ const ROLE_NAMES: { [key: string]: string } = {
     .empty { text-align: center; padding: 20px; color: #a0aec0; font-size: 13px; }
 
     :host ::ng-deep .mono { font-family: monospace; }
+
+    .status-ARCHIVED {
+      background: #4a5568 !important;
+      color: #fff !important;
+    }
+
+    .review-note {
+      padding: 12px 15px;
+      background: #ebf8ff;
+      border-left: 4px solid #2c5282;
+      border-radius: 4px;
+    }
+    .review-note p { margin: 0 0 8px 0; font-size: 13px; color: #2d3748; }
+    .review-note p:last-child { margin: 0; }
+    .review-meta { font-size: 12px !important; color: #718096 !important; }
+
+    .exception-item.resolved {
+      opacity: 0.6;
+      background: #f7fafc !important;
+    }
+    .exc-resolved {
+      background: #c6f6d5;
+      color: #22543d;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+    .exc-resolution {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: #f0fff4;
+      border-left: 3px solid #38a169;
+      border-radius: 3px;
+    }
+    .exc-resolution .exc-meta {
+      display: block;
+      margin-top: 4px;
+    }
+    .exc-resolve-form {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .exc-resolve-form textarea {
+      width: 100%;
+      min-height: 50px;
+    }
+    .exc-resolve-form button { align-self: flex-end; }
   `]
 })
 export class ApplicationDetailComponent implements OnInit {
@@ -667,6 +791,8 @@ export class ApplicationDetailComponent implements OnInit {
   actionRemark = '';
   newAuditNote = '';
   newAttach = { type: '', name: '' };
+  newReviewNote = '';
+  resolutionMap: { [key: number]: string } = {};
 
   constructor(
     private route: ActivatedRoute,
@@ -683,12 +809,32 @@ export class ApplicationDetailComponent implements OnInit {
 
   get canAct(): boolean {
     if (!this.application) return false;
+    if (this.isArchived) return false;
     const s = this.status;
     if (this.isCreditOfficer && (s === 'DRAFT' || s === 'CORRECTION_REQUIRED')) return true;
     if (this.isRiskAuditor && s === 'PENDING_VERIFICATION') return true;
     if (this.isSupervisor && s === 'VERIFICATION_PASSED') return true;
     if (this.isSupervisor && s === 'APPROVED') return true;
     return false;
+  }
+
+  get isArchived(): boolean {
+    return this.application?.is_archived === 1;
+  }
+
+  get canArchive(): boolean {
+    if (!this.application || !this.isSupervisor || this.isArchived) return false;
+    const s = this.status;
+    return ['COMPLETED', 'VERIFICATION_FAILED', 'REJECTED', 'CORRECTION_REQUIRED',
+            'VERIFICATION_PASSED', 'APPROVED', 'PENDING_VERIFICATION', 'DRAFT'].includes(s);
+  }
+
+  get canUnarchive(): boolean {
+    return this.isSupervisor && this.isArchived;
+  }
+
+  get canReview(): boolean {
+    return this.isSupervisor && !this.isArchived;
   }
 
   get isVerificationOverdue(): boolean {
@@ -701,26 +847,26 @@ export class ApplicationDetailComponent implements OnInit {
   }
 
   get canUploadAttachments(): boolean {
-    if (!this.application) return false;
+    if (!this.application || this.isArchived) return false;
     return this.canUploadApplication || this.canUploadVerification || this.canUploadApproval;
   }
 
   get canUploadApplication(): boolean {
-    if (!this.application || !this.isCreditOfficer) return false;
+    if (!this.application || !this.isCreditOfficer || this.isArchived) return false;
     const s = this.status;
     if (this.application.created_by !== this.currentUser?.username && s !== 'CORRECTION_REQUIRED') return false;
     return s === 'DRAFT' || s === 'CORRECTION_REQUIRED';
   }
 
   get canUploadVerification(): boolean {
-    if (!this.application || !this.isRiskAuditor) return false;
+    if (!this.application || !this.isRiskAuditor || this.isArchived) return false;
     const s = this.status;
     return s === 'PENDING_VERIFICATION' || s === 'CORRECTION_REQUIRED'
       || s === 'VERIFICATION_PASSED';
   }
 
   get canUploadApproval(): boolean {
-    if (!this.application || !this.isSupervisor) return false;
+    if (!this.application || !this.isSupervisor || this.isArchived) return false;
     const s = this.status;
     return s === 'VERIFICATION_PASSED' || s === 'APPROVED';
   }
@@ -756,6 +902,68 @@ export class ApplicationDetailComponent implements OnInit {
     const missing = this.evidenceSummary?.[node]?.missing;
     if (!missing || !missing.length) return '';
     return missing.map((m: any) => m.name).join('、');
+  }
+
+  doArchive(): void {
+    if (!confirm('确认月底归档？归档后所有编辑操作将被冻结，如需修改需先解除归档。')) return;
+    this.loanService.archiveApplication(this.application.id, this.application.version).subscribe({
+      next: () => {
+        alert('归档成功');
+        this.loadDetail(this.application.id);
+      },
+      error: (err) => {
+        alert(err.error?.error || '操作失败');
+      }
+    });
+  }
+
+  doUnarchive(): void {
+    if (!confirm('确认解除归档？解除后单据恢复可编辑状态。')) return;
+    this.loanService.unarchiveApplication(this.application.id, this.application.version).subscribe({
+      next: () => {
+        alert('解除归档成功');
+        this.loadDetail(this.application.id);
+      },
+      error: (err) => {
+        alert(err.error?.error || '操作失败');
+      }
+    });
+  }
+
+  doAddReview(): void {
+    if (!this.newReviewNote.trim()) {
+      alert('请输入复核备注内容');
+      return;
+    }
+    this.loanService.addReview(this.application.id, this.newReviewNote.trim(), this.application.version).subscribe({
+      next: () => {
+        alert('复核备注已保存');
+        this.newReviewNote = '';
+        this.loadDetail(this.application.id);
+      },
+      error: (err) => {
+        alert(err.error?.error || '保存失败');
+      }
+    });
+  }
+
+  doResolveException(exc: ExceptionReason): void {
+    const resolution = this.resolutionMap[exc.id];
+    if (!resolution || !resolution.trim()) {
+      alert('请输入解除异常的说明');
+      return;
+    }
+    if (!confirm('确认解除该异常？解除后该异常记录将标记为已解决。')) return;
+    this.loanService.resolveException(this.application.id, exc.id, resolution.trim(), this.application.version).subscribe({
+      next: () => {
+        alert('异常已解除');
+        delete this.resolutionMap[exc.id];
+        this.loadDetail(this.application.id);
+      },
+      error: (err) => {
+        alert(err.error?.error || '操作失败');
+      }
+    });
   }
 
   isOverdue(dateStr: string): boolean {

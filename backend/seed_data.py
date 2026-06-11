@@ -293,10 +293,134 @@ def seed_data():
                 ('VERIFY_PASS', 'PENDING_VERIFICATION', 'VERIFICATION_PASSED', 'risk_auditor_01', 'RISK_AUDITOR', 'APPROVAL', '核验通过，材料齐全'),
             ],
             'exceptions': [
-                ('MISSING_EVIDENCE', '审批证据不全', '缺少审批意见(APPROVAL_OPINION)，主管需上传后才能审批通过', 'supervisor_01', (now - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')),
+                ('MISSING_EVIDENCE', '审批证据不全', '缺少审批意见(APPROVAL_OPINION)，主管需上传后才能审批通过', 'supervisor_01', (now - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S'), None, None),
             ],
             'audit_notes': [
                 ('月底复核重点：核验通过后，审批证据不齐不能推进，防止越权放款', 'supervisor_01'),
+            ]
+        },
+        {
+            'no': 'LA' + (now - timedelta(days=35)).strftime('%Y%m%d') + '0010',
+            'name': '褚归档',
+            'id_card': '110101199910100123',
+            'phone': '13800000010',
+            'amount': 55000,
+            'purpose': '家居装修',
+            'term': 24,
+            'status': 'COMPLETED',
+            'node': 'APPROVAL',
+            'handler': None,
+            'created_by': 'credit_officer_01',
+            'created_at': (now - timedelta(days=35)).strftime('%Y-%m-%d %H:%M:%S'),
+            'ver_due': (now - timedelta(days=28)).strftime('%Y-%m-%d'),
+            'due': (now - timedelta(days=25)).strftime('%Y-%m-%d'),
+            'remark': '已归档案例：上个月月底完成归档，冻结所有编辑操作',
+            'is_archived': 1,
+            'archived_at': (now - timedelta(days=25)).strftime('%Y-%m-%d %H:%M:%S'),
+            'archived_by': 'supervisor_01',
+            'review_note': '【月底复核】全流程合规，三节点证据齐全，审批手续完整，同意归档。借款人征信良好，还款能力充足，无异常记录。',
+            'reviewed_by': 'supervisor_01',
+            'reviewed_at': (now - timedelta(days=25)).strftime('%Y-%m-%d %H:%M:%S'),
+            'attachments': [
+                ('ID_CARD', '身份证', 1, 'APPLICATION', 'credit_officer_01'),
+                ('INCOME_PROOF', '收入证明', 1, 'APPLICATION', 'credit_officer_01'),
+                ('CREDIT_REPORT', '征信报告', 1, 'VERIFICATION', 'risk_auditor_01'),
+                ('VERIFICATION_RECORD', '核验记录', 1, 'VERIFICATION', 'risk_auditor_01'),
+                ('APPROVAL_OPINION', '审批意见', 1, 'APPROVAL', 'supervisor_01'),
+                ('DISBURSEMENT_VOUCHER', '放款凭证', 1, 'APPROVAL', 'supervisor_01'),
+            ],
+            'records': [
+                ('CREATE', None, 'DRAFT', 'credit_officer_01', 'CREDIT_OFFICER', 'APPLICATION', '创建申请单'),
+                ('SUBMIT', 'DRAFT', 'PENDING_VERIFICATION', 'credit_officer_01', 'CREDIT_OFFICER', 'VERIFICATION', '提交核验'),
+                ('VERIFY_PASS', 'PENDING_VERIFICATION', 'VERIFICATION_PASSED', 'risk_auditor_01', 'RISK_AUDITOR', 'APPROVAL', '核验通过'),
+                ('APPROVE', 'VERIFICATION_PASSED', 'APPROVED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '审批通过'),
+                ('COMPLETE', 'APPROVED', 'COMPLETED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '放款完成'),
+                ('REVIEW', 'COMPLETED', 'COMPLETED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '月底复核通过，添加复核备注'),
+                ('ARCHIVE', 'COMPLETED', 'COMPLETED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '月底归档，冻结所有编辑操作'),
+            ],
+            'audit_notes': [
+                ('归档后不可编辑，如需修改请先解除归档', 'supervisor_01'),
+            ]
+        },
+        {
+            'no': 'LA' + (now - timedelta(days=30)).strftime('%Y%m%d') + '0011',
+            'name': '卫已解',
+            'id_card': '110101200011111234',
+            'phone': '13800000011',
+            'amount': 40000,
+            'purpose': '教育培训',
+            'term': 12,
+            'status': 'COMPLETED',
+            'node': 'APPROVAL',
+            'handler': None,
+            'created_by': 'credit_officer_02',
+            'created_at': (now - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S'),
+            'ver_due': (now - timedelta(days=23)).strftime('%Y-%m-%d'),
+            'due': (now - timedelta(days=20)).strftime('%Y-%m-%d'),
+            'remark': '异常已解除案例：曾因材料缺失退回，补正后完成全部流程并解除异常',
+            'attachments': [
+                ('ID_CARD', '身份证', 1, 'APPLICATION', 'credit_officer_02'),
+                ('INCOME_PROOF', '收入证明', 1, 'APPLICATION', 'credit_officer_02'),
+                ('CREDIT_REPORT', '征信报告', 1, 'VERIFICATION', 'risk_auditor_01'),
+                ('VERIFICATION_RECORD', '核验记录', 1, 'VERIFICATION', 'risk_auditor_01'),
+                ('APPROVAL_OPINION', '审批意见', 1, 'APPROVAL', 'supervisor_01'),
+                ('DISBURSEMENT_VOUCHER', '放款凭证', 1, 'APPROVAL', 'supervisor_01'),
+            ],
+            'records': [
+                ('CREATE', None, 'DRAFT', 'credit_officer_02', 'CREDIT_OFFICER', 'APPLICATION', '创建申请单'),
+                ('SUBMIT', 'DRAFT', 'PENDING_VERIFICATION', 'credit_officer_02', 'CREDIT_OFFICER', 'VERIFICATION', '提交核验'),
+                ('RETURN_CORRECTION', 'PENDING_VERIFICATION', 'CORRECTION_REQUIRED', 'risk_auditor_01', 'RISK_AUDITOR', 'APPLICATION', '收入证明缺失，退回补正'),
+                ('SUBMIT', 'CORRECTION_REQUIRED', 'PENDING_VERIFICATION', 'credit_officer_02', 'CREDIT_OFFICER', 'VERIFICATION', '补正收入证明后重新提交'),
+                ('VERIFY_PASS', 'PENDING_VERIFICATION', 'VERIFICATION_PASSED', 'risk_auditor_01', 'RISK_AUDITOR', 'APPROVAL', '核验通过'),
+                ('APPROVE', 'VERIFICATION_PASSED', 'APPROVED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '审批通过'),
+                ('COMPLETE', 'APPROVED', 'COMPLETED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '放款完成'),
+                ('RESOLVE_EXCEPTION', 'COMPLETED', 'COMPLETED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '月底复核确认异常已解决，解除异常标记'),
+            ],
+            'exceptions': [
+                ('RETURNED', '退回补正', '收入证明缺失，请补充后重新提交', 'risk_auditor_01', (now - timedelta(days=28)).strftime('%Y-%m-%d %H:%M:%S'),
+                 'supervisor_01', (now - timedelta(days=20)).strftime('%Y-%m-%d %H:%M:%S'), '收入证明已补正，完整有效，借款人资质符合要求'),
+            ],
+            'audit_notes': [
+                ('异常解除后可正常归档，解除过程已留痕', 'supervisor_01'),
+            ]
+        },
+        {
+            'no': 'LA' + (now - timedelta(days=12)).strftime('%Y%m%d') + '0012',
+            'name': '蒋复核',
+            'id_card': '110101200112122345',
+            'phone': '13800000012',
+            'amount': 75000,
+            'purpose': '汽车消费',
+            'term': 36,
+            'status': 'COMPLETED',
+            'node': 'APPROVAL',
+            'handler': None,
+            'created_by': 'credit_officer_01',
+            'created_at': (now - timedelta(days=12)).strftime('%Y-%m-%d %H:%M:%S'),
+            'ver_due': (now - timedelta(days=5)).strftime('%Y-%m-%d'),
+            'due': (now - timedelta(days=2)).strftime('%Y-%m-%d'),
+            'remark': '待归档案例：本月已完成放款，有复核备注，待月底归档',
+            'review_note': '【月底复核】资料完整，流程合规，符合归档条件。建议本月月底集中归档。',
+            'reviewed_by': 'supervisor_01',
+            'reviewed_at': (now - timedelta(days=2)).strftime('%Y-%m-%d %H:%M:%S'),
+            'attachments': [
+                ('ID_CARD', '身份证', 1, 'APPLICATION', 'credit_officer_01'),
+                ('INCOME_PROOF', '收入证明', 1, 'APPLICATION', 'credit_officer_01'),
+                ('CREDIT_REPORT', '征信报告', 1, 'VERIFICATION', 'risk_auditor_01'),
+                ('VERIFICATION_RECORD', '核验记录', 1, 'VERIFICATION', 'risk_auditor_01'),
+                ('APPROVAL_OPINION', '审批意见', 1, 'APPROVAL', 'supervisor_01'),
+                ('DISBURSEMENT_VOUCHER', '放款凭证', 1, 'APPROVAL', 'supervisor_01'),
+            ],
+            'records': [
+                ('CREATE', None, 'DRAFT', 'credit_officer_01', 'CREDIT_OFFICER', 'APPLICATION', '创建申请单'),
+                ('SUBMIT', 'DRAFT', 'PENDING_VERIFICATION', 'credit_officer_01', 'CREDIT_OFFICER', 'VERIFICATION', '提交核验'),
+                ('VERIFY_PASS', 'PENDING_VERIFICATION', 'VERIFICATION_PASSED', 'risk_auditor_01', 'RISK_AUDITOR', 'APPROVAL', '核验通过'),
+                ('APPROVE', 'VERIFICATION_PASSED', 'APPROVED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '审批通过'),
+                ('COMPLETE', 'APPROVED', 'COMPLETED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '放款完成'),
+                ('REVIEW', 'COMPLETED', 'COMPLETED', 'supervisor_01', 'LOAN_SUPERVISOR', 'APPROVAL', '月底复核，添加复核备注，待月底归档'),
+            ],
+            'audit_notes': [
+                ('有复核备注，可直接月底归档', 'supervisor_01'),
             ]
         },
     ]
@@ -306,12 +430,15 @@ def seed_data():
             '''INSERT INTO loan_applications
                (application_no, applicant_name, id_card, phone, amount, purpose,
                 term_months, status, current_node, current_handler, created_by,
-                created_at, verification_due_date, due_date, remark, version)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3)''',
+                created_at, verification_due_date, due_date, remark, version,
+                is_archived, archived_at, archived_by, review_note, reviewed_by, reviewed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, ?, ?, ?, ?, ?, ?)''',
             (app['no'], app['name'], app['id_card'], app['phone'],
              app['amount'], app['purpose'], app['term'], app['status'],
              app['node'], app['handler'], app['created_by'], app['created_at'],
-             app['ver_due'], app['due'], app['remark'])
+             app['ver_due'], app['due'], app['remark'],
+             app.get('is_archived', 0), app.get('archived_at'), app.get('archived_by'),
+             app.get('review_note'), app.get('reviewed_by'), app.get('reviewed_at'))
         )
         app_id = cursor.lastrowid
 
@@ -334,9 +461,13 @@ def seed_data():
         for exc in app.get('exceptions', []):
             c.execute(
                 '''INSERT INTO exception_reasons
-                   (loan_application_id, exception_type, reason, detail, detected_by, detected_at)
-                   VALUES (?, ?, ?, ?, ?, ?)''',
-                (app_id, exc[0], exc[1], exc[2], exc[3], exc[4])
+                   (loan_application_id, exception_type, reason, detail, detected_by, detected_at,
+                    resolved_by, resolved_at, resolution)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (app_id, exc[0], exc[1], exc[2], exc[3], exc[4],
+                 exc[5] if len(exc) > 5 else None,
+                 exc[6] if len(exc) > 6 else None,
+                 exc[7] if len(exc) > 7 else None)
             )
 
         for note in app.get('audit_notes', []):
@@ -380,6 +511,11 @@ def seed_data():
     print('  - 核验完成待审批(证据齐全): LA...0001（刘正常）- 主管登录后可审批→完成放款')
     print('  - 核验完成待审批(缺审批意见): LA...0009（沈待批）- 演示审批阶段证据拦截')
     print('  - 已完成(全链路走完):        LA...0007（冯完成）- 含三节点完整证据与处理记录')
+    print()
+    print('月底归档与复核闭环演示（主管视角）:')
+    print('  - 已归档(冻结不可编辑):      LA...0010（褚归档）- 含归档标记、复核备注、解除归档入口')
+    print('  - 异常已解除:                LA...0011（卫已解）- 含已解除异常、解除时间/人/说明')
+    print('  - 待归档(有复核备注):        LA...0012（蒋复核）- 含复核备注、待月底归档、可批量归档')
     print()
     print('附加案例:')
     print('  - 待核验(齐全):      LA...0002（钱待核）')

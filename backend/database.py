@@ -44,8 +44,19 @@ def init_db():
         version INTEGER DEFAULT 1,
         verification_due_date TEXT,
         due_date TEXT,
-        remark TEXT
+        remark TEXT,
+        is_archived INTEGER DEFAULT 0,
+        archived_at TEXT,
+        archived_by TEXT,
+        review_note TEXT,
+        reviewed_by TEXT,
+        reviewed_at TEXT
     );
+
+    CREATE INDEX IF NOT EXISTS idx_loan_app_status ON loan_applications(status);
+    CREATE INDEX IF NOT EXISTS idx_loan_app_is_archived ON loan_applications(is_archived);
+    CREATE INDEX IF NOT EXISTS idx_loan_app_created_by ON loan_applications(created_by);
+    CREATE INDEX IF NOT EXISTS idx_loan_app_handler ON loan_applications(current_handler);
 
     CREATE TABLE IF NOT EXISTS attachments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +70,9 @@ def init_db():
         uploaded_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (loan_application_id) REFERENCES loan_applications(id)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_attach_app_id ON attachments(loan_application_id);
+    CREATE INDEX IF NOT EXISTS idx_attach_node ON attachments(node);
 
     CREATE TABLE IF NOT EXISTS processing_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +88,9 @@ def init_db():
         FOREIGN KEY (loan_application_id) REFERENCES loan_applications(id)
     );
 
+    CREATE INDEX IF NOT EXISTS idx_records_app_id ON processing_records(loan_application_id);
+    CREATE INDEX IF NOT EXISTS idx_records_action ON processing_records(action);
+
     CREATE TABLE IF NOT EXISTS audit_notes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         loan_application_id INTEGER NOT NULL,
@@ -82,6 +99,8 @@ def init_db():
         created_at TEXT DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (loan_application_id) REFERENCES loan_applications(id)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_app_id ON audit_notes(loan_application_id);
 
     CREATE TABLE IF NOT EXISTS exception_reasons (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,11 +112,34 @@ def init_db():
         detected_at TEXT DEFAULT (datetime('now', 'localtime')),
         resolved_at TEXT,
         resolution TEXT,
+        resolved_by TEXT,
         FOREIGN KEY (loan_application_id) REFERENCES loan_applications(id)
     );
-    ''')
+
+    CREATE INDEX IF NOT EXISTS idx_exception_app_id ON exception_reasons(loan_application_id);
+    CREATE INDEX IF NOT EXISTS idx_exception_resolved ON exception_reasons(resolved_at);
+    '')
 
     conn.commit()
+
+    migration_conn = get_db()
+    mc = migration_conn.cursor()
+    migration_sqls = [
+        "ALTER TABLE loan_applications ADD COLUMN is_archived INTEGER DEFAULT 0",
+        "ALTER TABLE loan_applications ADD COLUMN archived_at TEXT",
+        "ALTER TABLE loan_applications ADD COLUMN archived_by TEXT",
+        "ALTER TABLE loan_applications ADD COLUMN review_note TEXT",
+        "ALTER TABLE loan_applications ADD COLUMN reviewed_by TEXT",
+        "ALTER TABLE loan_applications ADD COLUMN reviewed_at TEXT",
+        "ALTER TABLE exception_reasons ADD COLUMN resolved_by TEXT",
+    ]
+    for sql in migration_sqls:
+        try:
+            mc.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+    migration_conn.commit()
+    migration_conn.close()
     conn.close()
     print('数据库初始化完成')
 
