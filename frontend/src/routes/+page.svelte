@@ -1,8 +1,17 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { userStore } from '$lib/store.js';
-	import { api, statusMap, warningLevelMap, verifyStatusMap, formatMoney, formatDate, roleMap } from '$lib/api.js';
+	import { userStore, currentRole } from '$lib/store.js';
+	import {
+		api,
+		statusMap,
+		warningLevelMap,
+		verifyStatusMap,
+		formatMoney,
+		formatDate,
+		roleMap,
+		loanStatusMap
+	} from '$lib/api.js';
 
 	let loading = false;
 	let statistics = null;
@@ -11,12 +20,11 @@
 	let page = 1;
 	let pageSize = 10;
 	let selectedIds = new Set();
-	
-	let filterStatus = '';
+
+	let filterInvoiceStatus = '';
 	let filterClueNo = '';
 	let filterCustomer = '';
 
-	let selectedRole = '';
 	let availableRoles = [];
 
 	let showBatchModal = false;
@@ -25,7 +33,26 @@
 	let batchLoading = false;
 	let batchResults = [];
 
+	let showCreateModal = false;
+	let createLoading = false;
+	let createForm = {
+		clue_no: '',
+		customer_name: '',
+		finance_amount: '',
+		invoice_count: '',
+		remark: '',
+		evidence_requirements: []
+	};
+	let createError = '';
+
 	let refreshInterval;
+
+	$: role = $currentRole;
+	$: user = $userStore;
+
+	$: if (role && user) {
+		loadData();
+	}
 
 	onMount(async () => {
 		const token = localStorage.getItem('token');
@@ -35,8 +62,7 @@
 		}
 
 		await loadUser();
-		await loadData();
-		
+
 		refreshInterval = setInterval(() => {
 			loadData();
 		}, 30000);
@@ -49,25 +75,35 @@
 	});
 
 	async function loadUser() {
-		const user = await userStore.loadUser();
-		if (user && user.roles) {
-			availableRoles = user.roles;
-			selectedRole = user.roles[0];
+		const u = await userStore.loadUser();
+		if (u && u.roles) {
+			availableRoles = u.roles;
+			if (!role && u.roles.length > 0) {
+				currentRole.set(u.roles[0]);
+			}
 		}
 	}
 
 	async function loadData() {
 		loading = true;
 		try {
+			const queryParams = {
+				page,
+				page_size: pageSize
+			};
+			if (filterInvoiceStatus) {
+				queryParams.invoice_status = filterInvoiceStatus;
+			}
+			if (filterClueNo) {
+				queryParams.clue_no = filterClueNo;
+			}
+			if (filterCustomer) {
+				queryParams.customer_name = filterCustomer;
+			}
+
 			const [statsRes, appsRes] = await Promise.all([
-				api.getStatistics(),
-				api.getApplications({
-					status: filterStatus,
-					clue_no: filterClueNo,
-					customer_name: filterCustomer,
-					page,
-					page_size: pageSize
-				})
+				api.getStatistics(role),
+				api.getApplications(queryParams)
 			]);
 
 			if (statsRes.success) statistics = statsRes.data;
@@ -82,13 +118,19 @@
 		}
 	}
 
+	function handleRoleChange(r) {
+		currentRole.set(r);
+		page = 1;
+		selectedIds = new Set();
+	}
+
 	function handleSearch() {
 		page = 1;
 		loadData();
 	}
 
 	function handleReset() {
-		filterStatus = '';
+		filterInvoiceStatus = '';
 		filterClueNo = '';
 		filterCustomer = '';
 		page = 1;
@@ -151,7 +193,7 @@
 			});
 
 			if (res.success) {
-				batchResults = res.data;
+				batchResults = res.data || [];
 				await loadData();
 				selectedIds = new Set();
 			}
@@ -167,6 +209,77 @@
 		batchResults = [];
 	}
 
+	function openCreateModal() {
+		createForm = {
+			clue_no: '',
+			customer_name: '',
+			finance_amount: '',
+			invoice_count: '',
+			remark: '',
+			evidence_requirements: []
+		};
+		createError = '';
+		showCreateModal = true;
+	}
+
+	function closeCreateModal() {
+		showCreateModal = false;
+		createLoading = false;
+		createError = '';
+	}
+
+	function toggleEvidence(type) {
+		const arr = [...createForm.evidence_requirements];
+		const idx = arr.indexOf(type);
+		if (idx >= 0) {
+			arr.splice(idx, 1);
+		} else {
+			arr.push(type);
+		}
+		createForm.evidence_requirements = arr;
+	}
+
+	async function handleCreateSubmit() {
+		createError = '';
+
+		if (!createForm.customer_name.trim()) {
+			createError = '请输入客户名称';
+			return;
+		}
+		if (!createForm.finance_amount || isNaN(Number(createForm.finance_amount)) || Number(createForm.finance_amount) <= 0) {
+			createError = '请输入有效的融资金额';
+			return;
+		}
+		if (!createForm.invoice_count || isNaN(Number(createForm.invoice_count)) || Number(createForm.invoice_count) <= 0) {
+			createError = '请输入有效的发票张数';
+			return;
+		}
+
+		createLoading = true;
+		try {
+			const res = await api.createApplication({
+				clue_no: createForm.clue_no.trim(),
+				customer_name: createForm.customer_name.trim(),
+				finance_amount: Number(createForm.finance_amount),
+				invoice_count: Number(createForm.invoice_count),
+				remark: createForm.remark.trim(),
+				evidence_requirements: createForm.evidence_requirements
+			});
+
+			if (res.success) {
+				alert('创建成功');
+				closeCreateModal();
+				await loadData();
+			} else {
+				createError = res.message || '创建失败';
+			}
+		} catch (e) {
+			createError = e.message || '创建失败';
+		} finally {
+			createLoading = false;
+		}
+	}
+
 	function getStatCards() {
 		if (!statistics) return [];
 		return [
@@ -180,15 +293,19 @@
 	}
 
 	function canBatchPass() {
-		return $userStore?.roles?.includes('auditor');
+		return user?.roles?.includes('auditor');
 	}
 
 	function canBatchReject() {
-		return $userStore?.roles?.includes('auditor');
+		return user?.roles?.includes('auditor');
 	}
 
 	function canBatchArchive() {
-		return $userStore?.roles?.includes('reviewer');
+		return user?.roles?.includes('reviewer');
+	}
+
+	function isRegisterRole() {
+		return role === 'register';
 	}
 
 	function totalPages() {
@@ -200,19 +317,25 @@
 		page = p;
 		loadData();
 	}
+
+	const evidenceOptions = [
+		{ value: 'contract', label: '合同' },
+		{ value: 'invoice', label: '发票' },
+		{ value: 'invoice_list', label: '发票清单' }
+	];
 </script>
 
 <div class="home-page">
 	<div class="role-switcher">
 		<span class="role-label">当前角色：</span>
 		<div class="role-tabs">
-			{#each availableRoles as role}
-				<button 
-					class="role-tab {selectedRole === role ? 'active' : ''}"
-					on:click={() => { selectedRole = role; loadData(); }}
+			{#each availableRoles as r}
+				<button
+					class="role-tab {role === r ? 'active' : ''}"
+					on:click={() => handleRoleChange(r)}
 				>
-					{roleMap[role]?.name || role}
-					<span class="role-fullname">（{roleMap[role]?.label || role}）</span>
+					{roleMap[r]?.name || r}
+					<span class="role-fullname">（{roleMap[r]?.label || r}）</span>
 				</button>
 			{/each}
 		</div>
@@ -231,6 +354,11 @@
 		<div class="card-header">
 			<h3>融资申请单台账</h3>
 			<div class="header-actions">
+				{#if isRegisterRole()}
+					<button class="btn btn-success" on:click={openCreateModal}>
+						+ 创建申请单
+					</button>
+				{/if}
 				{#if canBatchPass()}
 					<button class="btn btn-primary" on:click={() => openBatchModal('pass')} disabled={selectedIds.size === 0}>
 						批量通过
@@ -251,16 +379,12 @@
 
 		<div class="filter-bar">
 			<div class="filter-item">
-				<label>状态：</label>
-				<select bind:value={filterStatus}>
+				<label>发票核验状态：</label>
+				<select bind:value={filterInvoiceStatus}>
 					<option value="">全部</option>
-					<option value="pending_verify">待核验</option>
-					<option value="verify_failed">核验失败</option>
-					<option value="verify_completed">核验完成</option>
-					<option value="pending_correction">待补正</option>
-					<option value="overdue">已逾期</option>
-					<option value="verify_passed">待复核</option>
-					<option value="archived">已归档</option>
+					<option value="pending">待核验</option>
+					<option value="failed">核验失败</option>
+					<option value="passed">核验完成</option>
 				</select>
 			</div>
 			<div class="filter-item">
@@ -285,8 +409,8 @@
 					<thead>
 						<tr>
 							<th style="width: 40px;">
-								<input 
-									type="checkbox" 
+								<input
+									type="checkbox"
 									checked={selectedIds.size > 0 && selectedIds.size === applications.length}
 									on:change={toggleSelectAll}
 								/>
@@ -298,6 +422,7 @@
 							<th>当前节点</th>
 							<th>当前处理人</th>
 							<th>预警等级</th>
+							<th>补正次数</th>
 							<th>发票核验</th>
 							<th>放款确认</th>
 							<th>创建时间</th>
@@ -307,14 +432,14 @@
 					<tbody>
 						{#if applications.length === 0}
 							<tr>
-								<td colspan="12" class="empty-row">暂无数据</td>
+								<td colspan="13" class="empty-row">暂无数据</td>
 							</tr>
 						{/if}
 						{#each applications as app}
 							<tr class={selectedIds.has(app.id) ? 'selected' : ''}>
 								<td>
-									<input 
-										type="checkbox" 
+									<input
+										type="checkbox"
 										checked={selectedIds.has(app.id)}
 										on:change={() => toggleSelect(app.id)}
 									/>
@@ -342,13 +467,18 @@
 									{:else}-{/if}
 								</td>
 								<td>
-									<span class="verify-tag" style="background: {verifyStatusMap[app.invoice_verify_status]?.color + '20'}; color: {verifyStatusMap[app.invoice_verify_status]?.color}">
-										{verifyStatusMap[app.invoice_verify_status]?.label}
+									<span class="correction-count {app.correction_count > 0 ? 'has-correction' : ''}">
+										{app.correction_count || 0}
 									</span>
 								</td>
 								<td>
-									<span class="verify-tag" style="background: {verifyStatusMap[app.loan_confirm_status]?.color + '20'}; color: {verifyStatusMap[app.loan_confirm_status]?.color}">
-										{verifyStatusMap[app.loan_confirm_status]?.label}
+									<span class="verify-tag" style="background: {verifyStatusMap[app.invoice_verify_status]?.color + '20'}; color: {verifyStatusMap[app.invoice_verify_status]?.color}">
+										{verifyStatusMap[app.invoice_verify_status]?.label || '-'}
+									</span>
+								</td>
+								<td>
+									<span class="verify-tag" style="background: {loanStatusMap[app.loan_confirm_status]?.color + '20'}; color: {loanStatusMap[app.loan_confirm_status]?.color}">
+										{loanStatusMap[app.loan_confirm_status]?.label || '-'}
 									</span>
 								</td>
 								<td class="time">{formatDate(app.created_at)}</td>
@@ -373,6 +503,65 @@
 			</div>
 		</div>
 	</div>
+
+	{#if showCreateModal}
+		<div class="modal-overlay" on:click={closeCreateModal}>
+			<div class="modal modal-large" on:click|stopPropagation>
+				<div class="modal-header">
+					<h3>创建融资申请单</h3>
+					<button class="close-btn" on:click={closeCreateModal}>×</button>
+				</div>
+				<div class="modal-body">
+					{#if createError}
+						<div class="error-tip">{createError}</div>
+					{/if}
+					<div class="form-grid">
+						<div class="form-group">
+							<label>线索号 <span class="optional">（选填）</span></label>
+							<input type="text" bind:value={createForm.clue_no} placeholder="请输入线索号" />
+						</div>
+						<div class="form-group">
+							<label>客户名称 <span class="required">*</span></label>
+							<input type="text" bind:value={createForm.customer_name} placeholder="请输入客户名称" />
+						</div>
+						<div class="form-group">
+							<label>融资金额（元） <span class="required">*</span></label>
+							<input type="number" bind:value={createForm.finance_amount} placeholder="请输入融资金额" min="0" step="0.01" />
+						</div>
+						<div class="form-group">
+							<label>发票张数 <span class="required">*</span></label>
+							<input type="number" bind:value={createForm.invoice_count} placeholder="请输入发票张数" min="1" step="1" />
+						</div>
+					</div>
+					<div class="form-group">
+						<label>证据需求 <span class="optional">（多选）</span></label>
+						<div class="checkbox-group">
+							{#each evidenceOptions as opt}
+								<label class="checkbox-item">
+									<input
+										type="checkbox"
+										checked={createForm.evidence_requirements.includes(opt.value)}
+										on:change={() => toggleEvidence(opt.value)}
+									/>
+									<span>{opt.label}</span>
+								</label>
+							{/each}
+						</div>
+					</div>
+					<div class="form-group">
+						<label>备注 <span class="optional">（选填）</span></label>
+						<textarea bind:value={createForm.remark} rows="3" placeholder="请输入备注"></textarea>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button class="btn" on:click={closeCreateModal} disabled={createLoading}>取消</button>
+					<button class="btn btn-primary" on:click={handleCreateSubmit} disabled={createLoading}>
+						{createLoading ? '提交中...' : '确认创建'}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 
 	{#if showBatchModal}
 		<div class="modal-overlay" on:click={closeBatchModal}>
@@ -406,7 +595,7 @@
 								<div class="result-item {result.success ? 'success' : 'error'}">
 									<span class="result-no">{result.application_no || result.id}</span>
 									<span class="result-status">{result.success ? '✓ 成功' : '✗ 失败'}</span>
-									<span class="result-msg">{result.message}</span>
+									<span class="result-msg">{result.message || (result.success ? '操作成功' : '操作失败')}</span>
 								</div>
 							{/each}
 						</div>
@@ -429,7 +618,7 @@
 
 <style>
 	.home-page {
-		max-width: 1400px;
+		max-width: 1500px;
 		margin: 0 auto;
 	}
 
@@ -453,6 +642,7 @@
 	.role-tabs {
 		display: flex;
 		gap: 8px;
+		flex-wrap: wrap;
 	}
 
 	.role-tab {
@@ -523,6 +713,8 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		flex-wrap: wrap;
+		gap: 12px;
 	}
 
 	.card-header h3 {
@@ -534,6 +726,7 @@
 	.header-actions {
 		display: flex;
 		gap: 8px;
+		flex-wrap: wrap;
 	}
 
 	.filter-bar {
@@ -642,6 +835,7 @@
 		width: 100%;
 		border-collapse: collapse;
 		font-size: 13px;
+		min-width: 1200px;
 	}
 
 	.data-table th,
@@ -649,6 +843,7 @@
 		padding: 12px 8px;
 		text-align: left;
 		border-bottom: 1px solid #f0f0f0;
+		white-space: nowrap;
 	}
 
 	.data-table th {
@@ -706,6 +901,23 @@
 		font-size: 11px;
 	}
 
+	.correction-count {
+		display: inline-block;
+		min-width: 28px;
+		text-align: center;
+		padding: 2px 8px;
+		border-radius: 10px;
+		font-size: 12px;
+		font-weight: 500;
+		background: #f0f0f0;
+		color: #666;
+	}
+
+	.correction-count.has-correction {
+		background: #fff7e6;
+		color: #d48806;
+	}
+
 	.link-btn {
 		background: none;
 		border: none;
@@ -725,6 +937,8 @@
 		justify-content: space-between;
 		align-items: center;
 		border-top: 1px solid #f0f0f0;
+		flex-wrap: wrap;
+		gap: 12px;
 	}
 
 	.total-text {
@@ -786,6 +1000,10 @@
 		flex-direction: column;
 	}
 
+	.modal-large {
+		max-width: 640px;
+	}
+
 	.modal-header {
 		padding: 16px 20px;
 		border-bottom: 1px solid #f0f0f0;
@@ -824,6 +1042,20 @@
 		color: #333;
 	}
 
+	.modal-body h4 {
+		margin: 0 0 16px 0;
+		font-size: 14px;
+		color: #333;
+		font-weight: 600;
+	}
+
+	.form-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 16px;
+		margin-bottom: 16px;
+	}
+
 	.form-group {
 		margin-bottom: 16px;
 	}
@@ -835,15 +1067,61 @@
 		color: #666;
 	}
 
-	.form-group textarea {
+	.required {
+		color: #ff4d4f;
+	}
+
+	.optional {
+		color: #999;
+		font-weight: normal;
+	}
+
+	.form-group input,
+	.form-group textarea,
+	.form-group select {
 		width: 100%;
 		padding: 8px 12px;
 		border: 1px solid #d9d9d9;
 		border-radius: 4px;
 		font-size: 13px;
-		resize: vertical;
 		box-sizing: border-box;
 		font-family: inherit;
+	}
+
+	.form-group textarea {
+		resize: vertical;
+		min-height: 80px;
+	}
+
+	.checkbox-group {
+		display: flex;
+		gap: 20px;
+		flex-wrap: wrap;
+		padding: 4px 0;
+	}
+
+	.checkbox-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		cursor: pointer;
+		font-size: 13px;
+		color: #333;
+	}
+
+	.checkbox-item input[type="checkbox"] {
+		width: auto;
+		cursor: pointer;
+	}
+
+	.error-tip {
+		background: #fff2f0;
+		border: 1px solid #ffccc7;
+		color: #ff4d4f;
+		padding: 10px 12px;
+		border-radius: 4px;
+		font-size: 12px;
+		margin-bottom: 16px;
 	}
 
 	.warning-tip {
@@ -918,6 +1196,10 @@
 	@media (max-width: 768px) {
 		.stats-cards {
 			grid-template-columns: repeat(2, 1fr);
+		}
+
+		.form-grid {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

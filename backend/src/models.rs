@@ -24,6 +24,21 @@ pub struct LoginResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EvidenceRequirement {
+    pub id: String,
+    pub application_id: String,
+    pub evidence_type: String,
+    pub evidence_name: String,
+    pub required: bool,
+    pub provided: bool,
+    pub attachment_id: Option<String>,
+    pub required_by_role: Option<String>,
+    pub required_at: Option<NaiveDateTime>,
+    pub provided_at: Option<NaiveDateTime>,
+    pub remark: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FinanceApplication {
     pub id: String,
     pub application_no: String,
@@ -44,6 +59,7 @@ pub struct FinanceApplication {
     pub updated_at: NaiveDateTime,
     pub invoice_verify_status: String,
     pub loan_confirm_status: String,
+    pub correction_count: i64,
     pub remark: Option<String>,
 }
 
@@ -54,7 +70,16 @@ pub struct CreateApplicationRequest {
     pub finance_amount: f64,
     pub invoice_count: i64,
     pub remark: Option<String>,
-    pub attachment_ids: Option<Vec<String>>,
+    pub acting_role: Option<String>,
+    pub evidence_requirements: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EvidenceRequirementInput {
+    pub evidence_type: String,
+    pub evidence_name: String,
+    pub required: Option<bool>,
+    pub attachment_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -62,9 +87,24 @@ pub struct ProcessApplicationRequest {
     pub action: String,
     pub comment: Option<String>,
     pub version: i64,
+    pub acting_role: Option<String>,
     pub evidence_required: Option<Vec<String>>,
     pub evidence_provided: Option<Vec<String>>,
     pub exception_reason: Option<String>,
+    pub correction_note: Option<String>,
+    pub invoice_status: Option<String>,
+    pub loan_status: Option<String>,
+    pub evidence_updates: Option<Vec<EvidenceRequirementUpdate>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EvidenceRequirementUpdate {
+    pub id: Option<String>,
+    pub evidence_type: String,
+    pub evidence_name: String,
+    pub provided: bool,
+    pub attachment_id: Option<String>,
+    pub remark: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -72,6 +112,7 @@ pub struct BatchProcessRequest {
     pub ids: Vec<String>,
     pub action: String,
     pub comment: Option<String>,
+    pub acting_role: Option<String>,
     pub version_map: Option<std::collections::HashMap<String, i64>>,
 }
 
@@ -109,8 +150,16 @@ pub struct ProcessingRecord {
     pub handler: String,
     pub handler_name: Option<String>,
     pub handler_role: String,
+    pub acting_role: Option<String>,
     pub handler_role_name: Option<String>,
     pub comment: Option<String>,
+    pub correction_note: Option<String>,
+    pub evidence_required: Option<String>,
+    pub evidence_provided: Option<String>,
+    pub invoice_status_before: Option<String>,
+    pub invoice_status_after: Option<String>,
+    pub loan_status_before: Option<String>,
+    pub loan_status_after: Option<String>,
     pub version_before: Option<i64>,
     pub version_after: Option<i64>,
     pub created_at: NaiveDateTime,
@@ -121,12 +170,16 @@ pub struct ExceptionReason {
     pub id: String,
     pub application_id: String,
     pub record_id: Option<String>,
+    pub audit_note_id: Option<String>,
     pub exception_type: String,
     pub exception_type_name: Option<String>,
     pub reason: String,
     pub severity: String,
+    pub source_role: Option<String>,
     pub resolved: bool,
     pub resolved_by: Option<String>,
+    pub resolved_by_role: Option<String>,
+    pub resolved_note: Option<String>,
     pub resolved_at: Option<NaiveDateTime>,
     pub created_at: NaiveDateTime,
 }
@@ -136,7 +189,11 @@ pub struct AuditNote {
     pub id: String,
     pub application_id: String,
     pub note: String,
+    pub note_type: Option<String>,
+    pub related_record_id: Option<String>,
+    pub related_exception_id: Option<String>,
     pub created_by: String,
+    pub created_by_role: Option<String>,
     pub created_by_name: Option<String>,
     pub created_at: NaiveDateTime,
 }
@@ -148,6 +205,7 @@ pub struct ApplicationDetail {
     pub records: Vec<ProcessingRecord>,
     pub exceptions: Vec<ExceptionReason>,
     pub audit_notes: Vec<AuditNote>,
+    pub evidence_requirements: Vec<EvidenceRequirement>,
     pub can_process: bool,
     pub allowed_actions: Vec<String>,
 }
@@ -159,6 +217,9 @@ pub struct ApplicationListQuery {
     pub customer_name: Option<String>,
     pub node: Option<String>,
     pub handler: Option<String>,
+    pub acting_role: Option<String>,
+    pub invoice_status: Option<String>,
+    pub loan_status: Option<String>,
     pub page: Option<u64>,
     pub page_size: Option<u64>,
 }

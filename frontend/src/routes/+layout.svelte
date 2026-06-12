@@ -1,6 +1,7 @@
 <script>
 	import { page } from '$app/stores';
-	import { userStore } from '$lib/store.js';
+	import { userStore, currentRole, switchRole } from '$lib/store.js';
+	import { roleMap } from '$lib/api.js';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 
@@ -24,7 +25,12 @@
 		goto('/login');
 	}
 
+	function onChangeRole(e) {
+		switchRole(e.target.value);
+	}
+
 	$: currentPath = $page.url.pathname;
+	$: roles = $userStore?.roles || [];
 </script>
 
 <div class="app-layout">
@@ -39,14 +45,32 @@
 			</div>
 			<div class="header-right">
 				{#if $userStore}
+					<div class="role-switcher">
+						<label class="role-label">当前角色：</label>
+						<select class="role-select" value={$currentRole} on:change={onChangeRole}>
+							{#each roles as r}
+								<option value={r}>{roleMap[r]?.name || r}</option>
+							{/each}
+						</select>
+					</div>
 					<div class="user-info" on:click={() => showUserMenu = !showUserMenu}>
 						<span class="user-avatar">{$userStore.real_name?.charAt(0) || 'U'}</span>
 						<span class="user-name">{$userStore.real_name}</span>
-						<span class="user-role">{roleLabel($userStore.roles?.[0])}</span>
+						<span class="user-role">{$currentRole && roleMap[$currentRole]?.name ? roleMap[$currentRole].name : ''}</span>
 						<span class="dropdown-arrow">▼</span>
 					</div>
 					{#if showUserMenu}
 						<div class="user-menu" on:click|stopPropagation>
+							<div class="menu-info">
+								<div class="mi-line"><span class="mi-label">用户名：</span>{$userStore.username}</div>
+								<div class="mi-line"><span class="mi-label">姓名：</span>{$userStore.real_name}</div>
+								<div class="mi-line"><span class="mi-label">角色：</span>
+									{#each roles as r, i}
+										{roleMap[r]?.label || r}{i < roles.length - 1 ? '、' : ''}
+									{/each}
+								</div>
+							</div>
+							<div class="menu-divider"></div>
 							<div class="menu-item" on:click={logout}>退出登录</div>
 						</div>
 					{/if}
@@ -112,7 +136,33 @@
 	.header-right {
 		display: flex;
 		align-items: center;
+		gap: 20px;
 		position: relative;
+	}
+
+	.role-switcher {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		background: rgba(255, 255, 255, 0.12);
+		padding: 6px 12px;
+		border-radius: 4px;
+	}
+
+	.role-label {
+		font-size: 13px;
+		opacity: 0.9;
+	}
+
+	.role-select {
+		background: #fff;
+		color: #333;
+		border: none;
+		border-radius: 3px;
+		padding: 4px 8px;
+		font-size: 13px;
+		outline: none;
+		cursor: pointer;
 	}
 
 	.user-info {
@@ -164,10 +214,30 @@
 		right: 0;
 		margin-top: 8px;
 		background: white;
-		border-radius: 4px;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-		min-width: 120px;
+		border-radius: 6px;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+		min-width: 220px;
 		z-index: 1000;
+		color: #333;
+		overflow: hidden;
+	}
+
+	.menu-info {
+		padding: 14px 16px;
+		font-size: 13px;
+	}
+
+	.mi-line {
+		line-height: 1.8;
+	}
+
+	.mi-label {
+		color: #999;
+	}
+
+	.menu-divider {
+		height: 1px;
+		background: #f0f0f0;
 	}
 
 	.menu-item {
@@ -188,14 +258,3 @@
 		padding: 20px;
 	}
 </style>
-
-<script context="module">
-	function roleLabel(role) {
-		const map = {
-			register: '融资申请登记员',
-			auditor: '融资申请审核主管',
-			reviewer: '供应链金融平台复核负责人'
-		};
-		return map[role] || role;
-	}
-</script>

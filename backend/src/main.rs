@@ -104,7 +104,7 @@ fn get_me(user: AuthUser) -> Json<ApiResponse<User>> {
     Json(ApiResponse::ok(user.0))
 }
 
-#[get("/applications?<status>&<clue_no>&<customer_name>&<node>&<handler>&<page>&<page_size>")]
+#[get("/applications?<status>&<clue_no>&<customer_name>&<node>&<handler>&<acting_role>&<invoice_status>&<loan_status>&<page>&<page_size>")]
 fn list_applications(
     state: &State<AppState>,
     user: AuthUser,
@@ -113,6 +113,9 @@ fn list_applications(
     customer_name: Option<String>,
     node: Option<String>,
     handler: Option<String>,
+    acting_role: Option<String>,
+    invoice_status: Option<String>,
+    loan_status: Option<String>,
     page: Option<u64>,
     page_size: Option<u64>,
 ) -> Result<Json<ApiResponse<PaginatedResponse<FinanceApplication>>>, Custom<Json<ApiResponse<()>>>> {
@@ -122,6 +125,9 @@ fn list_applications(
         customer_name,
         node,
         handler,
+        acting_role,
+        invoice_status,
+        loan_status,
         page,
         page_size,
     };
@@ -186,13 +192,14 @@ fn batch_process(
     Ok(Json(ApiResponse::ok(result)))
 }
 
-#[get("/statistics")]
+#[get("/statistics?<acting_role>")]
 fn get_statistics(
     state: &State<AppState>,
     user: AuthUser,
+    acting_role: Option<String>,
 ) -> Result<Json<ApiResponse<Statistics>>, Custom<Json<ApiResponse<()>>>> {
     let db = state.db.lock().unwrap();
-    let result = db.get_statistics(&user.0)
+    let result = db.get_statistics(&user.0, acting_role)
         .map_err(|e| Custom(Status::InternalServerError, Json(ApiResponse::err(&e.to_string()))))?;
     
     Ok(Json(ApiResponse::ok(result)))
@@ -206,8 +213,9 @@ fn health() -> Json<ApiResponse<String>> {
 #[launch]
 fn rocket() -> _ {
     let db_path = "data/finance.db";
+    let init_sql = include_str!("../init.sql");
     
-    let db = Database::new(db_path)
+    let db = Database::new(db_path, init_sql)
         .expect("Failed to initialize database");
     
     rocket::build()
