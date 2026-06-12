@@ -166,7 +166,7 @@ export default function VisitList() {
     return actions;
   };
 
-  const overdueSelected = list.filter(o => selected.has(o.id) && getDeadlineStatus(o.deadline).status === 'overdue').length;
+  const selectedOverdueCount = list.filter(o => selected.has(o.id) && getDeadlineStatus(o.deadline).status === 'overdue').length;
 
   return (
     <div>
@@ -271,7 +271,7 @@ export default function VisitList() {
 
         {selected.size > 0 && (
           <div className="batch-bar">
-            <span>已选择 <strong>{selected.size}</strong> 条单据{overdueSelected > 0 && `（其中 ${overdueSelected} 条逾期）`}</span>
+            <span>已选择 <strong>{selected.size}</strong> 条单据{selectedOverdueCount > 0 && `（其中 ${selectedOverdueCount} 条逾期）`}</span>
             <button className="btn btn-primary btn-sm" onClick={() => setBatchModal(true)}>批量处理</button>
             <button className="btn btn-sm" onClick={() => setSelected(new Set())}>取消选择</button>
           </div>

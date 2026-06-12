@@ -301,205 +301,6 @@ router.get('/overdue-queue', requireRole('director'), (req, res, next) => {
   }
 });
 
-router.get('/:id', requireAuth, (req, res, next) => {
-  try {
-    const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(req.params.id);
-    if (!order) {
-      throw new AppError('就诊单不存在', 404, 'material');
-    }
-
-    if (!canViewOrder(order, req.user)) {
-      throw new AppError('越权访问：您无权查看此就诊单', 403, 'permission');
-    }
-
-    const enriched = enrichOrder(req.db, order);
-    enriched.allowedActions = getAllowedActions(order, req.user);
-
-    enriched.attachments = req.db.prepare(`
-      SELECT a.*, u.name as uploader_name
-      FROM attachments a LEFT JOIN users u ON a.uploaded_by = u.id
-      WHERE a.visit_order_id = ? ORDER BY a.created_at DESC
-    `).all(req.params.id);
-
-    enriched.records = req.db.prepare(`
-      SELECT r.*, u.name as operator_name
-      FROM processing_records r LEFT JOIN users u ON r.operator_id = u.id
-      WHERE r.visit_order_id = ? ORDER BY r.created_at DESC
-    `).all(req.params.id).map(r => ({
-      ...r,
-      operatorRoleLabel: ROLE_LABELS[r.operator_role],
-      fromStatusLabel: r.from_status ? STATUS_LABELS[r.from_status] : null,
-      toStatusLabel: STATUS_LABELS[r.to_status],
-      exceptionTypeLabel: r.exception_type ? EXCEPTION_TYPE_LABELS[r.exception_type] : null
-    }));
-
-    enriched.auditNotes = req.db.prepare(`
-      SELECT n.*, u.name as operator_name, u.role as operator_role
-      FROM audit_notes n LEFT JOIN users u ON n.operator_id = u.id
-      WHERE n.visit_order_id = ? ORDER BY n.created_at DESC
-    `).all(req.params.id);
-
-    enriched.correctionHistory = req.db.prepare(`
-      SELECT id, action, from_status, to_status, operator_id, operator_role,
-             comment, exception_type, exception_reason, correction_action,
-             evidence_required, evidence_provided, created_at
-      FROM processing_records
-      WHERE visit_order_id = ? AND (action IN ('return_for_correction', 'reprocess', 'submit_correction', 'overdue_advance', 'overdue_advance_blocked', 'resume_process') OR correction_action IS NOT NULL)
-      ORDER BY created_at DESC
-    `).all(req.params.id);
-
-    res.json({
-      success: true,
-      data: enriched
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.put('/:id', requireAssigneeOrRole('director', 'nurse'), (req, res, next) => {
-  try {
-    const order = req.visitOrder;
-    const allowedFields = [
-      'pet_name', 'pet_type', 'pet_breed', 'pet_age', 'pet_gender',
-      'owner_name', 'owner_phone', 'appointment_time', 'visit_time',
-      'follow_up_time', 'chief_complaint', 'diagnosis', 'treatment',
-      'follow_up_result', 'priority', 'deadline', 'material_status'
-    ];
-
-    const sets = [];
-    const params = [];
-
-    for (const f of allowedFields) {
-      if (req.body[f] !== undefined) {
-        sets.push(`${f} = ?`);
-        params.push(req.body[f]);
-      }
-    }
-
-    if (sets.length === 0) {
-      throw new AppError('没有可更新的字段', 400, 'material');
-    }
-
-    sets.push('updated_at = CURRENT_TIMESTAMP');
-    params.push(order.id);
-
-    req.db.prepare(`UPDATE visit_orders SET ${sets.join(', ')} WHERE id = ?`).run(...params);
-
-    const updated = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(order.id);
-
-    res.json({
-      success: true,
-      data: enrichOrder(req.db, updated),
-      message: '就诊单更新成功'
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.post('/:id/transition', requireAuth, (req, res, next) => {
-  try {
-    const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(req.params.id);
-    if (!order) {
-      throw new AppError('就诊单不存在', 404, 'material');
-    }
-
-    const result = executeTransition(req.db, order, req.body.action, req.user, req.body);
-
-    res.json({
-      success: true,
-      ...result,
-      data: enrichOrder(req.db, result.order)
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.post('/batch', requireAuth, (req, res, next) => {
-  try {
-    const { ids, action, payload = {} } = req.body;
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      throw new AppError('请选择要批量处理的就诊单', 400, 'material');
-    }
-    if (!action) {
-      throw new AppError('请指定批量操作类型', 400, 'material');
-    }
-
-    const results = [];
-
-    const tx = req.db.transaction(() => {
-      for (const id of ids) {
-        try {
-          const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(id);
-          if (!order) {
-            results.push({
-              id,
-              success: false,
-              message: '就诊单不存在',
-              exceptionType: 'material',
-              reason: '单据ID不存在或已被删除'
-            });
-            continue;
-          }
-          if (!canViewOrder(order, req.user)) {
-            results.push({
-              id,
-              order_no: order.order_no,
-              success: false,
-              message: '越权操作',
-              exceptionType: 'permission',
-              reason: `角色「${ROLE_LABELS[req.user.role]}」无权操作此单据（分派兽医师：用户${order.assignee_id || '无'}）`
-            });
-            continue;
-          }
-          const result = executeTransition(req.db, order, action, req.user, { ...payload, version: order.version });
-          results.push({
-            id,
-            order_no: order.order_no,
-            success: true,
-            message: result.message,
-            from: result.from,
-            to: result.to,
-            exceptionType: result.exceptionType || null,
-            exceptionReason: result.exceptionReason || null,
-            correctionAction: result.correctionAction || null
-          });
-        } catch (err) {
-          const orderInfo = req.db.prepare('SELECT order_no, status FROM visit_orders WHERE id = ?').get(id);
-          results.push({
-            id,
-            order_no: orderInfo?.order_no || id,
-            success: false,
-            message: err.message,
-            exceptionType: err.exceptionType || 'status',
-            reason: err.message,
-            currentStatus: orderInfo?.status || null,
-            currentStatusLabel: orderInfo?.status ? STATUS_LABELS[orderInfo.status] : null
-          });
-        }
-      }
-    });
-
-    tx();
-
-    const successCount = results.filter(r => r.success).length;
-    const failCount = results.filter(r => !r.success).length;
-
-    res.json({
-      success: true,
-      message: `批量处理完成：成功 ${successCount} 条，失败 ${failCount} 条`,
-      total: ids.length,
-      successCount,
-      failCount,
-      results
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
 router.post('/overdue-batch', requireRole('director'), (req, res, next) => {
   try {
     const { ids, payload = {} } = req.body;
@@ -626,6 +427,89 @@ router.post('/overdue-batch', requireRole('director'), (req, res, next) => {
   }
 });
 
+router.post('/batch', requireAuth, (req, res, next) => {
+  try {
+    const { ids, action, payload = {} } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      throw new AppError('请选择要批量处理的就诊单', 400, 'material');
+    }
+    if (!action) {
+      throw new AppError('请指定批量操作类型', 400, 'material');
+    }
+
+    const results = [];
+
+    const tx = req.db.transaction(() => {
+      for (const id of ids) {
+        try {
+          const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(id);
+          if (!order) {
+            results.push({
+              id,
+              success: false,
+              message: '就诊单不存在',
+              exceptionType: 'material',
+              reason: '单据ID不存在或已被删除'
+            });
+            continue;
+          }
+          if (!canViewOrder(order, req.user)) {
+            results.push({
+              id,
+              order_no: order.order_no,
+              success: false,
+              message: '越权操作',
+              exceptionType: 'permission',
+              reason: `角色「${ROLE_LABELS[req.user.role]}」无权操作此单据（分派兽医师：用户${order.assignee_id || '无'}）`
+            });
+            continue;
+          }
+          const result = executeTransition(req.db, order, action, req.user, { ...payload, version: order.version });
+          results.push({
+            id,
+            order_no: order.order_no,
+            success: true,
+            message: result.message,
+            from: result.from,
+            to: result.to,
+            exceptionType: result.exceptionType || null,
+            exceptionReason: result.exceptionReason || null,
+            correctionAction: result.correctionAction || null
+          });
+        } catch (err) {
+          const orderInfo = req.db.prepare('SELECT order_no, status FROM visit_orders WHERE id = ?').get(id);
+          results.push({
+            id,
+            order_no: orderInfo?.order_no || id,
+            success: false,
+            message: err.message,
+            exceptionType: err.exceptionType || 'status',
+            reason: err.message,
+            currentStatus: orderInfo?.status || null,
+            currentStatusLabel: orderInfo?.status ? STATUS_LABELS[orderInfo.status] : null
+          });
+        }
+      }
+    });
+
+    tx();
+
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+
+    res.json({
+      success: true,
+      message: `批量处理完成：成功 ${successCount} 条，失败 ${failCount} 条`,
+      total: ids.length,
+      successCount,
+      failCount,
+      results
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id/allowed-actions', requireAuth, (req, res) => {
   const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(req.params.id);
   if (!order) {
@@ -635,6 +519,122 @@ router.get('/:id/allowed-actions', requireAuth, (req, res) => {
     success: true,
     actions: getAllowedActions(order, req.user)
   });
+});
+
+router.post('/:id/transition', requireAuth, (req, res, next) => {
+  try {
+    const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(req.params.id);
+    if (!order) {
+      throw new AppError('就诊单不存在', 404, 'material');
+    }
+
+    const result = executeTransition(req.db, order, req.body.action, req.user, req.body);
+
+    res.json({
+      success: true,
+      ...result,
+      data: enrichOrder(req.db, result.order)
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id', requireAuth, (req, res, next) => {
+  try {
+    const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(req.params.id);
+    if (!order) {
+      throw new AppError('就诊单不存在', 404, 'material');
+    }
+
+    if (!canViewOrder(order, req.user)) {
+      throw new AppError('越权访问：您无权查看此就诊单', 403, 'permission');
+    }
+
+    const enriched = enrichOrder(req.db, order);
+    enriched.allowedActions = getAllowedActions(order, req.user);
+
+    enriched.attachments = req.db.prepare(`
+      SELECT a.*, u.name as uploader_name
+      FROM attachments a LEFT JOIN users u ON a.uploaded_by = u.id
+      WHERE a.visit_order_id = ? ORDER BY a.created_at DESC
+    `).all(req.params.id);
+
+    enriched.records = req.db.prepare(`
+      SELECT r.*, u.name as operator_name
+      FROM processing_records r LEFT JOIN users u ON r.operator_id = u.id
+      WHERE r.visit_order_id = ? ORDER BY r.created_at DESC
+    `).all(req.params.id).map(r => ({
+      ...r,
+      operatorRoleLabel: ROLE_LABELS[r.operator_role],
+      fromStatusLabel: r.from_status ? STATUS_LABELS[r.from_status] : null,
+      toStatusLabel: STATUS_LABELS[r.to_status],
+      exceptionTypeLabel: r.exception_type ? EXCEPTION_TYPE_LABELS[r.exception_type] : null
+    }));
+
+    enriched.auditNotes = req.db.prepare(`
+      SELECT n.*, u.name as operator_name, u.role as operator_role
+      FROM audit_notes n LEFT JOIN users u ON n.operator_id = u.id
+      WHERE n.visit_order_id = ? ORDER BY n.created_at DESC
+    `).all(req.params.id);
+
+    enriched.correctionHistory = req.db.prepare(`
+      SELECT id, action, from_status, to_status, operator_id, operator_role,
+             comment, exception_type, exception_reason, correction_action,
+             evidence_required, evidence_provided, created_at
+      FROM processing_records
+      WHERE visit_order_id = ? AND (action IN ('return_for_correction', 'reprocess', 'submit_correction', 'overdue_advance', 'overdue_advance_blocked', 'resume_process') OR correction_action IS NOT NULL)
+      ORDER BY created_at DESC
+    `).all(req.params.id);
+
+    res.json({
+      success: true,
+      data: enriched
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/:id', requireAssigneeOrRole('director', 'nurse'), (req, res, next) => {
+  try {
+    const order = req.visitOrder;
+    const allowedFields = [
+      'pet_name', 'pet_type', 'pet_breed', 'pet_age', 'pet_gender',
+      'owner_name', 'owner_phone', 'appointment_time', 'visit_time',
+      'follow_up_time', 'chief_complaint', 'diagnosis', 'treatment',
+      'follow_up_result', 'priority', 'deadline', 'material_status'
+    ];
+
+    const sets = [];
+    const params = [];
+
+    for (const f of allowedFields) {
+      if (req.body[f] !== undefined) {
+        sets.push(`${f} = ?`);
+        params.push(req.body[f]);
+      }
+    }
+
+    if (sets.length === 0) {
+      throw new AppError('没有可更新的字段', 400, 'material');
+    }
+
+    sets.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(order.id);
+
+    req.db.prepare(`UPDATE visit_orders SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+
+    const updated = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(order.id);
+
+    res.json({
+      success: true,
+      data: enrichOrder(req.db, updated),
+      message: '就诊单更新成功'
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;
