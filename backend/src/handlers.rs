@@ -366,8 +366,14 @@ impl AppointmentApi {
         .await
         .unwrap_or_default();
 
+        let mut combined_types: std::collections::HashSet<String> = existing_types.iter().cloned().collect();
+        for att in &body.attachments {
+            combined_types.insert(att.evidence_type.clone());
+        }
+        let combined_types_vec: Vec<String> = combined_types.into_iter().collect();
+
         let required = get_required_evidence(&body.action, &apt.status);
-        if let Err(e) = validate_required_evidence(&body.action, &required, &existing_types) {
+        if let Err(e) = validate_required_evidence(&body.action, &required, &combined_types_vec) {
             return Json(AppointmentApiResponse { success: false, message: e.message, data: None });
         }
 
@@ -446,6 +452,7 @@ impl AppointmentApi {
                 Some(apt.version),
                 Some(new_version),
                 None,
+                body.remark.as_deref(),
                 &now,
             ).await;
         }
@@ -494,7 +501,7 @@ impl AppointmentApi {
                         success: false,
                         message: msg.clone(),
                     });
-                    insert_processing_record(&state.pool, aid, "未知", "batch_fail", &username, &role, Some(&msg), None, None, None, None, Some(&msg), &now).await;
+                    insert_processing_record(&state.pool, aid, "未知", "batch_fail", &username, &role, Some(&msg), None, None, None, None, Some(&msg), body.remark.as_deref(), &now).await;
                     continue;
                 }
             };
@@ -524,7 +531,7 @@ impl AppointmentApi {
                     success: false,
                     message: e.message.clone(),
                 });
-                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), &now).await;
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), body.remark.as_deref(), &now).await;
                 continue;
             }
 
@@ -537,7 +544,7 @@ impl AppointmentApi {
                     success: false,
                     message: msg.clone(),
                 });
-                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref().or(Some("逾期未处理")), None, Some(version), None, Some(&msg), &now).await;
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref().or(Some("逾期未处理")), None, Some(version), None, Some(&msg), body.remark.as_deref(), &now).await;
                 continue;
             }
 
@@ -550,7 +557,7 @@ impl AppointmentApi {
                         success: false,
                         message: e.message.clone(),
                     });
-                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), &now).await;
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), body.remark.as_deref(), &now).await;
                     continue;
                 }
                 _ => {}
@@ -587,7 +594,7 @@ impl AppointmentApi {
                         success: false,
                         message: e.message.clone(),
                     });
-                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), &now).await;
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), body.remark.as_deref(), &now).await;
                     continue;
                 }
                 _ => {}
@@ -601,8 +608,16 @@ impl AppointmentApi {
             .await
             .unwrap_or_default();
 
+            let mut combined_types: std::collections::HashSet<String> = existing_types.iter().cloned().collect();
+            if let Some(attachments) = &body.attachments {
+                for att in attachments {
+                    combined_types.insert(att.evidence_type.clone());
+                }
+            }
+            let combined_types_vec: Vec<String> = combined_types.into_iter().collect();
+
             let required = get_required_evidence(&body.action, &status);
-            if let Err(e) = validate_required_evidence(&body.action, &required, &existing_types) {
+            if let Err(e) = validate_required_evidence(&body.action, &required, &combined_types_vec) {
                 fail_count += 1;
                 results.push(BatchResultItem {
                     appointment_id: aid.clone(),
@@ -610,7 +625,7 @@ impl AppointmentApi {
                     success: false,
                     message: e.message.clone(),
                 });
-                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), &now).await;
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), body.remark.as_deref(), &now).await;
                 continue;
             }
 
@@ -660,13 +675,13 @@ impl AppointmentApi {
                             success: false,
                             message: msg.clone(),
                         });
-                        insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, Some(version), None, Some(&msg), &now).await;
+                        insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, Some(version), None, Some(&msg), body.remark.as_deref(), &now).await;
                     } else {
                         success_count += 1;
                         insert_audit(&state.pool, aid, &body.action, Some(&status), Some(&new_status), Some(version), Some(new_version), &username, &role, body.remark.clone()).await;
                         if body.action == "return_to_correct" || body.action == "correction_submit" {
                             let corr_note = body.correction_note.clone();
-                            insert_processing_record(&state.pool, aid, &order_no, if body.action == "correction_submit" { "correction" } else { &body.action }, &username, &role, body.remark.as_deref(), new_exception_reason.as_deref(), corr_note.as_deref(), Some(version), Some(new_version), None, &now).await;
+                            insert_processing_record(&state.pool, aid, &order_no, if body.action == "correction_submit" { "correction" } else { &body.action }, &username, &role, body.remark.as_deref(), new_exception_reason.as_deref(), corr_note.as_deref(), Some(version), Some(new_version), None, body.remark.as_deref(), &now).await;
                         }
                         if let Some(attachments) = &body.attachments {
                             for att in attachments {
@@ -705,7 +720,7 @@ impl AppointmentApi {
                         success: false,
                         message: msg.clone(),
                     });
-                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, Some(version), None, Some(&msg), &now).await;
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, Some(version), None, Some(&msg), body.remark.as_deref(), &now).await;
                 }
             }
         }
@@ -807,12 +822,13 @@ async fn insert_processing_record(
     from_version: Option<i64>,
     to_version: Option<i64>,
     batch_fail_reason: Option<&str>,
+    audit_remark: Option<&str>,
     now: &str,
 ) {
     sqlx::query(
         r#"
-        INSERT INTO processing_records (id, appointment_id, action, handler, handler_role, detail, exception_reason, correction_note, from_version, to_version, batch_fail_reason, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO processing_records (id, appointment_id, action, handler, handler_role, detail, exception_reason, correction_note, from_version, to_version, batch_fail_reason, audit_remark, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#
     )
     .bind(Uuid::new_v4().to_string())
@@ -826,6 +842,7 @@ async fn insert_processing_record(
     .bind(from_version)
     .bind(to_version)
     .bind(batch_fail_reason)
+    .bind(audit_remark)
     .bind(now)
     .execute(pool)
     .await

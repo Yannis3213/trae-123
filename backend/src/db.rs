@@ -471,32 +471,32 @@ async fn seed_audit_trails(pool: &SqlitePool, apt: &Appointment) -> anyhow::Resu
 
 async fn seed_processing_records(pool: &SqlitePool, apt: &Appointment) -> anyhow::Result<()> {
     let now = Utc::now();
-    let records: Vec<(&str, &str, &str, Option<&str>, Option<&str>, Option<&str>, Option<i64>, Option<i64>, Option<&str>)> = match apt.order_no.as_str() {
+    let records: Vec<(&str, &str, &str, Option<&str>, Option<&str>, Option<&str>, Option<i64>, Option<i64>, Option<&str>, Option<&str>)> = match apt.order_no.as_str() {
         "MR20260601004" => vec![
-            ("return_to_correct", "店长-王芳", "store_manager", Some("退回补正：回访照片不清晰，服务确认单缺少项目明细"), Some("店长退回：回访照片不清晰，需重新拍摄；服务确认单缺少项目明细"), None, Some(3), Some(4), None),
-            ("correction", "护理师-赵敏", "beautician", Some("补正内容：重新拍摄高清回访照片2张，补充服务确认单的项目明细栏，已附上顾客签字确认"), None, Some("护理师已重新拍摄高清照片，补充完整服务确认单明细"), Some(4), Some(5), None),
+            ("return_to_correct", "店长-王芳", "store_manager", Some("退回补正：回访照片不清晰，服务确认单缺少项目明细"), Some("店长退回：回访照片不清晰，需重新拍摄；服务确认单缺少项目明细"), None, Some(3), Some(4), None, Some("退回补正：回访照片不清晰，服务确认单缺少项目明细")),
+            ("correction", "护理师-赵敏", "beautician", Some("补正内容：重新拍摄高清回访照片2张，补充服务确认单的项目明细栏，已附上顾客签字确认"), None, Some("护理师已重新拍摄高清照片，补充完整服务确认单明细"), Some(4), Some(5), None, Some("补正内容：重新拍摄高清回访照片2张，补充服务确认单的项目明细栏，已附上顾客签字确认")),
         ],
         "MR20260601006" => vec![
-            ("return_to_correct", "美容顾问-陈静", "consultant", Some("退回补正：缺少项目确认单，顾客未签字确认服务项目"), Some("退回补正：缺少项目确认单，顾客未签字确认服务项目"), None, Some(2), Some(3), None),
+            ("return_to_correct", "美容顾问-陈静", "consultant", Some("退回补正：缺少项目确认单，顾客未签字确认服务项目"), Some("退回补正：缺少项目确认单，顾客未签字确认服务项目"), None, Some(2), Some(3), None, Some("退回补正：缺少项目确认单，顾客未签字确认服务项目")),
         ],
         "MR20260601007" => vec![
-            ("mark_overdue", "系统", "system", Some("系统自动标记逾期：超过处理期限"), Some("已超过处理期限6小时，护理师未按时提交项目确认照片"), None, Some(2), Some(3), None),
-            ("return_to_correct", "店长-王芳", "store_manager", Some("逾期退回：超过处理期限，责任人为护理师赵敏"), Some("逾期退回：超过处理期限6小时，护理师未及时处理"), None, Some(3), Some(4), None),
+            ("mark_overdue", "系统", "system", Some("系统自动标记逾期：超过处理期限"), Some("已超过处理期限6小时，护理师未按时提交项目确认照片"), None, Some(2), Some(3), None, Some("系统自动标记逾期：超过处理期限")),
+            ("return_to_correct", "店长-王芳", "store_manager", Some("逾期退回：超过处理期限，责任人为护理师赵敏"), Some("逾期退回：超过处理期限6小时，护理师未及时处理"), None, Some(3), Some(4), None, Some("逾期退回：超过处理期限，责任人为护理师赵敏")),
         ],
         "MR20260601008" => vec![
-            ("return_to_correct", "美容顾问-陈静", "consultant", Some("第一次退回：服务确认单缺顾客签字，需补签"), Some("第一次退回：服务确认单缺顾客签字"), None, Some(2), Some(3), None),
-            ("correction", "护理师-李娜", "beautician", Some("第一次补正：联系顾客补签服务确认单，重新上传扫描件"), None, Some("已联系顾客补签服务确认单，重新上传签字版扫描件"), Some(3), Some(4), None),
-            ("return_to_correct", "美容顾问-陈静", "consultant", Some("第二次退回：回访照片模糊，看不清顾客面部；服务确认单项目明细不全"), Some("第二次退回：回访照片不清晰"), None, Some(4), Some(5), None),
-            ("correction", "护理师-李娜", "beautician", Some("第二次补正：重新拍摄高清回访照片，补充完整服务确认单项目明细"), None, Some("重新拍摄高清回访照片2张，补充服务确认单全部项目明细"), Some(5), Some(6), None),
+            ("return_to_correct", "美容顾问-陈静", "consultant", Some("第一次退回：服务确认单缺顾客签字，需补签"), Some("第一次退回：服务确认单缺顾客签字"), None, Some(2), Some(3), None, Some("第一次退回：服务确认单缺顾客签字，需补签")),
+            ("correction", "护理师-李娜", "beautician", Some("第一次补正：联系顾客补签服务确认单，重新上传扫描件"), None, Some("已联系顾客补签服务确认单，重新上传签字版扫描件"), Some(3), Some(4), None, Some("第一次补正：联系顾客补签服务确认单，重新上传扫描件")),
+            ("return_to_correct", "美容顾问-陈静", "consultant", Some("第二次退回：回访照片模糊，看不清顾客面部；服务确认单项目明细不全"), Some("第二次退回：回访照片不清晰"), None, Some(4), Some(5), None, Some("第二次退回：回访照片模糊，看不清顾客面部；服务确认单项目明细不全")),
+            ("correction", "护理师-李娜", "beautician", Some("第二次补正：重新拍摄高清回访照片，补充完整服务确认单项目明细"), None, Some("重新拍摄高清回访照片2张，补充服务确认单全部项目明细"), Some(5), Some(6), None, Some("第二次补正：重新拍摄高清回访照片，补充完整服务确认单项目明细")),
         ],
         _ => vec![],
     };
 
-    for (action, handler, role, detail, exc, corr, from_v, to_v, batch_reason) in records {
+    for (action, handler, role, detail, exc, corr, from_v, to_v, batch_reason, audit_remark) in records {
         sqlx::query(
             r#"
-            INSERT INTO processing_records (id, appointment_id, action, handler, handler_role, detail, exception_reason, correction_note, from_version, to_version, batch_fail_reason, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO processing_records (id, appointment_id, action, handler, handler_role, detail, exception_reason, correction_note, from_version, to_version, batch_fail_reason, audit_remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#
         )
         .bind(Uuid::new_v4().to_string())
@@ -510,6 +510,7 @@ async fn seed_processing_records(pool: &SqlitePool, apt: &Appointment) -> anyhow
         .bind(from_v)
         .bind(to_v)
         .bind(batch_reason)
+        .bind(audit_remark)
         .bind(now.format("%Y-%m-%d %H:%M:%S").to_string())
         .execute(pool)
         .await?;

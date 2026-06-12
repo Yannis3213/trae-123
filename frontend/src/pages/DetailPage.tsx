@@ -180,6 +180,25 @@ export default function DetailPage() {
 
   const handleSubmit = async () => {
     if (!currentAction || !detail || !id) return;
+
+    if (currentAction.needCorrection && !correctionNote.trim()) {
+      showToast('请填写补正说明', 'error');
+      return;
+    }
+
+    if (currentAction.needException && exceptionType !== 'normal' && !exceptionReason.trim()) {
+      showToast('请填写异常/退回原因', 'error');
+      return;
+    }
+
+    const invalidAtts = newAttachments.filter(
+      (a) => !currentAction.requireEvidence.includes(a.evidence_type)
+    );
+    if (invalidAtts.length > 0) {
+      showToast('存在当前动作不支持的证据类型，请删除后重试', 'error');
+      return;
+    }
+
     setSubmitting(true);
 
     const body: ProcessAppointmentRequest = {
@@ -413,6 +432,7 @@ export default function DetailPage() {
                     {r.exception_reason && <div style={{ fontSize: 13, color: '#f56c6c', marginTop: 4 }}>异常原因：{r.exception_reason}</div>}
                     {r.correction_note && <div style={{ fontSize: 13, color: '#67c23a', marginTop: 4 }}>补正内容：{r.correction_note}</div>}
                     {r.batch_fail_reason && <div style={{ fontSize: 13, color: '#e6a23c', marginTop: 4 }}>失败原因：{r.batch_fail_reason}</div>}
+                    {r.audit_remark && <div style={{ fontSize: 13, color: '#909399', marginTop: 4, fontStyle: 'italic' }}>审计备注：{r.audit_remark}</div>}
                   </div>
                 ))}
               </div>
@@ -565,9 +585,9 @@ export default function DetailPage() {
                           value={newEvidenceType}
                           onChange={(e) => setNewEvidenceType(e.target.value)}
                         >
-                          <option value="customer_appointment">顾客预约凭证</option>
-                          <option value="project_confirmation">项目确认单</option>
-                          <option value="service_followup">服务回访记录</option>
+                          {currentAction.requireEvidence.map((e) => (
+                            <option key={e} value={e}>{EVIDENCE_LABELS[e] || e}</option>
+                          ))}
                         </select>
                       </div>
                       <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
