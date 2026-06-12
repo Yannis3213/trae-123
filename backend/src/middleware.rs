@@ -1,9 +1,5 @@
-use poem::{Request, Result, middleware::Middleware, Endpoint, IntoResponse, http::StatusCode};
+use poem::Result;
 use serde::Serialize;
-
-use crate::models::*;
-use crate::AppState;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AuthError {
@@ -12,11 +8,44 @@ pub struct AuthError {
     pub code: String,
 }
 
+pub fn is_exception_type(exception_type: &Option<String>) -> bool {
+    matches!(exception_type.as_deref(), Some("missing_materials") | Some("overdue") | Some("returned"))
+}
+
 pub fn validate_role_permission(
     action: &str,
     role: &str,
     current_status: &str,
+    exception_type: &Option<String>,
 ) -> Result<(), AuthError> {
+    let is_exception = is_exception_type(exception_type);
+    let exception_label = match exception_type.as_deref() {
+        Some("missing_materials") => "缺材料",
+        Some("overdue") => "逾期",
+        Some("returned") => "退回补正",
+        _ => "异常",
+    };
+
+    if is_exception {
+        match action {
+            "review_pass" | "archive" => {
+                return Err(AuthError {
+                    success: false,
+                    message: format!("{}预约单不允许{}，请先补正或退回", exception_label, if action == "archive" { "归档" } else { "复核通过" }),
+                    code: "EXCEPTION_BLOCKED".to_string(),
+                });
+            }
+            "return_to_correct" | "correction_submit" => {}
+            _ => {
+                return Err(AuthError {
+                    success: false,
+                    message: format!("{}预约单仅允许补正或退回操作", exception_label),
+                    code: "EXCEPTION_BLOCKED".to_string(),
+                });
+            }
+        }
+    }
+
     match action {
         "submit_review" => {
             if role != "beautician" {
@@ -177,7 +206,7 @@ pub fn validate_version(
 }
 
 pub fn validate_required_evidence(
-    action: &str,
+    _action: &str,
     required: &[String],
     existing_types: &[String],
 ) -> Result<(), AuthError> {

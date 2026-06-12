@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-poem = "2"
-poem-openapi = { version = "2", features = ["swagger-ui"] }
+poem = "1"
+poem-openapi = { version = "1", features = ["swagger-ui"] }
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }

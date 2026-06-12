@@ -1,0 +1,1 @@
+{"root":["./src/main.tsx","./src/api/index.ts","./src/components/batchresultmodal.tsx","./src/components/processmodal.tsx","./src/components/toast.tsx","./src/hooks/useuser.ts","./src/pages/detailpage.tsx","./src/pages/listpage.tsx","./src/types/index.ts"],"version":"5.9.3"}

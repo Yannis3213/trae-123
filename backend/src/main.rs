@@ -4,7 +4,7 @@ pub mod handlers;
 pub mod middleware;
 
 use poem::{listener::TcpListener, middleware::Cors, EndpointExt, Route, Server};
-use poem_openapi::{ContactObject, OpenApiService};
+use poem_openapi::OpenApiService;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -41,7 +41,6 @@ async fn main() -> anyhow::Result<()> {
         "美容连锁门店预约单系统",
         "1.0.0",
     )
-    .contact(ContactObject::new().name("门店系统管理员"))
     .description("美容连锁门店月底集中处理美容预约单系统 API");
 
     let ui = api_service.swagger_ui();

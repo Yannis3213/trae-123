@@ -1,4 +1,4 @@
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions, Row};
+use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use chrono::{Utc, Duration, NaiveDateTime};
 use uuid::Uuid;
 
@@ -187,7 +187,7 @@ pub async fn seed_data(pool: &SqlitePool) -> anyhow::Result<()> {
             deadline: (now + Duration::days(1)).format("%Y-%m-%d %H:%M:%S").to_string(),
             exception_type: Some("returned".to_string()),
             exception_reason: Some("店长退回：回访照片不清晰，需重新拍摄；服务确认单缺少项目明细".to_string()),
-            correction_note: Some("护理师已重新拍摄高清照片，补充完整服务确认单明细").to_string(),
+            correction_note: Some("护理师已重新拍摄高清照片，补充完整服务确认单明细".to_string()),
             version: 3,
             created_at: now.format("%Y-%m-%d %H:%M:%S").to_string(),
             updated_at: now.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -359,7 +359,7 @@ async fn seed_processing_records(pool: &SqlitePool, apt: &Appointment) -> anyhow
     let now = Utc::now();
     let records = match apt.order_no.as_str() {
         "MR20260601004" => vec![
-            ("correction", "护理师-赵敏", "beautician", "补正内容：重新拍摄高清回访照片2张，补充服务确认单的项目明细栏，已附上顾客签字确认", None, Some("护理师已重新拍摄高清照片，补充完整服务确认单明细")),
+            ("correction", "护理师-赵敏", "beautician", "补正内容：重新拍摄高清回访照片2张，补充服务确认单的项目明细栏，已附上顾客签字确认", None::<&str>, Some("护理师已重新拍摄高清照片，补充完整服务确认单明细")),
         ],
         _ => vec![],
     };

@@ -2,6 +2,15 @@ export type DeadlineStatus = 'normal' | 'approaching' | 'overdue';
 export type AppointmentStatus = 'draft' | 'pending_review' | 'archived';
 export type UserRole = 'beautician' | 'consultant' | 'store_manager';
 
+export interface CardEvidenceSummary {
+  has_customer_appointment: boolean;
+  has_project_confirmation: boolean;
+  has_service_followup: boolean;
+  customer_appointment_count: number;
+  project_confirmation_count: number;
+  service_followup_count: number;
+}
+
 export interface AppointmentListItem {
   id: string;
   order_no: string;
@@ -18,6 +27,7 @@ export interface AppointmentListItem {
   beautician: string;
   consultant: string;
   version: number;
+  evidence_summary: CardEvidenceSummary;
 }
 
 export interface Attachment {
@@ -145,6 +155,7 @@ export interface BatchProcessRequest {
   appointment_ids: string[];
   action: string;
   remark?: string | null;
+  version_map?: Record<string, number>;
 }
 
 export interface BatchResultItem {

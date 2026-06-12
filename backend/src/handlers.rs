@@ -15,10 +15,10 @@ pub struct UserApi;
 #[OpenApi]
 impl UserApi {
     #[oai(path = "/user/current", method = "get")]
-    async fn get_current_user(&self, state: Data<&Arc<AppState>>) -> Json<ApiResponse<UserInfo>> {
+    async fn get_current_user(&self, state: Data<&Arc<AppState>>) -> Json<UserInfoApiResponse> {
         let role = state.current_role.lock().await.clone();
         let username = state.current_user.lock().await.clone();
-        Json(ApiResponse {
+        Json(UserInfoApiResponse {
             success: true,
             message: "ok".to_string(),
             data: Some(UserInfo {
@@ -30,12 +30,12 @@ impl UserApi {
     }
 
     #[oai(path = "/user/switch", method = "post")]
-    async fn switch_role(&self, state: Data<&Arc<AppState>>, body: Json<SwitchRoleRequest>) -> Json<ApiResponse<UserInfo>> {
+    async fn switch_role(&self, state: Data<&Arc<AppState>>, body: Json<SwitchRoleRequest>) -> Json<UserInfoApiResponse> {
         let mut role = state.current_role.lock().await;
         let mut user = state.current_user.lock().await;
         *role = body.role.clone();
         *user = body.username.clone();
-        Json(ApiResponse {
+        Json(UserInfoApiResponse {
             success: true,
             message: "切换成功".to_string(),
             data: Some(UserInfo {
@@ -56,14 +56,14 @@ impl AppointmentApi {
         &self,
         state: Data<&Arc<AppState>>,
         status: Query<Option<String>>,
-    ) -> Json<ApiResponse<AppointmentsResponse>> {
+    ) -> Json<AppointmentsApiResponse> {
         let rows = sqlx::query("SELECT * FROM beauty_appointments ORDER BY created_at DESC")
             .fetch_all(&state.pool)
             .await;
 
         let rows = match rows {
             Ok(r) => r,
-            Err(e) => return Json(ApiResponse { success: false, message: format!("查询失败: {}", e), data: None }),
+            Err(e) => return Json(AppointmentsApiResponse { success: false, message: format!("查询失败: {}", e), data: None }),
         };
 
         let mut normal = vec![];
@@ -79,6 +79,37 @@ impl AppointmentApi {
             archived_count: 0,
         };
 
+        let apt_ids: Vec<String> = rows.iter()
+            .filter_map(|r| r.try_get::<String, _>("id").ok())
+            .collect();
+
+        let mut evidence_map: std::collections::HashMap<String, (i64, i64, i64)> = std::collections::HashMap::new();
+        if !apt_ids.is_empty() {
+            let placeholders: Vec<String> = apt_ids.iter().map(|_| "?".to_string()).collect();
+            let sql = format!(
+                "SELECT appointment_id, evidence_type, COUNT(*) as cnt FROM appointment_attachments WHERE appointment_id IN ({}) GROUP BY appointment_id, evidence_type",
+                placeholders.join(",")
+            );
+            let mut query = sqlx::query(&sql);
+            for id in &apt_ids {
+                query = query.bind(id);
+            }
+            if let Ok(ev_rows) = query.fetch_all(&state.pool).await {
+                for ev_row in ev_rows {
+                    let apt_id: String = ev_row.try_get("appointment_id").unwrap_or_default();
+                    let ev_type: String = ev_row.try_get("evidence_type").unwrap_or_default();
+                    let cnt: i64 = ev_row.try_get("cnt").unwrap_or(0);
+                    let entry = evidence_map.entry(apt_id).or_insert((0, 0, 0));
+                    match ev_type.as_str() {
+                        "customer_appointment" => entry.0 = cnt,
+                        "project_confirmation" => entry.1 = cnt,
+                        "service_followup" => entry.2 = cnt,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         for row in rows {
             let apt: Appointment = match Appointment::try_from_row(&row) {
                 Some(a) => a,
@@ -90,6 +121,16 @@ impl AppointmentApi {
                     continue;
                 }
             }
+
+            let ev_counts = evidence_map.get(&apt.id).unwrap_or(&(0, 0, 0));
+            let evidence_summary = CardEvidenceSummary {
+                has_customer_appointment: ev_counts.0 > 0,
+                has_project_confirmation: ev_counts.1 > 0,
+                has_service_followup: ev_counts.2 > 0,
+                customer_appointment_count: ev_counts.0,
+                project_confirmation_count: ev_counts.1,
+                service_followup_count: ev_counts.2,
+            };
 
             let dl_status = calculate_deadline_status(&apt.deadline);
             let item = AppointmentListItem {
@@ -108,6 +149,7 @@ impl AppointmentApi {
                 beautician: apt.beautician.clone(),
                 consultant: apt.consultant.clone(),
                 version: apt.version,
+                evidence_summary,
             };
 
             stats.total += 1;
@@ -125,7 +167,7 @@ impl AppointmentApi {
             }
         }
 
-        Json(ApiResponse {
+        Json(AppointmentsApiResponse {
             success: true,
             message: "ok".to_string(),
             data: Some(AppointmentsResponse { normal, approaching, overdue, stats }),
@@ -133,7 +175,7 @@ impl AppointmentApi {
     }
 
     #[oai(path = "/appointments/:id", method = "get")]
-    async fn get_appointment(&self, state: Data<&Arc<AppState>>, id: String) -> Json<ApiResponse<AppointmentDetail>> {
+    async fn get_appointment(&self, state: Data<&Arc<AppState>>, id: String) -> Json<AppointmentDetailApiResponse> {
         let apt_row = sqlx::query("SELECT * FROM beauty_appointments WHERE id = ?")
             .bind(&id)
             .fetch_optional(&state.pool)
@@ -141,13 +183,13 @@ impl AppointmentApi {
 
         let apt_row = match apt_row {
             Ok(Some(r)) => r,
-            Ok(None) => return Json(ApiResponse { success: false, message: "预约单不存在".to_string(), data: None }),
-            Err(e) => return Json(ApiResponse { success: false, message: format!("查询失败: {}", e), data: None }),
+            Ok(None) => return Json(AppointmentDetailApiResponse { success: false, message: "预约单不存在".to_string(), data: None }),
+            Err(e) => return Json(AppointmentDetailApiResponse { success: false, message: format!("查询失败: {}", e), data: None }),
         };
 
         let apt = match Appointment::try_from_row(&apt_row) {
             Some(a) => a,
-            None => return Json(ApiResponse { success: false, message: "数据解析失败".to_string(), data: None }),
+            None => return Json(AppointmentDetailApiResponse { success: false, message: "数据解析失败".to_string(), data: None }),
         };
 
         let attachments: Vec<Attachment> = sqlx::query_as::<_, Attachment>(
@@ -206,7 +248,7 @@ impl AppointmentApi {
 
         let dl_status = calculate_deadline_status(&apt.deadline);
 
-        Json(ApiResponse {
+        Json(AppointmentDetailApiResponse {
             success: true,
             message: "ok".to_string(),
             data: Some(AppointmentDetail {
@@ -227,10 +269,10 @@ impl AppointmentApi {
         &self,
         state: Data<&Arc<AppState>>,
         body: Json<CreateAppointmentRequest>,
-    ) -> Json<ApiResponse<Appointment>> {
+    ) -> Json<AppointmentApiResponse> {
         let role = state.current_role.lock().await.clone();
         if role != "beautician" {
-            return Json(ApiResponse { success: false, message: "只有护理师可以新建预约单".to_string(), data: None });
+            return Json(AppointmentApiResponse { success: false, message: "只有护理师可以新建预约单".to_string(), data: None });
         }
 
         let apt = body.to_appointment();
@@ -258,9 +300,9 @@ impl AppointmentApi {
         .bind(&apt.current_handler_role)
         .bind(&apt.appointment_time)
         .bind(&apt.deadline)
-        .bind::<Option<String>>(&apt.exception_type)
-        .bind::<Option<String>>(&apt.exception_reason)
-        .bind::<Option<String>>(&apt.correction_note)
+        .bind::<Option<String>>(apt.exception_type.clone())
+        .bind::<Option<String>>(apt.exception_reason.clone())
+        .bind::<Option<String>>(apt.correction_note.clone())
         .bind(apt.version)
         .bind(&apt.created_at)
         .bind(&apt.updated_at)
@@ -268,13 +310,13 @@ impl AppointmentApi {
         .await;
 
         if let Err(e) = result {
-            return Json(ApiResponse { success: false, message: format!("创建失败: {}", e), data: None });
+            return Json(AppointmentApiResponse { success: false, message: format!("创建失败: {}", e), data: None });
         }
 
         let username = state.current_user.lock().await.clone();
         insert_audit(&state.pool, &apt.id, "create", None, Some("draft"), &username, &role, Some("新建预约单".to_string())).await;
 
-        Json(ApiResponse { success: true, message: "创建成功".to_string(), data: Some(apt) })
+        Json(AppointmentApiResponse { success: true, message: "创建成功".to_string(), data: Some(apt) })
     }
 
     #[oai(path = "/appointments/:id/process", method = "post")]
@@ -283,7 +325,7 @@ impl AppointmentApi {
         state: Data<&Arc<AppState>>,
         id: String,
         body: Json<ProcessAppointmentRequest>,
-    ) -> Json<ApiResponse<Appointment>> {
+    ) -> Json<AppointmentApiResponse> {
         let role = state.current_role.lock().await.clone();
         let username = state.current_user.lock().await.clone();
 
@@ -293,25 +335,25 @@ impl AppointmentApi {
             .await
         {
             Ok(Some(r)) => r,
-            Ok(None) => return Json(ApiResponse { success: false, message: "预约单不存在".to_string(), data: None }),
-            Err(e) => return Json(ApiResponse { success: false, message: format!("查询失败: {}", e), data: None }),
+            Ok(None) => return Json(AppointmentApiResponse { success: false, message: "预约单不存在".to_string(), data: None }),
+            Err(e) => return Json(AppointmentApiResponse { success: false, message: format!("查询失败: {}", e), data: None }),
         };
 
         let apt = match Appointment::try_from_row(&apt_row) {
             Some(a) => a,
-            None => return Json(ApiResponse { success: false, message: "数据解析失败".to_string(), data: None }),
+            None => return Json(AppointmentApiResponse { success: false, message: "数据解析失败".to_string(), data: None }),
         };
 
-        if let Err(e) = validate_role_permission(&body.action, &role, &apt.status) {
-            return Json(ApiResponse { success: false, message: e.message, data: None });
+        if let Err(e) = validate_role_permission(&body.action, &role, &apt.status, &apt.exception_type) {
+            return Json(AppointmentApiResponse { success: false, message: e.message, data: None });
         }
 
         if let Err(e) = validate_handler(&username, &role, &apt, &body.action) {
-            return Json(ApiResponse { success: false, message: e.message, data: None });
+            return Json(AppointmentApiResponse { success: false, message: e.message, data: None });
         }
 
         if let Err(e) = validate_version(body.version, apt.version) {
-            return Json(ApiResponse { success: false, message: e.message, data: None });
+            return Json(AppointmentApiResponse { success: false, message: e.message, data: None });
         }
 
         let existing_types: Vec<String> = sqlx::query_scalar::<_, String>(
@@ -324,15 +366,24 @@ impl AppointmentApi {
 
         let required = get_required_evidence(&body.action, &apt.status);
         if let Err(e) = validate_required_evidence(&body.action, &required, &existing_types) {
-            return Json(ApiResponse { success: false, message: e.message, data: None });
+            return Json(AppointmentApiResponse { success: false, message: e.message, data: None });
         }
 
         let (new_status, new_handler, new_handler_role) = get_next_state(&body.action, &apt);
         let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let new_version = apt.version + 1;
 
-        let exc_type = body.exception_type.clone().or(apt.exception_type.clone());
-        let exc_reason = body.exception_reason.clone().or(apt.exception_reason.clone());
+        let (exc_type, exc_reason) = match body.action.as_str() {
+            "correction_submit" => (None, None),
+            "return_to_correct" => (
+                Some("returned".to_string()),
+                body.exception_reason.clone().or(body.remark.clone()).or(Some("退回补正".to_string())),
+            ),
+            _ => (
+                body.exception_type.clone().or(apt.exception_type.clone()),
+                body.exception_reason.clone().or(apt.exception_reason.clone()),
+            ),
+        };
         let corr_note = body.correction_note.clone().or(apt.correction_note.clone());
 
         let result = sqlx::query(
@@ -358,7 +409,7 @@ impl AppointmentApi {
         .await;
 
         if let Err(e) = result {
-            return Json(ApiResponse { success: false, message: format!("更新失败: {}", e), data: None });
+            return Json(AppointmentApiResponse { success: false, message: format!("更新失败: {}", e), data: None });
         }
 
         for att in &body.attachments {
@@ -380,21 +431,18 @@ impl AppointmentApi {
         insert_audit(&state.pool, &id, &body.action, Some(&apt.status), Some(&new_status), &username, &role, body.remark.clone()).await;
 
         if body.action == "correction_submit" || body.action == "return_to_correct" {
-            sqlx::query(
-                "INSERT INTO processing_records (id, appointment_id, action, handler, handler_role, detail, exception_reason, correction_note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            )
-            .bind(Uuid::new_v4().to_string())
-            .bind(&id)
-            .bind(if body.action == "correction_submit" { "correction" } else { &body.action })
-            .bind(&username)
-            .bind(&role)
-            .bind(body.remark.as_deref())
-            .bind(body.exception_reason.as_deref())
-            .bind(body.correction_note.as_deref())
-            .bind(&now)
-            .execute(&state.pool)
-            .await
-            .ok();
+            insert_processing_record(
+                &state.pool,
+                &id,
+                &apt.order_no,
+                if body.action == "correction_submit" { "correction" } else { &body.action },
+                &username,
+                &role,
+                body.remark.as_deref(),
+                exc_reason.as_deref(),
+                body.correction_note.as_deref(),
+                &now,
+            ).await;
         }
 
         let updated = sqlx::query("SELECT * FROM beauty_appointments WHERE id = ?")
@@ -404,7 +452,7 @@ impl AppointmentApi {
             .ok()
             .and_then(|r| Appointment::try_from_row(&r));
 
-        Json(ApiResponse { success: true, message: "操作成功".to_string(), data: updated })
+        Json(AppointmentApiResponse { success: true, message: "操作成功".to_string(), data: updated })
     }
 
     #[oai(path = "/appointments/batch", method = "post")]
@@ -412,7 +460,7 @@ impl AppointmentApi {
         &self,
         state: Data<&Arc<AppState>>,
         body: Json<BatchProcessRequest>,
-    ) -> Json<ApiResponse<BatchProcessResponse>> {
+    ) -> Json<BatchProcessApiResponse> {
         let role = state.current_role.lock().await.clone();
         let username = state.current_user.lock().await.clone();
 
@@ -420,8 +468,10 @@ impl AppointmentApi {
         let mut success_count = 0i32;
         let mut fail_count = 0i32;
 
+        let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
         for aid in &body.appointment_ids {
-            let apt_row = sqlx::query("SELECT id, order_no, status, version, current_handler, beautician, consultant, store_manager, deadline FROM beauty_appointments WHERE id = ?")
+            let apt_row = sqlx::query("SELECT id, order_no, status, version, current_handler, current_handler_role, beautician, consultant, store_manager, deadline, exception_type, exception_reason FROM beauty_appointments WHERE id = ?")
                 .bind(aid)
                 .fetch_optional(&state.pool)
                 .await
@@ -432,12 +482,14 @@ impl AppointmentApi {
                 Some(r) => r,
                 None => {
                     fail_count += 1;
+                    let msg = "预约单不存在".to_string();
                     results.push(BatchResultItem {
                         appointment_id: aid.clone(),
                         order_no: "未知".to_string(),
                         success: false,
-                        message: "预约单不存在".to_string(),
+                        message: msg.clone(),
                     });
+                    insert_processing_record(&state.pool, aid, "未知", "batch_fail", &username, &role, Some(&msg), None, None, &now).await;
                     continue;
                 }
             };
@@ -449,29 +501,51 @@ impl AppointmentApi {
             let consultant: String = apt_row.try_get("consultant").unwrap_or_default();
             let store_manager: String = apt_row.try_get("store_manager").unwrap_or_default();
             let deadline: String = apt_row.try_get("deadline").unwrap_or_default();
+            let exception_type: Option<String> = apt_row.try_get("exception_type").ok();
+            let exception_reason: Option<String> = apt_row.try_get("exception_reason").ok();
 
             let dl_status = calculate_deadline_status(&deadline);
 
-            if body.action == "archive" && dl_status == DeadlineStatus::Overdue && role == "store_manager" {
+            let request_version = body.version_map.as_ref()
+                .and_then(|vm| vm.get(aid))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(version);
+
+            if let Err(e) = validate_version(request_version, version) {
                 fail_count += 1;
                 results.push(BatchResultItem {
                     appointment_id: aid.clone(),
-                    order_no,
+                    order_no: order_no.clone(),
                     success: false,
-                    message: "逾期预约单不允许批量归档，请先处理逾期原因后逐单操作".to_string(),
+                    message: e.message.clone(),
                 });
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, &now).await;
                 continue;
             }
 
-            match validate_role_permission(&body.action, &role, &status) {
+            if body.action == "archive" && dl_status == DeadlineStatus::Overdue {
+                fail_count += 1;
+                let msg = "逾期预约单不允许批量归档，请先处理逾期原因后逐单操作".to_string();
+                results.push(BatchResultItem {
+                    appointment_id: aid.clone(),
+                    order_no: order_no.clone(),
+                    success: false,
+                    message: msg.clone(),
+                });
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref().or(Some("逾期未处理")), None, &now).await;
+                continue;
+            }
+
+            match validate_role_permission(&body.action, &role, &status, &exception_type) {
                 Err(e) => {
                     fail_count += 1;
                     results.push(BatchResultItem {
                         appointment_id: aid.clone(),
                         order_no: order_no.clone(),
                         success: false,
-                        message: e.message,
+                        message: e.message.clone(),
                     });
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, &now).await;
                     continue;
                 }
                 _ => {}
@@ -488,11 +562,11 @@ impl AppointmentApi {
                 store_manager: store_manager.clone(),
                 status: status.clone(),
                 current_handler: apt_row.try_get("current_handler").unwrap_or_default(),
-                current_handler_role: String::new(),
+                current_handler_role: apt_row.try_get("current_handler_role").unwrap_or_default(),
                 appointment_time: String::new(),
                 deadline: deadline.clone(),
-                exception_type: None,
-                exception_reason: None,
+                exception_type: exception_type.clone(),
+                exception_reason: exception_reason.clone(),
                 correction_note: None,
                 version,
                 created_at: String::new(),
@@ -506,23 +580,63 @@ impl AppointmentApi {
                         appointment_id: aid.clone(),
                         order_no: order_no.clone(),
                         success: false,
-                        message: e.message,
+                        message: e.message.clone(),
                     });
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, &now).await;
                     continue;
                 }
                 _ => {}
             }
 
+            let existing_types: Vec<String> = sqlx::query_scalar::<_, String>(
+                "SELECT DISTINCT evidence_type FROM appointment_attachments WHERE appointment_id = ?"
+            )
+            .bind(aid)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+
+            let required = get_required_evidence(&body.action, &status);
+            if let Err(e) = validate_required_evidence(&body.action, &required, &existing_types) {
+                fail_count += 1;
+                results.push(BatchResultItem {
+                    appointment_id: aid.clone(),
+                    order_no: order_no.clone(),
+                    success: false,
+                    message: e.message.clone(),
+                });
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, &now).await;
+                continue;
+            }
+
             let (new_status, new_handler, new_handler_role) = get_next_state(&body.action, &apt_stub);
-            let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
             let new_version = version + 1;
 
+            let mut new_exception_type = exception_type.clone();
+            let mut new_exception_reason = exception_reason.clone();
+            if body.action == "correction_submit" {
+                new_exception_type = None;
+                new_exception_reason = None;
+            }
+            if body.action == "return_to_correct" {
+                new_exception_type = Some("returned".to_string());
+                new_exception_reason = body.remark.clone().or(Some("批量退回补正".to_string()));
+            }
+
             let result = sqlx::query(
-                "UPDATE beauty_appointments SET status = ?, current_handler = ?, current_handler_role = ?, version = ?, updated_at = ? WHERE id = ? AND version = ?"
+                r#"
+                UPDATE beauty_appointments SET
+                    status = ?, current_handler = ?, current_handler_role = ?,
+                    exception_type = ?, exception_reason = ?,
+                    version = ?, updated_at = ?
+                WHERE id = ? AND version = ?
+                "#
             )
             .bind(&new_status)
             .bind(&new_handler)
             .bind(&new_handler_role)
+            .bind(new_exception_type.as_ref())
+            .bind(new_exception_reason.as_ref())
             .bind(new_version)
             .bind(&now)
             .bind(aid)
@@ -531,29 +645,46 @@ impl AppointmentApi {
             .await;
 
             match result {
-                Ok(_) => {
-                    success_count += 1;
-                    insert_audit(&state.pool, aid, &body.action, Some(&status), Some(&new_status), &username, &role, body.remark.clone()).await;
-                    results.push(BatchResultItem {
-                        appointment_id: aid.clone(),
-                        order_no: order_no.clone(),
-                        success: true,
-                        message: format!("{} 操作成功", action_label(&body.action)),
-                    });
+                Ok(r) => {
+                    if r.rows_affected() == 0 {
+                        fail_count += 1;
+                        let msg = format!("版本冲突：当前版本 v{} 已过期，请刷新后重试", version);
+                        results.push(BatchResultItem {
+                            appointment_id: aid.clone(),
+                            order_no: order_no.clone(),
+                            success: false,
+                            message: msg.clone(),
+                        });
+                        insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, &now).await;
+                    } else {
+                        success_count += 1;
+                        insert_audit(&state.pool, aid, &body.action, Some(&status), Some(&new_status), &username, &role, body.remark.clone()).await;
+                        if body.action == "return_to_correct" || body.action == "correction_submit" {
+                            insert_processing_record(&state.pool, aid, &order_no, if body.action == "correction_submit" { "correction" } else { &body.action }, &username, &role, body.remark.as_deref(), new_exception_reason.as_deref(), None, &now).await;
+                        }
+                        results.push(BatchResultItem {
+                            appointment_id: aid.clone(),
+                            order_no: order_no.clone(),
+                            success: true,
+                            message: format!("{} 操作成功", action_label(&body.action)),
+                        });
+                    }
                 }
                 Err(e) => {
                     fail_count += 1;
+                    let msg = format!("执行失败: {}", e);
                     results.push(BatchResultItem {
                         appointment_id: aid.clone(),
                         order_no: order_no.clone(),
                         success: false,
-                        message: format!("执行失败: {}", e),
+                        message: msg.clone(),
                     });
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, &now).await;
                 }
             }
         }
 
-        Json(ApiResponse {
+        Json(BatchProcessApiResponse {
             success: true,
             message: "批量处理完成".to_string(),
             data: Some(BatchProcessResponse {
@@ -628,6 +759,38 @@ async fn insert_audit(
     .bind(operator_role)
     .bind(remark.as_deref())
     .bind(&now)
+    .execute(pool)
+    .await
+    .ok();
+}
+
+async fn insert_processing_record(
+    pool: &sqlx::SqlitePool,
+    apt_id: &str,
+    _order_no: &str,
+    action: &str,
+    handler: &str,
+    handler_role: &str,
+    detail: Option<&str>,
+    exception_reason: Option<&str>,
+    correction_note: Option<&str>,
+    now: &str,
+) {
+    sqlx::query(
+        r#"
+        INSERT INTO processing_records (id, appointment_id, action, handler, handler_role, detail, exception_reason, correction_note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(apt_id)
+    .bind(action)
+    .bind(handler)
+    .bind(handler_role)
+    .bind(detail)
+    .bind(exception_reason)
+    .bind(correction_note)
+    .bind(now)
     .execute(pool)
     .await
     .ok();

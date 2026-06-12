@@ -110,10 +110,17 @@ export default function ListPage() {
       return;
     }
     const ids = Array.from(selected);
+    const version_map: Record<string, number> = {};
+    for (const item of allItems) {
+      if (selected.has(item.id)) {
+        version_map[item.id] = item.version;
+      }
+    }
     const resp = await api.batchProcess({
       appointment_ids: ids,
       action,
-      remark: `批量${action === 'submit_review' ? '提交复核' : action === 'archive' ? '归档' : action}`,
+      remark: `批量${action === 'submit_review' ? '提交复核' : action === 'archive' ? '归档' : action === 'correction_submit' ? '提交补正' : action === 'return_to_correct' ? '退回补正' : action}`,
+      version_map,
     });
     if (resp.success && resp.data) {
       setBatchResult({ open: true, data: resp.data });
@@ -318,6 +325,29 @@ interface ColumnProps {
   onClick: (apt: AppointmentListItem) => void;
 }
 
+const EVIDENCE_ITEMS = [
+  { key: 'customer_appointment', label: '预约', hasIcon: '✅', noIcon: '⭕' },
+  { key: 'project_confirmation', label: '确认', hasIcon: '✅', noIcon: '⭕' },
+  { key: 'service_followup', label: '回访', hasIcon: '✅', noIcon: '⭕' },
+] as const;
+
+function getEvidenceStatus(
+  summary: any,
+  key: 'customer_appointment' | 'project_confirmation' | 'service_followup',
+): { has: boolean; count: number } {
+  const hasMap: Record<string, boolean> = {
+    customer_appointment: summary?.has_customer_appointment ?? false,
+    project_confirmation: summary?.has_project_confirmation ?? false,
+    service_followup: summary?.has_service_followup ?? false,
+  };
+  const countMap: Record<string, number> = {
+    customer_appointment: summary?.customer_appointment_count ?? 0,
+    project_confirmation: summary?.project_confirmation_count ?? 0,
+    service_followup: summary?.service_followup_count ?? 0,
+  };
+  return { has: hasMap[key], count: countMap[key] };
+}
+
 function KanbanColumn({ type, items, selected, onToggle, onToggleAll, onClick }: ColumnProps) {
   const title = type === 'normal' ? '正常处理' : type === 'approaching' ? '临期预警' : '已逾期';
   const allSelected = items.length > 0 && items.every((i) => selected.has(i.id));
@@ -362,10 +392,26 @@ function KanbanColumn({ type, items, selected, onToggle, onToggleAll, onClick }:
                 <span className="card-exception">{apt.exception_type_label}</span>
               )}
             </div>
+            <div className="card-evidence">
+              {EVIDENCE_ITEMS.map((item) => {
+                const st = getEvidenceStatus(apt.evidence_summary, item.key);
+                return (
+                  <span
+                    key={item.key}
+                    className={`evidence-tag ${st.has ? 'has' : 'missing'}`}
+                    title={`${item.label}${st.has ? `(${st.count}份)` : '（缺失）'}`}
+                  >
+                    {st.has ? item.hasIcon : item.noIcon} {item.label}
+                    {st.has && st.count > 0 && <span className="evidence-count">×{st.count}</span>}
+                  </span>
+                );
+              })}
+            </div>
             <div className="card-meta">
               <span className="card-handler">👤 {apt.current_handler}</span>
               <span className="card-deadline">⏰ {apt.deadline.slice(5, 16)}</span>
             </div>
+            <div className="card-action-hint">点击卡片进入详情处理 →</div>
           </div>
         ))
       )}

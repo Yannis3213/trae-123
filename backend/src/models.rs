@@ -27,6 +27,16 @@ pub struct Appointment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Object)]
+pub struct CardEvidenceSummary {
+    pub has_customer_appointment: bool,
+    pub has_project_confirmation: bool,
+    pub has_service_followup: bool,
+    pub customer_appointment_count: i64,
+    pub project_confirmation_count: i64,
+    pub service_followup_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Object)]
 pub struct AppointmentListItem {
     pub id: String,
     pub order_no: String,
@@ -43,6 +53,7 @@ pub struct AppointmentListItem {
     pub beautician: String,
     pub consultant: String,
     pub version: i64,
+    pub evidence_summary: CardEvidenceSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Object)]
@@ -113,9 +124,9 @@ pub enum DeadlineStatus {
 impl DeadlineStatus {
     pub fn to_string(&self) -> String {
         match self {
-            DeadlineStatus::Normal => "normal",
-            DeadlineStatus::Approaching => "approaching",
-            DeadlineStatus::Overdue => "overdue",
+            DeadlineStatus::Normal => "normal".to_string(),
+            DeadlineStatus::Approaching => "approaching".to_string(),
+            DeadlineStatus::Overdue => "overdue".to_string(),
         }
     }
 }
@@ -266,11 +277,46 @@ pub struct SwitchRoleRequest {
     pub username: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Object)]
-pub struct ApiResponse<T: Serialize> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiResponse<T: Serialize + Send + Sync> {
     pub success: bool,
     pub message: String,
     pub data: Option<T>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Object)]
+pub struct AppointmentsApiResponse {
+    pub success: bool,
+    pub message: String,
+    pub data: Option<AppointmentsResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Object)]
+pub struct AppointmentDetailApiResponse {
+    pub success: bool,
+    pub message: String,
+    pub data: Option<AppointmentDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Object)]
+pub struct AppointmentApiResponse {
+    pub success: bool,
+    pub message: String,
+    pub data: Option<Appointment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Object)]
+pub struct UserInfoApiResponse {
+    pub success: bool,
+    pub message: String,
+    pub data: Option<UserInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Object)]
+pub struct BatchProcessApiResponse {
+    pub success: bool,
+    pub message: String,
+    pub data: Option<BatchProcessResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Object)]
