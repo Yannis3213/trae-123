@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"time"
 	"trademark-system/internal/models"
 )
@@ -223,9 +222,11 @@ func SeedInitialData(db *sql.DB) error {
 	defer tx.Rollback()
 
 	for _, app := range apps {
-		nodeDueDateStr := ""
+		var nodeDueDateVal interface{}
 		if app.nodeDueDate != nil {
-			nodeDueDateStr = app.nodeDueDate.Format("2006-01-02 15:04:05")
+			nodeDueDateVal = app.nodeDueDate.Format("2006-01-02 15:04:05")
+		} else {
+			nodeDueDateVal = nil
 		}
 
 		_, err := tx.Exec(`
@@ -240,7 +241,7 @@ func SeedInitialData(db *sql.DB) error {
 			app.id, app.applicationNo, app.trademarkName, app.applicantName, app.applicantContact,
 			app.category, string(app.status), app.currentHandler, app.createdBy, now, now,
 			app.dueDate, string(app.warningStatus), "", app.lastOpinion, app.lastHandlerName, 1,
-			app.materialComplete, app.evidenceComplete, app.currentNode, nodeDueDateStr,
+			app.materialComplete, app.evidenceComplete, app.currentNode, nodeDueDateVal,
 			app.nodeOverdue, app.nodeResponsible,
 		)
 		if err != nil {
@@ -525,19 +526,20 @@ func GetRoleName(role string) string {
 
 func GetActionName(action string) string {
 	names := map[string]string{
-		"create":   "创建申请",
-		"assign":   "分派",
-		"transfer": "转办",
-		"visit":    "回访",
-		"correct":  "补正",
-		"return":   "退回",
-		"review":   "复核",
-		"archive":  "归档",
+		"create":          "创建申请",
+		"assign":          "分派",
+		"transfer":        "转办",
+		"visit":           "回访",
+		"correct":         "补正",
+		"return":          "退回",
+		"review":          "复核",
+		"archive":         "归档",
+		"upload_evidence": "上传证据",
 	}
 	if name, ok := names[action]; ok {
 		return name
 	}
-	return strings.Title(action)
+	return action
 }
 
 func GetModuleName(module string) string {

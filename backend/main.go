@@ -50,7 +50,7 @@ func main() {
 		r.With(middleware.VersionCheck(db)).Post("/{id}/return", appHandler.Return)
 		r.With(middleware.VersionCheck(db)).Post("/{id}/review", appHandler.Review)
 		r.Get("/{id}/audit", appHandler.GetAuditTrail)
-		r.Post("/{id}/evidence", appHandler.UploadEvidence)
+		r.With(middleware.VersionCheck(db)).Post("/{id}/evidence", appHandler.UploadEvidence)
 		r.Get("/stats", appHandler.GetStats)
 	})
 

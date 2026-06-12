@@ -18,13 +18,30 @@ import {
 
 function ApplicationDetail({ id }) {
   const [app, setApp] = useState(null)
+  const [attachments, setAttachments] = useState([])
+  const [exceptions, setExceptions] = useState([])
   const [auditTrail, setAuditTrail] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [showActionModal, setShowActionModal] = useState(false)
   const [currentAction, setCurrentAction] = useState(null)
-  const [actionForm, setActionForm] = useState({ opinion: '', evidenceName: '', evidenceUrl: '' })
+  const [actionForm, setActionForm] = useState({
+    opinion: '',
+    evidenceName: '',
+    evidenceUrl: '',
+    evidenceType: 'notification_evidence',
+    materialComplete: false,
+    evidenceComplete: false,
+    reason: '',
+    assignee: 'agent',
+  })
   const [showEvidenceModal, setShowEvidenceModal] = useState(false)
+  const [evidenceForm, setEvidenceForm] = useState({
+    name: '',
+    fileType: '',
+    evidenceType: 'notification_evidence',
+    url: '',
+  })
 
   useEffect(() => {
     loadData()
@@ -34,13 +51,15 @@ function ApplicationDetail({ id }) {
     setLoading(true)
     setError(null)
     try {
-      const [appData, auditData] = await Promise.all([
-        api.getApplication(id),
-        api.getAuditTrail(id),
-      ])
-      setApp(appData)
-      setAuditTrail(auditData)
-    } catch (e) {
+      const [detailData, auditData] = await Promise.all([
+      api.getApplication(id),
+      api.getAuditTrail(id),
+    ])
+    setApp(detailData.application)
+    setAttachments(detailData.attachments || [])
+    setExceptions(detailData.exceptions || [])
+    setAuditTrail(auditData)
+  } catch (e) {
       setError(e.message)
     } finally {
       setLoading(false)
@@ -53,7 +72,16 @@ function ApplicationDetail({ id }) {
 
   const handleActionClick = (action) => {
     setCurrentAction(action)
-    setActionForm({ opinion: '', evidenceName: '', evidenceUrl: '' })
+    setActionForm({
+      opinion: '',
+      evidenceName: '',
+      evidenceUrl: '',
+      evidenceType: 'notification_evidence',
+      materialComplete: false,
+      evidenceComplete: false,
+      reason: '',
+      assignee: 'agent',
+    })
     setShowActionModal(true)
   }
 
@@ -64,28 +92,56 @@ function ApplicationDetail({ id }) {
 
       switch (currentAction) {
         case 'assign':
-          await api.assignApplication(id, data)
+          await api.assignApplication(id, { opinion: actionForm.opinion, version })
           break
         case 'transfer':
           await api.transferApplication(id, data)
           break
         case 'visit':
-          await api.visitApplication(id, data)
+          await api.visitApplication(id, {
+            opinion: actionForm.opinion,
+            evidence_complete: actionForm.evidenceComplete,
+            version,
+          })
           break
         case 'correct':
-          await api.correctApplication(id, data)
+          await api.correctApplication(id, {
+            opinion: actionForm.opinion,
+            material_complete: actionForm.materialComplete,
+            evidence_complete: actionForm.evidenceComplete,
+            exception_reason: actionForm.reason,
+            version,
+          })
           break
         case 'return':
-          await api.returnApplication(id, data)
+          await api.returnApplication(id, {
+            opinion: actionForm.opinion,
+            reason: actionForm.reason,
+            version,
+          })
           break
         case 'review':
-          await api.reviewApplication(id, data)
+          await api.reviewApplication(id, {
+          opinion: actionForm.opinion,
+          approved: true,
+          version,
+        })
           break
         case 'submitCorrection':
-          await api.submitCorrection(id, data)
+          await api.submitCorrection(id, {
+            opinion: actionForm.opinion,
+            material_complete: actionForm.materialComplete,
+            evidence_complete: actionForm.evidenceComplete,
+            exception_reason: actionForm.reason,
+            version,
+          })
           break
         case 'submitNotification':
-          await api.submitNotification(id, data)
+          await api.submitNotification(id, {
+            opinion: actionForm.opinion,
+            evidence_complete: actionForm.evidenceComplete,
+            version,
+          })
           break
         default:
           break
@@ -101,19 +157,30 @@ function ApplicationDetail({ id }) {
   }
 
   const handleUploadEvidence = async () => {
-    if (!actionForm.evidenceName || !actionForm.evidenceUrl) {
-      alert('请填写证据名称和链接')
+    if (!evidenceForm.name) {
+      alert('请填写证据名称')
       return
     }
     try {
       await api.uploadEvidence(id, {
-        name: actionForm.evidenceName,
-        url: actionForm.evidenceUrl,
-        module: 'notification',
+        name: evidenceForm.name,
+        file_name: evidenceForm.name,
+        file_type: evidenceForm.fileType,
+        evidence_type: evidenceForm.evidenceType,
+        module_type: app.currentModule || 'notification',
+        url: evidenceForm.url,
+        version: app.version,
       })
       setShowEvidenceModal(false)
-      setActionForm({ opinion: '', evidenceName: '', evidenceUrl: '' })
+      setEvidenceForm({
+        name: '',
+        fileType: '',
+        evidenceType: 'notification_evidence',
+        url: '',
+      })
       await loadData()
+      await loadApplications()
+      await loadStats()
     } catch (e) {
       alert(`上传失败：${e.message}`)
     }
@@ -121,7 +188,7 @@ function ApplicationDetail({ id }) {
 
   const isHandler = app && currentUser.value && app.current_handler === currentUser.value.id
 
-  const canAssign = currentRole.value === 'registrar' && app?.status === 'pending_assign'
+  const canAssign = currentRole.value === 'registrar' && app?.status === 'pending_assign' && isHandler
   const canTransfer = currentRole.value === 'agent' && app?.status === 'pending_assign' && isHandler
   const canVisit = currentRole.value === 'agent' && app?.status === 'transferred' && isHandler
   const canCorrect = currentRole.value === 'registrar' &&
@@ -135,8 +202,10 @@ function ApplicationDetail({ id }) {
   const canSubmitNotification = currentRole.value === 'agent' &&
     app?.status === 'transferred' && isHandler
 
-  const canUploadEvidence = currentRole.value === 'agent' &&
-    (app?.status === 'transferred' || app?.status === 'visited') && isHandler
+  const canUploadEvidence = (currentRole.value === 'agent' || currentRole.value === 'registrar') &&
+    (app?.status === 'transferred' || app?.status === 'visited' ||
+     app?.status === 'correction' || app?.status === 'returned' ||
+     app?.status === 'pending_assign')
 
   const lastRecord = auditTrail && auditTrail.length > 0 ? auditTrail[0] : null
 
@@ -186,30 +255,30 @@ function ApplicationDetail({ id }) {
 
           {app.node_due_date && (
             <div style={{ padding: '0 20px' }}>
-              <div className={`node-info ${app.warning_status === 'overdue' ? 'overdue' : ''}`}>
-                <span className="node-name">当前节点：{app.current_node}</span>
-                <span style={{ margin: '0 12px', color: '#ddd' }}>|</span>
-                <span className="node-responsible">责任人：{app.node_responsible}</span>
-                <span style={{ margin: '0 12px', color: '#ddd' }}>|</span>
-                <span>
-                  截止日期：{formatDate(app.node_due_date)}
-                  {days !== null && (
-                    <span style={{
-                      marginLeft: '8px',
-                      color: days < 0 ? '#ff4d4f' : days <= 3 ? '#fa8c16' : '#52c41a',
-                      fontWeight: '500',
-                    }}>
-                      ({days < 0 ? `已逾期 ${Math.abs(days)} 天` : days <= 3 ? `剩 ${days} 天（临期）` : `剩 ${days} 天`})
-                    </span>
-                  )}
-                </span>
-                {app.node_overdue && (
-                  <span style={{ marginLeft: '12px', color: '#ff4d4f' }}>
-                    <strong>已超时</strong>
+            <div className={`node-info ${app.warning_status === 'overdue' ? 'overdue' : ''}`}>
+              <span className="node-name">当前节点：{app.current_node}</span>
+              <span style={{ margin: '0 12px', color: '#ddd' }}>|</span>
+              <span className="node-responsible">责任人：{app.node_responsible}</span>
+              <span style={{ margin: '0 12px', color: '#ddd' }}>|</span>
+              <span>
+                截止日期：{formatDate(app.node_due_date)}
+                {days !== null && (
+                  <span style={{
+                    marginLeft: '8px',
+                    color: days < 0 ? '#ff4d4f' : days <= 3 ? '#fa8c16' : '#52c41a',
+                    fontWeight: '500',
+                  }}>
+                    ({days < 0 ? `已逾期 ${Math.abs(days)} 天` : days <= 3 ? `剩 ${days} 天（临期）` : `剩 ${days} 天`})
                   </span>
                 )}
-              </div>
+              </span>
+              {app.node_overdue && (
+                <span style={{ marginLeft: '12px', color: '#ff4d4f' }}>
+                  <strong>已超时</strong>
+                </span>
+              )}
             </div>
+          </div>
           )}
 
           <div className="detail-section">
@@ -221,7 +290,7 @@ function ApplicationDetail({ id }) {
               </div>
               <div className="detail-item">
                 <div className="label">联系电话</div>
-                <div className="value">{app.applicant_phone || '-'}</div>
+                <div className="value">{app.applicant_contact || '-'}</div>
               </div>
               <div className="detail-item">
                 <div className="label">商标名称</div>
@@ -229,11 +298,11 @@ function ApplicationDetail({ id }) {
               </div>
               <div className="detail-item">
                 <div className="label">商标类别</div>
-                <div className="value">第 {app.trademark_class} 类</div>
+                <div className="value">{app.category}</div>
               </div>
               <div className="detail-item">
                 <div className="label">申请日期</div>
-                <div className="value">{formatDate(app.application_date)}</div>
+                <div className="value">{formatDate(app.created_at)}</div>
               </div>
               <div className="detail-item">
                 <div className="label">当前处理人</div>
@@ -246,7 +315,6 @@ function ApplicationDetail({ id }) {
                     {app.material_complete ? '齐全' : '缺件'}
                   </span>
                 </div>
-                <div className="value">{app.material_note || '无'}</div>
               </div>
               <div className="detail-item" style={{ gridColumn: 'span 2' }}>
                 <div className="label">
@@ -255,7 +323,6 @@ function ApplicationDetail({ id }) {
                     {app.evidence_complete ? '齐全' : '缺件'}
                   </span>
                 </div>
-                <div className="value">{app.evidence_note || '无'}</div>
               </div>
             </div>
           </div>
@@ -280,34 +347,58 @@ function ApplicationDetail({ id }) {
             </div>
           )}
 
-          {app.attachments && app.attachments.length > 0 && (
+          {attachments && attachments.length > 0 && (
             <div className="detail-section">
-              <h3>附件材料</h3>
+              <h3>附件材料（{attachments.length}）</h3>
               <div className="attachment-list">
-                {app.attachments.map(att => (
+                {attachments.map(att => (
                   <div key={att.id} className="attachment-item">
                     <span className="file-icon">📄</span>
-                    <span className="file-name">{att.name}</span>
-                    <span className="module-tag">{moduleLabel(att.module)}</span>
+                    <span className="file-name">{att.file_name || att.name}</span>
+                    <span className="module-tag">{moduleLabel(att.module_type || att.module)}</span>
+                    {att.evidence_type && (
+                      <span className="evidence-type-tag" style={{
+                        fontSize: '12px',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: '#e6f7ff',
+                      color: '#1890ff',
+                    }}>
+                      {att.evidence_type === 'notification_evidence' ? '递交通知' :
+                       att.evidence_type === 'application_form' ? '申请书' :
+                       att.evidence_type === 'trademark_image' ? '商标图样' :
+                       att.evidence_type === 'correction_material' ? '补正材料' : att.evidence_type}
+                    </span>
+                    )}
+                    <span style={{ fontSize: '12px', color: '#888' }}>
+                      {att.uploaded_by_name || att.uploaded_by} · {formatDate(att.uploaded_at)}
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {app.exception_reasons && app.exception_reasons.length > 0 && (
+          {exceptions && exceptions.length > 0 && (
             <div className="detail-section">
-              <h3>异常原因</h3>
+              <h3>异常原因（{exceptions.length}）</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {app.exception_reasons.map(ex => (
-                  <div key={ex.id} className="alert alert-error">
+                {exceptions.map(ex => (
+                  <div key={ex.id} className={`alert ${ex.resolved ? 'alert-success' : 'alert-error'}`}>
                     <div style={{ fontWeight: '500', marginBottom: '4px' }}>
-                      {actionLabel(ex.action)} · {ex.handler_name} · {formatDateTime(ex.created_at)}
+                      {moduleLabel(ex.module_type || ex.module)} · {ex.created_by_name || ex.created_by} · {formatDateTime(ex.created_at)}
                     </div>
                     <div>{ex.reason}</div>
-                    {ex.corrected && (
+                    {ex.reason_type && (
+                      <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
+                        类型：{ex.reason_type === 'material_missing' ? '材料缺失' :
+                              ex.reason_type === 'evidence_missing' ? '证据缺失' :
+                              ex.reason_type === 'correction_note' ? '补正备注' : ex.reason_type}
+                      </div>
+                    )}
+                    {ex.resolved && (
                       <div style={{ marginTop: '4px', color: '#52c41a', fontSize: '12px' }}>
-                        ✓ 已补正
+                        ✓ 已解决 {ex.resolved_at ? `（${formatDate(ex.resolved_at)}）` : ''}
                       </div>
                     )}
                   </div>
@@ -318,18 +409,18 @@ function ApplicationDetail({ id }) {
 
           {auditTrail && auditTrail.length > 0 && (
             <div className="detail-section">
-              <h3>审计轨迹</h3>
+              <h3>审计轨迹（{auditTrail.length} 条记录）</h3>
               <div className="audit-trail">
                 {auditTrail.map(record => (
                   <div key={record.id} className="audit-item">
                     <div className="audit-time">{formatDateTime(record.created_at)}</div>
                     <div className="audit-action">
-                      <span className={`status-tag status-${record.to_status || record.from_status || 'pending_assign'}`} style={{ marginRight: '8px' }}>
+                      <span className={`status-tag status-${record.new_status || record.old_status || 'pending_assign'}`} style={{ marginRight: '8px' }}>
                         {actionLabel(record.action)}
                       </span>
-                      {record.from_status && record.to_status && (
+                      {record.old_status && record.new_status && (
                         <span style={{ color: '#888', fontSize: '12px' }}>
-                          {statusLabel(record.from_status)} → {statusLabel(record.to_status)}
+                          {statusLabel(record.old_status)} → {statusLabel(record.new_status)}
                         </span>
                       )}
                     </div>
@@ -434,18 +525,48 @@ function ApplicationDetail({ id }) {
                   {!app?.evidence_complete && <div>• 证据不完整</div>}
                 </div>
               )}
-              {(currentAction === 'correct' || currentAction === 'submitCorrection') && (
+              {currentAction === 'return' && (
                 <div className="form-group">
-                  <label>材料是否已补全</label>
-                  <select
-                    value={actionForm.materialComplete ? 'true' : 'false'}
-                    onInput={(e) => setActionForm({ ...actionForm, materialComplete: e.target.value === 'true' })}
-                  >
-                    <option value="false">否</option>
-                    <option value="true">是，材料已补全</option>
-                  </select>
+                  <label>退回原因 *</label>
+                  <textarea
+                    placeholder="请输入退回原因"
+                    value={actionForm.reason}
+                    onInput={(e) => setActionForm({ ...actionForm, reason: e.target.value })}
+                  />
                 </div>
               )}
+              {(currentAction === 'correct' || currentAction === 'submitCorrection') && (
+                  <>
+                    <div className="form-group">
+                      <label>材料是否已补全</label>
+                      <select
+                        value={actionForm.materialComplete ? 'true' : 'false'}
+                        onInput={(e) => setActionForm({ ...actionForm, materialComplete: e.target.value === 'true' })}
+                      >
+                        <option value="false">否</option>
+                        <option value="true">是，材料已补全</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label>证据是否已完整</label>
+                      <select
+                        value={actionForm.evidenceComplete ? 'true' : 'false'}
+                        onInput={(e) => setActionForm({ ...actionForm, evidenceComplete: e.target.value === 'true' })}
+                      >
+                        <option value="false">否</option>
+                        <option value="true">是，证据已完整</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label>异常原因说明</label>
+                      <textarea
+                        placeholder="补正说明或异常原因（可选）"
+                        value={actionForm.reason}
+                        onInput={(e) => setActionForm({ ...actionForm, reason: e.target.value })}
+                      />
+                    </div>
+                  </>
+                )}
               {(currentAction === 'visit' || currentAction === 'submitNotification') && (
                 <div className="form-group">
                   <label>证据是否已完整</label>
@@ -474,7 +595,8 @@ function ApplicationDetail({ id }) {
                 onClick={handleActionConfirm}
                 disabled={
                   (currentAction === 'visit' && !app?.evidence_complete) ||
-                  (currentAction === 'review' && (!app?.material_complete || !app?.evidence_complete))
+                  (currentAction === 'review' && (!app?.material_complete || !app?.evidence_complete)) ||
+                  (currentAction === 'return' && !actionForm.reason)
                 }
               >
                 确认提交
@@ -488,7 +610,7 @@ function ApplicationDetail({ id }) {
         <div className="modal-overlay" onClick={() => setShowEvidenceModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>上传递交通知证据</h2>
+              <h2>上传证据材料</h2>
               <button className="modal-close" onClick={() => setShowEvidenceModal(false)}>&times;</button>
             </div>
             <div className="modal-body">
@@ -497,25 +619,39 @@ function ApplicationDetail({ id }) {
                 <input
                   type="text"
                   placeholder="如：商标局受理通知书"
-                  value={actionForm.evidenceName}
-                  onInput={(e) => setActionForm({ ...actionForm, evidenceName: e.target.value })}
+                  value={evidenceForm.name}
+                  onInput={(e) => setEvidenceForm({ ...evidenceForm, name: e.target.value })}
                 />
               </div>
               <div className="form-group">
-                <label>证据链接 *</label>
+                <label>证据类型</label>
+                <select
+                  value={evidenceForm.evidenceType}
+                  onInput={(e) => setEvidenceForm({ ...evidenceForm, evidenceType: e.target.value })}
+                >
+                  <option value="notification_evidence">递交通知回执</option>
+                  <option value="application_form">商标申请书</option>
+                  <option value="trademark_image">商标图样</option>
+                  <option value="correction_material">补正材料</option>
+                  <option value="other">其他</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>文件类型</label>
                 <input
                   type="text"
-                  placeholder="请输入证据文件链接"
-                  value={actionForm.evidenceUrl}
-                  onInput={(e) => setActionForm({ ...actionForm, evidenceUrl: e.target.value })}
+                  placeholder="如：pdf、jpg 等"
+                  value={evidenceForm.fileType}
+                  onInput={(e) => setEvidenceForm({ ...evidenceForm, fileType: e.target.value })}
                 />
               </div>
               <div className="form-group">
-                <label>备注</label>
-                <textarea
-                  placeholder="备注说明（可选）"
-                  value={actionForm.opinion}
-                  onInput={(e) => setActionForm({ ...actionForm, opinion: e.target.value })}
+                <label>文件链接/地址</label>
+                <input
+                  type="text"
+                  placeholder="请输入文件访问链接"
+                  value={evidenceForm.url}
+                  onInput={(e) => setEvidenceForm({ ...evidenceForm, url: e.target.value })}
                 />
               </div>
             </div>

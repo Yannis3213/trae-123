@@ -171,8 +171,8 @@ func (h *ApplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	`
 
 	app := &models.TrademarkApplication{}
-	var createdAt, updatedAt, dueDate sql.NullTime
-	var nodeDueDate, lastHandleTime sql.NullTime
+	var createdAt, updatedAt, dueDate *time.Time
+	var nodeDueDate, lastHandleTime *time.Time
 	var nodeOverdue, materialComplete, evidenceComplete int
 	var currentHandler, lastHandlerName, lastOpinion sql.NullString
 
@@ -202,22 +202,20 @@ func (h *ApplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	app.LastOpinion = lastOpinion.String
 	app.LastHandlerName = lastHandlerName.String
 
-	if createdAt.Valid {
-		app.CreatedAt = createdAt.Time
+	if createdAt != nil {
+		app.CreatedAt = *createdAt
 	}
-	if updatedAt.Valid {
-		app.UpdatedAt = updatedAt.Time
+	if updatedAt != nil {
+		app.UpdatedAt = *updatedAt
 	}
-	if dueDate.Valid {
-		app.DueDate = dueDate.Time
+	if dueDate != nil {
+		app.DueDate = *dueDate
 	}
-	if nodeDueDate.Valid {
-		t := nodeDueDate.Time
-		app.NodeDueDate = &t
+	if nodeDueDate != nil {
+		app.NodeDueDate = nodeDueDate
 	}
-	if lastHandleTime.Valid {
-		t := lastHandleTime.Time
-		app.LastHandleTime = &t
+	if lastHandleTime != nil {
+		app.LastHandleTime = lastHandleTime
 	}
 
 	_, app.WarningText = database.CalculateWarning(app.DueDate)
@@ -893,8 +891,8 @@ func (h *ApplicationHandler) Return(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	user := GetCurrentUserFromContext(r)
 
-	if user.Role != models.RoleAgent {
-		respondError(w, http.StatusForbidden, "只有商标申请审核主管可以退回")
+	if user.Role != models.RoleAgent && user.Role != models.RoleDirector {
+		respondError(w, http.StatusForbidden, "只有商标申请审核主管或复核负责人可以退回")
 		return
 	}
 
@@ -921,9 +919,16 @@ func (h *ApplicationHandler) Return(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if currentStatus != string(models.StatusTransferred) {
-		respondError(w, http.StatusBadRequest, "当前状态不允许退回操作，应为已转办状态")
+	if currentStatus != string(models.StatusTransferred) && currentStatus != string(models.StatusVisited) {
+		respondError(w, http.StatusBadRequest, "当前状态不允许退回操作，应为已转办或已回访状态")
 		return
+	}
+
+	if req.MaterialComplete != nil {
+		materialComplete = *req.MaterialComplete
+	}
+	if req.EvidenceComplete != nil {
+		evidenceComplete = *req.EvidenceComplete
 	}
 
 	var newStatus string
@@ -962,14 +967,17 @@ func (h *ApplicationHandler) Return(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	reason := req.Reason
-	if reason == "" {
+	exceptionReason := req.ExceptionReason
+	if exceptionReason == "" {
+		exceptionReason = req.Reason
+	}
+	if exceptionReason == "" {
 		if !materialComplete {
-			reason = "商标申请材料不完整"
+			exceptionReason = "商标申请材料不完整"
 		} else if !evidenceComplete {
-			reason = "递交通知证据不完整"
+			exceptionReason = "递交通知证据不完整"
 		} else {
-			reason = "其他原因"
+			exceptionReason = "其他原因"
 		}
 	}
 
@@ -977,11 +985,13 @@ func (h *ApplicationHandler) Return(w http.ResponseWriter, r *http.Request) {
 		UPDATE trademark_applications SET
 			status = ?, current_handler = ?, updated_at = ?, version = ?,
 			last_opinion = ?, last_handler_name = ?, last_handle_time = ?,
+			material_complete = ?, evidence_complete = ?,
 			current_node = ?, node_due_date = ?, node_responsible = ?
 		WHERE id = ?
 	`,
 		newStatus, newHandler, now, version+1,
 		opinion, user.Name, now,
+		materialComplete, evidenceComplete,
 		nodeName, nodeDueDate, nodeResponsible, id,
 	)
 	if err != nil {
@@ -1018,7 +1028,7 @@ func (h *ApplicationHandler) Return(w http.ResponseWriter, r *http.Request) {
 			created_at, module_type, resolved
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		excID, id, reason, reasonType, user.ID,
+		excID, id, exceptionReason, reasonType, user.ID,
 		now, moduleType, false,
 	)
 	if err != nil {
@@ -1198,20 +1208,35 @@ func (h *ApplicationHandler) UploadEvidence(w http.ResponseWriter, r *http.Reque
 	id := chi.URLParam(r, "id")
 	user := GetCurrentUserFromContext(r)
 
-	var req struct {
-		FileName     string `json:"file_name"`
-		FileType     string `json:"file_type"`
-		FileSize     int64  `json:"file_size"`
-		ModuleType   string `json:"module_type"`
-		EvidenceType string `json:"evidence_type"`
-	}
+	var req models.UploadEvidenceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "参数错误")
 		return
 	}
 
-	if req.FileName == "" {
-		respondError(w, http.StatusBadRequest, "文件名不能为空")
+	fileName := req.FileName
+	if fileName == "" {
+		fileName = req.Name
+	}
+	if fileName == "" {
+		respondError(w, http.StatusBadRequest, "文件名称不能为空")
+		return
+	}
+
+	var currentStatus, currentHandler string
+	var version int
+	var materialComplete, evidenceComplete bool
+	err := h.db.QueryRow(`
+		SELECT status, current_handler, version, material_complete, evidence_complete
+		FROM trademark_applications WHERE id = ?
+	`, id).Scan(&currentStatus, &currentHandler, &version, &materialComplete, &evidenceComplete)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "申请单不存在")
+		return
+	}
+
+	if currentHandler != string(user.Role) && currentHandler != "" {
+		respondError(w, http.StatusForbidden, "您不是当前处理人")
 		return
 	}
 
@@ -1220,43 +1245,99 @@ func (h *ApplicationHandler) UploadEvidence(w http.ResponseWriter, r *http.Reque
 		moduleType = string(models.ModuleNotification)
 	}
 
+	evidenceType := req.EvidenceType
+	if evidenceType == "" {
+		if moduleType == string(models.ModuleApplication) {
+			evidenceType = "application_form"
+		} else if moduleType == string(models.ModuleCorrection) {
+			evidenceType = "correction_material"
+		} else {
+			evidenceType = "notification_evidence"
+		}
+	}
+
 	now := time.Now()
 	attachID := generateID()
 
-	_, err := h.db.Exec(`
+	tx, err := h.db.Begin()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "启动事务失败")
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO attachments (
 			id, application_id, file_name, file_type, file_size,
 			module_type, uploaded_by, uploaded_at, evidence_type
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		attachID, id, req.FileName, req.FileType, req.FileSize,
-		moduleType, user.ID, now, req.EvidenceType,
+		attachID, id, fileName, req.FileType, req.FileSize,
+		moduleType, user.ID, now, evidenceType,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "上传证据失败")
 		return
 	}
 
-	if req.EvidenceType == "notification_evidence" {
-		h.db.Exec(`
-			UPDATE trademark_applications SET evidence_complete = 1 WHERE id = ?
-		`, id)
+	newMaterialComplete := materialComplete
+	newEvidenceComplete := evidenceComplete
+
+	if evidenceType == "notification_evidence" {
+		newEvidenceComplete = true
 	}
 
-	if req.EvidenceType == "application_form" || req.EvidenceType == "trademark_image" {
+	if evidenceType == "application_form" || evidenceType == "trademark_image" {
 		var count int
-		h.db.QueryRow(`
+		tx.QueryRow(`
 			SELECT COUNT(*) FROM attachments WHERE application_id = ? AND evidence_type IN ('application_form', 'trademark_image')
 		`, id).Scan(&count)
 		if count >= 2 {
-			h.db.Exec(`
-				UPDATE trademark_applications SET material_complete = 1 WHERE id = ?
-			`, id)
+			newMaterialComplete = true
 		}
 	}
 
+	if evidenceType == "correction_material" {
+		newMaterialComplete = true
+	}
+
+	_, err = tx.Exec(`
+		UPDATE trademark_applications SET
+			material_complete = ?, evidence_complete = ?,
+			updated_at = ?, version = ?
+		WHERE id = ?
+	`, newMaterialComplete, newEvidenceComplete, now, version+1, id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "更新状态失败")
+		return
+	}
+
+	recordID := generateID()
+	opinion := "上传证据：" + fileName
+	_, err = tx.Exec(`
+		INSERT INTO processing_records (
+			id, application_id, action, old_status, new_status,
+			handler, opinion, created_at, module_type
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		recordID, id, "upload_evidence", currentStatus, currentStatus,
+		user.ID, opinion, now, moduleType,
+	)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "创建处理记录失败")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		respondError(w, http.StatusInternalServerError, "提交事务失败")
+		return
+	}
+
 	respondSuccess(w, map[string]interface{}{
-		"id": attachID,
+		"id":       attachID,
+		"version":  version + 1,
+		"material_complete": newMaterialComplete,
+		"evidence_complete": newEvidenceComplete,
 	})
 }
 

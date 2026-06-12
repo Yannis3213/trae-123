@@ -200,9 +200,23 @@ type CorrectRequest struct {
 }
 
 type ReturnRequest struct {
-	Opinion         string `json:"opinion"`
-	Reason          string `json:"reason"`
-	Version         int    `json:"version"`
+	Opinion          string `json:"opinion"`
+	Reason           string `json:"reason"`
+	MaterialComplete *bool  `json:"material_complete"`
+	EvidenceComplete *bool  `json:"evidence_complete"`
+	ExceptionReason  string `json:"exception_reason"`
+	Version          int    `json:"version"`
+}
+
+type UploadEvidenceRequest struct {
+	Name         string `json:"name"`
+	FileName     string `json:"file_name"`
+	FileType     string `json:"file_type"`
+	FileSize     int64  `json:"file_size"`
+	Url          string `json:"url"`
+	ModuleType   string `json:"module_type"`
+	EvidenceType string `json:"evidence_type"`
+	Version      int    `json:"version"`
 }
 
 type StatsResponse struct {
