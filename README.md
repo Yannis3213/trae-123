@@ -150,7 +150,12 @@ curl -s http://localhost:10100/api/audits/batch \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"action":"advance","audit_ids":["a4","a5"],"comment":"批量推进"}'
-# 逐条返回成功/失败原因
+# 逐条返回成功/失败原因，a4(待补正→处理中)成功，a5(复核中)失败返回 ERR_INVALID_STATUS
+
+# 逾期批量推进（supervisor 对逾期队列执行 advance）
+# 混合状态的逾期单会逐条拦截：reviewing 状态返回 ERR_INVALID_STATUS"当前状态为复核中，服务督导无法推进，需城市经理处理"
+# pending/processing/correction_needed 状态可正常推进
+# 失败项不改状态、版本和审计日志，仅成功项写入操作记录
 ```
 
 ### 前端操作测试
@@ -159,7 +164,7 @@ curl -s http://localhost:10100/api/audits/batch \
 2. **列表筛选**：按状态/到期筛选，正常/临期/逾期标签颜色区分
 3. **详情办理**：进入审核单详情，按角色显示操作按钮，提交时服务端校验
 4. **批量处理**：勾选多条审核单，执行批量操作，结果弹窗逐条显示成功/失败
-5. **到期预警**：三列看板（正常/临期/逾期），逾期批量推进逐条拦截
+5. **到期预警**：三列看板（正常/临期/逾期），逾期批量推进逐条拦截，失败项显示错误码和原因（ERR_INVALID_STATUS + 具体状态说明），成功项刷新队列
 6. **审计时间线**：详情页右侧展示操作人姓名/角色/动作/异常原因
 
 ## API 端点（http://localhost:10100）

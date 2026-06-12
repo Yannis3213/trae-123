@@ -20,6 +20,28 @@ fn now_iso() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+fn status_label(status: &str) -> String {
+    match status {
+        "pending" => "待处理".to_string(),
+        "processing" => "处理中".to_string(),
+        "reviewing" => "复核中".to_string(),
+        "correction_needed" => "待补正".to_string(),
+        "completed" => "已办结".to_string(),
+        "withdrawn" => "已撤回".to_string(),
+        _ => status.to_string(),
+    }
+}
+
+fn action_label(action: &str) -> String {
+    match action {
+        "advance" => "推进".to_string(),
+        "return_correction" => "退回补正".to_string(),
+        "review_pass" => "复核通过".to_string(),
+        "complete" => "办结".to_string(),
+        _ => action.to_string(),
+    }
+}
+
 fn compute_expiry_status(expiry_date: &str) -> String {
     let today = Utc::now().date_naive();
     let expiry = chrono::NaiveDate::parse_from_str(expiry_date, "%Y-%m-%d");
@@ -358,6 +380,18 @@ fn do_process_audit(
                     new_status = "reviewing".to_string();
                     new_handler_id = None;
                 }
+                "reviewing" => {
+                    return Err(AppError::InvalidStatusWithReason(format!(
+                        "当前状态为复核中，服务督导无法推进，需城市经理处理（{}→{}）",
+                        status_label(&audit.status), action_label(&req.action)
+                    )));
+                }
+                "completed" | "withdrawn" => {
+                    return Err(AppError::InvalidStatusWithReason(format!(
+                        "审核单已{}，无法再{}",
+                        status_label(&audit.status), action_label(&req.action)
+                    )));
+                }
                 _ => return Err(AppError::InvalidStatus),
             }
         }
@@ -370,6 +404,22 @@ fn do_process_audit(
                     new_status = "correction_needed".to_string();
                     new_handler_id = None;
                 }
+                "pending" => {
+                    return Err(AppError::InvalidStatusWithReason(format!(
+                        "当前状态为待处理，无需退回补正，可直接推进"
+                    )));
+                }
+                "correction_needed" => {
+                    return Err(AppError::InvalidStatusWithReason(format!(
+                        "当前状态已为待补正，无需重复退回"
+                    )));
+                }
+                "completed" | "withdrawn" => {
+                    return Err(AppError::InvalidStatusWithReason(format!(
+                        "审核单已{}，无法退回补正",
+                        status_label(&audit.status)
+                    )));
+                }
                 _ => return Err(AppError::InvalidStatus),
             }
         }
@@ -378,7 +428,10 @@ fn do_process_audit(
                 return Err(AppError::Forbidden);
             }
             if audit.status != "reviewing" {
-                return Err(AppError::InvalidStatus);
+                return Err(AppError::InvalidStatusWithReason(format!(
+                    "当前状态为{}，需在复核中才能复核通过",
+                    status_label(&audit.status)
+                )));
             }
             new_status = "reviewing".to_string();
             new_handler_id = audit.current_handler_id.clone();
@@ -388,7 +441,10 @@ fn do_process_audit(
                 return Err(AppError::Forbidden);
             }
             if audit.status != "reviewing" {
-                return Err(AppError::InvalidStatus);
+                return Err(AppError::InvalidStatusWithReason(format!(
+                    "当前状态为{}，需在复核中才能办结",
+                    status_label(&audit.status)
+                )));
             }
             new_status = "completed".to_string();
             new_handler_id = None;

@@ -272,17 +272,22 @@ export default component$(() => {
               {results.value.map((item) => (
                 <div
                   key={item.audit_id}
-                  class={`flex items-center gap-3 p-3 rounded-lg text-sm ${
+                  class={`p-3 rounded-lg text-sm ${
                     item.success ? "bg-green-50" : "bg-red-50"
                   }`}
                 >
-                  <span class={item.success ? "text-status-green" : "text-status-red"}>
-                    {item.success ? "✓" : "✗"}
-                  </span>
-                  <span class="font-mono text-xs">{item.order_no}</span>
-                  <span class={item.success ? "text-green-700" : "text-red-700"}>
-                    {item.success ? "成功" : item.error_message || "失败"}
-                  </span>
+                  <div class="flex items-center gap-3">
+                    <span class={item.success ? "text-status-green" : "text-status-red"}>
+                      {item.success ? "✓" : "✗"}
+                    </span>
+                    <span class="font-mono text-xs">{item.order_no}</span>
+                    <span class={item.success ? "text-green-700" : "text-red-700"}>
+                      {item.success ? "成功" : item.error_message || "失败"}
+                    </span>
+                  </div>
+                  {!item.success && item.error_code && (
+                    <div class="mt-1 ml-7 text-xs text-red-500 font-mono">[{item.error_code}]</div>
+                  )}
                 </div>
               ))}
             </div>

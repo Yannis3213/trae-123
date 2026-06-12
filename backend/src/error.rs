@@ -22,6 +22,8 @@ pub enum AppError {
     MissingEvidence(String),
     #[error("状态不允许此操作")]
     InvalidStatus,
+    #[error("{0}")]
+    InvalidStatusWithReason(String),
     #[error("当前用户不是处理人")]
     NotHandler,
     #[error("参数错误: {0}")]
@@ -38,7 +40,7 @@ impl AppError {
             AppError::NotFound(_) => "ERR_NOT_FOUND",
             AppError::VersionConflict => "ERR_VERSION_CONFLICT",
             AppError::MissingEvidence(_) => "ERR_MISSING_EVIDENCE",
-            AppError::InvalidStatus => "ERR_INVALID_STATUS",
+            AppError::InvalidStatus | AppError::InvalidStatusWithReason(_) => "ERR_INVALID_STATUS",
             AppError::NotHandler => "ERR_NOT_HANDLER",
             AppError::BadRequest(_) => "ERR_BAD_REQUEST",
             AppError::Internal(_) => "ERR_INTERNAL",
@@ -52,7 +54,7 @@ impl AppError {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::VersionConflict => StatusCode::CONFLICT,
             AppError::MissingEvidence(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            AppError::InvalidStatus => StatusCode::UNPROCESSABLE_ENTITY,
+            AppError::InvalidStatus | AppError::InvalidStatusWithReason(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::NotHandler => StatusCode::FORBIDDEN,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
