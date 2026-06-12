@@ -47,6 +47,14 @@ const TRANSITIONS = {
       label: '分派兽医师',
       requiresEvidence: [],
       updates: { assignee_id: true }
+    },
+    overdue_assign: {
+      to: 'assigned',
+      allowedRoles: ['director'],
+      label: '逾期强派（院长干预）',
+      requiresEvidence: ['逾期处理说明'],
+      updates: { assignee_id: true },
+      isOverdueAction: true
     }
   },
   assigned: {
@@ -65,14 +73,24 @@ const TRANSITIONS = {
       label: '转办（待补充材料）',
       requiresEvidence: ['诊断记录'],
       optionalEvidence: true,
-      updates: {}
+      updates: {},
+      onExecute: (order, payload) => ({
+        material_status: 'incomplete',
+        exception_type: 'material',
+        exception_reason: payload.exception_reason || '材料不完整，需补充后恢复处理'
+      })
     },
     schedule_follow_up: {
       to: 'follow_up_scheduled',
       allowedRoles: ['doctor'],
       label: '完成治疗，安排回访',
       requiresEvidence: ['诊断记录', '治疗方案', '处方单'],
-      updates: {}
+      updates: {},
+      onExecute: () => ({
+        material_status: 'complete',
+        exception_type: null,
+        exception_reason: null
+      })
     }
   },
   transferred: {
@@ -81,7 +99,13 @@ const TRANSITIONS = {
       allowedRoles: ['doctor'],
       label: '补充材料，恢复处理',
       requiresEvidence: ['补充材料'],
-      updates: {}
+      updates: {},
+      onExecute: (order, payload) => ({
+        material_status: 'complete',
+        exception_type: null,
+        exception_reason: null,
+        correction_action: payload.correction_action || '补充缺失材料，恢复处理流程'
+      })
     }
   },
   returned_for_correction: {
@@ -90,7 +114,11 @@ const TRANSITIONS = {
       allowedRoles: ['doctor', 'nurse'],
       label: '开始补正',
       requiresEvidence: [],
-      updates: {}
+      updates: {},
+      onExecute: (order, payload) => ({
+        correction_action: payload.correction_action || '按退回要求进行补正',
+        exception_reason: `补正中：${payload.correction_action || '按退回要求进行补正'}`
+      })
     }
   },
   reprocessing: {
@@ -99,7 +127,13 @@ const TRANSITIONS = {
       allowedRoles: ['doctor'],
       label: '补正完成，提交复核',
       requiresEvidence: ['补正材料', '补正说明'],
-      updates: { reviewer_id: true }
+      updates: { reviewer_id: true },
+      onExecute: (order, payload) => ({
+        material_status: 'complete',
+        exception_type: null,
+        exception_reason: null,
+        correction_action: payload.correction_action || `补正完成并提交：${(payload.evidence_provided || '补正材料')}`
+      })
     }
   },
   follow_up_scheduled: {
@@ -108,7 +142,11 @@ const TRANSITIONS = {
       allowedRoles: ['nurse'],
       label: '完成回访',
       requiresEvidence: ['回访记录'],
-      updates: {}
+      updates: {},
+      onExecute: () => ({
+        exception_type: null,
+        exception_reason: null
+      })
     }
   },
   followed_up: {
@@ -117,7 +155,11 @@ const TRANSITIONS = {
       allowedRoles: ['doctor'],
       label: '提交院长复核',
       requiresEvidence: [],
-      updates: { reviewer_id: true }
+      updates: { reviewer_id: true },
+      onExecute: () => ({
+        exception_type: null,
+        exception_reason: null
+      })
     }
   },
   reviewing: {
@@ -126,16 +168,39 @@ const TRANSITIONS = {
       allowedRoles: ['director'],
       label: '复核通过，归档',
       requiresEvidence: [],
-      updates: {}
+      updates: {},
+      onExecute: () => ({
+        exception_type: null,
+        exception_reason: null,
+        is_overdue: 0
+      })
     },
     return_for_correction: {
       to: 'returned_for_correction',
       allowedRoles: ['director'],
       label: '退回补正',
       requiresEvidence: ['退回原因说明'],
-      updates: {}
+      updates: {},
+      onExecute: (order, payload) => ({
+        material_status: 'incomplete',
+        exception_type: payload.exception_type || 'material',
+        exception_reason: payload.exception_reason || '材料不完整，需补正后重新提交',
+        correction_action: null
+      })
     }
   }
+};
+
+const OVERDUE_ADVANCE_MAP = {
+  pending_assign: { to: 'assigned', label: '逾期推进：强制分派', requiresAssignee: true },
+  assigned: { to: 'processing', label: '逾期推进：强制接诊' },
+  processing: { to: 'follow_up_scheduled', label: '逾期推进：强制完成治疗' },
+  transferred: { to: 'processing', label: '逾期推进：强制恢复处理' },
+  returned_for_correction: { to: 'reprocessing', label: '逾期推进：强制开始补正' },
+  reprocessing: { to: 'reviewing', label: '逾期推进：强制提交复核', requiresEvidence: true },
+  follow_up_scheduled: { to: 'followed_up', label: '逾期推进：强制完成回访' },
+  followed_up: { to: 'reviewing', label: '逾期推进：强制提交复核' },
+  reviewing: { to: 'archived', label: '逾期推进：强制归档' }
 };
 
 const getDeadlineStatus = (deadline) => {
@@ -155,17 +220,21 @@ const checkDeadline = (order) => {
     return {
       isOverdue: true,
       exceptionType: 'timeline',
-      exceptionReason: `就诊单已逾期，截止时间为 ${new Date(order.deadline).toLocaleString()}`
+      exceptionReason: `就诊单已逾期，截止时间为 ${new Date(order.deadline).toLocaleString()}，当前责任人：${order.assignee_id ? '分派兽医师' : (order.handler_id ? '接诊兽医师' : '未分派')}`
     };
   }
   return { isOverdue: status === 'overdue', exceptionType: null, exceptionReason: null };
 };
 
 const validateTransition = (db, order, action, user, payload = {}) => {
+  if (action === 'overdue_advance') {
+    return validateOverdueAdvance(db, order, user, payload);
+  }
+
   const currentTransitions = TRANSITIONS[order.status];
   if (!currentTransitions || !currentTransitions[action]) {
     throw new AppError(
-      `当前状态「${STATUS_LABELS[order.status]}」不支持操作「${action}」`,
+      `当前状态「${STATUS_LABELS[order.status]}」不支持操作「${action}」，允许的操作：${Object.keys(currentTransitions || {}).join('、') || '无'}`,
       400,
       'status'
     );
@@ -175,7 +244,7 @@ const validateTransition = (db, order, action, user, payload = {}) => {
 
   if (!transition.allowedRoles.includes(user.role)) {
     throw new AppError(
-      `角色「${ROLE_LABELS[user.role]}」无权执行操作「${transition.label}」，需要角色：${transition.allowedRoles.map(r => ROLE_LABELS[r]).join(' / ')}`,
+      `权限不足：角色「${ROLE_LABELS[user.role]}」无权执行「${transition.label}」，需要角色：${transition.allowedRoles.map(r => ROLE_LABELS[r]).join(' / ')}`,
       403,
       'permission'
     );
@@ -183,15 +252,15 @@ const validateTransition = (db, order, action, user, payload = {}) => {
 
   if (user.role === 'doctor' && order.assignee_id && order.assignee_id !== user.id && order.handler_id && order.handler_id !== user.id) {
     throw new AppError(
-      '越权操作：您不是该就诊单的分派兽医师，无法处理此单据',
+      `越权操作：您（${ROLE_LABELS[user.role]}）不是该就诊单的责任兽医师（分派：用户${order.assignee_id}，接诊：用户${order.handler_id || '无'}），无法处理此单据`,
       403,
       'permission'
     );
   }
 
-  if (user.role === 'director' && order.reviewer_id && order.reviewer_id !== user.id) {
+  if (user.role === 'director' && order.reviewer_id && order.reviewer_id !== user.id && ['reviewing'].includes(order.status)) {
     throw new AppError(
-      '越权操作：您不是该就诊单的复核院长',
+      `越权操作：您不是该就诊单的指定复核院长（复核人：用户${order.reviewer_id}），无法在此状态下操作`,
       403,
       'permission'
     );
@@ -199,7 +268,7 @@ const validateTransition = (db, order, action, user, payload = {}) => {
 
   if (payload.version !== undefined && payload.version !== order.version) {
     throw new AppError(
-      `版本冲突：当前版本为 ${order.version}，您提交的版本为 ${payload.version}，请刷新后重试`,
+      `版本冲突：当前版本为 ${order.version}，您提交的版本为 ${payload.version}，单据已被他人修改，请刷新后重试`,
       409,
       'status'
     );
@@ -210,9 +279,20 @@ const validateTransition = (db, order, action, user, payload = {}) => {
     const missing = transition.requiresEvidence.filter(e => !providedEvidence.some(p => p.includes(e) || e.includes(p)));
     if (missing.length > 0) {
       throw new AppError(
-        `缺少必填证据材料：${missing.join('、')}`,
+        `缺少必填证据材料：${missing.join('、')}（已提供：${providedEvidence.join('、') || '无'}，需要：${transition.requiresEvidence.join('、')}）`,
         400,
         'material'
+      );
+    }
+  }
+
+  if (transition.isOverdueAction) {
+    const dlStatus = getDeadlineStatus(order.deadline);
+    if (dlStatus !== 'overdue') {
+      throw new AppError(
+        `逾期操作校验失败：该就诊单当前未逾期（到期状态：${dlStatus === 'approaching' ? '临期' : '正常'}），不能使用逾期强制操作`,
+        400,
+        'timeline'
       );
     }
   }
@@ -232,10 +312,89 @@ const validateTransition = (db, order, action, user, payload = {}) => {
   return transition;
 };
 
+const validateOverdueAdvance = (db, order, user, payload = {}) => {
+  if (user.role !== 'director') {
+    throw new AppError(
+      `逾期推进权限不足：仅院长可执行逾期强制推进，当前角色「${ROLE_LABELS[user.role]}」无此权限`,
+      403,
+      'permission'
+    );
+  }
+
+  if (order.status === 'archived') {
+    throw new AppError(
+      '状态冲突：已归档的单据无法进行逾期推进',
+      400,
+      'status'
+    );
+  }
+
+  const advance = OVERDUE_ADVANCE_MAP[order.status];
+  if (!advance) {
+    throw new AppError(
+      `逾期推进不支持当前状态「${STATUS_LABELS[order.status]}」`,
+      400,
+      'status'
+    );
+  }
+
+  const dlStatus = getDeadlineStatus(order.deadline);
+  if (dlStatus !== 'overdue') {
+    throw new AppError(
+      `逾期推进校验失败：该就诊单当前未逾期（到期状态：${dlStatus === 'approaching' ? '临期' : '正常'}），不可使用逾期强制推进`,
+      400,
+      'timeline'
+    );
+  }
+
+  if (payload.version !== undefined && payload.version !== order.version) {
+    throw new AppError(
+      `版本冲突：当前版本 ${order.version}，提交版本 ${payload.version}，请刷新后重试`,
+      409,
+      'status'
+    );
+  }
+
+  if (advance.requiresAssignee && !payload.assignee_id) {
+    throw new AppError(
+      '逾期推进「强制分派」必须指定兽医师',
+      400,
+      'material'
+    );
+  }
+
+  if (advance.requiresEvidence && !payload.evidence_provided) {
+    throw new AppError(
+      `逾期推进「${advance.label}」必须提供证据材料`,
+      400,
+      'material'
+    );
+  }
+
+  return {
+    to: advance.to,
+    allowedRoles: ['director'],
+    label: advance.label,
+    requiresEvidence: advance.requiresEvidence ? ['逾期处理证据'] : [],
+    updates: payload.assignee_id ? { assignee_id: true } : {},
+    onExecute: () => ({
+      exception_type: 'timeline',
+      exception_reason: `逾期强制推进：${advance.label}（操作人：${ROLE_LABELS[user.role]}）`,
+      correction_action: `逾期处理：${advance.label}`
+    }),
+    isOverdueAdvance: true
+  };
+};
+
 const executeTransition = (db, order, action, user, payload = {}) => {
   const transition = validateTransition(db, order, action, user, payload);
 
   const deadlineCheck = checkDeadline(order);
+
+  let extraUpdates = {};
+  if (transition.onExecute) {
+    extraUpdates = transition.onExecute(order, payload);
+  }
 
   const stmt = db.prepare(`
     UPDATE visit_orders
@@ -245,39 +404,59 @@ const executeTransition = (db, order, action, user, payload = {}) => {
         handler_id = COALESCE(?, handler_id),
         reviewer_id = COALESCE(?, reviewer_id),
         is_overdue = ?,
+        material_status = COALESCE(?, material_status),
         exception_type = COALESCE(?, exception_type),
         exception_reason = COALESCE(?, exception_reason),
+        correction_action = COALESCE(?, correction_action),
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ? AND version = ?
   `);
 
+  const newOverdue = extraUpdates.is_overdue !== undefined
+    ? extraUpdates.is_overdue
+    : (deadlineCheck.isOverdue ? 1 : (order.is_overdue || 0));
+
+  const newExceptionType = extraUpdates.exception_type !== undefined
+    ? (extraUpdates.exception_type === null ? null : extraUpdates.exception_type)
+    : (deadlineCheck.exceptionType || null);
+
+  const newExceptionReason = extraUpdates.exception_reason !== undefined
+    ? (extraUpdates.exception_reason === null ? null : extraUpdates.exception_reason)
+    : (deadlineCheck.exceptionReason || null);
+
   const result = stmt.run(
     transition.to,
     payload.assignee_id || null,
-    payload.handler_id || null,
-    payload.reviewer_id || null,
-    deadlineCheck.isOverdue ? 1 : (order.is_overdue || 0),
-    deadlineCheck.exceptionType,
-    deadlineCheck.exceptionReason,
+    payload.handler_id || (transition.updates?.handler_id ? user.id : null),
+    payload.reviewer_id || (transition.updates?.reviewer_id ? user.id : null),
+    newOverdue,
+    extraUpdates.material_status || null,
+    newExceptionType,
+    newExceptionReason,
+    extraUpdates.correction_action || null,
     order.id,
     payload.version || order.version
   );
 
   if (result.changes === 0) {
     throw new AppError(
-      '状态变更失败：版本冲突或单据已被他人修改，请刷新后重试',
+      '状态变更失败：版本冲突或单据已被他人修改，请刷新页面获取最新数据后重试',
       409,
       'status'
     );
   }
+
+  const effectiveExceptionType = newExceptionType || (deadlineCheck.exceptionType);
+  const effectiveExceptionReason = newExceptionReason || (deadlineCheck.exceptionReason);
 
   const recordStmt = db.prepare(`
     INSERT INTO processing_records (
       visit_order_id, action, from_status, to_status,
       operator_id, operator_role, comment,
       exception_type, exception_reason,
-      evidence_required, evidence_provided
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      evidence_required, evidence_provided,
+      correction_action
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   recordStmt.run(
@@ -288,10 +467,11 @@ const executeTransition = (db, order, action, user, payload = {}) => {
     user.id,
     user.role,
     payload.comment || transition.label,
-    payload.exception_type || deadlineCheck.exceptionType,
-    payload.exception_reason || deadlineCheck.exceptionReason,
+    effectiveExceptionType,
+    effectiveExceptionReason,
     transition.requiresEvidence ? transition.requiresEvidence.join('、') : null,
-    payload.evidence_provided || null
+    payload.evidence_provided || null,
+    extraUpdates.correction_action || payload.correction_action || null
   );
 
   const updated = db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(order.id);
@@ -301,7 +481,10 @@ const executeTransition = (db, order, action, user, payload = {}) => {
     from: order.status,
     to: transition.to,
     order: updated,
-    message: `已${transition.label}`
+    message: `已${transition.label}`,
+    exceptionType: effectiveExceptionType,
+    exceptionReason: effectiveExceptionReason,
+    correctionAction: extraUpdates.correction_action || payload.correction_action || null
   };
 };
 
@@ -310,19 +493,39 @@ const getAllowedActions = (order, user) => {
   const allowed = [];
 
   for (const [action, transition] of Object.entries(currentTransitions)) {
-    if (transition.allowedRoles.includes(user.role)) {
-      if (user.role === 'doctor' && order.assignee_id && order.assignee_id !== user.id && order.handler_id && order.handler_id !== user.id) {
+    if (!transition.allowedRoles.includes(user.role)) {
+      continue;
+    }
+    if (user.role === 'doctor' && order.assignee_id && order.assignee_id !== user.id && order.handler_id && order.handler_id !== user.id) {
+      continue;
+    }
+    if (user.role === 'director' && order.reviewer_id && order.reviewer_id !== user.id && order.status === 'reviewing') {
+      if (action !== 'return_for_correction' && action !== 'archive') {
         continue;
       }
-      if (user.role === 'director' && order.reviewer_id && order.reviewer_id !== user.id && order.status === 'reviewing') {
-        continue;
-      }
+    }
+    allowed.push({
+      action,
+      label: transition.label,
+      to: transition.to,
+      toLabel: STATUS_LABELS[transition.to],
+      requiresEvidence: transition.requiresEvidence || [],
+      isOverdueAction: transition.isOverdueAction || false
+    });
+  }
+
+  if (user.role === 'director' && order.status !== 'archived' && OVERDUE_ADVANCE_MAP[order.status]) {
+    const dlStatus = getDeadlineStatus(order.deadline);
+    if (dlStatus === 'overdue') {
+      const advance = OVERDUE_ADVANCE_MAP[order.status];
       allowed.push({
-        action,
-        label: transition.label,
-        to: transition.to,
-        toLabel: STATUS_LABELS[transition.to],
-        requiresEvidence: transition.requiresEvidence || []
+        action: 'overdue_advance',
+        label: advance.label,
+        to: advance.to,
+        toLabel: STATUS_LABELS[advance.to],
+        requiresEvidence: advance.requiresEvidence ? ['逾期处理证据'] : [],
+        isOverdueAction: true,
+        requiresAssignee: advance.requiresAssignee || false
       });
     }
   }
@@ -346,6 +549,7 @@ module.exports = {
   PRIORITY_LABELS,
   EXCEPTION_TYPE_LABELS,
   TRANSITIONS,
+  OVERDUE_ADVANCE_MAP,
   getDeadlineStatus,
   checkDeadline,
   validateTransition,

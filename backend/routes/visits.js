@@ -19,6 +19,7 @@ const enrichOrder = (db, order) => {
   if (order.exception_type) {
     result.exceptionTypeLabel = EXCEPTION_TYPE_LABELS[order.exception_type] || order.exception_type;
   }
+  result.materialStatusLabel = order.material_status === 'complete' ? '材料齐全' : '材料不完整';
 
   if (order.assignee_id) {
     const u = db.prepare('SELECT id, name, role FROM users WHERE id = ?').get(order.assignee_id);
@@ -83,6 +84,30 @@ router.get('/', requireAuth, (req, res) => {
     params.push(like, like, like, like);
   }
 
+  const now = new Date();
+  const nowStr = now.toISOString();
+  const approachingTime = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  if (deadline_status) {
+    const dlStatuses = String(deadline_status).split(',').filter(Boolean);
+    const dlConditions = [];
+    for (const ds of dlStatuses) {
+      if (ds === 'overdue') {
+        dlConditions.push('(deadline < ? AND status != ?)');
+        params.push(nowStr, 'archived');
+      } else if (ds === 'approaching') {
+        dlConditions.push('(deadline >= ? AND deadline < ? AND status != ?)');
+        params.push(nowStr, approachingTime, 'archived');
+      } else if (ds === 'normal') {
+        dlConditions.push('(deadline >= ? OR status = ?)');
+        params.push(approachingTime, 'archived');
+      }
+    }
+    if (dlConditions.length > 0) {
+      conditions.push(`(${dlConditions.join(' OR ')})`);
+    }
+  }
+
   let where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
   const countSql = `SELECT COUNT(*) as total FROM visit_orders ${where}`;
@@ -92,6 +117,7 @@ router.get('/', requireAuth, (req, res) => {
   const listSql = `
     SELECT * FROM visit_orders ${where}
     ORDER BY
+      is_overdue DESC,
       CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,
       deadline ASC,
       id DESC
@@ -100,11 +126,6 @@ router.get('/', requireAuth, (req, res) => {
   const orders = req.db.prepare(listSql).all(...params, Number(page_size), offset);
 
   let enriched = orders.map(o => enrichOrder(req.db, o));
-
-  if (deadline_status) {
-    const statuses = String(deadline_status).split(',').filter(Boolean);
-    enriched = enriched.filter(o => statuses.includes(o.deadlineStatus));
-  }
 
   enriched = enriched.filter(o => canViewOrder(o, req.user));
 
@@ -220,9 +241,18 @@ router.get('/:id', requireAuth, (req, res, next) => {
     }));
 
     enriched.auditNotes = req.db.prepare(`
-      SELECT n.*, u.name as operator_name
+      SELECT n.*, u.name as operator_name, u.role as operator_role
       FROM audit_notes n LEFT JOIN users u ON n.operator_id = u.id
       WHERE n.visit_order_id = ? ORDER BY n.created_at DESC
+    `).all(req.params.id);
+
+    enriched.correctionHistory = req.db.prepare(`
+      SELECT id, action, from_status, to_status, operator_id, operator_role,
+             comment, exception_type, exception_reason, correction_action,
+             evidence_required, evidence_provided, created_at
+      FROM processing_records
+      WHERE visit_order_id = ? AND (action IN ('return_for_correction', 'reprocess', 'submit_correction', 'overdue_advance', 'resume_process') OR correction_action IS NOT NULL)
+      ORDER BY created_at DESC
     `).all(req.params.id);
 
     res.json({
@@ -311,29 +341,49 @@ router.post('/batch', requireAuth, (req, res, next) => {
         try {
           const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(id);
           if (!order) {
-            results.push({ id, success: false, message: '就诊单不存在', exceptionType: 'material' });
+            results.push({
+              id,
+              success: false,
+              message: '就诊单不存在',
+              exceptionType: 'material',
+              reason: '单据ID不存在或已被删除'
+            });
             continue;
           }
           if (!canViewOrder(order, req.user)) {
-            results.push({ id, success: false, message: '越权操作', exceptionType: 'permission' });
+            results.push({
+              id,
+              order_no: order.order_no,
+              success: false,
+              message: '越权操作',
+              exceptionType: 'permission',
+              reason: `角色「${ROLE_LABELS[req.user.role]}」无权操作此单据（分派兽医师：用户${order.assignee_id || '无'}）`
+            });
             continue;
           }
-          const result = executeTransition(req.db, order, action, req.user, payload);
+          const result = executeTransition(req.db, order, action, req.user, { ...payload, version: order.version });
           results.push({
             id,
             order_no: order.order_no,
             success: true,
             message: result.message,
             from: result.from,
-            to: result.to
+            to: result.to,
+            exceptionType: result.exceptionType || null,
+            exceptionReason: result.exceptionReason || null,
+            correctionAction: result.correctionAction || null
           });
         } catch (err) {
+          const orderInfo = req.db.prepare('SELECT order_no, status FROM visit_orders WHERE id = ?').get(id);
           results.push({
             id,
-            order_no: req.db.prepare('SELECT order_no FROM visit_orders WHERE id = ?').get(id)?.order_no || id,
+            order_no: orderInfo?.order_no || id,
             success: false,
             message: err.message,
-            exceptionType: err.exceptionType || 'status'
+            exceptionType: err.exceptionType || 'status',
+            reason: err.message,
+            currentStatus: orderInfo?.status || null,
+            currentStatusLabel: orderInfo?.status ? STATUS_LABELS[orderInfo.status] : null
           });
         }
       }
@@ -347,6 +397,132 @@ router.post('/batch', requireAuth, (req, res, next) => {
     res.json({
       success: true,
       message: `批量处理完成：成功 ${successCount} 条，失败 ${failCount} 条`,
+      total: ids.length,
+      successCount,
+      failCount,
+      results
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/overdue-batch', requireRole('director'), (req, res, next) => {
+  try {
+    const { ids, payload = {} } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      const now = new Date().toISOString();
+      const overdueOrders = req.db.prepare(`
+        SELECT id FROM visit_orders
+        WHERE deadline < ? AND status != 'archived' AND is_overdue = 1
+      `).all(now).map(o => o.id);
+
+      if (overdueOrders.length === 0) {
+        return res.json({
+          success: true,
+          message: '当前无逾期单据需要处理',
+          total: 0,
+          successCount: 0,
+          failCount: 0,
+          results: []
+        });
+      }
+
+      const results = [];
+      const tx = req.db.transaction(() => {
+        for (const id of overdueOrders) {
+          try {
+            const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(id);
+            if (!order) {
+              results.push({ id, success: false, message: '就诊单不存在', exceptionType: 'material', reason: '单据不存在' });
+              continue;
+            }
+            const result = executeTransition(req.db, order, 'overdue_advance', req.user, { ...payload, version: order.version });
+            results.push({
+              id,
+              order_no: order.order_no,
+              success: true,
+              message: result.message,
+              from: result.from,
+              to: result.to,
+              exceptionType: result.exceptionType || null,
+              exceptionReason: result.exceptionReason || null,
+              correctionAction: result.correctionAction || null
+            });
+          } catch (err) {
+            const orderInfo = req.db.prepare('SELECT order_no, status FROM visit_orders WHERE id = ?').get(id);
+            results.push({
+              id,
+              order_no: orderInfo?.order_no || id,
+              success: false,
+              message: err.message,
+              exceptionType: err.exceptionType || 'status',
+              reason: `逾期推进被拦截：${err.message}`,
+              currentStatus: orderInfo?.status || null,
+              currentStatusLabel: orderInfo?.status ? STATUS_LABELS[orderInfo.status] : null
+            });
+          }
+        }
+      });
+      tx();
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+
+      return res.json({
+        success: true,
+        message: `逾期批量推进完成：成功 ${successCount} 条，失败 ${failCount} 条`,
+        total: overdueOrders.length,
+        successCount,
+        failCount,
+        results
+      });
+    }
+
+    const results = [];
+    const tx = req.db.transaction(() => {
+      for (const id of ids) {
+        try {
+          const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(id);
+          if (!order) {
+            results.push({ id, success: false, message: '就诊单不存在', exceptionType: 'material', reason: '单据不存在' });
+            continue;
+          }
+          const result = executeTransition(req.db, order, 'overdue_advance', req.user, { ...payload, version: order.version });
+          results.push({
+            id,
+            order_no: order.order_no,
+            success: true,
+            message: result.message,
+            from: result.from,
+            to: result.to,
+            exceptionType: result.exceptionType || null,
+            exceptionReason: result.exceptionReason || null,
+            correctionAction: result.correctionAction || null
+          });
+        } catch (err) {
+          const orderInfo = req.db.prepare('SELECT order_no, status FROM visit_orders WHERE id = ?').get(id);
+          results.push({
+            id,
+            order_no: orderInfo?.order_no || id,
+            success: false,
+            message: err.message,
+            exceptionType: err.exceptionType || 'status',
+            reason: `逾期推进被拦截：${err.message}`,
+            currentStatus: orderInfo?.status || null,
+            currentStatusLabel: orderInfo?.status ? STATUS_LABELS[orderInfo.status] : null
+          });
+        }
+      }
+    });
+    tx();
+
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+
+    res.json({
+      success: true,
+      message: `逾期批量推进完成：成功 ${successCount} 条，失败 ${failCount} 条`,
       total: ids.length,
       successCount,
       failCount,

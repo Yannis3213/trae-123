@@ -4,6 +4,7 @@ import {
 } from '../lib/api';
 import {
   STATUS_LABELS, PRIORITY_LABELS, EXCEPTION_LABELS, CATEGORY_LABELS,
+  MATERIAL_STATUS_LABELS,
   formatDate, getDeadlineStatus, priorityStyle, statusStyle, hasRole
 } from '../lib/auth';
 import ActionModal from './ActionModal';
@@ -64,7 +65,7 @@ export default function VisitDetail({ id }) {
         ...payload
       });
       if (res.success) {
-        showToast(res.message);
+        showToast(res.message + (res.exceptionReason ? `（异常：${res.exceptionReason}）` : ''));
         setActionModal(null);
         loadData();
       } else {
@@ -156,7 +157,7 @@ export default function VisitDetail({ id }) {
 
       <div className="card">
         <div className="card-title">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 18, fontWeight: 600 }}>{data.order_no}</span>
             <span className="badge" style={{ background: ss.bg, color: ss.color }}>
               {STATUS_LABELS[data.status]}
@@ -167,9 +168,16 @@ export default function VisitDetail({ id }) {
             <span className="badge" style={{ background: `${dl.color}20`, color: dl.color }}>
               {dl.label}
             </span>
+            <span className="badge" style={{
+              background: data.material_status === 'complete' ? '#dcfce7' : '#fef3c7',
+              color: data.material_status === 'complete' ? '#166534' : '#92400e'
+            }}>
+              {MATERIAL_STATUS_LABELS[data.material_status] || data.material_status}
+            </span>
             {data.exception_type && (
               <span className="exception-tag">{EXCEPTION_LABELS[data.exception_type]}</span>
             )}
+            <span style={{ fontSize: 12, color: '#64748b' }}>v{data.version}</span>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             {canEdit && !editMode && (
@@ -186,8 +194,43 @@ export default function VisitDetail({ id }) {
         </div>
 
         {data.exception_reason && (
-          <div className="error-box" style={{ marginBottom: 16 }}>
-            ⚠️ 异常原因：{data.exception_reason}
+          <div style={{
+            background: data.exception_type === 'timeline' ? '#fef2f2' : (data.exception_type === 'material' ? '#fff7ed' : '#fef2f2'),
+            border: `1px solid ${data.exception_type === 'timeline' ? '#fecaca' : (data.exception_type === 'material' ? '#fed7aa' : '#fecaca')}`,
+            borderRadius: 8, padding: 12, marginBottom: 16
+          }}>
+            <div style={{ fontWeight: 600, color: data.exception_type === 'timeline' ? '#dc2626' : '#ea580c', marginBottom: 4 }}>
+              {data.exception_type === 'timeline' ? '⚠️ 逾期异常' : (data.exception_type === 'material' ? '📋 材料异常' : (data.exception_type === 'permission' ? '🔒 权限异常' : '⚠️ 状态异常'))}
+            </div>
+            <div style={{ color: '#1e293b', fontSize: 13 }}>{data.exception_reason}</div>
+            {data.status === 'returned_for_correction' && data.correctionHistory?.length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
+                退回人：{data.correctionHistory[0].comment || '院长'}
+              </div>
+            )}
+          </div>
+        )}
+
+        {data.correction_action && (
+          <div style={{
+            background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 8, padding: 12, marginBottom: 16
+          }}>
+            <div style={{ fontWeight: 600, color: '#9a3412', marginBottom: 4 }}>🔄 补正动作</div>
+            <div style={{ color: '#1e293b', fontSize: 13 }}>{data.correction_action}</div>
+          </div>
+        )}
+
+        {dl.status === 'overdue' && data.status !== 'archived' && (
+          <div style={{
+            background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 12, marginBottom: 16
+          }}>
+            <div style={{ fontWeight: 600, color: '#dc2626', marginBottom: 4 }}>⏰ 逾期可办理</div>
+            <div style={{ fontSize: 13, color: '#1e293b' }}>
+              该就诊单已逾期，截止时间 {formatDate(data.deadline)}。
+              {hasRole('director') && '院长可使用「逾期推进」强制推进至下一状态。'}
+              {hasRole('doctor') && '请联系院长处理或尽快完成当前操作。'}
+              {hasRole('nurse') && '请通知相关兽医师加快处理。'}
+            </div>
           </div>
         )}
 
@@ -195,10 +238,10 @@ export default function VisitDetail({ id }) {
           {(data.allowedActions || []).map(act => (
             <button
               key={act.action}
-              className="btn btn-primary btn-sm"
+              className={`btn btn-sm ${act.isOverdueAction ? 'btn-danger' : 'btn-primary'}`}
               onClick={() => setActionModal(act)}
             >
-              {act.label}
+              {act.isOverdueAction ? '⚠️ ' : ''}{act.label}
             </button>
           ))}
           {(!data.allowedActions || data.allowedActions.length === 0) && (
@@ -326,6 +369,63 @@ export default function VisitDetail({ id }) {
         </div>
       </div>
 
+      {data.correctionHistory && data.correctionHistory.length > 0 && (
+        <div className="card">
+          <div className="card-title"><span>🔄 补正与逾期处理记录</span></div>
+          <div className="timeline">
+            {data.correctionHistory.map(r => (
+              <div key={r.id} className="timeline-item" style={{
+                borderLeft: r.action === 'return_for_correction' ? '3px solid #dc2626' :
+                            r.action === 'overdue_advance' ? '3px solid #f59e0b' :
+                            '3px solid #2563eb'
+              }}>
+                <div className="time">{formatDate(r.created_at)}</div>
+                <div className="meta">
+                  <span className="badge" style={{
+                    background: r.action === 'return_for_correction' ? '#fee2e2' :
+                                r.action === 'overdue_advance' ? '#fef3c7' :
+                                r.action === 'reprocess' ? '#fed7aa' : '#eff6ff',
+                    color: r.action === 'return_for_correction' ? '#991b1b' :
+                           r.action === 'overdue_advance' ? '#92400e' :
+                           r.action === 'reprocess' ? '#9a3412' : '#1e40af'
+                  }}>
+                    {r.action === 'return_for_correction' ? '退回补正' :
+                     r.action === 'overdue_advance' ? '逾期推进' :
+                     r.action === 'reprocess' ? '开始补正' :
+                     r.action === 'submit_correction' ? '补正提交' :
+                     r.action === 'resume_process' ? '恢复处理' : r.action}
+                  </span>
+                  {r.from_status && (
+                    <span style={{ color: '#64748b' }}>
+                      {STATUS_LABELS[r.from_status]} → <strong>{STATUS_LABELS[r.to_status]}</strong>
+                    </span>
+                  )}
+                </div>
+                <div>{r.comment}</div>
+                {r.exception_type && (
+                  <div style={{ fontSize: 12, marginTop: 4 }}>
+                    <span className="exception-tag">{EXCEPTION_LABELS[r.exception_type]}</span>
+                    {r.exception_reason && <span style={{ color: '#dc2626', marginLeft: 6 }}>{r.exception_reason}</span>}
+                  </div>
+                )}
+                {r.correction_action && (
+                  <div style={{ fontSize: 12, color: '#9a3412', marginTop: 4 }}>
+                    🔄 补正动作：{r.correction_action}
+                  </div>
+                )}
+                {(r.evidence_required || r.evidence_provided) && (
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                    {r.evidence_required && <span>需提供：{r.evidence_required}</span>}
+                    {r.evidence_required && r.evidence_provided && ' | '}
+                    {r.evidence_provided && <span>已提供：{r.evidence_provided}</span>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <div className="card-title">
           <span>📎 附件（{data.attachments.length}）</span>
@@ -437,6 +537,9 @@ export default function VisitDetail({ id }) {
                 )}
                 {r.exception_reason && (
                   <div style={{ fontSize: 12, color: '#dc2626', marginTop: 4 }}>异常：{r.exception_reason}</div>
+                )}
+                {r.correction_action && (
+                  <div style={{ fontSize: 12, color: '#9a3412', marginTop: 4 }}>🔄 补正：{r.correction_action}</div>
                 )}
               </div>
             ))}

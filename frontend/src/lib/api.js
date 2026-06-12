@@ -45,6 +45,7 @@ export const visitsApi = {
   update: (id, data) => api.put(`/visits/${id}`, data),
   transition: (id, data) => api.post(`/visits/${id}/transition`, data),
   batch: (data) => api.post('/visits/batch', data),
+  overdueBatch: (data) => api.post('/visits/overdue-batch', data),
   getAllowedActions: (id) => api.get(`/visits/${id}/allowed-actions`)
 };
 

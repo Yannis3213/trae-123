@@ -6,7 +6,8 @@ export default function ActionModal({ action, doctors, onClose, onSubmit }) {
     comment: '',
     assignee_id: '',
     evidence_provided: '',
-    exception_reason: ''
+    exception_reason: '',
+    correction_action: ''
   });
   const [loading, setLoading] = useState(false);
 
@@ -18,21 +19,31 @@ export default function ActionModal({ action, doctors, onClose, onSubmit }) {
     setLoading(false);
   };
 
-  const needsAssignee = action.action === 'assign';
+  const needsAssignee = action.action === 'assign' || action.action === 'overdue_assign' || action.requiresAssignee;
   const needsEvidence = action.requiresEvidence && action.requiresEvidence.length > 0;
   const needsReason = action.action === 'return_for_correction';
+  const needsCorrectionAction = ['reprocess', 'submit_correction', 'resume_process'].includes(action.action);
+  const isOverdueAction = action.isOverdueAction;
 
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h3>{action.label}</h3>
+          <h3>{isOverdueAction ? '⚠️ ' : ''}{action.label}</h3>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
 
-        <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', padding: 10, borderRadius: 6, fontSize: 13, marginBottom: 14 }}>
-          操作后状态将从 <strong>{action.from || '当前状态'}</strong> 变更为 <strong>{action.toLabel}</strong>
-        </div>
+        {isOverdueAction && (
+          <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: 10, borderRadius: 6, fontSize: 13, marginBottom: 14 }}>
+            ⚠️ 这是逾期强制推进操作，将跳过正常流程限制直接推进至下一状态。操作后状态将从 <strong>{action.from || '当前状态'}</strong> 变更为 <strong>{action.toLabel}</strong>
+          </div>
+        )}
+
+        {!isOverdueAction && (
+          <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', padding: 10, borderRadius: 6, fontSize: 13, marginBottom: 14 }}>
+            操作后状态将从 <strong>{action.from || '当前状态'}</strong> 变更为 <strong>{action.toLabel}</strong>
+          </div>
+        )}
 
         {needsAssignee && (
           <div className="form-group" style={{ marginBottom: 14 }}>
@@ -47,21 +58,19 @@ export default function ActionModal({ action, doctors, onClose, onSubmit }) {
         )}
 
         {needsEvidence && (
-          <>
-            <div className="form-group" style={{ marginBottom: 14 }}>
-              <label>
-                必填证据材料：
-                {action.requiresEvidence.map(e => (
-                  <span key={e} className="tag" style={{ marginLeft: 6 }}>{e}</span>
-                ))}
-              </label>
-              <textarea
-                value={form.evidence_provided}
-                onChange={e => setForm({ ...form, evidence_provided: e.target.value })}
-                placeholder="请列出已提供的证据材料，多个用逗号分隔"
-              />
-            </div>
-          </>
+          <div className="form-group" style={{ marginBottom: 14 }}>
+            <label>
+              必填证据材料：
+              {action.requiresEvidence.map(e => (
+                <span key={e} className="tag" style={{ marginLeft: 6 }}>{e}</span>
+              ))}
+            </label>
+            <textarea
+              value={form.evidence_provided}
+              onChange={e => setForm({ ...form, evidence_provided: e.target.value })}
+              placeholder="请列出已提供的证据材料，多个用逗号分隔"
+            />
+          </div>
         )}
 
         {needsReason && (
@@ -71,6 +80,23 @@ export default function ActionModal({ action, doctors, onClose, onSubmit }) {
               value={form.exception_reason}
               onChange={e => setForm({ ...form, exception_reason: e.target.value })}
               placeholder="请详细说明退回补正的原因，将作为异常原因留存"
+            />
+          </div>
+        )}
+
+        {needsCorrectionAction && (
+          <div className="form-group" style={{ marginBottom: 14 }}>
+            <label className="required">补正动作说明</label>
+            <textarea
+              value={form.correction_action}
+              onChange={e => setForm({ ...form, correction_action: e.target.value })}
+              placeholder={
+                action.action === 'reprocess'
+                  ? '请说明将要执行的补正动作，如：补充复诊记录、确认药浴执行情况'
+                  : action.action === 'submit_correction'
+                  ? '请说明已完成的补正动作，如：已补充复诊记录和药浴确认，处方执行已核实'
+                  : '请说明补充的材料和处理动作'
+              }
             />
           </div>
         )}
@@ -86,7 +112,7 @@ export default function ActionModal({ action, doctors, onClose, onSubmit }) {
 
         <div className="modal-footer">
           <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>
+          <button className={`btn ${isOverdueAction ? 'btn-danger' : 'btn-primary'}`} onClick={handleSubmit} disabled={loading}>
             {loading ? '提交中...' : '确认提交'}
           </button>
         </div>

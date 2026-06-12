@@ -26,6 +26,11 @@ export const PRIORITY_LABELS = {
   low: '低'
 };
 
+export const MATERIAL_STATUS_LABELS = {
+  complete: '材料齐全',
+  incomplete: '材料不完整'
+};
+
 export const EXCEPTION_LABELS = {
   material: '材料问题',
   permission: '权限问题',
