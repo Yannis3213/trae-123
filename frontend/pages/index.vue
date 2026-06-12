@@ -29,14 +29,14 @@
 
     <div class="card">
       <div class="page-header" style="margin-bottom: 16px;">
-        <h1>外贸订单列表</h1>
+        <h1>外贸订单列表 <span class="tag tag-blue" style="margin-left: 8px;">{{ currentRoleName }}队列</span></h1>
         <div style="display: flex; gap: 10px;">
           <button class="btn btn-secondary" @click="loadData">🔄 刷新</button>
-          <button class="btn btn-primary" @click="showCreateModal = true">+ 新建订单</button>
+          <button v-if="canCreateOrder" class="btn btn-primary" @click="showCreateModal = true">+ 新建订单</button>
         </div>
       </div>
 
-      <div v-if="selectedIds.length > 0" class="batch-bar">
+      <div v-if="selectedIds.length > 0 && canBatchProcess" class="batch-bar">
         <span>已选择 <strong>{{ selectedIds.length }}</strong> 个订单</span>
         <button class="btn btn-primary btn-sm" @click="showBatchModal = true">批量处理</button>
         <button class="btn btn-secondary btn-sm" @click="clearSelection">取消选择</button>
@@ -253,10 +253,7 @@
               <label>操作<span class="required">*</span></label>
               <select v-model="batchForm.action">
                 <option value="">请选择操作</option>
-                <option value="dispatch">派发</option>
-                <option value="process">办理</option>
-                <option value="review">复核</option>
-                <option value="close">关闭归档</option>
+                <option v-for="a in availableBatchActions" :key="a.code" :value="a.code">{{ a.name }}</option>
               </select>
             </div>
             <div v-if="batchForm.action === 'dispatch'" class="form-group">
@@ -267,9 +264,17 @@
               </select>
             </div>
           </div>
-          <div class="form-group">
+          <div v-if="['return'].includes(batchForm.action)" class="form-group">
+            <label>退回原因<span class="required">*</span></label>
+            <textarea v-model="batchForm.comment" placeholder="请输入退回原因"></textarea>
+          </div>
+          <div v-else class="form-group">
             <label>备注说明</label>
             <textarea v-model="batchForm.comment" placeholder="请输入处理说明"></textarea>
+          </div>
+          <div v-if="['return', 'correct'].includes(batchForm.action)" class="form-group">
+            <label>补正动作要求</label>
+            <textarea v-model="batchForm.corrective_action" placeholder="请描述需要补正的具体内容"></textarea>
           </div>
           <div v-if="['process', 'review', 'close'].includes(batchForm.action)" class="form-check" style="margin-bottom: 14px;">
             <input type="checkbox" v-model="batchForm.evidence_provided" id="ev-batch" />
@@ -326,6 +331,36 @@ import type { OrderListItem, BatchProcessResponse } from '~/composables/types'
 const { apiGet, apiPost } = useApi()
 const { currentRole, roleList } = useUserStore()
 const router = useRouter()
+
+const currentRoleName = computed(() => {
+  const r = roleList.find(x => x.code === currentRole.value)
+  return r ? r.name : ''
+})
+
+const canCreateOrder = computed(() => currentRole.value === 'clerk')
+
+const canBatchProcess = computed(() => ['clerk', 'supervisor', 'reviewer'].includes(currentRole.value))
+
+const availableBatchActions = computed(() => {
+  const role = currentRole.value
+  const actions: { code: string; name: string }[] = []
+  if (role === 'clerk' || role === 'supervisor') {
+    actions.push({ code: 'dispatch', name: '派发' })
+  }
+  if (role === 'clerk' || role === 'supervisor') {
+    actions.push({ code: 'correct', name: '补正' })
+  }
+  if (role === 'supervisor') {
+    actions.push({ code: 'process', name: '办理' })
+    actions.push({ code: 'return', name: '退回补正' })
+  }
+  if (role === 'reviewer') {
+    actions.push({ code: 'review', name: '复核' })
+    actions.push({ code: 'return', name: '退回补正' })
+    actions.push({ code: 'close', name: '关闭归档' })
+  }
+  return actions
+})
 
 const orders = ref<OrderListItem[]>([])
 const total = ref(0)
@@ -481,7 +516,8 @@ const batchForm = reactive({
   action: '',
   dispatch_to_role: '',
   comment: '',
-  evidence_provided: false
+  evidence_provided: false,
+  corrective_action: ''
 })
 
 const doBatchProcess = async () => {
@@ -495,6 +531,10 @@ const doBatchProcess = async () => {
     batchError.value = '请选择派发目标角色'
     return
   }
+  if (batchForm.action === 'return' && !batchForm.comment.trim()) {
+    batchError.value = '请填写退回原因'
+    return
+  }
   batchProcessing.value = true
   try {
     const items = selectedIds.value.map(id => {
@@ -505,7 +545,8 @@ const doBatchProcess = async () => {
         action: batchForm.action,
         comment: batchForm.comment,
         dispatch_to_role: batchForm.dispatch_to_role || null,
-        evidence_provided: batchForm.evidence_provided
+        evidence_provided: batchForm.evidence_provided,
+        corrective_action: batchForm.corrective_action
       }
     })
     for (const item of items) {
@@ -533,6 +574,7 @@ const closeBatchModal = () => {
   batchForm.dispatch_to_role = ''
   batchForm.comment = ''
   batchForm.evidence_provided = false
+  batchForm.corrective_action = ''
 }
 
 watch(currentRole, () => {

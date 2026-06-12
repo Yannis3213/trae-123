@@ -190,6 +190,113 @@ def _check_overdue(order: ForeignTradeOrder) -> bool:
     return order.get_warning_level() == WarningLevel.OVERDUE
 
 
+def _validate_role_access_order(role: str, order: ForeignTradeOrder) -> bool:
+    if role == Role.CLERK:
+        return order.stage in [OrderStage.INQUIRY, OrderStage.QUOTE_CONFIRMATION]
+    elif role == Role.SUPERVISOR:
+        return order.stage in [OrderStage.INQUIRY, OrderStage.QUOTE_CONFIRMATION, OrderStage.ORDER_SIGNING]
+    elif role == Role.REVIEWER:
+        return order.stage in [OrderStage.QUOTE_CONFIRMATION, OrderStage.ORDER_SIGNING, OrderStage.ARCHIVED]
+    return False
+
+
+def _validate_can_update(role: str, order: ForeignTradeOrder) -> tuple[bool, str]:
+    if order.status == OrderStatus.CLOSED:
+        return False, '已关闭订单不能修改'
+    if role != order.current_handler_role and order.status == OrderStatus.PROCESSING:
+        return False, f'当前节点需由{_get_role_display(order.current_handler_role)}修改'
+    return True, ''
+
+
+def _validate_can_process(role: str, order: ForeignTradeOrder, action: str, evidence_provided: bool) -> tuple[bool, str, bool]:
+    evidence_required = False
+
+    if order.status == OrderStatus.CLOSED:
+        return False, '已关闭订单不能操作', evidence_required
+
+    if order.version is None:
+        pass
+
+    if _check_overdue(order) and action in [ProcessingAction.PROCESS, ProcessingAction.REVIEW, ProcessingAction.CLOSE]:
+        return False, '订单已逾期，请先处理逾期异常或补正后再推进', evidence_required
+
+    if action == ProcessingAction.SUBMIT:
+        if role != Role.CLERK:
+            return False, '只有外贸登记员才能提交', evidence_required
+        if order.stage != OrderStage.INQUIRY:
+            return False, f'当前阶段为{order.get_stage_display()}，不能提交', evidence_required
+        if not order.inquiry_content.strip():
+            return False, '客户询盘内容不能为空', evidence_required
+
+    elif action == ProcessingAction.DISPATCH:
+        if role not in [Role.CLERK, Role.SUPERVISOR]:
+            return False, '无派发权限', evidence_required
+
+    elif action == ProcessingAction.PROCESS:
+        if role != order.current_handler_role:
+            return False, f'当前节点需由{_get_role_display(order.current_handler_role)}办理', evidence_required
+        evidence_required = True
+        if not evidence_provided:
+            return False, '办理必须上传证据附件', evidence_required
+        if order.stage == OrderStage.QUOTE_CONFIRMATION:
+            if not order.quote_confirmed or not order.quote_content.strip():
+                return False, '报价确认信息不完整，订单停留在原队列', evidence_required
+        elif order.stage == OrderStage.ORDER_SIGNING:
+            complete, missing = _validate_quote_and_order_complete(order)
+            if not complete:
+                return False, '报价确认、订单签订信息不齐，订单停留在原队列：' + '；'.join(missing), evidence_required
+
+    elif action == ProcessingAction.REVIEW:
+        if role != Role.REVIEWER:
+            return False, '只有复核负责人才能复核', evidence_required
+        evidence_required = True
+        if not evidence_provided:
+            return False, '复核必须上传证据', evidence_required
+        complete, missing = _validate_quote_and_order_complete(order)
+        if not complete:
+            return False, '报价确认、订单签订信息不齐：' + '；'.join(missing), evidence_required
+
+    elif action == ProcessingAction.RETURN:
+        if role not in [Role.SUPERVISOR, Role.REVIEWER]:
+            return False, '只有审核主管或复核负责人才能退回', evidence_required
+        if order.stage == OrderStage.INQUIRY:
+            return False, '客户询盘阶段不能退回', evidence_required
+
+    elif action == ProcessingAction.CORRECT:
+        if role != order.current_handler_role:
+            return False, '只有当前处理人才能补正', evidence_required
+
+    elif action == ProcessingAction.CLOSE:
+        if role != Role.REVIEWER:
+            return False, '只有复核负责人才能关闭归档', evidence_required
+        evidence_required = True
+        if not evidence_provided:
+            return False, '关闭归档必须上传证据', evidence_required
+        complete, missing = _validate_quote_and_order_complete(order)
+        if not complete:
+            return False, '报价确认、订单签订信息不齐：' + '；'.join(missing), evidence_required
+
+    return True, '', evidence_required
+
+
+def _record_exception(order: ForeignTradeOrder, reason_type: str, reason_detail: str,
+                      username: str, role: str, corrective_action: str = ''):
+    exc = ExceptionReason.objects.create(
+        order=order,
+        reason_type=reason_type,
+        reason_detail=reason_detail,
+        corrective_action=corrective_action,
+        recorded_by=username,
+        recorded_by_role=role,
+    )
+    order.is_exception = True
+    tags = list(order.exception_tags or [])
+    if reason_type not in tags:
+        tags.append(reason_type)
+    order.exception_tags = tags
+    return exc
+
+
 @api.get('/roles')
 def list_roles(request):
     return [
@@ -238,18 +345,31 @@ def list_orders(
     warning_level: str | None = Query(None),
     keyword: str | None = Query(None),
     is_exception: bool | None = Query(None),
+    my_queue_only: bool | None = Query(True),
 ):
     role = _get_role(request)
     username = _get_username(request)
 
     qs = ForeignTradeOrder.objects.all()
 
-    if role == Role.CLERK:
-        pass
-    elif role == Role.SUPERVISOR:
-        qs = qs.filter(stage__in=[OrderStage.INQUIRY, OrderStage.QUOTE_CONFIRMATION])
-    elif role == Role.REVIEWER:
-        qs = qs.filter(stage__in=[OrderStage.QUOTE_CONFIRMATION, OrderStage.ORDER_SIGNING, OrderStage.ARCHIVED])
+    if my_queue_only:
+        if role == Role.CLERK:
+            qs = qs.filter(
+                models.Q(stage=OrderStage.INQUIRY)
+                | models.Q(stage=OrderStage.QUOTE_CONFIRMATION, current_handler_role=Role.CLERK)
+                | models.Q(status=OrderStatus.PENDING_DISPATCH)
+            )
+        elif role == Role.SUPERVISOR:
+            qs = qs.filter(
+                models.Q(stage=OrderStage.QUOTE_CONFIRMATION)
+                | models.Q(stage=OrderStage.ORDER_SIGNING, current_handler_role=Role.SUPERVISOR)
+                | models.Q(status=OrderStatus.PENDING_DISPATCH)
+            )
+        elif role == Role.REVIEWER:
+            qs = qs.filter(
+                models.Q(stage=OrderStage.ORDER_SIGNING)
+                | models.Q(stage=OrderStage.ARCHIVED)
+            )
 
     if status:
         qs = qs.filter(status=status)
@@ -277,6 +397,25 @@ def list_orders(
     total = qs.count()
     items = [_order_to_list_item(o) for o in qs.order_by('-create_time')]
 
+    my_qs = ForeignTradeOrder.objects.all()
+    if role == Role.CLERK:
+        my_qs = my_qs.filter(
+            models.Q(stage=OrderStage.INQUIRY)
+            | models.Q(stage=OrderStage.QUOTE_CONFIRMATION, current_handler_role=Role.CLERK)
+            | models.Q(status=OrderStatus.PENDING_DISPATCH)
+        )
+    elif role == Role.SUPERVISOR:
+        my_qs = my_qs.filter(
+            models.Q(stage=OrderStage.QUOTE_CONFIRMATION)
+            | models.Q(stage=OrderStage.ORDER_SIGNING, current_handler_role=Role.SUPERVISOR)
+            | models.Q(status=OrderStatus.PENDING_DISPATCH)
+        )
+    elif role == Role.REVIEWER:
+        my_qs = my_qs.filter(
+            models.Q(stage=OrderStage.ORDER_SIGNING)
+            | models.Q(stage=OrderStage.ARCHIVED)
+        )
+
     all_qs = ForeignTradeOrder.objects.all()
     stats = {
         'total': all_qs.count(),
@@ -285,7 +424,8 @@ def list_orders(
         'closed': all_qs.filter(status=OrderStatus.CLOSED).count(),
         'exception': all_qs.filter(is_exception=True).count(),
         'overdue': all_qs.filter(due_time__lt=timezone.now(), status__in=[OrderStatus.PENDING_DISPATCH, OrderStatus.PROCESSING]).count(),
-        'my_queue': qs.count(),
+        'my_queue': my_qs.count(),
+        'my_pending': my_qs.filter(status__in=[OrderStatus.PENDING_DISPATCH, OrderStatus.PROCESSING]).count(),
     }
 
     return OrderListResponse(total=total, items=items, stats=stats)
@@ -298,6 +438,10 @@ def get_order(request, order_id: int):
         order = ForeignTradeOrder.objects.get(id=order_id)
     except ForeignTradeOrder.DoesNotExist:
         raise HttpError(404, '订单不存在')
+
+    if not _validate_role_access_order(role, order):
+        raise HttpError(403, f'当前角色无权访问此订单（阶段：{order.get_stage_display()}）')
+
     return _order_to_detail(order, role)
 
 
@@ -355,11 +499,16 @@ def update_order(request, order_id: int, data: OrderUpdate):
         except ForeignTradeOrder.DoesNotExist:
             raise HttpError(404, '订单不存在')
 
+        if not _validate_role_access_order(role, order):
+            raise HttpError(403, f'当前角色无权修改此订单（阶段：{order.get_stage_display()}）')
+
         if order.version != data.version:
             raise HttpError(409, f'版本冲突，当前版本为 {order.version}，请刷新后重试')
 
-        if order.status == OrderStatus.CLOSED:
-            raise HttpError(400, '已关闭订单不能修改')
+        can_upd, err_msg = _validate_can_update(role, order)
+        if not can_upd:
+            is_permission_err = '需由' in err_msg or '无权' in err_msg
+            raise HttpError(403 if is_permission_err else 400, err_msg)
 
         fields = data.model_dump(exclude_unset=True, exclude={'version'})
         for k, v in fields.items():
@@ -396,76 +545,56 @@ def process_order(request, order_id: int, data: ProcessAction):
         except ForeignTradeOrder.DoesNotExist:
             raise HttpError(404, '订单不存在')
 
+        if not _validate_role_access_order(role, order):
+            raise HttpError(403, f'当前角色无权操作此订单（阶段：{order.get_stage_display()}）')
+
         if order.version != data.version:
             raise HttpError(409, f'版本冲突，当前版本为 {order.version}，请刷新后重试')
+
+        ok, err_msg, evidence_required = _validate_can_process(
+            role, order, data.action, data.evidence_provided
+        )
+        if not ok:
+            is_permission_err = '无权' in err_msg or '只有' in err_msg or '需由' in err_msg
+            if '报价确认信息不完整' in err_msg or '信息不齐' in err_msg:
+                _record_exception(order, '缺资料', err_msg, username, role, '补全缺失的资料信息')
+                order.save()
+            elif '已逾期' in err_msg:
+                _record_exception(order, '逾期', err_msg, username, role, '处理逾期异常并补正资料')
+                order.save()
+            raise HttpError(403 if is_permission_err else 400, err_msg)
 
         old_version = order.version
         old_status = order.status
         old_stage = order.stage
-
         action = data.action
 
-        if order.status == OrderStatus.CLOSED:
-            raise HttpError(400, '已关闭订单不能操作')
-
-        evidence_required = False
-
         if action == ProcessingAction.SUBMIT:
-            if role != Role.CLERK:
-                raise HttpError(403, '只有外贸登记员才能提交')
-            if not order.inquiry_content.strip():
-                raise HttpError(400, '客户询盘内容不能为空')
             order.status = OrderStatus.PROCESSING
             order.stage = OrderStage.QUOTE_CONFIRMATION
             order.current_handler_role = Role.SUPERVISOR
             order.current_handler = ''
 
         elif action == ProcessingAction.DISPATCH:
-            if role not in [Role.CLERK, Role.SUPERVISOR]:
-                raise HttpError(403, '无派发权限')
-            if not data.dispatch_to_role:
-                raise HttpError(400, '请指定派发目标角色')
             order.status = OrderStatus.PROCESSING
             order.stage = _role_to_queue_stage(data.dispatch_to_role)
             order.current_handler_role = data.dispatch_to_role
             order.current_handler = ''
 
         elif action == ProcessingAction.PROCESS:
-            if role != order.current_handler_role:
-                raise HttpError(403, f'当前节点需由{_get_role_display(order.current_handler_role)}办理')
-            evidence_required = True
-            if not data.evidence_provided:
-                raise HttpError(400, '办理必须上传证据附件')
-
             if order.stage == OrderStage.QUOTE_CONFIRMATION:
-                if not order.quote_confirmed or not order.quote_content.strip():
-                    raise HttpError(400, '报价确认信息不完整，订单停留在原队列')
                 order.stage = OrderStage.ORDER_SIGNING
                 order.current_handler_role = Role.REVIEWER
                 order.current_handler = ''
-
             elif order.stage == OrderStage.ORDER_SIGNING:
-                complete, missing = _validate_quote_and_order_complete(order)
-                if not complete:
-                    raise HttpError(400, '报价确认、订单签订信息不齐，订单停留在原队列：' + '；'.join(missing))
-                order.stage = OrderStage.ORDER_SIGNING
+                pass
 
         elif action == ProcessingAction.REVIEW:
-            if role != Role.REVIEWER:
-                raise HttpError(403, '只有复核负责人才能复核')
-            evidence_required = True
-            if not data.evidence_provided:
-                raise HttpError(400, '复核必须上传证据')
-            complete, missing = _validate_quote_and_order_complete(order)
-            if not complete:
-                raise HttpError(400, '报价确认、订单签订信息不齐：' + '；'.join(missing))
             order.status = OrderStatus.CLOSED
             order.stage = OrderStage.ARCHIVED
 
         elif action == ProcessingAction.RETURN:
-            if role not in [Role.SUPERVISOR, Role.REVIEWER]:
-                raise HttpError(403, '只有审核主管或复核负责人才能退回')
-            if not data.comment:
+            if data.comment:
                 order.return_reason = data.comment
             if order.stage == OrderStage.QUOTE_CONFIRMATION:
                 order.stage = OrderStage.INQUIRY
@@ -475,37 +604,26 @@ def process_order(request, order_id: int, data: ProcessAction):
                 order.current_handler_role = Role.SUPERVISOR
             order.status = OrderStatus.PROCESSING
             order.current_handler = ''
-            order.is_exception = True
-            tags = list(order.exception_tags or [])
-            if '退回补正' not in tags:
-                tags.append('退回补正')
-            order.exception_tags = tags
+            _record_exception(
+                order, '退回补正',
+                data.comment or '审核未通过，退回补正',
+                username, role,
+                data.corrective_action or '按退回意见补正资料'
+            )
 
         elif action == ProcessingAction.CORRECT:
-            if role != order.current_handler_role:
-                raise HttpError(403, '只有当前处理人才能补正')
             if data.corrective_action:
-                ExceptionReason.objects.create(
-                    order=order,
-                    reason_type='补正',
-                    reason_detail=data.comment or '补正资料',
-                    corrective_action=data.corrective_action,
-                    recorded_by=username,
-                    recorded_by_role=role,
+                _record_exception(
+                    order, '补正',
+                    data.comment or '补正资料',
+                    username, role,
+                    data.corrective_action
                 )
             order.is_exception = False
 
         elif action == ProcessingAction.CLOSE:
-            if role != Role.REVIEWER:
-                raise HttpError(403, '只有复核负责人才能关闭归档')
-            evidence_required = True
-            if not data.evidence_provided:
-                raise HttpError(400, '关闭归档必须上传证据')
             order.status = OrderStatus.CLOSED
             order.stage = OrderStage.ARCHIVED
-
-        else:
-            raise HttpError(400, f'不支持的操作: {action}')
 
         order.version += 1
         order.result = data.comment or order.result
@@ -553,15 +671,37 @@ def batch_process_orders(request, data: BatchProcessRequest):
 
                 result.order_no = order.order_no
 
+                if not _validate_role_access_order(role, order):
+                    result.error_code = 'FORBIDDEN'
+                    result.error_message = f'当前角色无权访问此订单（阶段：{order.get_stage_display()}）'
+                    results.append(result)
+                    continue
+
                 if order.version != item.version:
                     result.error_code = 'VERSION_CONFLICT'
                     result.error_message = f'版本冲突，当前版本为 {order.version}'
                     results.append(result)
                     continue
 
-                if order.status == OrderStatus.CLOSED:
-                    result.error_code = 'CLOSED'
-                    result.error_message = '订单已关闭，不能操作'
+                ok, err_msg, evidence_required = _validate_can_process(
+                    role, order, item.action, item.evidence_provided
+                )
+                if not ok:
+                    if '报价确认信息不完整' in err_msg or '信息不齐' in err_msg:
+                        _record_exception(order, '缺资料', err_msg, username, role, '补全缺失的资料信息')
+                        order.save()
+                        result.error_code = 'INCOMPLETE'
+                    elif '已逾期' in err_msg:
+                        _record_exception(order, '逾期', err_msg, username, role, '处理逾期异常并补正资料')
+                        order.save()
+                        result.error_code = 'OVERDUE'
+                    elif '必须上传证据' in err_msg:
+                        result.error_code = 'NO_EVIDENCE'
+                    elif '无权' in err_msg or '只有' in err_msg:
+                        result.error_code = 'FORBIDDEN'
+                    else:
+                        result.error_code = 'BAD_REQUEST'
+                    result.error_message = err_msg
                     results.append(result)
                     continue
 
@@ -570,14 +710,7 @@ def batch_process_orders(request, data: BatchProcessRequest):
                 old_stage = order.stage
                 action = item.action
 
-                evidence_required = False
-
                 if action == ProcessingAction.DISPATCH:
-                    if role not in [Role.CLERK, Role.SUPERVISOR]:
-                        result.error_code = 'FORBIDDEN'
-                        result.error_message = '无派发权限'
-                        results.append(result)
-                        continue
                     if not item.dispatch_to_role:
                         result.error_code = 'BAD_REQUEST'
                         result.error_message = '请指定派发目标角色'
@@ -589,79 +722,51 @@ def batch_process_orders(request, data: BatchProcessRequest):
                     order.current_handler = ''
 
                 elif action == ProcessingAction.PROCESS:
-                    if role != order.current_handler_role:
-                        result.error_code = 'FORBIDDEN'
-                        result.error_message = f'当前节点需由{_get_role_display(order.current_handler_role)}办理'
-                        results.append(result)
-                        continue
-                    evidence_required = True
-                    if not item.evidence_provided:
-                        result.error_code = 'NO_EVIDENCE'
-                        result.error_message = '办理必须上传证据附件'
-                        results.append(result)
-                        continue
-
-                    complete, missing = _validate_quote_and_order_complete(order)
                     if order.stage == OrderStage.QUOTE_CONFIRMATION:
-                        if not order.quote_confirmed or not order.quote_content.strip():
-                            result.error_code = 'INCOMPLETE'
-                            result.error_message = '报价确认信息不完整，订单停留在原队列'
-                            results.append(result)
-                            continue
                         order.stage = OrderStage.ORDER_SIGNING
                         order.current_handler_role = Role.REVIEWER
                         order.current_handler = ''
-
                     elif order.stage == OrderStage.ORDER_SIGNING:
-                        if not complete:
-                            result.error_code = 'INCOMPLETE'
-                            result.error_message = '报价确认、订单签订信息不齐：' + '；'.join(missing)
-                            results.append(result)
-                            continue
+                        pass
 
                 elif action == ProcessingAction.REVIEW:
-                    if role != Role.REVIEWER:
-                        result.error_code = 'FORBIDDEN'
-                        result.error_message = '只有复核负责人才能复核'
-                        results.append(result)
-                        continue
-                    evidence_required = True
-                    if not item.evidence_provided:
-                        result.error_code = 'NO_EVIDENCE'
-                        result.error_message = '复核必须上传证据'
-                        results.append(result)
-                        continue
-                    complete, missing = _validate_quote_and_order_complete(order)
-                    if not complete:
-                        result.error_code = 'INCOMPLETE'
-                        result.error_message = '报价确认、订单签订信息不齐：' + '；'.join(missing)
-                        results.append(result)
-                        continue
                     order.status = OrderStatus.CLOSED
                     order.stage = OrderStage.ARCHIVED
+
+                elif action == ProcessingAction.RETURN:
+                    if item.comment:
+                        order.return_reason = item.comment
+                    if order.stage == OrderStage.QUOTE_CONFIRMATION:
+                        order.stage = OrderStage.INQUIRY
+                        order.current_handler_role = Role.CLERK
+                    elif order.stage in [OrderStage.ORDER_SIGNING, OrderStage.ARCHIVED]:
+                        order.stage = OrderStage.QUOTE_CONFIRMATION
+                        order.current_handler_role = Role.SUPERVISOR
+                    order.status = OrderStatus.PROCESSING
+                    order.current_handler = ''
+                    _record_exception(
+                        order, '退回补正',
+                        item.comment or '审核未通过，退回补正',
+                        username, role,
+                        item.corrective_action or '按退回意见补正资料'
+                    )
+
+                elif action == ProcessingAction.CORRECT:
+                    if item.corrective_action:
+                        _record_exception(
+                            order, '补正',
+                            item.comment or '补正资料',
+                            username, role,
+                            item.corrective_action
+                        )
+                    order.is_exception = False
 
                 elif action == ProcessingAction.CLOSE:
-                    if role != Role.REVIEWER:
-                        result.error_code = 'FORBIDDEN'
-                        result.error_message = '只有复核负责人才能关闭归档'
-                        results.append(result)
-                        continue
-                    evidence_required = True
-                    if not item.evidence_provided:
-                        result.error_code = 'NO_EVIDENCE'
-                        result.error_message = '关闭归档必须上传证据'
-                        results.append(result)
-                        continue
                     order.status = OrderStatus.CLOSED
                     order.stage = OrderStage.ARCHIVED
 
-                else:
-                    result.error_code = 'BAD_REQUEST'
-                    result.error_message = f'不支持的操作: {action}'
-                    results.append(result)
-                    continue
-
                 order.version += 1
+                order.result = item.comment or order.result
                 order.save()
 
                 ProcessingRecord.objects.create(

@@ -64,6 +64,7 @@ class BatchProcessItem(BaseModel):
     comment: str = ''
     dispatch_to_role: Optional[str] = None
     evidence_provided: bool = False
+    corrective_action: str = ''
 
 
 class BatchProcessRequest(BaseModel):

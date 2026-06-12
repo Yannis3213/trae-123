@@ -110,22 +110,22 @@
 
       <div v-if="activeTab === 'content'">
         <div class="form-group" style="margin-bottom: 14px;">
-          <label>客户询盘内容</label>
-          <textarea v-model="editForm.inquiry_content" :disabled="!canEdit"></textarea>
+          <label>客户询盘内容 <span v-if="!canEditInquiry" class="tag tag-gray" style="margin-left:6px;">仅登记员/审核阶段可编辑</span></label>
+          <textarea v-model="editForm.inquiry_content" :disabled="!canEditInquiry"></textarea>
         </div>
         <div class="form-group" style="margin-bottom: 14px;">
-          <label>报价确认信息</label>
-          <textarea v-model="editForm.quote_content" :disabled="!canEdit"></textarea>
+          <label>报价确认信息 <span v-if="!canEditQuote" class="tag tag-gray" style="margin-left:6px;">仅报价/订单阶段可编辑</span></label>
+          <textarea v-model="editForm.quote_content" :disabled="!canEditQuote"></textarea>
           <div class="form-check" style="margin-top: 6px;">
-            <input type="checkbox" v-model="editForm.quote_confirmed" :disabled="!canEdit" id="qc" />
+            <input type="checkbox" v-model="editForm.quote_confirmed" :disabled="!canEditQuote" id="qc" />
             <label for="qc">报价已确认</label>
           </div>
         </div>
         <div class="form-group" style="margin-bottom: 14px;">
-          <label>订单签订信息</label>
-          <textarea v-model="editForm.order_content" :disabled="!canEdit"></textarea>
+          <label>订单签订信息 <span v-if="!canEditOrder" class="tag tag-gray" style="margin-left:6px;">仅订单/归档阶段可编辑</span></label>
+          <textarea v-model="editForm.order_content" :disabled="!canEditOrder"></textarea>
           <div class="form-check" style="margin-top: 6px;">
-            <input type="checkbox" v-model="editForm.order_signed" :disabled="!canEdit" id="os" />
+            <input type="checkbox" v-model="editForm.order_signed" :disabled="!canEditOrder" id="os" />
             <label for="os">订单已签订</label>
           </div>
         </div>
@@ -327,6 +327,11 @@
           当前角色无权办理此订单。此订单当前需由 <strong>{{ getRoleDisplayName(order.current_handler_role) }}</strong> 处理。
         </div>
         <div v-else>
+          <div class="alert alert-info" style="margin-bottom: 14px;">
+            当前角色: <strong>{{ getRoleDisplayName(currentRole) }}</strong>
+            &nbsp;|&nbsp; 订单阶段: <strong>{{ order.stage_display }}</strong>
+            &nbsp;|&nbsp; 订单状态: <strong>{{ order.status_display }}</strong>
+          </div>
           <div style="margin-bottom: 14px;">
             <button class="btn btn-primary" @click="openAction('submit')" v-if="canDoAction('submit')">📤 提交下一环节</button>
             <button class="btn btn-secondary" @click="openAction('dispatch')" style="margin-left: 8px;" v-if="canDoAction('dispatch')">📋 派发</button>
@@ -351,13 +356,16 @@
                     <option v-for="r in roleList" :key="r.code" :value="r.code">{{ r.name }}</option>
                   </select>
                 </div>
-                <div v-if="actionForm.action === 'correct'" class="form-group" style="margin-bottom: 14px;">
+                <div v-if="['return', 'correct'].includes(actionForm.action)" class="form-group" style="margin-bottom: 14px;">
                   <label>补正动作</label>
                   <textarea v-model="actionForm.corrective_action" placeholder="请说明补正内容"></textarea>
                 </div>
                 <div class="form-group" style="margin-bottom: 14px;">
-                  <label>处理说明</label>
-                  <textarea v-model="actionForm.comment" placeholder="请输入处理说明"></textarea>
+                  <label>
+                    <span v-if="actionForm.action === 'return'">退回原因<span class="required">*</span></span>
+                    <span v-else>处理说明</span>
+                  </label>
+                  <textarea v-model="actionForm.comment" :placeholder="actionForm.action === 'return' ? '请填写退回原因（必填）' : '请输入处理说明'"></textarea>
                 </div>
                 <div v-if="['process', 'review', 'close'].includes(actionForm.action)" class="form-check" style="margin-bottom: 14px;">
                   <input type="checkbox" v-model="actionForm.evidence_provided" id="evidence" />
@@ -427,7 +435,32 @@ const editForm = reactive({
 
 const canEdit = computed(() => {
   if (!order.value) return false
-  return order.value.status !== 'closed'
+  if (order.value.status === 'closed') return false
+  const role = currentRole.value
+  if (order.value.status === 'processing') {
+    return role === order.value.current_handler_role
+  }
+  if (order.value.status === 'pending_dispatch') {
+    if (order.value.stage === 'inquiry') return role === 'clerk'
+    if (order.value.stage === 'quote_confirmation') return role === 'supervisor' || role === 'clerk'
+    if (order.value.stage === 'order_signing') return role === 'reviewer' || role === 'supervisor'
+  }
+  return false
+})
+
+const canEditInquiry = computed(() => {
+  if (!canEdit.value) return false
+  return ['inquiry', 'quote_confirmation'].includes(order.value!.stage)
+})
+
+const canEditQuote = computed(() => {
+  if (!canEdit.value) return false
+  return ['quote_confirmation', 'order_signing'].includes(order.value!.stage)
+})
+
+const canEditOrder = computed(() => {
+  if (!canEdit.value) return false
+  return ['order_signing', 'archived'].includes(order.value!.stage)
 })
 
 const showActionModal = ref(false)
@@ -486,6 +519,10 @@ const doAction = async () => {
   actionError.value = ''
   if (actionForm.action === 'dispatch' && !actionForm.dispatch_to_role) {
     actionError.value = '请选择派发目标角色'
+    return
+  }
+  if (actionForm.action === 'return' && !actionForm.comment.trim()) {
+    actionError.value = '请填写退回原因'
     return
   }
   if (['process', 'review', 'close'].includes(actionForm.action) && !actionForm.evidence_provided) {
