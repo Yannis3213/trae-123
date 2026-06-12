@@ -313,6 +313,43 @@ def _resolve_all_exceptions(order: ForeignTradeOrder, username: str, role: str, 
     return updated
 
 
+def _validate_handler_match(username: str, order: ForeignTradeOrder) -> tuple[bool, str]:
+    if order.status == OrderStatus.CLOSED:
+        return True, ''
+    if order.status == OrderStatus.PENDING_DISPATCH:
+        return True, ''
+    if order.current_handler and order.current_handler.strip():
+        if username != order.current_handler:
+            return False, f'当前订单由值班人「{order.current_handler}」办理，请联系该人员或重新派发'
+    return True, ''
+
+
+def _validate_dispatch_role(dispatch_to_role: str, from_role: str, order: ForeignTradeOrder) -> tuple[bool, str]:
+    if not dispatch_to_role:
+        return False, '请指定派发目标角色'
+    valid_roles = {Role.CLERK, Role.SUPERVISOR, Role.REVIEWER}
+    if dispatch_to_role not in valid_roles:
+        return False, f'派发目标角色不合法，只能是 {valid_roles} 之一'
+    allowed_map = {
+        (Role.CLERK, OrderStage.INQUIRY): {Role.CLERK, Role.SUPERVISOR},
+        (Role.CLERK, OrderStage.QUOTE_CONFIRMATION): {Role.SUPERVISOR},
+        (Role.SUPERVISOR, OrderStage.QUOTE_CONFIRMATION): {Role.SUPERVISOR, Role.REVIEWER, Role.CLERK},
+        (Role.SUPERVISOR, OrderStage.ORDER_SIGNING): {Role.REVIEWER, Role.SUPERVISOR, Role.CLERK},
+        (Role.REVIEWER, OrderStage.ORDER_SIGNING): {Role.REVIEWER, Role.SUPERVISOR},
+        (Role.REVIEWER, OrderStage.ARCHIVED): {Role.REVIEWER, Role.SUPERVISOR},
+    }
+    allowed = allowed_map.get((from_role, order.stage))
+    if allowed and dispatch_to_role not in allowed:
+        return False, f'{_get_role_display(from_role)}不能从{order.get_stage_display()}派发到{_get_role_display(dispatch_to_role)}'
+    return True, ''
+
+
+def _record_audit_note(order: ForeignTradeOrder, note: str, username: str, role: str):
+    return AuditNote.objects.create(
+        order=order, note=note, noted_by=username, noted_by_role=role,
+    )
+
+
 @api.get('/roles')
 def list_roles(request):
     return [
@@ -450,6 +487,7 @@ def list_orders(
 @api.get('/orders/{order_id}', response=OrderDetail)
 def get_order(request, order_id: int):
     role = _get_role(request)
+    username = _get_username(request)
     try:
         order = ForeignTradeOrder.objects.get(id=order_id)
     except ForeignTradeOrder.DoesNotExist:
@@ -457,6 +495,10 @@ def get_order(request, order_id: int):
 
     if not _validate_role_access_order(role, order):
         raise HttpError(403, f'当前角色无权访问此订单（阶段：{order.get_stage_display()}）')
+
+    handler_ok, handler_msg = _validate_handler_match(username, order)
+    if not handler_ok:
+        raise HttpError(403, handler_msg)
 
     return _order_to_detail(order, role)
 
@@ -518,6 +560,10 @@ def update_order(request, order_id: int, data: OrderUpdate):
         if not _validate_role_access_order(role, order):
             raise HttpError(403, f'当前角色无权修改此订单（阶段：{order.get_stage_display()}）')
 
+        handler_ok, handler_msg = _validate_handler_match(username, order)
+        if not handler_ok:
+            raise HttpError(403, handler_msg)
+
         if order.version != data.version:
             raise HttpError(409, f'版本冲突，当前版本为 {order.version}，请刷新后重试')
 
@@ -530,8 +576,18 @@ def update_order(request, order_id: int, data: OrderUpdate):
         for k, v in fields.items():
             setattr(order, k, v)
 
+        auto_claimed = False
+        if order.status == OrderStatus.PROCESSING and not order.current_handler and order.current_handler_role == role:
+            order.current_handler = username
+            auto_claimed = True
+
         order.version += 1
         order.save()
+
+        if auto_claimed:
+            _record_audit_note(order, f'[自动认领] 由「{username}」({_get_role_display(role)}) 接单并修改信息', username, role)
+        else:
+            _record_audit_note(order, f'[信息修改] 由「{username}」更新订单字段', username, role)
 
         ProcessingRecord.objects.create(
             order=order,
@@ -542,7 +598,7 @@ def update_order(request, order_id: int, data: OrderUpdate):
             to_status=order.status,
             from_stage=order.stage,
             to_stage=order.stage,
-            comment=f'修改订单信息',
+            comment=f'修改订单信息{"（自动认领）" if auto_claimed else ""}',
             version_before=data.version,
             version_after=order.version,
         )
@@ -564,8 +620,19 @@ def process_order(request, order_id: int, data: ProcessAction):
         if not _validate_role_access_order(role, order):
             raise HttpError(403, f'当前角色无权操作此订单（阶段：{order.get_stage_display()}）')
 
+        handler_ok, handler_msg = _validate_handler_match(username, order)
+        if not handler_ok:
+            raise HttpError(403, handler_msg)
+
         if order.version != data.version:
             raise HttpError(409, f'版本冲突，当前版本为 {order.version}，请刷新后重试')
+
+        if data.action == ProcessingAction.DISPATCH:
+            dispatch_ok, dispatch_msg = _validate_dispatch_role(
+                data.dispatch_to_role, role, order
+            )
+            if not dispatch_ok:
+                raise HttpError(400, dispatch_msg)
 
         ok, err_msg, evidence_required = _validate_can_process(
             role, order, data.action, data.evidence_provided
@@ -574,9 +641,11 @@ def process_order(request, order_id: int, data: ProcessAction):
             is_permission_err = '无权' in err_msg or '只有' in err_msg or '需由' in err_msg
             if '报价确认信息不完整' in err_msg or '信息不齐' in err_msg:
                 _record_exception(order, '缺资料', err_msg, username, role, '补全缺失的资料信息')
+                _record_audit_note(order, f'[拦截] {err_msg}', username, role)
                 order.save()
             elif '已逾期' in err_msg:
                 _record_exception(order, '逾期', err_msg, username, role, '处理逾期异常并补正资料')
+                _record_audit_note(order, f'[拦截] {err_msg}', username, role)
                 order.save()
             raise HttpError(403 if is_permission_err else 400, err_msg)
 
@@ -585,29 +654,42 @@ def process_order(request, order_id: int, data: ProcessAction):
         old_stage = order.stage
         action = data.action
 
+        auto_claimed = False
+        if order.status == OrderStatus.PROCESSING and not order.current_handler and order.current_handler_role == role:
+            order.current_handler = username
+            auto_claimed = True
+
         if action == ProcessingAction.SUBMIT:
             order.status = OrderStatus.PROCESSING
             order.stage = OrderStage.QUOTE_CONFIRMATION
             order.current_handler_role = Role.SUPERVISOR
             order.current_handler = ''
+            _record_audit_note(order, f'[提交] 提交到报价确认环节，等待审核主管接单', username, role)
 
         elif action == ProcessingAction.DISPATCH:
             order.status = OrderStatus.PROCESSING
             order.stage = _role_to_queue_stage(data.dispatch_to_role)
             order.current_handler_role = data.dispatch_to_role
             order.current_handler = ''
+            _record_audit_note(
+                order,
+                f'[派发] 从{_get_role_display(role)}派发到{_get_role_display(data.dispatch_to_role)}，等待接单',
+                username, role
+            )
 
         elif action == ProcessingAction.PROCESS:
             if order.stage == OrderStage.QUOTE_CONFIRMATION:
                 order.stage = OrderStage.ORDER_SIGNING
                 order.current_handler_role = Role.REVIEWER
                 order.current_handler = ''
+                _record_audit_note(order, '[办理] 报价确认通过，进入订单签订环节', username, role)
             elif order.stage == OrderStage.ORDER_SIGNING:
-                pass
+                _record_audit_note(order, '[办理] 订单签订办理确认', username, role)
 
         elif action == ProcessingAction.REVIEW:
             order.status = OrderStatus.CLOSED
             order.stage = OrderStage.ARCHIVED
+            _record_audit_note(order, '[复核] 复核通过，归档关闭', username, role)
 
         elif action == ProcessingAction.RETURN:
             if data.comment:
@@ -626,17 +708,35 @@ def process_order(request, order_id: int, data: ProcessAction):
                 username, role,
                 data.corrective_action or '按退回意见补正资料'
             )
+            _record_audit_note(
+                order,
+                f'[退回] 原因：{data.comment or "审核未通过"}，补正要求：{data.corrective_action or "按退回意见补正资料"}',
+                username, role
+            )
 
         elif action == ProcessingAction.CORRECT:
             _resolve_all_exceptions(order, username, role, data.comment or '补正资料')
+            _record_audit_note(
+                order,
+                f'[补正] {data.corrective_action or data.comment or "完成资料补正"}，所有未解决异常已标记为解决',
+                username, role
+            )
 
         elif action == ProcessingAction.CLOSE:
             order.status = OrderStatus.CLOSED
             order.stage = OrderStage.ARCHIVED
+            _record_audit_note(order, '[关闭] 手动归档关闭', username, role)
 
         order.version += 1
         order.result = data.comment or order.result
         order.save()
+
+        if auto_claimed:
+            _record_audit_note(
+                order,
+                f'[自动认领] 由「{username}」({_get_role_display(role)}) 接单并执行{action}操作',
+                username, role
+            )
 
         ProcessingRecord.objects.create(
             order=order,
@@ -647,7 +747,7 @@ def process_order(request, order_id: int, data: ProcessAction):
             to_status=order.status,
             from_stage=old_stage,
             to_stage=order.stage,
-            comment=data.comment or '',
+            comment=(data.comment or '') + ('（自动认领）' if auto_claimed else ''),
             evidence_required=evidence_required,
             evidence_provided=data.evidence_provided,
             version_before=old_version,
@@ -686,11 +786,28 @@ def batch_process_orders(request, data: BatchProcessRequest):
                     results.append(result)
                     continue
 
+                handler_ok, handler_msg = _validate_handler_match(username, order)
+                if not handler_ok:
+                    result.error_code = 'HANDLER_MISMATCH'
+                    result.error_message = handler_msg
+                    results.append(result)
+                    continue
+
                 if order.version != item.version:
                     result.error_code = 'VERSION_CONFLICT'
                     result.error_message = f'版本冲突，当前版本为 {order.version}'
                     results.append(result)
                     continue
+
+                if item.action == ProcessingAction.DISPATCH:
+                    dispatch_ok, dispatch_msg = _validate_dispatch_role(
+                        item.dispatch_to_role, role, order
+                    )
+                    if not dispatch_ok:
+                        result.error_code = 'BAD_REQUEST'
+                        result.error_message = dispatch_msg
+                        results.append(result)
+                        continue
 
                 ok, err_msg, evidence_required = _validate_can_process(
                     role, order, item.action, item.evidence_provided
@@ -698,15 +815,17 @@ def batch_process_orders(request, data: BatchProcessRequest):
                 if not ok:
                     if '报价确认信息不完整' in err_msg or '信息不齐' in err_msg:
                         _record_exception(order, '缺资料', err_msg, username, role, '补全缺失的资料信息')
+                        _record_audit_note(order, f'[批量拦截] {err_msg}', username, role)
                         order.save()
                         result.error_code = 'INCOMPLETE'
                     elif '已逾期' in err_msg:
                         _record_exception(order, '逾期', err_msg, username, role, '处理逾期异常并补正资料')
+                        _record_audit_note(order, f'[批量拦截] {err_msg}', username, role)
                         order.save()
                         result.error_code = 'OVERDUE'
                     elif '必须上传证据' in err_msg:
                         result.error_code = 'NO_EVIDENCE'
-                    elif '无权' in err_msg or '只有' in err_msg:
+                    elif '无权' in err_msg or '只有' in err_msg or '需由' in err_msg:
                         result.error_code = 'FORBIDDEN'
                     else:
                         result.error_code = 'BAD_REQUEST'
@@ -719,28 +838,35 @@ def batch_process_orders(request, data: BatchProcessRequest):
                 old_stage = order.stage
                 action = item.action
 
+                auto_claimed = False
+                if order.status == OrderStatus.PROCESSING and not order.current_handler and order.current_handler_role == role:
+                    order.current_handler = username
+                    auto_claimed = True
+
                 if action == ProcessingAction.DISPATCH:
-                    if not item.dispatch_to_role:
-                        result.error_code = 'BAD_REQUEST'
-                        result.error_message = '请指定派发目标角色'
-                        results.append(result)
-                        continue
                     order.status = OrderStatus.PROCESSING
                     order.stage = _role_to_queue_stage(item.dispatch_to_role)
                     order.current_handler_role = item.dispatch_to_role
                     order.current_handler = ''
+                    _record_audit_note(
+                        order,
+                        f'[批量派发] 派发到{_get_role_display(item.dispatch_to_role)}，等待接单',
+                        username, role
+                    )
 
                 elif action == ProcessingAction.PROCESS:
                     if order.stage == OrderStage.QUOTE_CONFIRMATION:
                         order.stage = OrderStage.ORDER_SIGNING
                         order.current_handler_role = Role.REVIEWER
                         order.current_handler = ''
+                        _record_audit_note(order, '[批量办理] 报价确认通过，进入订单签订环节', username, role)
                     elif order.stage == OrderStage.ORDER_SIGNING:
-                        pass
+                        _record_audit_note(order, '[批量办理] 订单签订办理确认', username, role)
 
                 elif action == ProcessingAction.REVIEW:
                     order.status = OrderStatus.CLOSED
                     order.stage = OrderStage.ARCHIVED
+                    _record_audit_note(order, '[批量复核] 复核通过，归档关闭', username, role)
 
                 elif action == ProcessingAction.RETURN:
                     if item.comment:
@@ -759,17 +885,31 @@ def batch_process_orders(request, data: BatchProcessRequest):
                         username, role,
                         item.corrective_action or '按退回意见补正资料'
                     )
+                    _record_audit_note(
+                        order,
+                        f'[批量退回] 原因：{item.comment or "审核未通过"}',
+                        username, role
+                    )
 
                 elif action == ProcessingAction.CORRECT:
                     _resolve_all_exceptions(order, username, role, item.comment or '补正资料')
+                    _record_audit_note(order, '[批量补正] 资料补正，异常标记为解决', username, role)
 
                 elif action == ProcessingAction.CLOSE:
                     order.status = OrderStatus.CLOSED
                     order.stage = OrderStage.ARCHIVED
+                    _record_audit_note(order, '[批量关闭] 归档关闭', username, role)
 
                 order.version += 1
                 order.result = item.comment or order.result
                 order.save()
+
+                if auto_claimed:
+                    _record_audit_note(
+                        order,
+                        f'[自动认领] 由「{username}」({_get_role_display(role)}) 接单并批量执行{action}操作',
+                        username, role
+                    )
 
                 ProcessingRecord.objects.create(
                     order=order,
@@ -780,7 +920,7 @@ def batch_process_orders(request, data: BatchProcessRequest):
                     to_status=order.status,
                     from_stage=old_stage,
                     to_stage=order.stage,
-                    comment=item.comment or '',
+                    comment=(item.comment or '') + ('（自动认领）' if auto_claimed else ''),
                     evidence_required=evidence_required,
                     evidence_provided=item.evidence_provided,
                     version_before=old_version,
@@ -812,41 +952,65 @@ def upload_attachment(request, order_id: int, file: NinjaUploadedFile = File(...
     role = _get_role(request)
     username = _get_username(request)
 
-    try:
-        order = ForeignTradeOrder.objects.get(id=order_id)
-    except ForeignTradeOrder.DoesNotExist:
-        raise HttpError(404, '订单不存在')
+    with transaction.atomic():
+        try:
+            order = ForeignTradeOrder.objects.select_for_update().get(id=order_id)
+        except ForeignTradeOrder.DoesNotExist:
+            raise HttpError(404, '订单不存在')
 
-    if not _validate_role_access_order(role, order):
-        raise HttpError(403, f'当前角色无权上传附件（阶段：{order.get_stage_display()}）')
+        if not _validate_role_access_order(role, order):
+            raise HttpError(403, f'当前角色无权上传附件（阶段：{order.get_stage_display()}）')
 
-    if order.status == OrderStatus.CLOSED:
-        raise HttpError(400, '已关闭订单不能上传附件')
+        handler_ok, handler_msg = _validate_handler_match(username, order)
+        if not handler_ok:
+            raise HttpError(403, handler_msg)
 
-    upload_dir = Path(settings.MEDIA_ROOT) / str(order.id)
-    upload_dir.mkdir(parents=True, exist_ok=True)
+        if order.status == OrderStatus.CLOSED:
+            raise HttpError(400, '已关闭订单不能上传附件')
 
-    ext = Path(file.name).suffix or '.bin'
-    safe_name = f"{uuid.uuid4().hex}{ext}"
-    file_path = upload_dir / safe_name
+        upload_dir = Path(settings.MEDIA_ROOT) / str(order.id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(file_path, 'wb') as f:
-        for chunk in file.chunks():
-            f.write(chunk)
+        ext = Path(file.name).suffix or '.bin'
+        safe_name = f"{uuid.uuid4().hex}{ext}"
+        file_path = upload_dir / safe_name
 
-    rel_path = f"/uploads/{order.id}/{safe_name}"
+        with open(file_path, 'wb') as f:
+            for chunk in file.chunks():
+                f.write(chunk)
 
-    attachment = OrderAttachment.objects.create(
-        order=order,
-        file_name=file.name,
-        file_path=rel_path,
-        file_type=file.content_type or '',
-        file_size=file.size,
-        uploaded_by=username,
-        uploaded_by_role=role,
-        description=description,
-        stage=stage or order.stage,
-    )
+        rel_path = f"/uploads/{order.id}/{safe_name}"
+
+        attachment = OrderAttachment.objects.create(
+            order=order,
+            file_name=file.name,
+            file_path=rel_path,
+            file_type=file.content_type or '',
+            file_size=file.size,
+            uploaded_by=username,
+            uploaded_by_role=role,
+            description=description,
+            stage=stage or order.stage,
+        )
+
+        auto_claimed = False
+        if order.status == OrderStatus.PROCESSING and not order.current_handler and order.current_handler_role == role:
+            order.current_handler = username
+            auto_claimed = True
+            order.save()
+
+        if auto_claimed:
+            _record_audit_note(
+                order,
+                f'[自动认领] 由「{username}」({_get_role_display(role)}) 接单并上传附件',
+                username, role
+            )
+
+        _record_audit_note(
+            order,
+            f'[附件上传] {file.name}（{file.size}字节）{description and "- " + description}（阶段：{attachment.stage}）',
+            username, role
+        )
 
     return AttachmentInfo(
         id=attachment.id,
@@ -867,23 +1031,23 @@ def add_audit_note(request, order_id: int, data: AuditNoteCreate):
     role = _get_role(request)
     username = _get_username(request)
 
-    try:
-        order = ForeignTradeOrder.objects.get(id=order_id)
-    except ForeignTradeOrder.DoesNotExist:
-        raise HttpError(404, '订单不存在')
+    with transaction.atomic():
+        try:
+            order = ForeignTradeOrder.objects.select_for_update().get(id=order_id)
+        except ForeignTradeOrder.DoesNotExist:
+            raise HttpError(404, '订单不存在')
 
-    if not _validate_role_access_order(role, order):
-        raise HttpError(403, f'当前角色无权添加审计备注（阶段：{order.get_stage_display()}）')
+        if not _validate_role_access_order(role, order):
+            raise HttpError(403, f'当前角色无权添加审计备注（阶段：{order.get_stage_display()}）')
 
-    if order.status == OrderStatus.CLOSED:
-        raise HttpError(400, '已关闭订单不能添加审计备注')
+        handler_ok, handler_msg = _validate_handler_match(username, order)
+        if not handler_ok:
+            raise HttpError(403, handler_msg)
 
-    note = AuditNote.objects.create(
-        order=order,
-        note=data.note,
-        noted_by=username,
-        noted_by_role=role,
-    )
+        if order.status == OrderStatus.CLOSED:
+            raise HttpError(400, '已关闭订单不能添加审计备注')
+
+        note = _record_audit_note(order, data.note, username, role)
 
     return AuditNoteInfo(
         id=note.id,
@@ -899,32 +1063,37 @@ def add_exception_reason(request, order_id: int, data: ExceptionReasonCreate):
     role = _get_role(request)
     username = _get_username(request)
 
-    try:
-        order = ForeignTradeOrder.objects.get(id=order_id)
-    except ForeignTradeOrder.DoesNotExist:
-        raise HttpError(404, '订单不存在')
+    with transaction.atomic():
+        try:
+            order = ForeignTradeOrder.objects.select_for_update().get(id=order_id)
+        except ForeignTradeOrder.DoesNotExist:
+            raise HttpError(404, '订单不存在')
 
-    if not _validate_role_access_order(role, order):
-        raise HttpError(403, f'当前角色无权添加异常原因（阶段：{order.get_stage_display()}）')
+        if not _validate_role_access_order(role, order):
+            raise HttpError(403, f'当前角色无权添加异常原因（阶段：{order.get_stage_display()}）')
 
-    if order.status == OrderStatus.CLOSED:
-        raise HttpError(400, '已关闭订单不能添加异常原因')
+        handler_ok, handler_msg = _validate_handler_match(username, order)
+        if not handler_ok:
+            raise HttpError(403, handler_msg)
 
-    exc = ExceptionReason.objects.create(
-        order=order,
-        reason_type=data.reason_type,
-        reason_detail=data.reason_detail,
-        corrective_action=data.corrective_action,
-        recorded_by=username,
-        recorded_by_role=role,
-    )
+        if order.status == OrderStatus.CLOSED:
+            raise HttpError(400, '已关闭订单不能添加异常原因')
 
-    order.is_exception = True
-    tags = list(order.exception_tags or [])
-    if data.reason_type not in tags:
-        tags.append(data.reason_type)
-    order.exception_tags = tags
-    order.save()
+        exc = _record_exception(
+            order,
+            data.reason_type,
+            data.reason_detail,
+            username,
+            role,
+            data.corrective_action
+        )
+        _record_audit_note(
+            order,
+            f'[异常登记] 类型：{data.reason_type}，原因：{data.reason_detail}'
+            f'{data.corrective_action and f"，补正：{data.corrective_action}"}',
+            username, role
+        )
+        order.save()
 
     return ExceptionReasonInfo(
         id=exc.id,

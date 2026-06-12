@@ -20,6 +20,12 @@
             </span>
             <span v-if="order.is_exception" style="margin-left: 16px;" class="tag tag-red">异常</span>
           </div>
+          <div style="margin-top: 10px;">
+            <span :class="['tag', handlerMatchStatus === 'match' ? 'tag-green' : handlerMatchStatus === 'mismatch' ? 'tag-red' : 'tag-gray']">
+              值班人: {{ currentUserName || '未指定' }}
+              {{ handlerMatchStatus === 'match' ? '✓ 与当前处理人一致' : handlerMatchStatus === 'mismatch' ? '✗ 与当前处理人不一致' : '（待派发/可认领）' }}
+            </span>
+          </div>
         </div>
         <div class="action-buttons">
           <button class="btn btn-secondary" @click="loadDetail">🔄 刷新</button>
@@ -461,6 +467,14 @@ const canEditQuote = computed(() => {
 const canEditOrder = computed(() => {
   if (!canEdit.value) return false
   return ['order_signing', 'archived'].includes(order.value!.stage)
+})
+
+const handlerMatchStatus = computed<'match' | 'mismatch' | 'pending'>(() => {
+  if (!order.value) return 'pending'
+  if (order.value.status === 'pending_dispatch' || !order.value.current_handler) {
+    return 'pending'
+  }
+  return order.value.current_handler === currentUserName.value ? 'match' : 'mismatch'
 })
 
 const showActionModal = ref(false)
