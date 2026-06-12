@@ -125,3 +125,8 @@ Thumbs.db
 playwright-report/
 test-results/
 reports/test-results/
+
+# TanStack Start / Vinxi 生成文件
+frontend/app.config.timestamp_*
+frontend/.vinxi/
+frontend/.tanstack/

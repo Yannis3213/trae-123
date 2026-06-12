@@ -7,6 +7,17 @@ export const Route = createFileRoute('/projects/new')({
   component: NewProject,
 })
 
+type NewProjectForm = Record<string, string | number | undefined>
+
+function getErrMsg(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (typeof e === 'string') return e
+  if (e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string') {
+    return (e as { message: string }).message
+  }
+  return '创建失败'
+}
+
 function NewProject() {
   const nav = useNavigate()
   const user = getUser()
@@ -22,7 +33,7 @@ function NewProject() {
 
   const defaultDeadline = dayjs().add(15, 'day').format('YYYY-MM-DD')
 
-  const [form, setForm] = useState<any>({
+  const [form, setForm] = useState<NewProjectForm>({
     project_name: '',
     client_company: '',
     contact_person: '',
@@ -54,19 +65,35 @@ function NewProject() {
     setSaving(true)
     setErr('')
     try {
-      const data: any = {
-        ...form,
-        expected_start_date: form.expected_start_date ? new Date(form.expected_start_date).toISOString() : null,
-        expected_end_date: form.expected_end_date ? new Date(form.expected_end_date).toISOString() : null,
-        contract_date: form.contract_date ? new Date(form.contract_date).toISOString() : null,
-        deadline: form.deadline ? new Date(form.deadline + 'T23:59:59').toISOString() : null,
+      const data: TrainingProjectCreate = {
+        project_name: String(form.project_name),
+        client_company: String(form.client_company),
+        contact_person: form.contact_person ? String(form.contact_person) : undefined,
+        contact_phone: form.contact_phone ? String(form.contact_phone) : undefined,
+        training_type: form.training_type ? String(form.training_type) : undefined,
         training_count: Number(form.training_count) || 0,
+        expected_start_date: form.expected_start_date
+          ? new Date(String(form.expected_start_date)).toISOString()
+          : undefined,
+        expected_end_date: form.expected_end_date
+          ? new Date(String(form.expected_end_date)).toISOString()
+          : undefined,
+        demand_description: form.demand_description ? String(form.demand_description) : undefined,
+        plan_content: form.plan_content ? String(form.plan_content) : undefined,
         quotation_amount: Number(form.quotation_amount) || 0,
+        contract_no: form.contract_no ? String(form.contract_no) : undefined,
+        contract_date: form.contract_date
+          ? new Date(String(form.contract_date)).toISOString()
+          : undefined,
+        deadline: form.deadline
+          ? new Date(String(form.deadline) + 'T23:59:59').toISOString()
+          : undefined,
+        stage: (form.stage as 'demand' | 'plan' | 'contract') || 'demand',
       }
       const res = await api.createProject(data)
       nav({ to: `/projects/$id`, params: { id: String(res.id) } })
-    } catch (e: any) {
-      setErr(e.message || '创建失败')
+    } catch (e) {
+      setErr(getErrMsg(e) || '创建失败')
     } finally {
       setSaving(false)
     }
@@ -76,7 +103,11 @@ function NewProject() {
     <div>
       <label className="label">{label}</label>
       {opts ? (
-        <select className="input" value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })}>
+        <select
+          className="input"
+          value={String(form[key] ?? '')}
+          onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+        >
           {opts.map((o) => (
             <option key={o} value={o}>
               {o}
@@ -87,9 +118,9 @@ function NewProject() {
         <input
           type={type}
           className="input"
-          value={form[key] ?? ''}
+          value={String(form[key] ?? '')}
           onChange={(e) =>
-            setForm({ ...form, [key]: type === 'number' ? e.target.value : e.target.value })
+            setForm({ ...form, [key]: type === 'number' ? Number(e.target.value) : e.target.value })
           }
         />
       )}

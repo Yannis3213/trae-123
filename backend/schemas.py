@@ -32,6 +32,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class OkResponse(BaseModel):
+    ok: bool = True
+    message: Optional[str] = None
+
+
 class UserResponse(BaseModel):
     id: int
     username: str

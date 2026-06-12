@@ -6,7 +6,7 @@ from models import get_db, User, TrainingProject, Attachment
 from schemas import (
     TrainingProjectCreate, TrainingProjectUpdate, TrainingProjectDetailResponse,
     ProjectListResponse, ProcessActionRequest, BatchActionRequest,
-    BatchActionResponse, DashboardStats, AttachmentCreate, AttachmentResponse
+    BatchActionResponse, DashboardStats, AttachmentCreate, AttachmentResponse, OkResponse
 )
 from auth_service import user_simple_response
 from routers.auth import get_current_user
@@ -107,7 +107,7 @@ def do_action(project_id: int, req: ProcessActionRequest,
     return project_to_detail_dict(p, db, user)
 
 
-@router.delete("/{project_id}")
+@router.delete("/{project_id}", response_model=OkResponse)
 def delete_project(project_id: int, db: Session = Depends(get_db),
                    user: User = Depends(get_current_user)):
     p = db.query(TrainingProject).filter(
@@ -122,7 +122,7 @@ def delete_project(project_id: int, db: Session = Depends(get_db),
     p.is_deleted = True
     p.updated_at = datetime.utcnow()
     db.commit()
-    return {"message": "已删除"}
+    return {"ok": True, "message": "已删除"}
 
 
 @router.post("/{project_id}/attachments", response_model=AttachmentResponse)
@@ -159,7 +159,7 @@ def upload_attachment(project_id: int, data: AttachmentCreate,
     }
 
 
-@router.delete("/{project_id}/attachments/{attachment_id}")
+@router.delete("/{project_id}/attachments/{attachment_id}", response_model=OkResponse)
 def delete_attachment(project_id: int, attachment_id: int,
                       db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     att = db.query(Attachment).filter(
@@ -171,4 +171,4 @@ def delete_attachment(project_id: int, attachment_id: int,
         raise HTTPException(status_code=403, detail="仅上传人可删除附件")
     db.delete(att)
     db.commit()
-    return {"message": "已删除附件"}
+    return {"ok": True, "message": "已删除附件"}

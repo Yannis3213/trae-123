@@ -598,7 +598,7 @@ function ProjectDetail() {
                       </div>
                     </div>
                     <div className="mt-3 flex gap-2 text-xs flex-wrap">
-                      {(STAGE_REQUIRED_CATEGORIES as any)[project.stage]?.map((cat: string) => {
+                      {(STAGE_REQUIRED_CATEGORIES[project.stage as keyof typeof STAGE_REQUIRED_CATEGORIES] || []).map((cat) => {
                         const label = cat === 'demand' ? '需求' : cat === 'plan' ? '方案' : '合同'
                         const have = project.attachments.some(a => a.category === cat)
                         return (

@@ -33,8 +33,7 @@ BACKEND_PORT = int(os.environ.get("BACKEND_PORT", "8106"))
 origins = [
     f"http://localhost:{FRONTEND_PORT}",
     f"http://127.0.0.1:{FRONTEND_PORT}",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    f"http://0.0.0.0:{FRONTEND_PORT}",
 ]
 
 app.add_middleware(

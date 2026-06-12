@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from models import get_db, User
 from schemas import (
-    LoginRequest, UserResponse, UserSimpleResponse
+    LoginRequest, UserResponse, UserSimpleResponse, OkResponse
 )
 from auth_service import (
     authenticate, create_session_token, get_user_from_token,
@@ -39,11 +39,11 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     return user_to_response(user, token)
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=OkResponse)
 def api_logout(authorization: str = Header(None)):
     if authorization and authorization.startswith("Bearer "):
         logout(authorization[7:])
-    return {"message": "已退出登录"}
+    return {"ok": True, "message": "已退出登录"}
 
 
 @router.get("/me", response_model=UserResponse)
