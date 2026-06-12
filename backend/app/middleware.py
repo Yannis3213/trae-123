@@ -131,21 +131,21 @@ def get_target_queue(action: str) -> Optional[str]:
         Actions.APPROVE_REVIEW: Roles.QUEUES[Roles.REVIEW_LEADER],
         Actions.CONFIRM_BOOTH: Roles.QUEUES[Roles.REVIEW_LEADER],
         Actions.ARCHIVE: Roles.QUEUES[Roles.REVIEW_LEADER],
-        Actions.SYNC: None
+        Actions.SYNC: Roles.QUEUES[Roles.REVIEW_LEADER]
     }
     return action_to_queue.get(action)
 
 
 def get_target_handler(action: str) -> Optional[str]:
     action_to_handler = {
-        Actions.SUBMIT: Roles.AUDIT_SUPERVISOR,
-        Actions.CORRECT: Roles.AUDIT_SUPERVISOR,
-        Actions.APPROVE_AUDIT: Roles.REVIEW_LEADER,
-        Actions.RETURN_FOR_CORRECTION: Roles.REGISTRAR,
-        Actions.APPROVE_REVIEW: Roles.REVIEW_LEADER,
-        Actions.CONFIRM_BOOTH: Roles.REVIEW_LEADER,
-        Actions.ARCHIVE: Roles.REVIEW_LEADER,
-        Actions.SYNC: None
+        Actions.SUBMIT: "supervisor1",
+        Actions.CORRECT: "supervisor1",
+        Actions.APPROVE_AUDIT: "leader1",
+        Actions.RETURN_FOR_CORRECTION: "registrar1",
+        Actions.APPROVE_REVIEW: "leader1",
+        Actions.CONFIRM_BOOTH: "leader1",
+        Actions.ARCHIVE: "leader1",
+        Actions.SYNC: "leader1"
     }
     return action_to_handler.get(action)
 

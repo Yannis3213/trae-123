@@ -611,10 +611,7 @@ async def validate_action(
 
         handler_match = False
         ch = app.get("current_handler")
-        if not ch or ch == username or ch == user_role:
-            handler_match = True
-
-        if user_role == Roles.REVIEW_LEADER and ch in [Roles.REVIEW_LEADER, Roles.AUDIT_SUPERVISOR]:
+        if not ch or ch == username:
             handler_match = True
 
         if not handler_match:
@@ -704,6 +701,28 @@ async def execute_action(
 
     is_fields_valid, error_code, error_msg = await validate_action_fields(data.action, data)
     if not is_fields_valid:
+        async with db.cursor() as cur:
+            await cur.execute("""
+                INSERT INTO processing_records (
+                    application_id, action, from_status, to_status, handler, handler_role,
+                    comment, correction_reason, reject_reason, evidence_required,
+                    error_code, error_message, version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                app_id, "error_record", app["status"], None,
+                user["username"], user["role"],
+                f"操作 [{data.action}] 因必填字段缺失校验失败",
+                data.correction_reason, data.reject_reason, data.evidence_required,
+                error_code, error_msg, app["version"]
+            ))
+
+            await cur.execute("""
+                UPDATE exhibitor_applications
+                SET last_error_code = ?, last_error_message = ?, last_updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (error_code, error_msg, app_id))
+
+        await db.commit()
         return False, error_code, error_msg, None
 
     if app.get("is_overdue") and data.action in [Actions.APPROVE_AUDIT, Actions.APPROVE_REVIEW, Actions.CONFIRM_BOOTH]:
@@ -810,8 +829,8 @@ async def execute_action(
     async with db.cursor() as cur:
         await cur.execute("""
             UPDATE exhibitor_applications
-            SET status = ?, queue = ?,
-                current_handler = ?, current_handler_name = ?,
+            SET status = ?, queue = COALESCE(?, queue),
+                current_handler = COALESCE(?, current_handler), current_handler_name = COALESCE(?, current_handler_name),
                 responsible_person = COALESCE(?, responsible_person),
                 responsible_person_name = COALESCE(?, responsible_person_name),
                 version = ?,
