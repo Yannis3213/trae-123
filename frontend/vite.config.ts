@@ -1,4 +1,4 @@
-import { defineConfig, type UserConfig } from "vite";
+import { defineConfig, loadEnv, type UserConfig } from "vite";
 import { qwikVite } from "@builder.io/qwik/optimizer";
 import { qwikCity } from "@builder.io/qwik-city/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
@@ -13,14 +13,26 @@ const { dependencies = {}, devDependencies = {} } = pkg as any as {
 };
 errorOnDuplicatesPkgDeps(devDependencies, dependencies);
 
+const DEFAULT_FRONTEND_PORT = 31010;
+
+function parsePort(portStr: string | undefined, defaultPort: number): number {
+  if (!portStr) return defaultPort;
+  const p = parseInt(portStr, 10);
+  if (isNaN(p) || p <= 0 || p > 65535) return defaultPort;
+  return p;
+}
+
 export default defineConfig(({ command, mode }): UserConfig => {
+  const env = loadEnv(mode, process.cwd(), "");
+  const frontendPort = parsePort(env.VITE_PORT, DEFAULT_FRONTEND_PORT);
+
   return {
     plugins: [qwikCity(), qwikVite(), tsconfigPaths({ root: "." }), tailwindcss()],
     optimizeDeps: {
       exclude: [],
     },
     server: {
-      port: 31010,
+      port: frontendPort,
       headers: {
         "Cache-Control": "public, max-age=0",
       },

@@ -2,11 +2,11 @@
 
 ```mermaid
 graph TB
-    subgraph "前端 Qwik City :31010"
+    subgraph "前端 Qwik City :$VITE_PORT"
         A["页面组件"] --> B["状态管理"]
         A --> C["API 客户端"]
     end
-    subgraph "后端 Rust + Poem :8101"
+    subgraph "后端 Rust + Poem :$BACKEND_PORT"
         D["路由层 Router"] --> E["中间件层<br/>认证/权限/CORS"]
         E --> F["Handler 层"]
         F --> G["Service 层<br/>业务逻辑/校验"]
@@ -22,11 +22,12 @@ graph TB
 ## 2. 技术说明
 
 - 前端：Qwik City + TypeScript + Tailwind CSS
-- 前端端口：31010
+- 前端端口：环境变量 `VITE_PORT`，默认 31010
 - 后端：Rust + Poem Web Framework + rusqlite
-- 后端端口：8101
+- 后端端口：环境变量 `BACKEND_PORT`，默认 10100
+- 前端 API 基地址：环境变量 `VITE_API_BASE_URL`，默认 `http://localhost:10100/api`
+- CORS 白名单：环境变量 `FRONTEND_ORIGIN`，默认 `http://localhost:31010`
 - 数据库：SQLite（项目内本地文件 `backend/data/app.db`）
-- CORS：允许 `http://localhost:31010`
 
 ## 3. 路由定义
 

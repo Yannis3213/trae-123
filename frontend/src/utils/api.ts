@@ -138,7 +138,8 @@ export interface CreateAuditRequest {
   expiry_date: string;
 }
 
-const BASE_URL = "http://localhost:8101/api";
+const DEFAULT_BASE_URL = "http://localhost:10100/api";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || DEFAULT_BASE_URL;
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
