@@ -542,7 +542,18 @@ const doAction = async () => {
     showActionModal.value = false
     await loadDetail()
   } catch (e: any) {
-    actionError.value = e.data?.detail || e.message || '操作失败'
+    const status = e.status || e.response?.status
+    const msg = e.data?.detail || e.message || '操作失败'
+    if (status === 409) {
+      actionError.value = `版本冲突：${msg}。请刷新后重试。`
+      setTimeout(() => loadDetail(), 1500)
+    } else if (status === 403) {
+      actionError.value = `无权限：${msg}`
+    } else if (status === 400) {
+      actionError.value = msg + '（订单保留在原队列）'
+    } else {
+      actionError.value = msg
+    }
   } finally {
     actionSubmitting.value = false
   }
@@ -602,7 +613,15 @@ const loadDetail = async () => {
     editForm.priority = res.priority
     editForm.due_time = res.due_time ? new Date(res.due_time).toISOString().slice(0, 16) : ''
   } catch (e: any) {
-    loadError.value = e.data?.detail || e.message || '加载订单失败'
+    const status = e.status || e.response?.status
+    const msg = e.data?.detail || e.message || '加载订单失败'
+    if (status === 403) {
+      loadError.value = `无权访问：${msg}。请切换到正确的角色后再试。`
+    } else if (status === 404) {
+      loadError.value = '订单不存在'
+    } else {
+      loadError.value = msg
+    }
   }
 }
 
@@ -631,8 +650,17 @@ const saveEdit = async () => {
     await loadDetail()
     setTimeout(() => { saveMessage.value = '' }, 2000)
   } catch (e: any) {
+    const status = e.status || e.response?.status
+    const msg = e.data?.detail || e.message || '保存失败'
     saveSuccess.value = false
-    saveMessage.value = e.data?.detail || e.message || '保存失败'
+    if (status === 409) {
+      saveMessage.value = `版本冲突：${msg}。页面将自动刷新。`
+      setTimeout(() => loadDetail(), 1500)
+    } else if (status === 403) {
+      saveMessage.value = `无权限：${msg}`
+    } else {
+      saveMessage.value = msg
+    }
   } finally {
     saving.value = false
   }

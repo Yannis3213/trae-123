@@ -17,6 +17,7 @@ export interface OrderListItem {
   priority_display: string
   responsible_person: string
   current_handler: string
+  current_handler_role: string
   create_time: string
   update_time: string
   due_time: string | null
@@ -24,6 +25,7 @@ export interface OrderListItem {
   exception_tags: string[]
   warning_level: string
   warning_level_display: string
+  can_process: boolean
 }
 
 export interface AttachmentInfo {

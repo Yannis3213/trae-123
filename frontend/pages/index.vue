@@ -36,8 +36,8 @@
         </div>
       </div>
 
-      <div v-if="selectedIds.length > 0 && canBatchProcess" class="batch-bar">
-        <span>已选择 <strong>{{ selectedIds.length }}</strong> 个订单</span>
+      <div v-if="selectedProcessableCount > 0 && canBatchProcess" class="batch-bar">
+        <span>已选择 <strong>{{ selectedProcessableCount }}</strong> 个可办理订单（共选中 {{ selectedIds.length }} 个）</span>
         <button class="btn btn-primary btn-sm" @click="showBatchModal = true">批量处理</button>
         <button class="btn btn-secondary btn-sm" @click="clearSelection">取消选择</button>
       </div>
@@ -98,6 +98,7 @@
                   type="checkbox"
                   :checked="isAllSelected"
                   @change="toggleSelectAll"
+                  :disabled="!hasProcessable"
                 />
               </th>
               <th>订单编号</th>
@@ -123,7 +124,7 @@
                   type="checkbox"
                   :value="order.id"
                   v-model="selectedIds"
-                  :disabled="order.status === 'closed'"
+                  :disabled="!order.can_process"
                 />
               </td>
               <td>
@@ -160,6 +161,9 @@
               <td>{{ formatDate(order.create_time) }}</td>
               <td>
                 <button class="btn btn-secondary btn-sm" @click="goDetail(order.id)">查看</button>
+                <button v-if="order.can_process" class="btn btn-primary btn-sm" style="margin-left: 4px;" @click="goDetail(order.id)">
+                  办理
+                </button>
               </td>
             </tr>
             <tr v-if="orders.length === 0">
@@ -285,6 +289,7 @@
             <div class="section-title">批量处理结果</div>
             <div class="alert" :class="batchResult.failed_count > 0 ? 'alert-warning' : 'alert-success'">
               共 {{ batchResult.total }} 条，成功 {{ batchResult.success_count }} 条，失败 {{ batchResult.failed_count }} 条
+              <span v-if="batchResult.failed_count > 0" style="font-size: 12px; margin-left: 8px;">（失败订单保留在原队列）</span>
             </div>
             <table style="margin-top: 8px;">
               <thead>
@@ -292,6 +297,7 @@
                   <th>订单号</th>
                   <th>结果</th>
                   <th>失败原因</th>
+                  <th>错误码</th>
                   <th>新状态/阶段</th>
                 </tr>
               </thead>
@@ -303,11 +309,16 @@
                       {{ r.success ? '成功' : '失败' }}
                     </span>
                   </td>
-                  <td style="color: #b91c1c;">{{ r.error_message }}</td>
+                  <td style="color: #b91c1c;">{{ r.error_message || '-' }}</td>
+                  <td>
+                    <span v-if="!r.success && r.error_code" class="tag tag-orange">{{ r.error_code }}</span>
+                    <span v-else>-</span>
+                  </td>
                   <td>
                     <span v-if="r.success">
                       {{ r.new_status }} / {{ r.new_stage }}
                     </span>
+                    <span v-else class="tag tag-gray">保留原队列</span>
                   </td>
                 </tr>
               </tbody>
@@ -403,15 +414,23 @@ const filters = reactive({
 })
 
 const isAllSelected = computed(() => {
-  const processable = orders.value.filter(o => o.status !== 'closed')
+  const processable = orders.value.filter(o => o.can_process)
   return processable.length > 0 && processable.every(o => selectedIds.value.includes(o.id))
+})
+
+const hasProcessable = computed(() => {
+  return orders.value.some(o => o.can_process)
+})
+
+const selectedProcessableCount = computed(() => {
+  return orders.value.filter(o => selectedIds.value.includes(o.id) && o.can_process).length
 })
 
 const toggleSelectAll = () => {
   if (isAllSelected.value) {
     selectedIds.value = []
   } else {
-    selectedIds.value = orders.value.filter(o => o.status !== 'closed').map(o => o.id)
+    selectedIds.value = orders.value.filter(o => o.can_process).map(o => o.id)
   }
 }
 

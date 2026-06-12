@@ -152,8 +152,9 @@ def _order_to_detail(order: ForeignTradeOrder, role: str) -> OrderDetail:
     )
 
 
-def _order_to_list_item(order: ForeignTradeOrder) -> OrderListItem:
+def _order_to_list_item(order: ForeignTradeOrder, role: str | None = None) -> OrderListItem:
     warning_level = order.get_warning_level()
+    can_process = order.can_process(role) if role else False
     return OrderListItem(
         id=order.id, order_no=order.order_no,
         customer_name=order.customer_name, product_name=order.product_name,
@@ -163,6 +164,7 @@ def _order_to_list_item(order: ForeignTradeOrder) -> OrderListItem:
         priority=order.priority, priority_display=order.get_priority_display(),
         responsible_person=order.responsible_person,
         current_handler=order.current_handler,
+        current_handler_role=order.current_handler_role,
         create_time=order.create_time,
         update_time=order.update_time,
         due_time=order.due_time,
@@ -174,6 +176,7 @@ def _order_to_list_item(order: ForeignTradeOrder) -> OrderListItem:
             WarningLevel.APPROACHING: '临期',
             WarningLevel.OVERDUE: '逾期',
         }.get(warning_level, '正常'),
+        can_process=can_process,
     )
 
 
@@ -297,6 +300,19 @@ def _record_exception(order: ForeignTradeOrder, reason_type: str, reason_detail:
     return exc
 
 
+def _resolve_all_exceptions(order: ForeignTradeOrder, username: str, role: str, comment: str = ''):
+    now = timezone.now()
+    updated = ExceptionReason.objects.filter(
+        order=order, resolved=False
+    ).update(
+        resolved=True,
+        resolve_time=now,
+    )
+    order.is_exception = False
+    order.exception_tags = []
+    return updated
+
+
 @api.get('/roles')
 def list_roles(request):
     return [
@@ -395,7 +411,7 @@ def list_orders(
             qs = qs.filter(models.Q(due_time__isnull=True) | models.Q(due_time__gt=two_days_later))
 
     total = qs.count()
-    items = [_order_to_list_item(o) for o in qs.order_by('-create_time')]
+    items = [_order_to_list_item(o, role) for o in qs.order_by('-create_time')]
 
     my_qs = ForeignTradeOrder.objects.all()
     if role == Role.CLERK:
@@ -612,14 +628,7 @@ def process_order(request, order_id: int, data: ProcessAction):
             )
 
         elif action == ProcessingAction.CORRECT:
-            if data.corrective_action:
-                _record_exception(
-                    order, '补正',
-                    data.comment or '补正资料',
-                    username, role,
-                    data.corrective_action
-                )
-            order.is_exception = False
+            _resolve_all_exceptions(order, username, role, data.comment or '补正资料')
 
         elif action == ProcessingAction.CLOSE:
             order.status = OrderStatus.CLOSED
@@ -752,14 +761,7 @@ def batch_process_orders(request, data: BatchProcessRequest):
                     )
 
                 elif action == ProcessingAction.CORRECT:
-                    if item.corrective_action:
-                        _record_exception(
-                            order, '补正',
-                            item.comment or '补正资料',
-                            username, role,
-                            item.corrective_action
-                        )
-                    order.is_exception = False
+                    _resolve_all_exceptions(order, username, role, item.comment or '补正资料')
 
                 elif action == ProcessingAction.CLOSE:
                     order.status = OrderStatus.CLOSED
@@ -815,6 +817,12 @@ def upload_attachment(request, order_id: int, file: NinjaUploadedFile = File(...
     except ForeignTradeOrder.DoesNotExist:
         raise HttpError(404, '订单不存在')
 
+    if not _validate_role_access_order(role, order):
+        raise HttpError(403, f'当前角色无权上传附件（阶段：{order.get_stage_display()}）')
+
+    if order.status == OrderStatus.CLOSED:
+        raise HttpError(400, '已关闭订单不能上传附件')
+
     upload_dir = Path(settings.MEDIA_ROOT) / str(order.id)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -864,6 +872,12 @@ def add_audit_note(request, order_id: int, data: AuditNoteCreate):
     except ForeignTradeOrder.DoesNotExist:
         raise HttpError(404, '订单不存在')
 
+    if not _validate_role_access_order(role, order):
+        raise HttpError(403, f'当前角色无权添加审计备注（阶段：{order.get_stage_display()}）')
+
+    if order.status == OrderStatus.CLOSED:
+        raise HttpError(400, '已关闭订单不能添加审计备注')
+
     note = AuditNote.objects.create(
         order=order,
         note=data.note,
@@ -889,6 +903,12 @@ def add_exception_reason(request, order_id: int, data: ExceptionReasonCreate):
         order = ForeignTradeOrder.objects.get(id=order_id)
     except ForeignTradeOrder.DoesNotExist:
         raise HttpError(404, '订单不存在')
+
+    if not _validate_role_access_order(role, order):
+        raise HttpError(403, f'当前角色无权添加异常原因（阶段：{order.get_stage_display()}）')
+
+    if order.status == OrderStatus.CLOSED:
+        raise HttpError(400, '已关闭订单不能添加异常原因')
 
     exc = ExceptionReason.objects.create(
         order=order,

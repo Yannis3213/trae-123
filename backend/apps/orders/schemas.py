@@ -176,6 +176,7 @@ class OrderListItem(BaseModel):
     priority_display: str
     responsible_person: str
     current_handler: str
+    current_handler_role: str
     create_time: datetime
     update_time: datetime
     due_time: Optional[datetime]
@@ -183,6 +184,7 @@ class OrderListItem(BaseModel):
     exception_tags: List[str]
     warning_level: str
     warning_level_display: str
+    can_process: bool
 
 
 class OrderListResponse(BaseModel):
