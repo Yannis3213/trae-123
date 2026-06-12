@@ -40,6 +40,12 @@ export class PlanController {
     return { code: 0, message: 'ok', data };
   }
 
+  @Get('queue/my')
+  async getMyQueue() {
+    const data = await this.planService.findMyQueue();
+    return { code: 0, message: 'ok', data };
+  }
+
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number) {
     const data = await this.planService.findOne(id);

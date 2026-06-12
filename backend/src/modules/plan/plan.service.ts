@@ -73,6 +73,44 @@ export class PlanService {
     return plans;
   }
 
+  async findMyQueue() {
+    const user = this.authService.getCurrentUser();
+    if (!user) throw new HttpException('未登录', HttpStatus.UNAUTHORIZED);
+
+    const qb = this.planRepo
+      .createQueryBuilder('plan')
+      .leftJoinAndSelect('plan.attachments', 'attachment')
+      .leftJoinAndSelect('plan.processRecords', 'record')
+      .leftJoinAndSelect('plan.auditNotes', 'note')
+      .orderBy('plan.createdAt', 'DESC');
+
+    if (user.role === 'registrar') {
+      qb.andWhere('plan.status IN (:...statuses)', { statuses: ['returned', 'rejected'] });
+      qb.andWhere('plan.currentHandlerRole = :role', { role: 'registrar' });
+    } else if (user.role === 'reviewer') {
+      qb.andWhere('plan.status IN (:...statuses)', { statuses: ['pending_sign', 'reviewing'] });
+      qb.andWhere('plan.currentHandlerRole = :role', { role: 'reviewer' });
+    } else if (user.role === 'director') {
+      qb.andWhere('plan.status = :status', { status: 'pending_verify' });
+      qb.andWhere('plan.currentHandlerRole = :role', { role: 'director' });
+    } else {
+      throw new HttpException('未知角色', HttpStatus.BAD_REQUEST);
+    }
+
+    const plans = await qb.getMany();
+    for (const p of plans) {
+      const warning = calcDueWarning(p.dueDate);
+      if (p.dueWarning !== warning) {
+        p.dueWarning = warning;
+        if (warning === 'overdue' && !p.exceptionTag) {
+          p.exceptionTag = '逾期';
+        }
+        await this.planRepo.save(p);
+      }
+    }
+    return plans;
+  }
+
   async findOne(id: number) {
     const plan = await this.planRepo
       .createQueryBuilder('plan')
@@ -133,21 +171,9 @@ export class PlanService {
 
   async sign(id: number, version: number) {
     const user = this.authService.getCurrentUser();
-    if (!user) throw new HttpException('未登录', HttpStatus.UNAUTHORIZED);
-    if (user.role !== 'reviewer') {
-      throw new HttpException('仅审核主管可签收', HttpStatus.FORBIDDEN);
-    }
-
     const plan = await this.findOne(id);
-    if (plan.status !== 'pending_sign') {
-      throw new HttpException(`状态冲突：当前状态为${plan.status}，无法签收`, HttpStatus.CONFLICT);
-    }
-    if (plan.version !== version) {
-      throw new HttpException('版本冲突：数据已被修改，请刷新后重试', HttpStatus.CONFLICT);
-    }
-    if (plan.currentHandlerRole !== 'reviewer') {
-      throw new HttpException('当前处理人不是审核主管', HttpStatus.FORBIDDEN);
-    }
+
+    this.validatePlanAction(plan, 'sign', version);
 
     plan.status = 'reviewing';
     plan.currentHandler = user.name;
@@ -169,32 +195,27 @@ export class PlanService {
 
   async review(id: number, dto: ReviewPlanDto) {
     const user = this.authService.getCurrentUser();
-    if (!user) throw new HttpException('未登录', HttpStatus.UNAUTHORIZED);
-    if (user.role !== 'reviewer') {
-      throw new HttpException('仅审核主管可办理', HttpStatus.FORBIDDEN);
-    }
-
     const plan = await this.findOne(id);
-    if (plan.status !== 'reviewing') {
-      throw new HttpException(`状态冲突：当前状态为${plan.status}，无法审核`, HttpStatus.CONFLICT);
-    }
-    if (plan.version !== dto.version) {
-      throw new HttpException('版本冲突：数据已被修改，请刷新后重试', HttpStatus.CONFLICT);
-    }
+
+    const actionType = dto.result === 'approve' ? 'review_approve' : dto.result === 'return' ? 'review_return' : '';
+    if (!actionType) throw new HttpException('无效的审核结果', HttpStatus.BAD_REQUEST);
+
+    this.validatePlanAction(plan, actionType, dto.version);
 
     if (dto.result === 'approve') {
       plan.status = 'pending_verify';
       plan.currentHandler = '王总监';
       plan.currentHandlerRole = 'director';
       plan.reviewResult = '审核通过';
+      plan.returnReason = null;
+      plan.exceptionTag = null;
     } else if (dto.result === 'return') {
       plan.status = 'returned';
       plan.currentHandler = '张晓明';
       plan.currentHandlerRole = 'registrar';
       plan.returnReason = dto.returnReason || '退回补正';
       plan.exceptionTag = '退回补正';
-    } else {
-      throw new HttpException('无效的审核结果', HttpStatus.BAD_REQUEST);
+      plan.reviewResult = '审核退回';
     }
 
     plan.version += 1;
@@ -208,7 +229,8 @@ export class PlanService {
       fromStatus: 'reviewing',
       toStatus: plan.status,
       result: dto.result === 'approve' ? '审核通过' : '退回',
-      returnReason: dto.returnReason,
+      returnReason: dto.returnReason || '退回补正',
+      exceptionReason: dto.result === 'return' ? (dto.returnReason || '退回补正') : null,
       auditNote: dto.auditNote,
     });
 
@@ -217,25 +239,31 @@ export class PlanService {
 
   async correct(id: number, dto: CorrectPlanDto) {
     const user = this.authService.getCurrentUser();
-    if (!user) throw new HttpException('未登录', HttpStatus.UNAUTHORIZED);
-    if (user.role !== 'registrar') {
-      throw new HttpException('仅登记员可补正', HttpStatus.FORBIDDEN);
-    }
-
     const plan = await this.findOne(id);
-    if (plan.status !== 'returned' && plan.status !== 'rejected') {
-      throw new HttpException(`状态冲突：当前状态为${plan.status}，无法补正`, HttpStatus.CONFLICT);
+
+    this.validatePlanAction(plan, 'correct', dto.version);
+
+    const requiredAtts = plan.attachments?.filter((a) => a.required) || [];
+    const uploadedRequired = requiredAtts.filter((a) => a.uploadedAt);
+    const hasAuditNote = !!dto.auditNote?.trim();
+    const allRequiredUploaded = uploadedRequired.length === requiredAtts.length && requiredAtts.length > 0;
+
+    if (!allRequiredUploaded && !hasAuditNote && requiredAtts.length > 0) {
+      throw new HttpException('未检测到补正内容：仍有必填附件未上传，且未填写补正说明', HttpStatus.BAD_REQUEST);
     }
-    if (plan.version !== dto.version) {
-      throw new HttpException('版本冲突：数据已被修改，请刷新后重试', HttpStatus.CONFLICT);
+    if (requiredAtts.length === 0 && !hasAuditNote) {
+      throw new HttpException('未检测到补正内容：请填写补正说明', HttpStatus.BAD_REQUEST);
     }
 
     const prevStatus = plan.status;
+    const prevReturnReason = plan.returnReason;
     plan.status = 'pending_sign';
     plan.currentHandler = '李审核';
     plan.currentHandlerRole = 'reviewer';
     plan.exceptionTag = null;
     plan.returnReason = null;
+    plan.reviewResult = null;
+    plan.verifyResult = null;
     plan.version += 1;
     await this.planRepo.save(plan);
 
@@ -246,6 +274,8 @@ export class PlanService {
       operatorRole: user.role,
       fromStatus: prevStatus,
       toStatus: 'pending_sign',
+      result: '补正提交',
+      returnReason: prevReturnReason,
       auditNote: dto.auditNote,
     });
 
@@ -254,32 +284,20 @@ export class PlanService {
 
   async verify(id: number, dto: VerifyPlanDto) {
     const user = this.authService.getCurrentUser();
-    if (!user) throw new HttpException('未登录', HttpStatus.UNAUTHORIZED);
-    if (user.role !== 'director') {
-      throw new HttpException('仅复核负责人可复核归档', HttpStatus.FORBIDDEN);
-    }
-
     const plan = await this.findOne(id);
-    if (plan.status !== 'pending_verify') {
-      throw new HttpException(`状态冲突：当前状态为${plan.status}，无法复核`, HttpStatus.CONFLICT);
-    }
-    if (plan.version !== dto.version) {
-      throw new HttpException('版本冲突：数据已被修改，请刷新后重试', HttpStatus.CONFLICT);
-    }
+
+    const actionType = dto.result === 'approve' ? 'verify_approve' : dto.result === 'reject' ? 'verify_reject' : '';
+    if (!actionType) throw new HttpException('无效的复核结果', HttpStatus.BAD_REQUEST);
+
+    this.validatePlanAction(plan, actionType, dto.version);
 
     if (dto.result === 'approve') {
-      const missingAtts = plan.attachments?.filter((a) => a.required && !a.uploadedAt);
-      if (missingAtts && missingAtts.length > 0) {
-        throw new HttpException(
-          `资料缺失：缺少必填附件 [${missingAtts.map((a) => a.fileName).join(', ')}]，需登记员补正`,
-          HttpStatus.BAD_REQUEST,
-        );
-      }
-
       plan.status = 'archived';
       plan.currentHandler = '';
       plan.currentHandlerRole = '';
       plan.verifyResult = '复核通过，已归档';
+      plan.returnReason = null;
+      plan.exceptionTag = null;
       plan.version += 1;
       await this.planRepo.save(plan);
 
@@ -311,12 +329,10 @@ export class PlanService {
         fromStatus: 'pending_verify',
         toStatus: 'rejected',
         result: '异常回传',
-        returnReason: dto.rejectReason,
+        returnReason: dto.rejectReason || '异常回传',
         auditNote: dto.auditNote,
-        exceptionReason: dto.rejectReason,
+        exceptionReason: dto.rejectReason || '异常回传',
       });
-    } else {
-      throw new HttpException('无效的复核结果', HttpStatus.BAD_REQUEST);
     }
 
     return this.findOne(plan.id);
@@ -477,8 +493,10 @@ export class PlanService {
   }
 
   async seedDemoData() {
-    const existing = await this.planRepo.count();
-    if (existing > 0) return { message: '演示数据已存在' };
+    await this.planRepo.clear();
+    await this.attachRepo.clear();
+    await this.recordRepo.clear();
+    await this.noteRepo.clear();
 
     const demoPlans = [
       {
@@ -625,6 +643,150 @@ export class PlanService {
         creatorId: 1,
         exceptionTag: null,
       },
+      {
+        planNo: 'PR-2026-1011',
+        title: '待签收-新品传播计划',
+        type: 'communication_plan',
+        status: 'pending_sign',
+        priority: 'normal',
+        dueDate: this.futureDate(7),
+        responsiblePerson: '张晓明',
+        currentHandler: '李审核',
+        currentHandlerRole: 'reviewer',
+        dueWarning: 'normal',
+        creatorId: 1,
+        exceptionTag: null,
+      },
+      {
+        planNo: 'PR-2026-1012',
+        title: '待签收-KOL投放确认',
+        type: 'placement_confirm',
+        status: 'pending_sign',
+        priority: 'high',
+        dueDate: this.futureDate(2),
+        responsiblePerson: '张晓明',
+        currentHandler: '李审核',
+        currentHandlerRole: 'reviewer',
+        dueWarning: 'approaching',
+        creatorId: 1,
+        exceptionTag: null,
+      },
+      {
+        planNo: 'PR-2026-1013',
+        title: '审核中-品牌升级素材',
+        type: 'material_review',
+        status: 'reviewing',
+        priority: 'normal',
+        dueDate: this.futureDate(4),
+        responsiblePerson: '张晓明',
+        currentHandler: '李审核',
+        currentHandlerRole: 'reviewer',
+        dueWarning: 'normal',
+        creatorId: 1,
+        exceptionTag: null,
+      },
+      {
+        planNo: 'PR-2026-1014',
+        title: '待复核-双11传播计划',
+        type: 'communication_plan',
+        status: 'pending_verify',
+        priority: 'urgent',
+        dueDate: this.futureDate(2),
+        responsiblePerson: '张晓明',
+        currentHandler: '王总监',
+        currentHandlerRole: 'director',
+        dueWarning: 'approaching',
+        creatorId: 1,
+        exceptionTag: null,
+      },
+      {
+        planNo: 'PR-2026-1015',
+        title: '签收完成-新年祝福投放',
+        type: 'placement_confirm',
+        status: 'archived',
+        priority: 'normal',
+        dueDate: this.futureDate(-10),
+        responsiblePerson: '张晓明',
+        currentHandler: '',
+        currentHandlerRole: '',
+        dueWarning: 'normal',
+        creatorId: 1,
+        verifyResult: '复核通过，已归档',
+        exceptionTag: null,
+      },
+      {
+        planNo: 'PR-2026-1016',
+        title: '签收完成-季度传播复盘',
+        type: 'communication_plan',
+        status: 'archived',
+        priority: 'low',
+        dueDate: this.futureDate(-5),
+        responsiblePerson: '张晓明',
+        currentHandler: '',
+        currentHandlerRole: '',
+        dueWarning: 'normal',
+        creatorId: 1,
+        verifyResult: '复核通过，已归档',
+        exceptionTag: null,
+      },
+      {
+        planNo: 'PR-2026-1017',
+        title: '退回补正-展会素材审核',
+        type: 'material_review',
+        status: 'returned',
+        priority: 'high',
+        dueDate: this.futureDate(3),
+        responsiblePerson: '张晓明',
+        currentHandler: '张晓明',
+        currentHandlerRole: 'registrar',
+        dueWarning: 'approaching',
+        creatorId: 1,
+        exceptionTag: '退回补正',
+        returnReason: '素材分辨率不足，且缺少品牌Logo规范版本',
+      },
+      {
+        planNo: 'PR-2026-1018',
+        title: '异常回传-户外广告投放',
+        type: 'placement_confirm',
+        status: 'rejected',
+        priority: 'high',
+        dueDate: this.futureDate(8),
+        responsiblePerson: '张晓明',
+        currentHandler: '张晓明',
+        currentHandlerRole: 'registrar',
+        dueWarning: 'normal',
+        creatorId: 1,
+        exceptionTag: '异常回传',
+        returnReason: '投放点位与方案严重不符，需重新评估供应商',
+      },
+      {
+        planNo: 'PR-2026-1019',
+        title: '逾期-待签收-紧急传播',
+        type: 'communication_plan',
+        status: 'pending_sign',
+        priority: 'urgent',
+        dueDate: this.pastDate(3),
+        responsiblePerson: '张晓明',
+        currentHandler: '李审核',
+        currentHandlerRole: 'reviewer',
+        dueWarning: 'overdue',
+        creatorId: 1,
+        exceptionTag: '逾期',
+      },
+      {
+        planNo: 'PR-2026-1020',
+        title: '逾期-待复核-活动投放',
+        type: 'placement_confirm',
+        status: 'pending_verify',
+        priority: 'urgent',
+        dueDate: this.pastDate(1),
+        responsiblePerson: '张晓明',
+        currentHandler: '王总监',
+        currentHandlerRole: 'director',
+        dueWarning: 'overdue',
+        creatorId: 1,
+        exceptionTag: '逾期',
+      },
     ];
 
     for (const dp of demoPlans) {
@@ -643,12 +805,15 @@ export class PlanService {
         });
       }
 
-      if (dp.status === 'archived') {
-        const atts = await this.attachRepo.findBy({ planId: saved.id });
-        for (const att of atts) {
-          att.uploadedAt = new Date().toISOString();
-          att.fileSize = 1024 * Math.floor(Math.random() * 500 + 100);
-          await this.attachRepo.save(att);
+      if (dp.status === 'archived' || dp.status === 'pending_verify') {
+        const isMissingMaterial = dp.planNo === 'PR-2026-1004';
+        if (!isMissingMaterial) {
+          const atts = await this.attachRepo.findBy({ planId: saved.id });
+          for (const att of atts) {
+            att.uploadedAt = new Date().toISOString();
+            att.fileSize = 1024 * Math.floor(Math.random() * 500 + 100);
+            await this.attachRepo.save(att);
+          }
         }
       }
 
@@ -765,7 +930,7 @@ export class PlanService {
         });
       }
 
-      if (dp.status === 'pending_sign' && dp.exceptionTag === '逾期') {
+      if (dp.status === 'pending_sign') {
         await this.recordRepo.save({
           planId: saved.id,
           action: '发起传播计划单',
@@ -796,8 +961,56 @@ export class PlanService {
       }
     }
 
-    planCounter = 1010;
-    return { message: '演示数据初始化完成' };
+    planCounter = 1020;
+    return { message: '演示数据初始化完成，共20条记录' };
+  }
+
+  private validatePlanAction(plan: Plan, actionType: string, requestVersion?: number) {
+    const user = this.authService.getCurrentUser();
+    if (!user) throw new HttpException('未登录', HttpStatus.UNAUTHORIZED);
+
+    const actionConfig: Record<string, { requiredRole: string; allowedStatuses: string[]; actionName: string; checkEvidence?: boolean }> = {
+      sign: { requiredRole: 'reviewer', allowedStatuses: ['pending_sign'], actionName: '签收' },
+      review_approve: { requiredRole: 'reviewer', allowedStatuses: ['reviewing'], actionName: '审核通过' },
+      review_return: { requiredRole: 'reviewer', allowedStatuses: ['reviewing'], actionName: '退回补正' },
+      correct: { requiredRole: 'registrar', allowedStatuses: ['returned', 'rejected'], actionName: '补正提交' },
+      verify_approve: { requiredRole: 'director', allowedStatuses: ['pending_verify'], actionName: '复核归档', checkEvidence: true },
+      verify_reject: { requiredRole: 'director', allowedStatuses: ['pending_verify'], actionName: '异常回传' },
+    };
+
+    const config = actionConfig[actionType];
+    if (!config) throw new HttpException('无效的操作类型', HttpStatus.BAD_REQUEST);
+
+    if (user.role !== config.requiredRole) {
+      const roleNames: Record<string, string> = {
+        registrar: '登记员',
+        reviewer: '审核主管',
+        director: '复核负责人',
+      };
+      throw new HttpException(`越权：仅${roleNames[config.requiredRole]}可${config.actionName}`, HttpStatus.FORBIDDEN);
+    }
+
+    if (user.name !== plan.currentHandler && user.role !== plan.currentHandlerRole) {
+      throw new HttpException('当前处理人不匹配，您无权处理此计划单', HttpStatus.FORBIDDEN);
+    }
+
+    if (!config.allowedStatuses.includes(plan.status)) {
+      throw new HttpException(`状态冲突：当前状态为${plan.status}，无法${config.actionName}`, HttpStatus.CONFLICT);
+    }
+
+    if (requestVersion !== undefined && plan.version !== requestVersion) {
+      throw new HttpException('版本冲突：数据已被修改，请刷新后重试', HttpStatus.CONFLICT);
+    }
+
+    if (config.checkEvidence) {
+      const missingAtts = plan.attachments?.filter((a) => a.required && !a.uploadedAt);
+      if (missingAtts && missingAtts.length > 0) {
+        throw new HttpException(
+          `资料缺失：缺少必填附件 [${missingAtts.map((a) => a.fileName).join(', ')}]，需登记员补正`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
   }
 
   private futureDate(days: number): string {
