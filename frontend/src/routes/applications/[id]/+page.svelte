@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { userStore, currentRole } from '$lib/store.js';
+	import { currentRole } from '$lib/store.js';
 	import { 
 		api, statusMap, nodeMap, warningLevelMap, verifyStatusMap, 
 		exceptionTypeMap, formatMoney, formatDate, roleMap,
@@ -23,6 +23,8 @@
 	let activeTab = 'info';
 	let evidenceUpdates = [];
 
+	let lastLoadId = '';
+
 	onMount(async () => {
 		const token = localStorage.getItem('token');
 		if (!token) {
@@ -33,14 +35,18 @@
 		await loadDetail();
 	});
 
-	$: if ($currentRole && !loading) {
-		loadDetail();
+	$: if ($page.params.id && $currentRole && !loading) {
+		const key = `${$page.params.id}|${$currentRole}`;
+		if (key !== lastLoadId) {
+			loadDetail();
+		}
 	}
 
 	async function loadDetail() {
 		loading = true;
 		try {
 			const id = $page.params.id;
+			lastLoadId = `${id}|${$currentRole}`;
 			const res = await api.getApplication(id);
 			if (res.success) {
 				detail = res.data;

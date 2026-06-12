@@ -1,16 +1,4 @@
 PRAGMA journal_mode=WAL;
-PRAGMA foreign_keys=OFF;
-
-DROP TABLE IF EXISTS exception_reasons;
-DROP TABLE IF EXISTS audit_notes;
-DROP TABLE IF EXISTS processing_records;
-DROP TABLE IF EXISTS evidence_requirements;
-DROP TABLE IF EXISTS attachments;
-DROP TABLE IF EXISTS finance_applications;
-DROP TABLE IF EXISTS user_roles;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS roles;
-
 PRAGMA foreign_keys=ON;
 
 CREATE TABLE IF NOT EXISTS roles (

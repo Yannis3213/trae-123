@@ -293,15 +293,15 @@
 	}
 
 	function canBatchPass() {
-		return user?.roles?.includes('auditor');
+		return role === 'auditor';
 	}
 
 	function canBatchReject() {
-		return user?.roles?.includes('auditor');
+		return role === 'auditor';
 	}
 
 	function canBatchArchive() {
-		return user?.roles?.includes('reviewer');
+		return role === 'reviewer';
 	}
 
 	function isRegisterRole() {

@@ -139,14 +139,15 @@ fn list_applications(
     Ok(Json(ApiResponse::ok(result)))
 }
 
-#[get("/applications/<id>")]
+#[get("/applications/<id>?<acting_role>")]
 fn get_application(
     state: &State<AppState>,
     user: AuthUser,
     id: &str,
+    acting_role: Option<String>,
 ) -> Result<Json<ApiResponse<ApplicationDetail>>, Custom<Json<ApiResponse<()>>>> {
     let db = state.db.lock().unwrap();
-    let result = db.get_application_detail(id, &user.0)
+    let result = db.get_application_detail(id, &user.0, acting_role.as_deref())
         .map_err(|e| Custom(Status::InternalServerError, Json(ApiResponse::err(&e.to_string()))))?;
     
     Ok(Json(ApiResponse::ok(result)))

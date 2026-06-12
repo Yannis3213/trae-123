@@ -193,11 +193,11 @@ impl Database {
                 params_vec.push(current_user.id.clone());
             }
             "auditor" => {
-                conditions.push("(current_handler = ? OR current_node IN ('register_done', 'verify_rejected'))".to_string());
+                conditions.push("(current_handler = ? OR (status = 'pending_verify' AND current_node = 'register_done') OR status = 'overdue')".to_string());
                 params_vec.push(current_user.id.clone());
             }
             "reviewer" => {
-                conditions.push("(current_handler = ? OR current_node = 'verify_done')".to_string());
+                conditions.push("(current_handler = ? OR (status = 'verify_passed' AND current_node = 'verify_done'))".to_string());
                 params_vec.push(current_user.id.clone());
             }
             _ => {}
@@ -316,7 +316,7 @@ impl Database {
         Ok((missing.is_empty(), missing))
     }
 
-    pub fn get_application_detail(&self, id: &str, current_user: &User) 
+    pub fn get_application_detail(&self, id: &str, current_user: &User, acting_role_opt: Option<&str>) 
         -> Result<ApplicationDetail, Box<dyn std::error::Error>> 
     {
         let mut stmt = self.conn.prepare(
@@ -359,7 +359,7 @@ impl Database {
         let audit_notes = self.get_audit_notes(id)?;
         let evidence_requirements = self.get_evidence_requirements(id)?;
 
-        let (can_process, allowed_actions) = self.get_allowed_actions(&row, current_user, None);
+        let (can_process, allowed_actions) = self.get_allowed_actions(&row, current_user, acting_role_opt);
 
         Ok(ApplicationDetail {
             application: row,
@@ -713,7 +713,7 @@ impl Database {
             )?;
         }
 
-        let detail = self.get_application_detail(&id, user)?;
+        let detail = self.get_application_detail(&id, user, None)?;
         Ok(detail.application)
     }
 
@@ -725,7 +725,7 @@ impl Database {
         let is_auditor = acting_role == "auditor";
         let is_reviewer = acting_role == "reviewer";
 
-        let detail = self.get_application_detail(id, user)?;
+        let detail = self.get_application_detail(id, user, Some(&acting_role))?;
         let app = &detail.application;
 
         if app.version != req.version {
@@ -962,6 +962,28 @@ impl Database {
                             id, et]
                     )?;
                 }
+
+                let evidence_summary = req.evidence_updates.as_ref()
+                    .map(|list| {
+                        list.iter()
+                            .filter(|e| e.provided)
+                            .map(|e| e.evidence_name.clone())
+                            .collect::<Vec<_>>()
+                            .join("、")
+                    })
+                    .unwrap_or_default();
+                let resubmit_note = if evidence_summary.is_empty() {
+                    format!("登记员重新提交：{}", req.comment.clone().unwrap_or_default())
+                } else {
+                    format!("登记员补正提交，已提供证据：{}", evidence_summary)
+                };
+                let note_id = Uuid::new_v4().to_string();
+                self.conn.execute(
+                    "INSERT INTO audit_notes 
+                     (id, application_id, note, note_type, related_record_id, created_by, created_by_role, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![note_id, id, resubmit_note, "correction", record_id, user.id, acting_role, now]
+                )?;
             }
             "archive" => {
                 if !is_reviewer {
@@ -1088,14 +1110,14 @@ impl Database {
                     ]
                 )?;
 
-                return self.get_application_detail(id, user);
+                return self.get_application_detail(id, user, None);
             }
             _ => {
                 return Err("不支持的操作类型".into());
             }
         }
 
-        self.get_application_detail(id, user)
+        self.get_application_detail(id, user, None)
     }
 
     pub fn batch_process(&self, req: &BatchProcessRequest, user: &User)
@@ -1105,7 +1127,7 @@ impl Database {
         let mut results: Vec<BatchProcessResult> = Vec::new();
 
         for app_id in &req.ids {
-            let result = match self.get_application_detail(app_id, user) {
+            let result = match self.get_application_detail(app_id, user, None) {
                 Ok(detail) => {
                     let version = req.version_map
                         .as_ref()

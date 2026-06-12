@@ -85,7 +85,11 @@ export const api = {
 		return request(`/applications?${query.toString()}`);
 	},
 	
-	getApplication: (id) => request(`/applications/${id}`),
+	getApplication: (id) => {
+		const role = getActingRole();
+		const qs = role ? `?acting_role=${encodeURIComponent(role)}` : '';
+		return request(`/applications/${id}${qs}`);
+	},
 	
 	createApplication: (data) =>
 		request('/applications', {
