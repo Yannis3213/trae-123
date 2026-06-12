@@ -113,9 +113,14 @@ export default function PlanList() {
   const handleBatchSign = async () => {
     try {
       const ids = Array.from(selectedIds());
+      const versions: Record<string, number> = {};
+      for (const id of ids) {
+        const p = plans().find((x) => x.id === id);
+        if (p) versions[String(id)] = p.version;
+      }
       const res = await apiFetch<BatchResult[]>('/plans/batch-sign', {
         method: 'POST',
-        body: JSON.stringify({ planIds: ids }),
+        body: JSON.stringify({ planIds: ids, versions }),
       });
       setBatchResults(res.data);
       setShowBatchModal(true);
@@ -131,9 +136,14 @@ export default function PlanList() {
   const handleBatchVerify = async () => {
     try {
       const ids = Array.from(selectedIds());
+      const versions: Record<string, number> = {};
+      for (const id of ids) {
+        const p = plans().find((x) => x.id === id);
+        if (p) versions[String(id)] = p.version;
+      }
       const res = await apiFetch<BatchResult[]>('/plans/batch-verify', {
         method: 'POST',
-        body: JSON.stringify({ planIds: ids, result: 'approve' }),
+        body: JSON.stringify({ planIds: ids, result: 'approve', versions }),
       });
       setBatchResults(res.data);
       setShowBatchModal(true);
@@ -148,9 +158,11 @@ export default function PlanList() {
 
   const handleQuickSign = async (planId: number) => {
     try {
+      const p = plans().find((x) => x.id === planId);
+      const versions: Record<string, number> = { [String(planId)]: p?.version || 1 };
       const res = await apiFetch<BatchResult[]>('/plans/batch-sign', {
         method: 'POST',
-        body: JSON.stringify({ planIds: [planId] }),
+        body: JSON.stringify({ planIds: [planId], versions }),
       });
       if (res.data && res.data[0]?.success) {
         if (sidebarFilter() === 'my-queue') loadMyQueue();
@@ -166,9 +178,11 @@ export default function PlanList() {
 
   const handleQuickVerify = async (planId: number) => {
     try {
+      const p = plans().find((x) => x.id === planId);
+      const versions: Record<string, number> = { [String(planId)]: p?.version || 1 };
       const res = await apiFetch<BatchResult[]>('/plans/batch-verify', {
         method: 'POST',
-        body: JSON.stringify({ planIds: [planId], result: 'approve' }),
+        body: JSON.stringify({ planIds: [planId], result: 'approve', versions }),
       });
       if (res.data && res.data[0]?.success) {
         if (sidebarFilter() === 'my-queue') loadMyQueue();

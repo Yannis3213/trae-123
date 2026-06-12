@@ -31,12 +31,21 @@ export class CorrectPlanDto {
 
 export class BatchSignDto {
   planIds: number[];
+  versions: Record<string, number>;
 }
 
 export class BatchVerifyDto {
   planIds: number[];
   result: string;
   auditNote?: string;
+  versions: Record<string, number>;
+}
+
+export class UploadAttachmentDto {
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  version: number;
 }
 
 export class QueryPlanDto {

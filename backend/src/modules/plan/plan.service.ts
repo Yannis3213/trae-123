@@ -346,7 +346,11 @@ export class PlanService {
       let plan: Plan | null = null;
       try {
         plan = await this.findOne(pid);
-        this.validatePlanAction(plan, 'sign', plan.version);
+        const requestVersion = dto.versions?.[String(pid)];
+        if (requestVersion === undefined) {
+          throw new HttpException('缺少版本号：请提交该单据的当前版本', HttpStatus.BAD_REQUEST);
+        }
+        this.validatePlanAction(plan, 'sign', requestVersion);
 
         plan.status = 'reviewing';
         plan.currentHandler = user.name;
@@ -400,7 +404,11 @@ export class PlanService {
           throw new HttpException('无效的复核结果', HttpStatus.BAD_REQUEST);
         }
 
-        this.validatePlanAction(plan, actionType, plan.version);
+        const requestVersion = dto.versions?.[String(pid)];
+        if (requestVersion === undefined) {
+          throw new HttpException('缺少版本号：请提交该单据的当前版本', HttpStatus.BAD_REQUEST);
+        }
+        this.validatePlanAction(plan, actionType, requestVersion);
 
         if (dto.result === 'approve' && plan.dueWarning === 'overdue') {
           const reason = `逾期单据不能批量放行，需逐条处理。责任人：${plan.responsiblePerson}`;
@@ -493,7 +501,26 @@ export class PlanService {
     };
   }
 
-  async uploadAttachment(planId: number, fileName: string, fileType: string, fileSize: number) {
+  async uploadAttachment(planId: number, fileName: string, fileType: string, fileSize: number, version?: number) {
+    const user = this.authService.getCurrentUser();
+    const plan = await this.findOne(planId);
+
+    if (!plan.currentHandler || user.name !== plan.currentHandler || user.role !== plan.currentHandlerRole) {
+      throw new HttpException(
+        `处理人不匹配：当前处理人为${plan.currentHandler}(${plan.currentHandlerRole})，您是${user.name}(${user.role})，无权上传附件`,
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    const allowedStatuses = ['pending_sign', 'reviewing', 'returned', 'rejected'];
+    if (!allowedStatuses.includes(plan.status)) {
+      throw new HttpException(`状态不允许上传附件：当前状态为${plan.status}`, HttpStatus.CONFLICT);
+    }
+
+    if (version !== undefined && plan.version !== version) {
+      throw new HttpException('版本冲突：数据已被修改，请刷新后重试', HttpStatus.CONFLICT);
+    }
+
     const existing = await this.attachRepo.findOneBy({
       planId, fileName, fileType,
     });

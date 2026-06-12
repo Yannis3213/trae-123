@@ -129,9 +129,9 @@ export class PlanController {
   @Post(':id/attachments')
   async uploadAttachment(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { fileName: string; fileType: string; fileSize: number },
+    @Body() body: { fileName: string; fileType: string; fileSize: number; version?: number },
   ) {
-    const data = await this.planService.uploadAttachment(id, body.fileName, body.fileType, body.fileSize);
+    const data = await this.planService.uploadAttachment(id, body.fileName, body.fileType, body.fileSize, body.version);
     return { code: 0, message: 'ok', data };
   }
 

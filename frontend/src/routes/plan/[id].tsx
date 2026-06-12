@@ -266,7 +266,7 @@ export default function PlanDetail() {
     try {
       await apiFetch(`/plans/${plan()!.id}/attachments`, {
         method: 'POST',
-        body: JSON.stringify({ fileName: att.fileName, fileType: att.fileType, fileSize: Math.floor(Math.random() * 500 + 100) * 1024 }),
+        body: JSON.stringify({ fileName: att.fileName, fileType: att.fileType, fileSize: Math.floor(Math.random() * 500 + 100) * 1024, version: plan()!.version }),
       });
       loadPlan();
     } catch (e: any) {
