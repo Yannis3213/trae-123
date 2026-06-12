@@ -343,21 +343,28 @@ export class PlanService {
     const results: { planId: number; planNo: string; success: boolean; reason: string | null }[] = [];
 
     for (const pid of dto.planIds) {
+      let plan: Plan | null = null;
       try {
-        const plan = await this.findOne(pid);
-        if (plan.status !== 'pending_sign') {
-          results.push({ planId: pid, planNo: plan.planNo, success: false, reason: `状态冲突：当前状态为${plan.status}` });
-          continue;
-        }
-        if (user.role !== 'reviewer') {
-          results.push({ planId: pid, planNo: plan.planNo, success: false, reason: '越权：仅审核主管可签收' });
-          continue;
-        }
+        plan = await this.findOne(pid);
+        this.validatePlanAction(plan, 'sign', plan.version);
         await this.sign(pid, plan.version);
         results.push({ planId: pid, planNo: plan.planNo, success: true, reason: null });
       } catch (e: any) {
-        const plan = await this.planRepo.findOneBy({ id: pid });
-        results.push({ planId: pid, planNo: plan?.planNo || `PR-${pid}`, success: false, reason: e?.message || String(e) });
+        if (!plan) plan = await this.planRepo.findOneBy({ id: pid });
+        const reason = e?.message || String(e);
+        results.push({ planId: pid, planNo: plan?.planNo || `PR-${pid}`, success: false, reason });
+        try {
+          await this.recordRepo.save({
+            planId: pid,
+            action: '批量签收拦截',
+            operator: user.name,
+            operatorRole: user.role,
+            fromStatus: plan?.status || null,
+            toStatus: plan?.status || null,
+            result: '失败',
+            exceptionReason: reason,
+          });
+        } catch {}
       }
     }
 
@@ -369,62 +376,51 @@ export class PlanService {
     const results: { planId: number; planNo: string; success: boolean; reason: string | null }[] = [];
 
     for (const pid of dto.planIds) {
+      let plan: Plan | null = null;
       try {
-        const plan = await this.findOne(pid);
-        if (plan.status !== 'pending_verify') {
-          results.push({ planId: pid, planNo: plan.planNo, success: false, reason: `状态冲突：当前状态为${plan.status}` });
+        plan = await this.findOne(pid);
+
+        const actionType = dto.result === 'approve' ? 'verify_approve' : dto.result === 'reject' ? 'verify_reject' : '';
+        if (!actionType) {
+          throw new HttpException('无效的复核结果', HttpStatus.BAD_REQUEST);
+        }
+
+        this.validatePlanAction(plan, actionType, plan.version);
+
+        if (dto.result === 'approve' && plan.dueWarning === 'overdue') {
+          const reason = `逾期单据不能批量放行，需逐条处理。责任人：${plan.responsiblePerson}`;
+          results.push({ planId: pid, planNo: plan.planNo, success: false, reason });
+          await this.recordRepo.save({
+            planId: plan.id,
+            action: '批量复核拦截-逾期',
+            operator: user.name,
+            operatorRole: user.role,
+            fromStatus: 'pending_verify',
+            toStatus: 'pending_verify',
+            result: '失败',
+            exceptionReason: reason,
+          });
           continue;
         }
-        if (user.role !== 'director') {
-          results.push({ planId: pid, planNo: plan.planNo, success: false, reason: '越权：仅复核负责人可复核' });
-          continue;
-        }
-        if (dto.result === 'approve') {
-          const missingAtts = plan.attachments?.filter((a) => a.required && !a.uploadedAt);
-          if (missingAtts && missingAtts.length > 0) {
-            results.push({
-              planId: pid,
-              planNo: plan.planNo,
-              success: false,
-              reason: `资料缺失：缺少必填附件 [${missingAtts.map((a) => a.fileName).join(', ')}]，需登记员补正`,
-            });
-            await this.recordRepo.save({
-              planId: plan.id,
-              action: '批量复核拦截-资料缺失',
-              operator: user.name,
-              operatorRole: user.role,
-              fromStatus: 'pending_verify',
-              toStatus: 'pending_verify',
-              result: '失败',
-              exceptionReason: `缺少必填附件：${missingAtts.map((a) => a.fileName).join(', ')}`,
-            });
-            continue;
-          }
-          if (plan.dueWarning === 'overdue') {
-            results.push({
-              planId: pid,
-              planNo: plan.planNo,
-              success: false,
-              reason: `逾期单据不能批量放行，需逐条处理。责任人：${plan.responsiblePerson}`,
-            });
-            await this.recordRepo.save({
-              planId: plan.id,
-              action: '批量复核拦截-逾期',
-              operator: user.name,
-              operatorRole: user.role,
-              fromStatus: 'pending_verify',
-              toStatus: 'pending_verify',
-              result: '失败',
-              exceptionReason: `逾期未处理，责任人：${plan.responsiblePerson}`,
-            });
-            continue;
-          }
-        }
+
         await this.verify(pid, { ...dto, version: plan.version });
         results.push({ planId: pid, planNo: plan.planNo, success: true, reason: null });
       } catch (e: any) {
-        const plan = await this.planRepo.findOneBy({ id: pid });
-        results.push({ planId: pid, planNo: plan?.planNo || `PR-${pid}`, success: false, reason: e?.message || String(e) });
+        if (!plan) plan = await this.planRepo.findOneBy({ id: pid });
+        const reason = e?.message || String(e);
+        results.push({ planId: pid, planNo: plan?.planNo || `PR-${pid}`, success: false, reason });
+        try {
+          await this.recordRepo.save({
+            planId: pid,
+            action: '批量复核拦截',
+            operator: user.name,
+            operatorRole: user.role,
+            fromStatus: plan?.status || null,
+            toStatus: plan?.status || null,
+            result: '失败',
+            exceptionReason: reason,
+          });
+        } catch {}
       }
     }
 

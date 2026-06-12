@@ -1,10 +1,20 @@
 const API_BASE = 'http://localhost:8107/api';
 
+let _getAuthHeader: (() => Record<string, string>) | null = null;
+
+export function setAuthHeaderProvider(fn: () => Record<string, string>) {
+  _getAuthHeader = fn;
+}
+
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<{ code: number; message: string; data: T }> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (_getAuthHeader) {
+    Object.assign(headers, _getAuthHeader());
+  }
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     ...options,
   });
   if (!res.ok) {

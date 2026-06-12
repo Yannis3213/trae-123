@@ -1,8 +1,7 @@
-import { createContext, useContext, Show, type JSX } from 'solid-js';
+import { createContext, useContext, Show, createEffect, type JSX } from 'solid-js';
 import { currentUser, setUser, clearUser, switchRole, initialized } from '../store/auth';
 import type { Role } from '../utils/api';
-import { ROLE_LABELS } from '../utils/api';
-import { apiFetch } from '../utils/api';
+import { ROLE_LABELS, apiFetch, setAuthHeaderProvider } from '../utils/api';
 
 const AuthContext = createContext<{
   user: typeof currentUser;
@@ -19,6 +18,13 @@ export function useAuth() {
 }
 
 export function AuthProvider(props: { children: JSX.Element }) {
+  createEffect(() => {
+    setAuthHeaderProvider(() => {
+      const u = currentUser();
+      return u ? { 'X-User-Role': u.role, 'X-User-Name': u.name, 'X-User-Id': String(u.id) } : {};
+    });
+  });
+
   const login = async (username: string) => {
     const res = await apiFetch('/auth/login', {
       method: 'POST',
