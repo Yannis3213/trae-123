@@ -22,48 +22,20 @@ export interface Attachment {
   file_type?: string
   file_size?: number
   category: string
-  is_required: boolean
-  uploaded_by?: User
-  uploaded_at: string
-}
-
-export interface ProcessingRecord {
-  id: number
-  project_id: number
-  action: string
-  action_name: string
-  from_status?: string
-  to_status?: string
-  from_stage?: string
-  to_stage?: string
-  operator?: User
-  operator_role?: string
-  remark?: string
-  evidence_checked?: string
-  processed_at: string
-  version_at_action?: number
-}
-
-export interface AuditNote {
-  id: number
-  project_id: number
-  note_type: string
-  note_content: string
-  created_by?: User
-  created_at: string
-}
-
-export interface Attachment {
-  id: number
-  file_name: string
-  file_type?: string
-  file_size?: number
-  category: string
   category_label?: string
   request_stage_label?: string
   is_required: boolean
   uploaded_by?: User
   uploaded_at: string
+}
+
+export interface AttachmentCreate {
+  file_name: string
+  file_type?: string
+  file_size?: number
+  category: string
+  is_required?: boolean
+  file_path: string
 }
 
 export interface ProcessingRecord {
@@ -94,6 +66,13 @@ export interface AuditNote {
   created_at: string
 }
 
+export interface RejectReason {
+  id: number
+  note_content: string
+  created_at: string
+  created_by?: User
+}
+
 export interface ExceptionRecordItem {
   id: number
   project_id: number
@@ -113,12 +92,7 @@ export interface ExceptionRecordItem {
 export interface SupplementInfo {
   is_supplement_needed: boolean
   missing_items: string[]
-  reject_reasons: Array<{
-    id: number
-    note_content: string
-    created_at: string
-    created_by?: User
-  }>
+  reject_reasons: RejectReason[]
   current_stage: string
   current_stage_label: string
 }
@@ -144,6 +118,34 @@ export interface TrainingProjectSimple {
   updated_at: string
   deadline_status?: string
   overdue_days?: number
+}
+
+export interface TrainingProjectBase {
+  project_name: string
+  client_company: string
+  contact_person?: string
+  contact_phone?: string
+  training_type?: string
+  training_count: number
+  expected_start_date?: string
+  expected_end_date?: string
+  demand_description?: string
+  plan_content?: string
+  quotation_amount: number
+  contract_no?: string
+  contract_date?: string
+  deadline?: string
+  stage: string
+}
+
+export interface TrainingProjectCreate extends Omit<TrainingProjectBase, 'stage' | 'training_count' | 'quotation_amount'> {
+  stage?: string
+  training_count?: number
+  quotation_amount?: number
+}
+
+export interface TrainingProjectUpdate extends TrainingProjectCreate {
+  version: number
 }
 
 export interface TrainingProjectDetail extends TrainingProjectSimple {
@@ -263,7 +265,7 @@ async function request<T>(
   })
 
   const text = await res.text()
-  let data: any = null
+  let data: unknown = null
   try {
     data = text ? JSON.parse(text) : null
   } catch {
@@ -271,7 +273,8 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const msg = data?.detail || data?.message || `HTTP ${res.status}`
+    const err = data as { detail?: string; message?: string } | null
+    const msg = err?.detail || err?.message || `HTTP ${res.status}`
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
   }
   return data as T
@@ -279,26 +282,32 @@ async function request<T>(
 
 export const api = {
   login: (data: LoginRequest) => request<User>('/api/auth/login', { method: 'POST', body: JSON.stringify(data) }, false),
-  logout: () => request<any>('/api/auth/logout', { method: 'POST' }, false),
+  logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }, false),
   me: () => request<User>('/api/auth/me'),
   users: () => request<User[]>('/api/auth/users'),
   dashboard: () => request<DashboardStats>('/api/projects/dashboard'),
-  listProjects: (params: Record<string, any> = {}) => {
-    const qs = new URLSearchParams(params).toString()
+  listProjects: (params: Record<string, string | number | boolean | undefined> = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params)
+        .filter(([, v]) => v !== undefined && v !== null && v !== '')
+        .map(([k, v]) => [k, String(v)]),
+    ).toString()
     return request<ProjectListResponse>(`/api/projects${qs ? '?' + qs : ''}`)
   },
   getProject: (id: number) => request<TrainingProjectDetail>(`/api/projects/${id}`),
-  createProject: (data: any) => request<TrainingProjectDetail>('/api/projects', { method: 'POST', body: JSON.stringify(data) }),
-  updateProject: (id: number, data: any) => request<TrainingProjectDetail>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  createProject: (data: TrainingProjectCreate) =>
+    request<TrainingProjectDetail>('/api/projects', { method: 'POST', body: JSON.stringify(data) }),
+  updateProject: (id: number, data: TrainingProjectUpdate) =>
+    request<TrainingProjectDetail>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   doAction: (id: number, data: ProcessActionRequest) =>
     request<TrainingProjectDetail>(`/api/projects/${id}/action`, { method: 'POST', body: JSON.stringify(data) }),
   batchAction: (data: BatchActionRequest) =>
     request<BatchActionResponse>('/api/projects/batch/action', { method: 'POST', body: JSON.stringify(data) }),
-  deleteProject: (id: number) => request<any>(`/api/projects/${id}`, { method: 'DELETE' }),
-  addAttachment: (id: number, data: any) =>
+  deleteProject: (id: number) => request<{ ok: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
+  addAttachment: (id: number, data: AttachmentCreate) =>
     request<Attachment>(`/api/projects/${id}/attachments`, { method: 'POST', body: JSON.stringify(data) }),
   deleteAttachment: (pid: number, aid: number) =>
-    request<any>(`/api/projects/${pid}/attachments/${aid}`, { method: 'DELETE' }),
+    request<{ ok: boolean }>(`/api/projects/${pid}/attachments/${aid}`, { method: 'DELETE' }),
 }
 
 export const STATUS_COLORS: Record<string, string> = {

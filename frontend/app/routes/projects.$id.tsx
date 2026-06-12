@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import {
   api,
   TrainingProjectDetail,
-  ExceptionRecordItem,
   STATUS_COLORS,
   STAGE_COLORS,
   DEADLINE_COLORS,
@@ -11,6 +10,7 @@ import {
   getUser,
   ProcessActionRequest,
   AttachmentCreate,
+  TrainingProjectUpdate,
 } from '~/app/api'
 import dayjs from 'dayjs'
 
@@ -49,10 +49,21 @@ const EXCEPTION_ICONS: Record<string, string> = {
   duplicate_submit: '♻️',
 }
 
-const STAGE_REQUIRED_CATEGORIES = {
+const STAGE_REQUIRED_CATEGORIES: Record<string, string[]> = {
   demand: ['demand'],
   plan: ['demand', 'plan'],
   contract: ['demand', 'plan', 'contract'],
+}
+
+type DetailTab = 'info' | 'supplement' | 'attachments' | 'records' | 'exceptions' | 'audit'
+
+function getErrMsg(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (typeof e === 'string') return e
+  if (e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string') {
+    return (e as { message: string }).message
+  }
+  return '操作失败'
 }
 
 function ProjectDetail() {
@@ -67,7 +78,7 @@ function ProjectDetail() {
   const [msg, setMsg] = useState('')
 
   const [editing, setEditing] = useState(false)
-  const [editData, setEditData] = useState<any>({})
+  const [editData, setEditData] = useState<Record<string, string | number | undefined>>({})
   const [saving, setSaving] = useState(false)
 
   const [actionRemark, setActionRemark] = useState('')
@@ -75,7 +86,7 @@ function ProjectDetail() {
   const [rejectRemark, setRejectRemark] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
 
-  const [tab, setTab] = useState<'info' | 'supplement' | 'attachments' | 'records' | 'exceptions' | 'audit'>('info')
+  const [tab, setTab] = useState<DetailTab>('info')
   const [newAtt, setNewAtt] = useState<AttachmentCreate>({
     file_name: '',
     file_type: 'pdf',
@@ -109,7 +120,7 @@ function ProjectDetail() {
         stage: p.stage,
         version: p.version,
       })
-    }).catch((e) => setErr(e.message)).finally(() => setLoading(false))
+    }).catch((e) => setErr(getErrMsg(e))).finally(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [pid])
@@ -137,9 +148,9 @@ function ProjectDetail() {
         training_count: Number(editData.training_count) || 0,
         quotation_amount: Number(editData.quotation_amount) || 0,
       }
-      const res = await api.updateProject(project.id, data)
+      const res = await api.updateProject(project.id, data as unknown as Parameters<typeof api.updateProject>[1])
       setProject(res); setMsg('修改成功'); setEditing(false)
-    } catch (e: any) { setErr(e.message || '修改失败') }
+    } catch (e) { setErr(getErrMsg(e) || '修改失败') }
     finally { setSaving(false) }
   }
 
@@ -151,8 +162,8 @@ function ProjectDetail() {
       const res = await api.doAction(project.id, req)
       setProject(res); setMsg(`操作成功：${ACTION_LABELS[action] || action}`)
       setActionRemark(''); setShowRejectDialog(null); setRejectRemark('')
-    } catch (e: any) {
-      setErr(e.message || '操作失败，该异常已进入审计备注用于追溯')
+    } catch (e) {
+      setErr(getErrMsg(e) || '操作失败，该异常已进入审计备注用于追溯')
     } finally { setActionLoading(false) }
   }
 
@@ -165,7 +176,7 @@ function ProjectDetail() {
       await api.addAttachment(project.id, data)
       setNewAtt({ file_name: '', file_type: 'pdf', file_size: 1024, file_path: '', category: 'demand', is_required: false })
       load(); setMsg('附件添加成功')
-    } catch (e: any) { setErr(e.message || '添加附件失败') }
+    } catch (e) { setErr(getErrMsg(e) || '添加附件失败') }
     finally { setAttLoading(false) }
   }
 
@@ -173,7 +184,7 @@ function ProjectDetail() {
     if (!project) return
     if (!confirm('确认删除该附件？')) return
     try { await api.deleteAttachment(project.id, aid); load() }
-    catch (e: any) { setErr(e.message) }
+    catch (e) { setErr(getErrMsg(e)) }
   }
 
   const dlStatus = project?.deadline_status || 'normal'
@@ -363,7 +374,7 @@ function ProjectDetail() {
                 ['exceptions', `⚠️ 异常追溯${unresolvedExc > 0 ? ` (${unresolvedExc}未处理)` : ''}`, exceptions.length],
                 ['audit', `🔍 审计备注 (${project.audit_notes.length})`, 0],
               ] as const).map(([k, l, count]) => (
-                <button key={k} onClick={() => setTab(k as any)}
+                <button key={k} onClick={() => setTab(k as DetailTab)}
                   className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px relative ${
                     tab === k ? 'text-primary-700 border-primary-500' : 'text-gray-600 border-transparent hover:text-gray-900'
                   }`}

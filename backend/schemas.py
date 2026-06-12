@@ -70,11 +70,31 @@ class AttachmentCreate(AttachmentBase):
 
 class AttachmentResponse(AttachmentBase):
     id: int
+    category_label: Optional[str] = None
+    request_stage_label: Optional[str] = None
     uploaded_by: Optional[UserSimpleResponse] = None
     uploaded_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class RejectReasonResponse(BaseModel):
+    id: int
+    note_content: str
+    created_at: datetime
+    created_by: Optional[UserSimpleResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SupplementInfoResponse(BaseModel):
+    is_supplement_needed: bool
+    missing_items: List[str] = []
+    reject_reasons: List[RejectReasonResponse] = []
+    current_stage: Optional[str] = None
+    current_stage_label: Optional[str] = None
 
 
 class ProcessingRecordResponse(BaseModel):
@@ -88,6 +108,7 @@ class ProcessingRecordResponse(BaseModel):
     to_stage: Optional[str] = None
     operator: Optional[UserSimpleResponse] = None
     operator_role: Optional[str] = None
+    operator_role_label: Optional[str] = None
     remark: Optional[str] = None
     evidence_checked: Optional[str] = None
     processed_at: datetime
@@ -101,6 +122,7 @@ class AuditNoteResponse(BaseModel):
     id: int
     project_id: int
     note_type: str
+    note_type_label: Optional[str] = None
     note_content: str
     created_by: Optional[UserSimpleResponse] = None
     created_at: datetime
@@ -113,9 +135,11 @@ class ExceptionRecordResponse(BaseModel):
     id: int
     project_id: int
     exception_type: str
+    exception_type_label: Optional[str] = None
     exception_code: Optional[str] = None
     exception_message: str
     responsible_role: Optional[str] = None
+    responsible_role_label: Optional[str] = None
     responsible_user: Optional[UserSimpleResponse] = None
     created_at: datetime
     resolved: bool
@@ -191,6 +215,7 @@ class TrainingProjectDetailResponse(TrainingProjectSimpleResponse):
     processing_records: List[ProcessingRecordResponse] = []
     audit_notes: List[AuditNoteResponse] = []
     exceptions: List[ExceptionRecordResponse] = []
+    supplement: SupplementInfoResponse
     allowed_actions: List[str] = []
 
     class Config:
