@@ -219,6 +219,11 @@ type UploadEvidenceRequest struct {
 	Version      int    `json:"version"`
 }
 
+type AddAuditRemarkRequest struct {
+	Content string `json:"content"`
+	Version int    `json:"version"`
+}
+
 type StatsResponse struct {
 	Total            int64 `json:"total"`
 	TotalApplication int64 `json:"total_application"`

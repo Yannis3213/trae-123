@@ -283,10 +283,37 @@ func (h *ApplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	remarkSQL := `
+		SELECT id, content, created_by, created_at
+		FROM audit_remarks WHERE application_id = ? ORDER BY created_at DESC
+	`
+	remarkRows, err := h.db.Query(remarkSQL, id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "查询审计备注失败")
+		return
+	}
+	defer remarkRows.Close()
+
+	auditRemarks := []*models.AuditRemark{}
+	for remarkRows.Next() {
+		remark := &models.AuditRemark{}
+		var createdAt *time.Time
+		err := remarkRows.Scan(&remark.ID, &remark.Content, &remark.CreatedBy, &createdAt)
+		if err == nil {
+			remark.ApplicationID = id
+			remark.CreatedByName = database.GetRoleName(remark.CreatedBy)
+			if createdAt != nil {
+				remark.CreatedAt = *createdAt
+			}
+			auditRemarks = append(auditRemarks, remark)
+		}
+	}
+
 	respondSuccess(w, map[string]interface{}{
-		"application": app,
-		"attachments": attachments,
-		"exceptions":  exceptions,
+		"application":    app,
+		"attachments":    attachments,
+		"exceptions":     exceptions,
+		"audit_remarks":  auditRemarks,
 	})
 }
 
@@ -1202,6 +1229,67 @@ func (h *ApplicationHandler) GetAuditTrail(w http.ResponseWriter, r *http.Reques
 	}
 
 	respondSuccess(w, records)
+}
+
+func (h *ApplicationHandler) AddAuditRemark(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	user := GetCurrentUserFromContext(r)
+
+	var req models.AddAuditRemarkRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	if req.Content == "" {
+		respondError(w, http.StatusBadRequest, "备注内容不能为空")
+		return
+	}
+
+	var version int
+	err := h.db.QueryRow("SELECT version FROM trademark_applications WHERE id = ?", id).Scan(&version)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "申请单不存在")
+		return
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "启动事务失败")
+		return
+	}
+	defer tx.Rollback()
+
+	now := time.Now()
+	remarkID := generateID()
+
+	_, err = tx.Exec(`
+		INSERT INTO audit_remarks (
+			id, application_id, content, created_by, created_at
+		) VALUES (?, ?, ?, ?, ?)
+	`, remarkID, id, req.Content, user.ID, now)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "添加审计备注失败")
+		return
+	}
+
+	_, err = tx.Exec(`
+		UPDATE trademark_applications SET version = ?, updated_at = ? WHERE id = ?
+	`, version+1, now, id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "更新版本失败")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		respondError(w, http.StatusInternalServerError, "提交事务失败")
+		return
+	}
+
+	respondSuccess(w, map[string]interface{}{
+		"id":      remarkID,
+		"version": version + 1,
+	})
 }
 
 func (h *ApplicationHandler) UploadEvidence(w http.ResponseWriter, r *http.Request) {

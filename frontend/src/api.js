@@ -105,6 +105,12 @@ export const api = {
 
   getAuditTrail: (id) => request(`/applications/${id}/audit`),
 
+  addAuditRemark: (id, data) => request(`/applications/${id}/audit-remark`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+    version: data.version,
+  }),
+
   uploadEvidence: (id, data) => request(`/applications/${id}/evidence`, {
     method: 'POST',
     body: JSON.stringify(data),

@@ -21,6 +21,7 @@ function ApplicationDetail({ id }) {
   const [attachments, setAttachments] = useState([])
   const [exceptions, setExceptions] = useState([])
   const [auditTrail, setAuditTrail] = useState([])
+  const [auditRemarks, setAuditRemarks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [showActionModal, setShowActionModal] = useState(false)
@@ -33,6 +34,7 @@ function ApplicationDetail({ id }) {
     materialComplete: false,
     evidenceComplete: false,
     reason: '',
+    exceptionReason: '',
     assignee: 'agent',
   })
   const [showEvidenceModal, setShowEvidenceModal] = useState(false)
@@ -42,6 +44,8 @@ function ApplicationDetail({ id }) {
     evidenceType: 'notification_evidence',
     url: '',
   })
+  const [showRemarkModal, setShowRemarkModal] = useState(false)
+  const [remarkForm, setRemarkForm] = useState('')
 
   useEffect(() => {
     loadData()
@@ -58,6 +62,7 @@ function ApplicationDetail({ id }) {
     setApp(detailData.application)
     setAttachments(detailData.attachments || [])
     setExceptions(detailData.exceptions || [])
+    setAuditRemarks(detailData.audit_remarks || [])
     setAuditTrail(auditData)
   } catch (e) {
       setError(e.message)
@@ -116,7 +121,10 @@ function ApplicationDetail({ id }) {
         case 'return':
           await api.returnApplication(id, {
             opinion: actionForm.opinion,
-            reason: actionForm.reason,
+            reason: actionForm.exceptionReason,
+            material_complete: actionForm.materialComplete,
+            evidence_complete: actionForm.evidenceComplete,
+            exception_reason: actionForm.exceptionReason,
             version,
           })
           break
@@ -183,6 +191,26 @@ function ApplicationDetail({ id }) {
       await loadStats()
     } catch (e) {
       alert(`上传失败：${e.message}`)
+    }
+  }
+
+  const handleRemarkSubmit = async () => {
+    if (!remarkForm.trim()) {
+      alert('请输入备注内容')
+      return
+    }
+    try {
+      await api.addAuditRemark(id, {
+        content: remarkForm.trim(),
+        version: app.version,
+      })
+      setShowRemarkModal(false)
+      setRemarkForm('')
+      await loadData()
+      await loadApplications()
+      await loadStats()
+    } catch (e) {
+      alert(`添加备注失败：${e.message}`)
     }
   }
 
@@ -407,6 +435,37 @@ function ApplicationDetail({ id }) {
             </div>
           )}
 
+          <div className="detail-section">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0 }}>审计备注（{auditRemarks.length} 条）</h3>
+              <button className="btn btn-default btn-sm" onClick={() => { setRemarkForm(''); setShowRemarkModal(true); }}>
+                + 添加备注
+              </button>
+            </div>
+            {auditRemarks && auditRemarks.length > 0 ? (
+              <div className="audit-trail">
+                {auditRemarks.map(remark => (
+                  <div key={remark.id} className="audit-item" style={{ background: '#f9f9ff' }}>
+                    <div className="audit-time">{formatDateTime(remark.created_at)}</div>
+                    <div className="audit-action">
+                      <span className="status-tag status-visited" style={{ marginRight: '8px' }}>
+                        备注
+                      </span>
+                    </div>
+                    <div className="audit-handler">
+                      <span>创建人：{remark.created_by_name || remark.created_by}</span>
+                    </div>
+                    <div className="audit-opinion" style={{ background: '#f0f5ff', color: '#1890ff', marginTop: '8px' }}>
+                      {remark.content}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: '#999', fontSize: '13px', padding: '12px 0' }}>暂无审计备注</div>
+            )}
+          </div>
+
           {auditTrail && auditTrail.length > 0 && (
             <div className="detail-section">
               <h3>审计轨迹（{auditTrail.length} 条记录）</h3>
@@ -526,14 +585,44 @@ function ApplicationDetail({ id }) {
                 </div>
               )}
               {currentAction === 'return' && (
-                <div className="form-group">
-                  <label>退回原因 *</label>
-                  <textarea
-                    placeholder="请输入退回原因"
-                    value={actionForm.reason}
-                    onInput={(e) => setActionForm({ ...actionForm, reason: e.target.value })}
-                  />
-                </div>
+                <>
+                  <div className="form-group">
+                    <label>材料是否完整</label>
+                    <select
+                      value={actionForm.materialComplete ? 'true' : 'false'}
+                      onInput={(e) => setActionForm({ ...actionForm, materialComplete: e.target.value === 'true' })}
+                    >
+                      <option value="false">否，材料不完整</option>
+                      <option value="true">是，材料完整</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>证据是否完整</label>
+                    <select
+                      value={actionForm.evidenceComplete ? 'true' : 'false'}
+                      onInput={(e) => setActionForm({ ...actionForm, evidenceComplete: e.target.value === 'true' })}
+                    >
+                      <option value="false">否，证据不完整</option>
+                      <option value="true">是，证据完整</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>异常原因说明 *</label>
+                    <textarea
+                      placeholder="请详细说明退回原因或异常情况"
+                      value={actionForm.exceptionReason}
+                      onInput={(e) => setActionForm({ ...actionForm, exceptionReason: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>处理意见</label>
+                    <textarea
+                      placeholder="请输入处理意见（可选）"
+                      value={actionForm.opinion}
+                      onInput={(e) => setActionForm({ ...actionForm, opinion: e.target.value })}
+                    />
+                  </div>
+                </>
               )}
               {(currentAction === 'correct' || currentAction === 'submitCorrection') && (
                   <>
@@ -658,6 +747,32 @@ function ApplicationDetail({ id }) {
             <div className="modal-footer">
               <button className="btn btn-default" onClick={() => setShowEvidenceModal(false)}>取消</button>
               <button className="btn btn-primary" onClick={handleUploadEvidence}>上传</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRemarkModal && (
+        <div className="modal-overlay" onClick={() => setShowRemarkModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>添加审计备注</h2>
+              <button className="modal-close" onClick={() => setShowRemarkModal(false)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>备注内容 *</label>
+                <textarea
+                  rows={5}
+                  placeholder="请输入备注内容，备注将永久保留在审计记录中"
+                  value={remarkForm}
+                  onInput={(e) => setRemarkForm(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-default" onClick={() => setShowRemarkModal(false)}>取消</button>
+              <button className="btn btn-primary" onClick={handleRemarkSubmit}>提交</button>
             </div>
           </div>
         </div>
