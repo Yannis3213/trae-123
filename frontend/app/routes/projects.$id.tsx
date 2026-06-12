@@ -49,10 +49,18 @@ const EXCEPTION_ICONS: Record<string, string> = {
   duplicate_submit: '♻️',
 }
 
-const STAGE_REQUIRED_CATEGORIES: Record<string, string[]> = {
+type StageKey = 'demand' | 'plan' | 'contract'
+
+const STAGE_REQUIRED_CATEGORIES: Record<StageKey, string[]> = {
   demand: ['demand'],
   plan: ['demand', 'plan'],
   contract: ['demand', 'plan', 'contract'],
+}
+
+const STAGE_LABEL: Record<StageKey, string> = {
+  demand: '培训需求',
+  plan: '方案报价',
+  contract: '合同确认',
 }
 
 type DetailTab = 'info' | 'supplement' | 'attachments' | 'records' | 'exceptions' | 'audit'
@@ -60,10 +68,103 @@ type DetailTab = 'info' | 'supplement' | 'attachments' | 'records' | 'exceptions
 function getErrMsg(e: unknown): string {
   if (e instanceof Error) return e.message
   if (typeof e === 'string') return e
-  if (e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string') {
-    return (e as { message: string }).message
+  if (e && typeof e === 'object' && 'message' in e) {
+    const m = (e as { message: unknown }).message
+    if (typeof m === 'string') return m
   }
   return '操作失败'
+}
+
+type EditFormData = {
+  project_name: string
+  client_company: string
+  contact_person: string
+  contact_phone: string
+  training_type: string
+  training_count: number
+  expected_start_date: string
+  expected_end_date: string
+  demand_description: string
+  plan_content: string
+  quotation_amount: number
+  contract_no: string
+  contract_date: string
+  deadline: string
+  stage: StageKey
+  version: number
+}
+
+const EMPTY_EDIT_FORM: EditFormData = {
+  project_name: '',
+  client_company: '',
+  contact_person: '',
+  contact_phone: '',
+  training_type: '',
+  training_count: 0,
+  expected_start_date: '',
+  expected_end_date: '',
+  demand_description: '',
+  plan_content: '',
+  quotation_amount: 0,
+  contract_no: '',
+  contract_date: '',
+  deadline: '',
+  stage: 'demand',
+  version: 1,
+}
+
+function buildUpdatePayload(form: EditFormData): TrainingProjectUpdate {
+  const toISO = (s: string): string | undefined => (s ? new Date(s).toISOString() : undefined)
+  return {
+    project_name: form.project_name,
+    client_company: form.client_company,
+    contact_person: form.contact_person || undefined,
+    contact_phone: form.contact_phone || undefined,
+    training_type: form.training_type || undefined,
+    training_count: Number(form.training_count) || 0,
+    expected_start_date: toISO(form.expected_start_date),
+    expected_end_date: toISO(form.expected_end_date),
+    demand_description: form.demand_description || undefined,
+    plan_content: form.plan_content || undefined,
+    quotation_amount: Number(form.quotation_amount) || 0,
+    contract_no: form.contract_no || undefined,
+    contract_date: toISO(form.contract_date),
+    deadline: form.deadline ? new Date(form.deadline + 'T23:59:59').toISOString() : undefined,
+    stage: form.stage,
+    version: form.version,
+  }
+}
+
+function initEditFormFromProject(p: TrainingProjectDetail): EditFormData {
+  return {
+    project_name: p.project_name,
+    client_company: p.client_company,
+    contact_person: p.contact_person || '',
+    contact_phone: p.contact_phone || '',
+    training_type: p.training_type || '',
+    training_count: p.training_count,
+    expected_start_date: p.expected_start_date ? dayjs(p.expected_start_date).format('YYYY-MM-DD') : '',
+    expected_end_date: p.expected_end_date ? dayjs(p.expected_end_date).format('YYYY-MM-DD') : '',
+    demand_description: p.demand_description || '',
+    plan_content: p.plan_content || '',
+    quotation_amount: p.quotation_amount,
+    contract_no: p.contract_no || '',
+    contract_date: p.contract_date ? dayjs(p.contract_date).format('YYYY-MM-DD') : '',
+    deadline: p.deadline ? dayjs(p.deadline).format('YYYY-MM-DD') : '',
+    stage: (p.stage as StageKey) || 'demand',
+    version: p.version,
+  }
+}
+
+function getProjectSupplement(p: TrainingProjectDetail): TrainingProjectDetail['supplement'] {
+  const existing = p.supplement
+  return existing || {
+    is_supplement_needed: p.status === 'audit_rejected' || p.status === 'review_rejected',
+    missing_items: [],
+    reject_reasons: [],
+    current_stage: p.stage,
+    current_stage_label: p.stage_name,
+  }
 }
 
 function ProjectDetail() {
@@ -78,7 +179,7 @@ function ProjectDetail() {
   const [msg, setMsg] = useState('')
 
   const [editing, setEditing] = useState(false)
-  const [editData, setEditData] = useState<Record<string, string | number | undefined>>({})
+  const [editData, setEditData] = useState<EditFormData>(EMPTY_EDIT_FORM)
   const [saving, setSaving] = useState(false)
 
   const [actionRemark, setActionRemark] = useState('')
@@ -102,56 +203,42 @@ function ProjectDetail() {
     setErr('')
     api.getProject(pid).then((p) => {
       setProject(p)
-      setEditData({
-        project_name: p.project_name,
-        client_company: p.client_company,
-        contact_person: p.contact_person || '',
-        contact_phone: p.contact_phone || '',
-        training_type: p.training_type || '',
-        training_count: p.training_count,
-        expected_start_date: p.expected_start_date ? dayjs(p.expected_start_date).format('YYYY-MM-DD') : '',
-        expected_end_date: p.expected_end_date ? dayjs(p.expected_end_date).format('YYYY-MM-DD') : '',
-        demand_description: p.demand_description || '',
-        plan_content: p.plan_content || '',
-        quotation_amount: p.quotation_amount,
-        contract_no: p.contract_no || '',
-        contract_date: p.contract_date ? dayjs(p.contract_date).format('YYYY-MM-DD') : '',
-        deadline: p.deadline ? dayjs(p.deadline).format('YYYY-MM-DD') : '',
-        stage: p.stage,
-        version: p.version,
-      })
+      setEditData(initEditFormFromProject(p))
     }).catch((e) => setErr(getErrMsg(e))).finally(() => setLoading(false))
   }
 
   useEffect(() => { load() }, [pid])
 
   useEffect(() => {
-    if (project?.supplement?.is_supplement_needed && tab === 'info') {
+    if (!project) return
+    const supp = getProjectSupplement(project)
+    if (supp.is_supplement_needed && tab === 'info') {
       setTab('supplement')
     }
   }, [project])
 
   const canEdit =
-    user?.role === 'registrar' &&
-    (project?.status === 'draft' || project?.status === 'audit_rejected')
+    !!user &&
+    user.role === 'registrar' &&
+    (project.status === 'draft' || project.status === 'audit_rejected')
 
   const handleEditSubmit = async () => {
     if (!project) return
-    setSaving(true); setErr(''); setMsg('')
+    setSaving(true)
+    setErr('')
+    setMsg('')
     try {
-      const data = {
-        ...editData,
-        expected_start_date: editData.expected_start_date ? new Date(editData.expected_start_date).toISOString() : null,
-        expected_end_date: editData.expected_end_date ? new Date(editData.expected_end_date).toISOString() : null,
-        contract_date: editData.contract_date ? new Date(editData.contract_date).toISOString() : null,
-        deadline: editData.deadline ? new Date(editData.deadline + 'T23:59:59').toISOString() : null,
-        training_count: Number(editData.training_count) || 0,
-        quotation_amount: Number(editData.quotation_amount) || 0,
-      }
-      const res = await api.updateProject(project.id, data as unknown as Parameters<typeof api.updateProject>[1])
-      setProject(res); setMsg('修改成功'); setEditing(false)
-    } catch (e) { setErr(getErrMsg(e) || '修改失败') }
-    finally { setSaving(false) }
+      const payload: TrainingProjectUpdate = buildUpdatePayload(editData)
+      const res = await api.updateProject(project.id, payload)
+      setProject(res)
+      setEditData(initEditFormFromProject(res))
+      setMsg('修改成功')
+      setEditing(false)
+    } catch (e) {
+      setErr(getErrMsg(e) || '修改失败')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const doAction = async (action: string, remark = '') => {
@@ -187,46 +274,61 @@ function ProjectDetail() {
     catch (e) { setErr(getErrMsg(e)) }
   }
 
-  const dlStatus = project?.deadline_status || 'normal'
-  const supp = project?.supplement
-  const exceptions = project?.exceptions || []
-  const missingCount = supp?.missing_items?.length || 0
-  const unresolvedExc = exceptions.filter(e => !e.resolved).length
+  if (loading && !project) return <div className="card p-10 text-center text-gray-400">加载中...</div>
+  if (!project) return <div className="card p-10 text-center text-gray-400">未找到项目单</div>
+
+  const dlStatus = project.deadline_status || 'normal'
+  const supp = getProjectSupplement(project)
+  const exceptions = project.exceptions
+  const missingCount = supp.missing_items.length
+  const unresolvedExc = exceptions.filter((e) => !e.resolved).length
 
   const quickAddAtt = (cat: string, required: boolean) => {
-    setNewAtt(prev => ({
+    setNewAtt((prev) => ({
       ...prev,
       category: cat,
       is_required: required,
-      file_name: prev.file_name || `${project?.project_no}_补充材料_${cat}.pdf`,
+      file_name: prev.file_name || `${project.project_no}_补充材料_${cat}.pdf`,
     }))
     setTab('attachments')
   }
 
-  const field = (key: string, label: string, type = 'text', opts?: string[]) => {
+  type FieldKey = keyof EditFormData
+
+  const updateField = (key: FieldKey, value: string | number) => {
+    setEditData((prev) => ({ ...prev, [key]: value as never }))
+  }
+
+  const field = (key: FieldKey, label: string, type: 'text' | 'number' | 'date' = 'text', opts?: string[]) => {
     const readonly = !editing
+    const rawVal = editData[key]
+    const displayVal = typeof rawVal === 'number' ? String(rawVal) : String(rawVal ?? '')
     return (
       <div key={key}>
         <label className="label">{label}</label>
         {readonly ? (
           <div className="px-3 py-2 bg-gray-50 rounded border border-gray-200 text-sm text-gray-800 min-h-[38px]">
-            {key === 'stage'
-              ? { demand: '培训需求', plan: '方案报价', contract: '合同确认' }[editData[key] as string] || '-'
-              : (editData[key] !== undefined && editData[key] !== null && editData[key] !== '' ? String(editData[key]) : '-')}
+            {key === 'stage' ? STAGE_LABEL[editData.stage] : (displayVal !== '' ? displayVal : '-')}
           </div>
         ) : opts ? (
-          <select className="input" value={editData[key]} onChange={(e) => setEditData({ ...editData, [key]: e.target.value })}>
-            {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+          <select className="input" value={displayVal} onChange={(e) => updateField(key, e.target.value)}>
+            {opts.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
           </select>
         ) : (
-          <input type={type} className="input" value={editData[key] ?? ''}
-            onChange={(e) => setEditData({ ...editData, [key]: type === 'number' ? e.target.value : e.target.value })} />
+          <input
+            type={type}
+            className="input"
+            value={displayVal}
+            onChange={(e) => updateField(key, type === 'number' ? Number(e.target.value) : e.target.value)}
+          />
         )}
       </div>
     )
   }
-
-  if (loading && !project) return <div className="card p-10 text-center text-gray-400">加载中...</div>
 
   return (
     <div className="space-y-4">
@@ -236,14 +338,14 @@ function ProjectDetail() {
           <div>
             <h1 className="text-xl font-bold text-gray-800">
               项目单详情
-              <span className="ml-3 text-sm font-mono text-primary-700">{project?.project_no}</span>
+              <span className="ml-3 text-sm font-mono text-primary-700">{project.project_no}</span>
               {unresolvedExc > 0 && (
                 <span className="ml-3 badge bg-red-50 text-red-700 border-red-300">
                   ⚠️ {unresolvedExc} 条未处理异常
                 </span>
               )}
             </h1>
-            <div className="text-xs text-gray-500 mt-0.5">版本 v{project?.version} · 连续办理：培训需求 → 方案报价 → 合同确认</div>
+            <div className="text-xs text-gray-500 mt-0.5">版本 v{project.version} · 连续办理：培训需求 → 方案报价 → 合同确认</div>
           </div>
         </div>
         <div className="flex gap-2">
@@ -274,11 +376,9 @@ function ProjectDetail() {
         </div>
       )}
 
-      {project && (
-        <>
-          {/* 顶部信息卡片 */}
-          <div className="card p-5">
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-sm">
+      {/* 顶部信息卡片 */}
+      <div className="card p-5">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-sm">
               {[
                 { t: '阶段', v: project.stage_name, c: `badge ${STAGE_COLORS[project.stage] || ''}` },
                 { t: '状态', v: project.status_name, c: `badge ${STATUS_COLORS[project.status] || ''}` },
@@ -368,7 +468,7 @@ function ProjectDetail() {
             <div className="flex border-b border-gray-200 flex-wrap">
               {([
                 ['info', '📋 基本信息', 0],
-                ['supplement', `🔧 补正办理${supp?.is_supplement_needed ? ' (需补正)' : ''}`, missingCount + (supp?.reject_reasons?.length || 0)],
+                ['supplement', `🔧 补正办理${supp.is_supplement_needed ? ' (需补正)' : ''}`, missingCount + supp.reject_reasons.length],
                 ['attachments', `📎 附件材料 (${project.attachments.length})`, 0],
                 ['records', `📝 处理记录 (${project.processing_records.length})`, 0],
                 ['exceptions', `⚠️ 异常追溯${unresolvedExc > 0 ? ` (${unresolvedExc}未处理)` : ''}`, exceptions.length],
@@ -382,7 +482,7 @@ function ProjectDetail() {
                   {l}
                   {typeof count === 'number' && count > 0 && (
                     <span className={`ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] text-[10px] px-1.5 rounded-full ${
-                      (k === 'supplement' && (missingCount > 0 || supp?.is_supplement_needed)) || (k === 'exceptions' && unresolvedExc > 0)
+                      (k === 'supplement' && (missingCount > 0 || supp.is_supplement_needed)) || (k === 'exceptions' && unresolvedExc > 0)
                         ? 'bg-red-500 text-white'
                         : 'bg-gray-200 text-gray-700'
                     }`}>
@@ -441,13 +541,13 @@ function ProjectDetail() {
             {/* Tab: 补正办理 */}
             {tab === 'supplement' && (
               <div className="p-5 space-y-5">
-                {!supp?.is_supplement_needed && missingCount === 0 ? (
+                {!supp.is_supplement_needed && missingCount === 0 ? (
                   <div className="p-6 rounded bg-green-50 border border-green-200 text-center text-green-700">
                     ✅ 当前项目无待补正项，材料齐全
                   </div>
                 ) : (
                   <>
-                    {supp?.is_supplement_needed && supp.reject_reasons.length > 0 && (
+                    {supp.is_supplement_needed && supp.reject_reasons.length > 0 && (
                       <div>
                         <div className="text-sm font-semibold text-red-700 mb-2 flex items-center gap-2">
                           📌 退回原因（来自审核/复核岗位）
@@ -456,7 +556,7 @@ function ProjectDetail() {
                           {supp.reject_reasons.map((r, i) => (
                             <div key={r.id} className="p-3 rounded border border-red-200 bg-red-50/40 text-sm">
                               <div className="flex justify-between text-xs text-red-600 mb-1">
-                                <span>第 {supp!.reject_reasons.length - i} 次退回 · {r.created_by?.full_name || '—'}</span>
+                                <span>第 {supp.reject_reasons.length - i} 次退回 · {r.created_by?.full_name || '—'}</span>
                                 <span>{dayjs(r.created_at).format('YYYY-MM-DD HH:mm')}</span>
                               </div>
                               <div className="text-gray-800 whitespace-pre-wrap">{r.note_content}</div>
@@ -522,7 +622,7 @@ function ProjectDetail() {
                             ✅ 补正完成，重新提交审核
                           </button>
                         )}
-                        {missingCount === 0 && !supp?.is_supplement_needed && (
+                        {missingCount === 0 && !supp.is_supplement_needed && (
                           <span className="text-green-700 self-center">当前材料已齐全</span>
                         )}
                         {missingCount > 0 && (
@@ -548,11 +648,11 @@ function ProjectDetail() {
             {/* Tab: 附件材料 */}
             {tab === 'attachments' && (
               <div className="p-5 space-y-5">
-                {(supp?.is_supplement_needed || canEdit || editing) && (
+                {(supp.is_supplement_needed || canEdit || editing) && (
                   <div className="p-4 rounded bg-blue-50 border border-blue-200">
                     <div className="text-sm font-semibold text-blue-800 mb-3">
                       ➕ 上传附件（模拟）· 当前阶段：
-                      <span className="ml-1 badge bg-blue-100 text-blue-800 border-blue-200">{supp?.current_stage_label || project.stage_name}</span>
+                      <span className="ml-1 badge bg-blue-100 text-blue-800 border-blue-200">{supp.current_stage_label || project.stage_name}</span>
                       <span className="ml-3 text-xs text-blue-600 font-normal">
                         建议：按阶段请求类型分类上传，勾选「必备证据」表示该附件为该阶段必填校验件
                       </span>
@@ -820,8 +920,6 @@ function ProjectDetail() {
               </div>
             )}
           </div>
-        </>
-      )}
     </div>
   )
 }
