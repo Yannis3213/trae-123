@@ -71,6 +71,8 @@ class BatchResultItem(BaseModel):
     success: bool
     error_code: Optional[str] = None
     error_message: Optional[str] = None
+    correction_suggestion: Optional[str] = None
+    evidence_required: Optional[str] = None
 
 
 class BatchActionResponse(BaseModel):
@@ -96,15 +98,24 @@ class ApplicationResponse(BaseModel):
     queue: str
     queue_name: str
     current_handler: Optional[str] = None
+    current_handler_name: Optional[str] = None
+    responsible_person: Optional[str] = None
+    responsible_person_name: Optional[str] = None
     version: int
     is_overdue: bool
     warning_level: str
     warning_level_name: str
     deadline: Optional[datetime] = None
+    deadline_info: Optional[Dict[str, Any]] = None
     submitted_at: datetime
     last_updated_at: datetime
     created_by: str
     booth_confirmation_evidence: Optional[str] = None
+    evidence_checklist: Optional[List[Dict[str, Any]]] = None
+    pending_correction_actions: Optional[List[Dict[str, Any]]] = None
+    last_error_code: Optional[str] = None
+    last_error_message: Optional[str] = None
+    overdue_exception: Optional[Dict[str, Any]] = None
     sync_status: str
 
     class Config:
@@ -115,8 +126,11 @@ class ProcessingRecordResponse(BaseModel):
     id: int
     application_id: int
     action: str
+    action_name: Optional[str] = None
     from_status: Optional[str] = None
+    from_status_name: Optional[str] = None
     to_status: Optional[str] = None
+    to_status_name: Optional[str] = None
     handler: str
     handler_name: str
     handler_role: str
@@ -126,6 +140,13 @@ class ProcessingRecordResponse(BaseModel):
     reject_reason: Optional[str] = None
     evidence_required: Optional[str] = None
     previous_handler: Optional[str] = None
+    previous_handler_name: Optional[str] = None
+    previous_handler_role: Optional[str] = None
+    previous_result: Optional[str] = None
+    booth_confirmation_evidence: Optional[str] = None
+    correction_action: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
     version: Optional[int] = None
     created_at: datetime
 

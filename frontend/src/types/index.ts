@@ -30,6 +30,50 @@ export interface ConstantOption {
   label: string;
 }
 
+export interface DeadlineInfo {
+  status: "normal" | "approaching" | "overdue";
+  text: string;
+  total_seconds: number;
+  color: string;
+}
+
+export interface EvidenceItem {
+  name: string;
+  required: boolean;
+  has_evidence: boolean;
+  category: string;
+}
+
+export interface PendingCorrectionAction {
+  reason: string;
+  evidence_required?: string;
+  deadline_hours?: number;
+  returned_by?: string;
+  returned_by_name?: string;
+  returned_at?: string;
+}
+
+export interface OverdueException {
+  id: number;
+  application_id: number;
+  application_no?: string;
+  deadline: string;
+  overdue_since: string;
+  overdue_days: number;
+  overdue_hours: number;
+  responsible_person?: string;
+  responsible_person_name?: string;
+  responsible_person_role?: string;
+  status_at_overdue?: string;
+  queue_at_overdue?: string;
+  correction_action_required?: string;
+  handling_status: string;
+  handled_by?: string;
+  handled_at?: string;
+  handling_result?: string;
+  created_at: string;
+}
+
 export interface Application {
   id: number;
   application_no: string;
@@ -45,11 +89,20 @@ export interface Application {
   queue: string;
   queue_name: string;
   current_handler?: string;
+  current_handler_name?: string;
+  responsible_person?: string;
+  responsible_person_name?: string;
   version: number;
   is_overdue: boolean;
   warning_level: string;
   warning_level_name: string;
   deadline?: string;
+  deadline_info?: DeadlineInfo;
+  evidence_checklist?: EvidenceItem[];
+  pending_correction_actions?: PendingCorrectionAction[];
+  last_error_code?: string;
+  last_error_message?: string;
+  overdue_exception?: OverdueException;
   submitted_at: string;
   last_updated_at: string;
   created_by: string;
@@ -61,8 +114,11 @@ export interface ProcessingRecord {
   id: number;
   application_id: number;
   action: string;
+  action_name?: string;
   from_status?: string;
+  from_status_name?: string;
   to_status?: string;
+  to_status_name?: string;
   handler: string;
   handler_name: string;
   handler_role: string;
@@ -72,6 +128,14 @@ export interface ProcessingRecord {
   reject_reason?: string;
   evidence_required?: string;
   previous_handler?: string;
+  previous_handler_name?: string;
+  previous_handler_role?: string;
+  previous_handler_role_name?: string;
+  previous_result?: string;
+  booth_confirmation_evidence?: string;
+  correction_action?: string;
+  error_code?: string;
+  error_message?: string;
   version?: number;
   created_at: string;
 }
@@ -136,6 +200,8 @@ export interface BatchResultItem {
   success: boolean;
   error_code?: string;
   error_message?: string;
+  correction_suggestion?: string;
+  evidence_required?: string;
 }
 
 export interface BatchActionResponse {
@@ -153,6 +219,9 @@ export interface StatisticsResponse {
   total: number;
   by_queue: Record<string, number>;
   by_warning: Record<string, number>;
+  by_responsible?: Record<string, number>;
+  overdue_total?: number;
+  approaching_total?: number;
 }
 
 export type WarningLevel = "normal" | "approaching" | "overdue";

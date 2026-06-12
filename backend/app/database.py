@@ -52,6 +52,9 @@ async def init_database():
             status TEXT NOT NULL,
             queue TEXT NOT NULL,
             current_handler TEXT,
+            current_handler_name TEXT,
+            responsible_person TEXT,
+            responsible_person_name TEXT,
             version INTEGER DEFAULT 1,
             is_overdue BOOLEAN DEFAULT 0,
             warning_level TEXT DEFAULT 'normal',
@@ -60,6 +63,10 @@ async def init_database():
             last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_by TEXT NOT NULL,
             booth_confirmation_evidence TEXT,
+            evidence_checklist TEXT,
+            pending_correction_actions TEXT,
+            last_error_code TEXT,
+            last_error_message TEXT,
             sync_status TEXT DEFAULT 'pending'
         )
         """)
@@ -92,6 +99,13 @@ async def init_database():
             reject_reason TEXT,
             evidence_required TEXT,
             previous_handler TEXT,
+            previous_handler_name TEXT,
+            previous_handler_role TEXT,
+            previous_result TEXT,
+            booth_confirmation_evidence TEXT,
+            correction_action TEXT,
+            error_code TEXT,
+            error_message TEXT,
             version INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (application_id) REFERENCES exhibitor_applications(id) ON DELETE CASCADE
@@ -128,10 +142,37 @@ async def init_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             batch_id INTEGER NOT NULL,
             application_id INTEGER NOT NULL,
+            application_no TEXT,
             success BOOLEAN NOT NULL,
             error_code TEXT,
             error_message TEXT,
+            correction_suggestion TEXT,
+            evidence_required TEXT,
             FOREIGN KEY (batch_id) REFERENCES batch_operations(id) ON DELETE CASCADE,
+            FOREIGN KEY (application_id) REFERENCES exhibitor_applications(id) ON DELETE CASCADE
+        )
+        """)
+
+        await cur.execute("""
+        CREATE TABLE IF NOT EXISTS overdue_exceptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id INTEGER NOT NULL,
+            application_no TEXT,
+            deadline TIMESTAMP NOT NULL,
+            overdue_since TIMESTAMP NOT NULL,
+            overdue_days INTEGER DEFAULT 0,
+            overdue_hours INTEGER DEFAULT 0,
+            responsible_person TEXT,
+            responsible_person_name TEXT,
+            responsible_person_role TEXT,
+            status_at_overdue TEXT,
+            queue_at_overdue TEXT,
+            correction_action_required TEXT,
+            handling_status TEXT DEFAULT 'pending',
+            handled_by TEXT,
+            handled_at TIMESTAMP,
+            handling_result TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (application_id) REFERENCES exhibitor_applications(id) ON DELETE CASCADE
         )
         """)
@@ -140,7 +181,13 @@ async def init_database():
         await cur.execute("CREATE INDEX IF NOT EXISTS idx_app_queue ON exhibitor_applications(queue)")
         await cur.execute("CREATE INDEX IF NOT EXISTS idx_app_handler ON exhibitor_applications(current_handler)")
         await cur.execute("CREATE INDEX IF NOT EXISTS idx_app_sync ON exhibitor_applications(sync_status)")
+        await cur.execute("CREATE INDEX IF NOT EXISTS idx_app_overdue ON exhibitor_applications(is_overdue)")
+        await cur.execute("CREATE INDEX IF NOT EXISTS idx_app_warning ON exhibitor_applications(warning_level)")
         await cur.execute("CREATE INDEX IF NOT EXISTS idx_records_app ON processing_records(application_id)")
+        await cur.execute("CREATE INDEX IF NOT EXISTS idx_records_error ON processing_records(error_code)")
+        await cur.execute("CREATE INDEX IF NOT EXISTS idx_overdue_app ON overdue_exceptions(application_id)")
+        await cur.execute("CREATE INDEX IF NOT EXISTS idx_overdue_status ON overdue_exceptions(handling_status)")
+        await cur.execute("CREATE INDEX IF NOT EXISTS idx_overdue_responsible ON overdue_exceptions(responsible_person)")
 
     await conn.commit()
     await conn.close()

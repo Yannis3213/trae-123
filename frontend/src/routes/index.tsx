@@ -209,6 +209,12 @@ export default component$(() => {
     });
   };
 
+  const getOverdueCountInSelection = () => {
+    return state.selectedIds.filter(id => 
+      state.applications.find(a => a.id === id)?.is_overdue
+    ).length;
+  };
+
   return (
     <div>
       <div
@@ -222,9 +228,9 @@ export default component$(() => {
         {state.statistics &&
           (
             [
-              { key: "pending", label: "待审核", color: "#f59e0b" },
-              { key: "passed", label: "审核通过", color: "#10b981" },
-              { key: "synced", label: "已同步", color: "#059669" },
+              { key: "pending", label: "待审核", color: "#f59e0b", badgeKey: "approaching_total" as const },
+              { key: "passed", label: "审核通过", color: "#10b981", badgeKey: null },
+              { key: "synced", label: "已同步", color: "#059669", badgeKey: null },
             ] as const
           ).map((item) => (
             <div
@@ -244,9 +250,33 @@ export default component$(() => {
                 transition: "all 0.2s",
               }}
             >
-              <h3 style={{ color: item.color }}>{item.label}</h3>
-              <div class="number" style={{ color: item.color }}>
-                {state.statistics[item.key as keyof StatisticsResponse] as number}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <h3 style={{ color: item.color }}>{item.label}</h3>
+                  <div class="number" style={{ color: item.color }}>
+                    {state.statistics[item.key as keyof StatisticsResponse] as number}
+                  </div>
+                </div>
+                {item.key === "pending" && state.statistics && (
+                  <div style={{ textAlign: "right" }}>
+                    {state.statistics.overdue_total !== undefined && state.statistics.overdue_total > 0 && (
+                      <div style={{
+                        background: "#fecaca", color: "#b91c1c", padding: "2px 8px",
+                        borderRadius: "10px", fontSize: "11px", marginBottom: "4px", fontWeight: "600"
+                      }}>
+                        逾期 {state.statistics.overdue_total}
+                      </div>
+                    )}
+                    {state.statistics.approaching_total !== undefined && state.statistics.approaching_total > 0 && (
+                      <div style={{
+                        background: "#fef3c7", color: "#b45309", padding: "2px 8px",
+                        borderRadius: "10px", fontSize: "11px", fontWeight: "600"
+                      }}>
+                        临期 {state.statistics.approaching_total}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -361,8 +391,18 @@ export default component$(() => {
             class={`btn ${action.danger ? "btn-danger" : "btn-warning"}`}
             disabled={state.selectedIds.length === 0}
             onClick$={() => openBatchModal(action.value)}
+            title={
+              getOverdueCountInSelection() > 0 && action.value !== "correct" && action.value !== "return_for_correction"
+                ? `含${getOverdueCountInSelection()}条逾期记录，将被逐条拦截`
+                : undefined
+            }
           >
             {action.label} ({state.selectedIds.length})
+            {getOverdueCountInSelection() > 0 && action.value !== "correct" && action.value !== "return_for_correction" && (
+              <span style={{
+                marginLeft: "6px", fontSize: "10px", opacity: 0.9
+              }}>⚠️含逾期</span>
+            )}
           </button>
         ))}
       </div>
@@ -395,17 +435,19 @@ export default component$(() => {
                   <th>申请编号</th>
                   <th>公司名称</th>
                   <th>联系人</th>
-                  <th>参展类型</th>
                   <th>状态</th>
                   <th>预警</th>
+                  <th>处理期限</th>
+                  <th>逾期责任人</th>
                   <th>当前处理人</th>
-                  <th>提交时间</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {state.applications.map((app) => (
-                  <tr key={app.id}>
+                  <tr key={app.id} style={{
+                    background: app.is_overdue ? "#fff7ed" : "transparent"
+                  }}>
                     <td>
                       <input
                         type="checkbox"
@@ -416,15 +458,32 @@ export default component$(() => {
                     </td>
                     <td style={{ fontFamily: "monospace", color: "#3b82f6" }}>
                       {app.application_no}
+                      {app.last_error_code && (
+                        <div style={{
+                          fontSize: "10px", color: "#b91c1c", marginTop: "2px",
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "150px"
+                        }}>
+                          ⚠️ {app.last_error_code}
+                        </div>
+                      )}
                     </td>
-                    <td style={{ fontWeight: "500" }}>{app.company_name}</td>
+                    <td style={{ fontWeight: "500" }}>
+                      {app.company_name}
+                      {app.pending_correction_actions && app.pending_correction_actions.length > 0 && (
+                        <div style={{
+                          fontSize: "11px", color: "#b45309", marginTop: "2px",
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "200px"
+                        }}>
+                          📝 待补正 {app.pending_correction_actions.length}项
+                        </div>
+                      )}
+                    </td>
                     <td>
                       {app.contact_person}
                       <div style={{ fontSize: "12px", color: "#6b7280" }}>
                         {app.contact_phone}
                       </div>
                     </td>
-                    <td>{app.exhibition_type}</td>
                     <td>
                       <span
                         class="badge"
@@ -447,18 +506,73 @@ export default component$(() => {
                         {app.warning_level_name}
                       </span>
                     </td>
-                    <td>{app.current_handler || "-"}</td>
-                    <td style={{ color: "#6b7280", fontSize: "13px" }}>
-                      {formatDate(app.submitted_at)}
+                    <td>
+                      {app.deadline_info ? (
+                        <span style={{
+                          display: "inline-block",
+                          padding: "2px 8px",
+                          borderRadius: "10px",
+                          fontSize: "12px",
+                          fontWeight: "600",
+                          background: `${app.deadline_info.color}15`,
+                          color: app.deadline_info.color,
+                          border: `1px solid ${app.deadline_info.color}30`
+                        }}>
+                          {app.deadline_info.status === "overdue" && "🚨 "}
+                          {app.deadline_info.status === "approaching" && "⏰ "}
+                          {app.deadline_info.text}
+                        </span>
+                      ) : (
+                        <span style={{ color: "#9ca3af", fontSize: "12px" }}>-</span>
+                      )}
                     </td>
                     <td>
-                      <button
-                        class="btn btn-outline"
-                        style={{ padding: "4px 12px", fontSize: "12px" }}
-                        onClick$={() => nav(`/applications/${app.id}`)}
-                      >
-                        办理
-                      </button>
+                      {app.responsible_person_name ? (
+                        <div>
+                          <div style={{ fontSize: "13px", fontWeight: "500" }}>
+                            {app.responsible_person_name}
+                          </div>
+                          {app.is_overdue && (
+                            <div style={{
+                              fontSize: "10px", color: "#b91c1c", marginTop: "2px", fontWeight: "600"
+                            }}>
+                              需立即处理
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: "#9ca3af", fontSize: "12px" }}>-</span>
+                      )}
+                    </td>
+                    <td>
+                      <div>{app.current_handler_name || app.current_handler || "-"}</div>
+                      <div style={{ fontSize: "11px", color: "#6b7280" }}>
+                        v{app.version} · {formatDate(app.last_updated_at)}
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", gap: "4px" }}>
+                        <button
+                          class="btn btn-outline"
+                          style={{ padding: "4px 12px", fontSize: "12px" }}
+                          onClick$={() => nav(`/applications/${app.id}`)}
+                        >
+                          办理
+                        </button>
+                        {app.last_error_message && (
+                          <span
+                            title={`异常原因: ${app.last_error_message}`}
+                            style={{
+                              cursor: "help",
+                              padding: "4px 6px",
+                              fontSize: "12px",
+                              color: "#b91c1c"
+                            }}
+                          >
+                            🔍
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -631,10 +745,23 @@ export default component$(() => {
 
       {state.showBatchModal && (
         <div class="modal-overlay">
-          <div class="modal-content" style={{ maxWidth: "700px" }}>
+          <div class="modal-content" style={{ maxWidth: "800px", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
             <div class="modal-header">
               <h3 style={{ margin: 0, fontSize: "18px" }}>
                 {actionNames[state.batchAction] || state.batchAction}
+                <span style={{
+                  marginLeft: "12px", fontSize: "13px", fontWeight: "400", color: "#6b7280"
+                }}>
+                  已选 {state.selectedIds.length} 条
+                  {getOverdueCountInSelection() > 0 && state.batchAction !== "correct" && state.batchAction !== "return_for_correction" && (
+                    <span style={{
+                      marginLeft: "8px", color: "#b91c1c", fontWeight: "600",
+                      background: "#fef2f2", padding: "2px 6px", borderRadius: "4px"
+                    }}>
+                      含 {getOverdueCountInSelection()} 条逾期（将被拦截）
+                    </span>
+                  )}
+                </span>
               </h3>
               <button
                 class="btn btn-default"
@@ -647,7 +774,7 @@ export default component$(() => {
                 关闭
               </button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body" style={{ overflowY: "auto", flex: 1 }}>
               <div class="alert alert-info">
                 已选择 <strong>{state.selectedIds.length}</strong> 条申请进行批量处理
               </div>
@@ -663,7 +790,7 @@ export default component$(() => {
                         onInput$={(e) => {
                           state.batchForm.correction_reason = (e.target as HTMLTextAreaElement).value;
                         }}
-                        placeholder="请填写需要补正的原因"
+                        placeholder="请填写需要补正的原因，会同步记录到每条申请的处理记录中"
                       />
                     </div>
                   )}
@@ -691,7 +818,7 @@ export default component$(() => {
                         onInput$={(e) => {
                           state.batchForm.booth_confirmation_evidence = (e.target as HTMLTextAreaElement).value;
                         }}
-                        placeholder="请填写展位确认函编号或相关证据"
+                        placeholder="请填写展位确认函编号或相关证据说明（证据闭环校验必填）"
                       />
                     </div>
                   )}
@@ -709,8 +836,18 @@ export default component$(() => {
                   </div>
 
                   <div class="alert alert-warning">
-                    <strong>注意：</strong>批量操作会逐条校验，越权、状态冲突、版本不一致、缺少必填证据的申请将被拦截。
-                    逾期申请不会整批放行，会被逐条拦截。
+                    <div style={{ marginBottom: "6px" }}>
+                      <strong>⚠️ 批量拦截规则说明：</strong>
+                    </div>
+                    <div style={{ fontSize: "13px", lineHeight: "1.8" }}>
+                      <div>• <strong>越权校验</strong>：当前角色无权限的申请将被拦截</div>
+                      <div>• <strong>处理人校验</strong>：非当前处理人的申请将被拦截</div>
+                      <div>• <strong>状态冲突</strong>：当前状态不支持该操作将被拦截</div>
+                      <div>• <strong>版本冲突</strong>：已被他人修改（版本不一致）将被拦截</div>
+                      <div>• <strong>证据闭环</strong>：确认展位缺少确认函证据将被拦截</div>
+                      <div>• <strong>逾期拦截</strong>：<span style={{ color: "#b91c1c", fontWeight: "600" }}>逾期申请不会整批放行，将被逐条拦截</span>，请进入详情页处理</div>
+                      <div>• <strong>上一结果校验</strong>：上一处理人未留下明确结果将被拦截</div>
+                    </div>
                   </div>
                 </>
               )}
@@ -725,6 +862,7 @@ export default component$(() => {
                       background: "#f9fafb",
                       display: "flex",
                       gap: "24px",
+                      flexWrap: "wrap",
                     }}
                   >
                     <div>
@@ -753,37 +891,123 @@ export default component$(() => {
                     </div>
                   </div>
 
-                  <div class="section-title">处理结果明细</div>
-                  <div class="batch-results">
+                  <div class="section-title" style={{ marginBottom: "12px" }}>
+                    处理结果明细
+                    <span style={{ fontSize: "12px", fontWeight: "400", color: "#6b7280", marginLeft: "8px" }}>
+                      （失败项可点击「前往办理」进入详情逐条补正）
+                    </span>
+                  </div>
+                  <div class="batch-results" style={{ maxHeight: "450px", overflowY: "auto" }}>
                     {state.batchResult.results.map((item: BatchResultItem, idx: number) => (
                       <div
                         key={idx}
                         class={`batch-result-item ${item.success ? "success" : "fail"}`}
+                        style={{
+                          border: item.success ? "1px solid #bbf7d0" : "1px solid #fecaca",
+                          borderRadius: "8px",
+                          marginBottom: "8px",
+                          padding: "12px",
+                        }}
                       >
-                        <div style={{ fontSize: "20px" }}>
-                          {item.success ? "✅" : "❌"}
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: "500" }}>
-                            {item.application_no || `申请 #${item.application_id}`}
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                          <div style={{ fontSize: "20px", flexShrink: 0 }}>
+                            {item.success ? "✅" : "❌"}
                           </div>
-                          {!item.success && (
-                            <div style={{ fontSize: "12px", marginTop: "4px" }}>
-                              {item.error_code && (
-                                <span
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              flexWrap: "wrap",
+                              gap: "8px",
+                              marginBottom: item.success ? "0" : "8px"
+                            }}>
+                              <div style={{ fontWeight: "600" }}>
+                                {item.success ? "处理成功" : "处理失败"} · {item.application_no || `申请 #${item.application_id}`}
+                              </div>
+                              {!item.success && (
+                                <button
+                                  class="btn btn-primary"
                                   style={{
-                                    background: "#fecaca",
-                                    padding: "1px 6px",
-                                    borderRadius: "4px",
-                                    marginRight: "8px",
+                                    padding: "2px 10px",
+                                    fontSize: "11px",
+                                    lineHeight: "1.6",
+                                  }}
+                                  onClick$={() => {
+                                    state.showBatchModal = false;
+                                    nav(`/applications/${item.application_id}`);
                                   }}
                                 >
-                                  {item.error_code}
-                                </span>
+                                  🔧 前往办理
+                                </button>
                               )}
-                              {item.error_message}
                             </div>
-                          )}
+                            {!item.success && (
+                              <div style={{
+                                background: "#fff7f7",
+                                border: "1px solid #fecaca",
+                                borderRadius: "6px",
+                                padding: "8px 10px",
+                                marginBottom: "8px",
+                                fontSize: "12px"
+                              }}>
+                                <div style={{ marginBottom: "4px" }}>
+                                  {item.error_code && (
+                                    <span
+                                      style={{
+                                        background: "#fecaca",
+                                        color: "#991b1b",
+                                        padding: "1px 6px",
+                                        borderRadius: "4px",
+                                        marginRight: "8px",
+                                        fontWeight: "600",
+                                        fontFamily: "monospace",
+                                        fontSize: "11px",
+                                      }}
+                                    >
+                                      {item.error_code}
+                                    </span>
+                                  )}
+                                  <span style={{ color: "#7f1d1d" }}>{item.error_message}</span>
+                                </div>
+                              </div>
+                            )}
+                            {!item.success && item.correction_suggestion && (
+                              <div style={{
+                                background: "#f0fdf4",
+                                border: "1px solid #bbf7d0",
+                                borderRadius: "6px",
+                                padding: "8px 10px",
+                                fontSize: "12px",
+                                color: "#166534",
+                                lineHeight: "1.6",
+                              }}>
+                                <div style={{
+                                  fontWeight: "600",
+                                  marginBottom: "4px",
+                                  color: "#15803d",
+                                }}>
+                                  💡 补正建议
+                                </div>
+                                <div style={{ whiteSpace: "pre-wrap" }}>
+                                  {item.correction_suggestion}
+                                </div>
+                              </div>
+                            )}
+                            {!item.success && item.evidence_required && (
+                              <div style={{
+                                marginTop: "6px",
+                                background: "#eff6ff",
+                                border: "1px solid #bfdbfe",
+                                borderRadius: "6px",
+                                padding: "6px 10px",
+                                fontSize: "11px",
+                                color: "#1e40af",
+                              }}>
+                                <strong>需补充证据：</strong>{item.evidence_required}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -791,7 +1015,7 @@ export default component$(() => {
                 </div>
               )}
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer" style={{ borderTop: "1px solid #e5e7eb" }}>
               {!state.batchResult ? (
                 <>
                   <button
