@@ -23,6 +23,7 @@ interface ActionDef {
 
 function getAvailableActions(role: UserRole, status: string, exceptionType: string | null | undefined): ActionDef[] {
   const actions: ActionDef[] = [];
+  const isException = exceptionType === 'missing_materials' || exceptionType === 'overdue' || exceptionType === 'returned';
 
   if (role === 'beautician') {
     if (status === 'draft') {
@@ -36,12 +37,12 @@ function getAvailableActions(role: UserRole, status: string, exceptionType: stri
         requireEvidence: ['customer_appointment', 'project_confirmation'],
       });
     }
-    if (status === 'pending_review' && (exceptionType === 'returned' || exceptionType === null)) {
+    if (status === 'pending_review' && exceptionType === 'returned') {
       actions.push({
         key: 'correction_submit',
         label: '补正后重新提交',
         className: 'btn-primary',
-        needRemark: true,
+        needRemark: false,
         needException: false,
         needCorrection: true,
         requireEvidence: ['customer_appointment', 'project_confirmation'],
@@ -51,20 +52,22 @@ function getAvailableActions(role: UserRole, status: string, exceptionType: stri
 
   if (role === 'consultant') {
     if (status === 'pending_review') {
-      actions.push({
-        key: 'review_pass',
-        label: '复核通过（转店长归档）',
-        className: 'btn-primary',
-        needRemark: true,
-        needException: false,
-        needCorrection: false,
-        requireEvidence: ['service_followup'],
-      });
+      if (!isException) {
+        actions.push({
+          key: 'review_pass',
+          label: '复核通过（转店长归档）',
+          className: 'btn-primary',
+          needRemark: true,
+          needException: false,
+          needCorrection: false,
+          requireEvidence: ['service_followup'],
+        });
+      }
       actions.push({
         key: 'return_to_correct',
         label: '退回补正',
         className: 'btn-danger',
-        needRemark: true,
+        needRemark: false,
         needException: true,
         needCorrection: false,
         requireEvidence: [],
@@ -74,20 +77,22 @@ function getAvailableActions(role: UserRole, status: string, exceptionType: stri
 
   if (role === 'store_manager') {
     if (status === 'pending_review') {
-      actions.push({
-        key: 'archive',
-        label: '归档完成',
-        className: 'btn-primary',
-        needRemark: true,
-        needException: false,
-        needCorrection: false,
-        requireEvidence: ['customer_appointment', 'project_confirmation', 'service_followup'],
-      });
+      if (!isException) {
+        actions.push({
+          key: 'archive',
+          label: '归档完成',
+          className: 'btn-primary',
+          needRemark: true,
+          needException: false,
+          needCorrection: false,
+          requireEvidence: ['customer_appointment', 'project_confirmation', 'service_followup'],
+        });
+      }
       actions.push({
         key: 'return_to_correct',
         label: '退回补正',
         className: 'btn-danger',
-        needRemark: true,
+        needRemark: false,
         needException: true,
         needCorrection: false,
         requireEvidence: [],
@@ -129,6 +134,17 @@ export default function ProcessModal({ apt, userRole, username, onClose, onSucce
 
   const handleSubmit = async () => {
     if (!currentAction) return;
+
+    if (currentAction.key === 'return_to_correct' && !exceptionReason.trim()) {
+      showToast('退回补正必须填写退回原因', 'error');
+      return;
+    }
+
+    if (currentAction.key === 'correction_submit' && !correctionNote.trim()) {
+      showToast('补正提交必须填写补正说明', 'error');
+      return;
+    }
+
     setSubmitting(true);
 
     const body: ProcessAppointmentRequest = {
@@ -177,6 +193,13 @@ export default function ProcessModal({ apt, userRole, username, onClose, onSucce
               <div style={{ fontSize: 13, color: '#606266', marginTop: 4 }}>
                 当前处理人：{apt.current_handler}
               </div>
+              {apt.evidence_summary && (
+                <div style={{ fontSize: 12, color: '#909399', marginTop: 4, display: 'flex', gap: 8 }}>
+                  <span>{apt.evidence_summary.has_customer_appointment ? '✅' : '⭕'}预约({apt.evidence_summary.customer_appointment_count})</span>
+                  <span>{apt.evidence_summary.has_project_confirmation ? '✅' : '⭕'}确认({apt.evidence_summary.project_confirmation_count})</span>
+                  <span>{apt.evidence_summary.has_service_followup ? '✅' : '⭕'}回访({apt.evidence_summary.service_followup_count})</span>
+                </div>
+              )}
             </div>
 
             {!selectedAction ? (
@@ -243,12 +266,12 @@ export default function ProcessModal({ apt, userRole, username, onClose, onSucce
                     </div>
                     {exceptionType !== 'normal' && (
                       <div className="form-group">
-                        <label className="form-label required">异常原因</label>
+                        <label className="form-label required">{currentAction.key === 'return_to_correct' ? '退回原因' : '异常原因'}</label>
                         <textarea
                           className="form-textarea"
                           value={exceptionReason}
                           onChange={(e) => setExceptionReason(e.target.value)}
-                          placeholder="请详细描述异常原因..."
+                          placeholder={currentAction.key === 'return_to_correct' ? '请详细说明退回原因...' : '请详细描述异常原因...'}
                         />
                       </div>
                     )}
@@ -271,11 +294,18 @@ export default function ProcessModal({ apt, userRole, username, onClose, onSucce
                   <div className="form-group">
                     <div className="form-label">所需证据（将由后端校验）</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                      {currentAction.requireEvidence.map((e) => (
-                        <span key={e} className="evidence-item missing">
-                          ⚠ 需提供：{EVIDENCE_LABELS[e] || e}
-                        </span>
-                      ))}
+                      {currentAction.requireEvidence.map((e) => {
+                        const hasIt = apt.evidence_summary && (
+                          (e === 'customer_appointment' && apt.evidence_summary.has_customer_appointment) ||
+                          (e === 'project_confirmation' && apt.evidence_summary.has_project_confirmation) ||
+                          (e === 'service_followup' && apt.evidence_summary.has_service_followup)
+                        );
+                        return (
+                          <span key={e} className={`evidence-item ${hasIt ? '' : 'missing'}`}>
+                            {hasIt ? '✓' : '⚠'} {EVIDENCE_LABELS[e] || e}
+                          </span>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

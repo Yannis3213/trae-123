@@ -166,6 +166,13 @@ pub fn validate_handler(
                 code: "WRONG_HANDLER".to_string(),
             });
         }
+        if role == "store_manager" && username != appointment.store_manager {
+            return Err(AuthError {
+                success: false,
+                message: format!("退回操作必须由门店店长 {} 执行", appointment.store_manager),
+                code: "WRONG_HANDLER".to_string(),
+            });
+        }
         return Ok(());
     }
 
@@ -201,6 +208,49 @@ pub fn validate_version(
             message: format!("版本冲突：您提交的版本 v{} 与当前版本 v{} 不一致，请刷新后重试", request_version, current_version),
             code: "VERSION_CONFLICT".to_string(),
         });
+    }
+    Ok(())
+}
+
+pub fn validate_reason_fields(
+    action: &str,
+    exception_reason: &Option<String>,
+    correction_note: &Option<String>,
+) -> Result<(), AuthError> {
+    if action == "return_to_correct" {
+        if exception_reason.as_ref().map_or(true, |r| r.trim().is_empty()) {
+            return Err(AuthError {
+                success: false,
+                message: "退回补正必须填写退回原因".to_string(),
+                code: "MISSING_RETURN_REASON".to_string(),
+            });
+        }
+    }
+    if action == "correction_submit" {
+        if correction_note.as_ref().map_or(true, |r| r.trim().is_empty()) {
+            return Err(AuthError {
+                success: false,
+                message: "补正提交必须填写补正说明".to_string(),
+                code: "MISSING_CORRECTION_NOTE".to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_attachment_types(
+    action: &str,
+    attachments: &[crate::models::AttachmentInput],
+) -> Result<(), AuthError> {
+    let allowed = get_required_evidence(action, "pending_review");
+    for att in attachments {
+        if !allowed.contains(&att.evidence_type) {
+            return Err(AuthError {
+                success: false,
+                message: format!("当前动作不允许上传类型为「{}」的证据", evidence_label(&att.evidence_type)),
+                code: "INVALID_EVIDENCE_TYPE".to_string(),
+            });
+        }
     }
     Ok(())
 }

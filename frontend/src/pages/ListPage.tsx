@@ -142,20 +142,31 @@ export default function ListPage() {
   const availableBatchActions = useMemo(() => {
     if (!user) return [];
     const actions: { key: string; label: string; className: string }[] = [];
+    const selectedItems = allItems.filter((i) => selected.has(i.id));
+    const hasException = selectedItems.some(
+      (i) => i.exception_type === 'missing_materials' || i.exception_type === 'overdue' || i.exception_type === 'returned'
+    );
+
     if (user.role === 'beautician') {
-      actions.push({ key: 'submit_review', label: '批量提交复核', className: 'btn-primary' });
+      if (!hasException) {
+        actions.push({ key: 'submit_review', label: '批量提交复核', className: 'btn-primary' });
+      }
       actions.push({ key: 'correction_submit', label: '批量提交补正', className: 'btn-secondary' });
     }
     if (user.role === 'consultant') {
-      actions.push({ key: 'review_pass', label: '批量复核通过', className: 'btn-primary' });
+      if (!hasException) {
+        actions.push({ key: 'review_pass', label: '批量复核通过', className: 'btn-primary' });
+      }
       actions.push({ key: 'return_to_correct', label: '批量退回补正', className: 'btn-danger' });
     }
     if (user.role === 'store_manager') {
-      actions.push({ key: 'archive', label: '批量归档', className: 'btn-primary' });
+      if (!hasException) {
+        actions.push({ key: 'archive', label: '批量归档', className: 'btn-primary' });
+      }
       actions.push({ key: 'return_to_correct', label: '批量退回补正', className: 'btn-danger' });
     }
     return actions;
-  }, [user]);
+  }, [user, selected, allItems]);
 
   if (loading || userLoading) {
     return (

@@ -358,6 +358,14 @@ impl AppointmentApi {
             return Json(AppointmentApiResponse { success: false, message: e.message, data: None });
         }
 
+        if let Err(e) = validate_reason_fields(&body.action, &body.exception_reason, &body.correction_note) {
+            return Json(AppointmentApiResponse { success: false, message: e.message, data: None });
+        }
+
+        if let Err(e) = validate_attachment_types(&body.action, &body.attachments) {
+            return Json(AppointmentApiResponse { success: false, message: e.message, data: None });
+        }
+
         let existing_types: Vec<String> = sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT evidence_type FROM appointment_attachments WHERE appointment_id = ?"
         )
@@ -598,6 +606,32 @@ impl AppointmentApi {
                     continue;
                 }
                 _ => {}
+            }
+
+            if let Err(e) = validate_reason_fields(&body.action, &body.exception_reason, &body.correction_note) {
+                fail_count += 1;
+                results.push(BatchResultItem {
+                    appointment_id: aid.clone(),
+                    order_no: order_no.clone(),
+                    success: false,
+                    message: e.message.clone(),
+                });
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), body.remark.as_deref(), &now).await;
+                continue;
+            }
+
+            if let Some(attachments) = &body.attachments {
+                if let Err(e) = validate_attachment_types(&body.action, attachments) {
+                    fail_count += 1;
+                    results.push(BatchResultItem {
+                        appointment_id: aid.clone(),
+                        order_no: order_no.clone(),
+                        success: false,
+                        message: e.message.clone(),
+                    });
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), body.remark.as_deref(), &now).await;
+                    continue;
+                }
             }
 
             let existing_types: Vec<String> = sqlx::query_scalar::<_, String>(

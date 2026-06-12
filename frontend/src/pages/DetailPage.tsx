@@ -36,6 +36,7 @@ interface ActionDef {
 
 function getAvailableActions(role: UserRole, status: string, exceptionType: string | null | undefined): ActionDef[] {
   const actions: ActionDef[] = [];
+  const isException = exceptionType === 'missing_materials' || exceptionType === 'overdue' || exceptionType === 'returned';
 
   if (role === 'beautician') {
     if (status === 'draft') {
@@ -49,12 +50,12 @@ function getAvailableActions(role: UserRole, status: string, exceptionType: stri
         requireEvidence: ['customer_appointment', 'project_confirmation'],
       });
     }
-    if (status === 'pending_review') {
+    if (status === 'pending_review' && exceptionType === 'returned') {
       actions.push({
         key: 'correction_submit',
         label: '补正后重新提交',
         className: 'btn-primary',
-        needRemark: true,
+        needRemark: false,
         needException: false,
         needCorrection: true,
         requireEvidence: ['customer_appointment', 'project_confirmation'],
@@ -64,20 +65,22 @@ function getAvailableActions(role: UserRole, status: string, exceptionType: stri
 
   if (role === 'consultant') {
     if (status === 'pending_review') {
-      actions.push({
-        key: 'review_pass',
-        label: '复核通过（转店长归档）',
-        className: 'btn-primary',
-        needRemark: true,
-        needException: false,
-        needCorrection: false,
-        requireEvidence: ['service_followup'],
-      });
+      if (!isException) {
+        actions.push({
+          key: 'review_pass',
+          label: '复核通过（转店长归档）',
+          className: 'btn-primary',
+          needRemark: true,
+          needException: false,
+          needCorrection: false,
+          requireEvidence: ['service_followup'],
+        });
+      }
       actions.push({
         key: 'return_to_correct',
         label: '退回补正',
         className: 'btn-danger',
-        needRemark: true,
+        needRemark: false,
         needException: true,
         needCorrection: false,
         requireEvidence: [],
@@ -87,20 +90,22 @@ function getAvailableActions(role: UserRole, status: string, exceptionType: stri
 
   if (role === 'store_manager') {
     if (status === 'pending_review') {
-      actions.push({
-        key: 'archive',
-        label: '归档完成',
-        className: 'btn-primary',
-        needRemark: true,
-        needException: false,
-        needCorrection: false,
-        requireEvidence: ['customer_appointment', 'project_confirmation', 'service_followup'],
-      });
+      if (!isException) {
+        actions.push({
+          key: 'archive',
+          label: '归档完成',
+          className: 'btn-primary',
+          needRemark: true,
+          needException: false,
+          needCorrection: false,
+          requireEvidence: ['customer_appointment', 'project_confirmation', 'service_followup'],
+        });
+      }
       actions.push({
         key: 'return_to_correct',
         label: '退回补正',
         className: 'btn-danger',
-        needRemark: true,
+        needRemark: false,
         needException: true,
         needCorrection: false,
         requireEvidence: [],
@@ -181,8 +186,13 @@ export default function DetailPage() {
   const handleSubmit = async () => {
     if (!currentAction || !detail || !id) return;
 
-    if (currentAction.needCorrection && !correctionNote.trim()) {
-      showToast('请填写补正说明', 'error');
+    if (currentAction.key === 'return_to_correct' && !exceptionReason.trim()) {
+      showToast('退回补正必须填写退回原因', 'error');
+      return;
+    }
+
+    if (currentAction.key === 'correction_submit' && !correctionNote.trim()) {
+      showToast('补正提交必须填写补正说明', 'error');
       return;
     }
 
