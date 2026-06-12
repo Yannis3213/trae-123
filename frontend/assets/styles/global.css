@@ -680,3 +680,17 @@ tr:hover td {
   gap: 6px;
   flex-wrap: wrap;
 }
+
+.alert-gray {
+  background: #f9fafb;
+  color: #4b5563;
+  border: 1px solid #e5e7eb;
+}
+
+.row-can-process td {
+  background: #f0fdf4;
+}
+
+.row-not-mine td {
+  opacity: 0.75;
+}

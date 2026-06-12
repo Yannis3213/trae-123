@@ -77,9 +77,12 @@ def _generate_order_no() -> str:
     return f'FT{date_str}{seq:04d}'
 
 
-def _order_to_detail(order: ForeignTradeOrder, role: str) -> OrderDetail:
+def _order_to_detail(order: ForeignTradeOrder, role: str, username: str | None = None) -> OrderDetail:
     warning_level = order.get_warning_level()
-    can_process = order.can_process(role)
+    if username:
+        can_proc = order.can_process_by(username, role)
+    else:
+        can_proc = order.can_process(role)
 
     attachments = [
         AttachmentInfo(
@@ -144,7 +147,7 @@ def _order_to_detail(order: ForeignTradeOrder, role: str) -> OrderDetail:
             WarningLevel.APPROACHING: '临期',
             WarningLevel.OVERDUE: '逾期',
         }.get(warning_level, '正常'),
-        can_process=can_process,
+        can_process=can_proc,
         attachments=attachments,
         processing_records=processing_records,
         audit_notes=audit_notes,
@@ -152,9 +155,14 @@ def _order_to_detail(order: ForeignTradeOrder, role: str) -> OrderDetail:
     )
 
 
-def _order_to_list_item(order: ForeignTradeOrder, role: str | None = None) -> OrderListItem:
+def _order_to_list_item(order: ForeignTradeOrder, username: str | None = None, role: str | None = None) -> OrderListItem:
     warning_level = order.get_warning_level()
-    can_process = order.can_process(role) if role else False
+    if username and role:
+        can_proc = order.can_process_by(username, role)
+    elif role:
+        can_proc = order.can_process(role)
+    else:
+        can_proc = False
     return OrderListItem(
         id=order.id, order_no=order.order_no,
         customer_name=order.customer_name, product_name=order.product_name,
@@ -176,7 +184,7 @@ def _order_to_list_item(order: ForeignTradeOrder, role: str | None = None) -> Or
             WarningLevel.APPROACHING: '临期',
             WarningLevel.OVERDUE: '逾期',
         }.get(warning_level, '正常'),
-        can_process=can_process,
+        can_process=can_proc,
     )
 
 
@@ -406,23 +414,20 @@ def list_orders(
     qs = ForeignTradeOrder.objects.all()
 
     if my_queue_only:
-        if role == Role.CLERK:
-            qs = qs.filter(
-                models.Q(stage=OrderStage.INQUIRY)
-                | models.Q(stage=OrderStage.QUOTE_CONFIRMATION, current_handler_role=Role.CLERK)
-                | models.Q(status=OrderStatus.PENDING_DISPATCH)
+        role_stage_map = {
+            Role.CLERK: [OrderStage.INQUIRY, OrderStage.QUOTE_CONFIRMATION],
+            Role.SUPERVISOR: [OrderStage.INQUIRY, OrderStage.QUOTE_CONFIRMATION, OrderStage.ORDER_SIGNING],
+            Role.REVIEWER: [OrderStage.QUOTE_CONFIRMATION, OrderStage.ORDER_SIGNING, OrderStage.ARCHIVED],
+        }
+        allowed_stages = role_stage_map.get(role, [])
+        qs = qs.filter(
+            models.Q(stage__in=allowed_stages)
+            & (
+                models.Q(status=OrderStatus.PENDING_DISPATCH)
+                | models.Q(status=OrderStatus.PROCESSING, current_handler='', current_handler_role=role)
+                | models.Q(status=OrderStatus.PROCESSING, current_handler=username)
             )
-        elif role == Role.SUPERVISOR:
-            qs = qs.filter(
-                models.Q(stage=OrderStage.QUOTE_CONFIRMATION)
-                | models.Q(stage=OrderStage.ORDER_SIGNING, current_handler_role=Role.SUPERVISOR)
-                | models.Q(status=OrderStatus.PENDING_DISPATCH)
-            )
-        elif role == Role.REVIEWER:
-            qs = qs.filter(
-                models.Q(stage=OrderStage.ORDER_SIGNING)
-                | models.Q(stage=OrderStage.ARCHIVED)
-            )
+        )
 
     if status:
         qs = qs.filter(status=status)
@@ -448,26 +453,23 @@ def list_orders(
             qs = qs.filter(models.Q(due_time__isnull=True) | models.Q(due_time__gt=two_days_later))
 
     total = qs.count()
-    items = [_order_to_list_item(o, role) for o in qs.order_by('-create_time')]
+    items = [_order_to_list_item(o, username, role) for o in qs.order_by('-create_time')]
 
     my_qs = ForeignTradeOrder.objects.all()
-    if role == Role.CLERK:
-        my_qs = my_qs.filter(
-            models.Q(stage=OrderStage.INQUIRY)
-            | models.Q(stage=OrderStage.QUOTE_CONFIRMATION, current_handler_role=Role.CLERK)
-            | models.Q(status=OrderStatus.PENDING_DISPATCH)
+    role_stage_map = {
+        Role.CLERK: [OrderStage.INQUIRY, OrderStage.QUOTE_CONFIRMATION],
+        Role.SUPERVISOR: [OrderStage.INQUIRY, OrderStage.QUOTE_CONFIRMATION, OrderStage.ORDER_SIGNING],
+        Role.REVIEWER: [OrderStage.QUOTE_CONFIRMATION, OrderStage.ORDER_SIGNING, OrderStage.ARCHIVED],
+    }
+    allowed_stages = role_stage_map.get(role, [])
+    my_qs = my_qs.filter(
+        models.Q(stage__in=allowed_stages)
+        & (
+            models.Q(status=OrderStatus.PENDING_DISPATCH)
+            | models.Q(status=OrderStatus.PROCESSING, current_handler='', current_handler_role=role)
+            | models.Q(status=OrderStatus.PROCESSING, current_handler=username)
         )
-    elif role == Role.SUPERVISOR:
-        my_qs = my_qs.filter(
-            models.Q(stage=OrderStage.QUOTE_CONFIRMATION)
-            | models.Q(stage=OrderStage.ORDER_SIGNING, current_handler_role=Role.SUPERVISOR)
-            | models.Q(status=OrderStatus.PENDING_DISPATCH)
-        )
-    elif role == Role.REVIEWER:
-        my_qs = my_qs.filter(
-            models.Q(stage=OrderStage.ORDER_SIGNING)
-            | models.Q(stage=OrderStage.ARCHIVED)
-        )
+    )
 
     all_qs = ForeignTradeOrder.objects.all()
     stats = {
@@ -500,7 +502,7 @@ def get_order(request, order_id: int):
     if not handler_ok:
         raise HttpError(403, handler_msg)
 
-    return _order_to_detail(order, role)
+    return _order_to_detail(order, role, username)
 
 
 @api.post('/orders', response=OrderDetail)
@@ -543,7 +545,7 @@ def create_order(request, data: OrderCreate):
             version_after=1,
         )
 
-    return _order_to_detail(order, role)
+    return _order_to_detail(order, role, username)
 
 
 @api.put('/orders/{order_id}', response=OrderDetail)
@@ -603,7 +605,7 @@ def update_order(request, order_id: int, data: OrderUpdate):
             version_after=order.version,
         )
 
-    return _order_to_detail(order, role)
+    return _order_to_detail(order, role, username)
 
 
 @api.post('/orders/{order_id}/process', response=OrderDetail)
@@ -754,7 +756,7 @@ def process_order(request, order_id: int, data: ProcessAction):
             version_after=order.version,
         )
 
-    return _order_to_detail(order, role)
+    return _order_to_detail(order, role, username)
 
 
 @api.post('/batch/orders/process', response=BatchProcessResponse)

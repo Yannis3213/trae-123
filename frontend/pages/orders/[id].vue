@@ -60,7 +60,16 @@
         </div>
         <div class="detail-item">
           <span class="detail-label">当前处理人</span>
-          <span class="detail-value">{{ order.current_handler || '-' }}</span>
+          <span class="detail-value">
+            <template v-if="order.current_handler">
+              {{ order.current_handler }}
+              <span v-if="order.current_handler === currentUserName" class="tag tag-green" style="margin-left: 6px;">✓ 我</span>
+              <span v-else class="tag tag-gray" style="margin-left: 6px;">他人办理中</span>
+            </template>
+            <template v-else>
+              <span class="tag tag-orange">待认领</span>
+            </template>
+          </span>
         </div>
         <div class="detail-item">
           <span class="detail-label">处理人角色</span>
@@ -162,7 +171,7 @@
       </div>
 
       <div v-if="activeTab === 'attachments'">
-        <div style="margin-bottom: 14px;">
+        <div v-if="order.can_process" style="margin-bottom: 14px;">
           <input type="file" id="file-upload" @change="onFileSelect" style="display: none;" />
           <label for="file-upload" class="file-input-label">📎 上传附件</label>
           <select v-model="uploadStage" style="margin-left: 10px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px;">
@@ -173,6 +182,9 @@
           </select>
           <input v-model="uploadDesc" placeholder="附件说明" style="margin-left: 6px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; min-width: 200px;" />
           <span v-if="uploadError" class="tag tag-red" style="margin-left: 10px;">{{ uploadError }}</span>
+        </div>
+        <div v-else class="alert alert-gray" style="margin-bottom: 14px;">
+          只有当前值班人可以上传附件
         </div>
         <table>
           <thead>
@@ -234,8 +246,11 @@
       </div>
 
       <div v-if="activeTab === 'exceptions'">
-        <div style="margin-bottom: 16px;">
+        <div v-if="order.can_process" style="margin-bottom: 16px;">
           <button class="btn btn-secondary" @click="showExcModal = true">+ 添加异常原因</button>
+        </div>
+        <div v-else class="alert alert-gray" style="margin-bottom: 16px;">
+          只有当前值班人可以添加异常原因
         </div>
         <div v-for="exc in order.exception_reasons" :key="exc.id" class="card" style="margin-bottom: 10px;">
           <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
@@ -288,11 +303,14 @@
       </div>
 
       <div v-if="activeTab === 'audit'">
-        <div style="margin-bottom: 16px;">
+        <div v-if="order.can_process" style="margin-bottom: 16px;">
           <div style="display: flex; gap: 10px;">
             <input v-model="newAuditNote" placeholder="添加审计备注..." style="flex: 1; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px;" />
             <button class="btn btn-primary" @click="addAuditNote">添加备注</button>
           </div>
+        </div>
+        <div v-else class="alert alert-gray" style="margin-bottom: 16px;">
+          只有当前值班人可以添加审计备注
         </div>
         <div v-for="note in order.audit_notes" :key="note.id" class="card" style="margin-bottom: 10px;">
           <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
@@ -329,14 +347,35 @@
       </div>
 
       <div v-if="activeTab === 'actions'">
-        <div v-if="!order.can_process" class="alert alert-warning">
-          当前角色无权办理此订单。此订单当前需由 <strong>{{ getRoleDisplayName(order.current_handler_role) }}</strong> 处理。
+        <div v-if="order.status === 'closed'" class="alert alert-gray">
+          <strong>订单已关闭归档</strong>
+          <p style="margin-top: 6px;">此订单已完成全部流程，不能再操作。</p>
+        </div>
+        <div v-else-if="!order.can_process && order.current_handler && order.current_handler !== currentUserName" class="alert alert-warning">
+          <strong>非当前值班人办理</strong>
+          <p style="margin-top: 6px;">
+            此订单由值班人 <strong>{{ order.current_handler }}</strong>（{{ getRoleDisplayName(order.current_handler_role) }}）办理中。
+            <br />
+            如需操作，请联系该人员或请其派发/退回到您的队列。
+          </p>
+          <p style="margin-top: 8px; font-size: 12px; color: #6b7280;">（订单保留在原队列，不会推进）</p>
+        </div>
+        <div v-else-if="!order.can_process" class="alert alert-warning">
+          <strong>角色无权办理</strong>
+          <p style="margin-top: 6px;">
+            当前角色 <strong>{{ getRoleDisplayName(currentRole) }}</strong> 无权操作此订单。
+            此订单当前阶段为「{{ order.stage_display }}」，需由
+            <strong>{{ getRoleDisplayName(order.current_handler_role) }}</strong> 处理。
+          </p>
         </div>
         <div v-else>
           <div class="alert alert-info" style="margin-bottom: 14px;">
-            当前角色: <strong>{{ getRoleDisplayName(currentRole) }}</strong>
-            &nbsp;|&nbsp; 订单阶段: <strong>{{ order.stage_display }}</strong>
-            &nbsp;|&nbsp; 订单状态: <strong>{{ order.status_display }}</strong>
+            当前值班人: <strong>{{ currentUserName || '未指定' }}</strong>
+            &nbsp;|&nbsp; 角色: <strong>{{ getRoleDisplayName(currentRole) }}</strong>
+            &nbsp;|&nbsp; 阶段: <strong>{{ order.stage_display }}</strong>
+            &nbsp;|&nbsp; 
+            <span v-if="!order.current_handler" class="tag tag-orange">待认领（首次操作自动接单）</span>
+            <span v-else class="tag tag-green">✓ 我在办理</span>
           </div>
           <div style="margin-bottom: 14px;">
             <button class="btn btn-primary" @click="openAction('submit')" v-if="canDoAction('submit')">📤 提交下一环节</button>

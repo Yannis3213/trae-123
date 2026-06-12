@@ -118,7 +118,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="order in orders" :key="order.id">
+            <tr v-for="order in orders" :key="order.id" :class="{ 'row-can-process': order.can_process, 'row-not-mine': !order.can_process }">
               <td class="checkbox-cell">
                 <input
                   type="checkbox"
@@ -144,7 +144,16 @@
                 {{ order.priority_display }}
               </td>
               <td>{{ order.responsible_person }}</td>
-              <td>{{ order.current_handler || '-' }}</td>
+              <td>
+                <template v-if="order.current_handler">
+                  <span :class="['tag', isMine(order) ? 'tag-green' : 'tag-gray']">
+                    {{ isMine(order) ? '✓ 我' : order.current_handler }}
+                  </span>
+                </template>
+                <template v-else>
+                  <span class="tag tag-orange">待认领</span>
+                </template>
+              </td>
               <td>{{ order.due_time ? formatDate(order.due_time) : '-' }}</td>
               <td>
                 <span :class="['tag', warningTagClass(order.warning_level)]">
@@ -309,7 +318,12 @@
                       {{ r.success ? '成功' : '失败' }}
                     </span>
                   </td>
-                  <td style="color: #b91c1c;">{{ r.error_message || '-' }}</td>
+                  <td style="color: #b91c1c;">
+                    <div>{{ r.error_message || '-' }}</div>
+                    <div v-if="!r.success && r.error_code" style="font-size: 12px; color: #9ca3af; margin-top: 2px;">
+                      留队原因: {{ getErrorCodeLabel(r.error_code) }}
+                    </div>
+                  </td>
                   <td>
                     <span v-if="!r.success && r.error_code" class="tag tag-orange">{{ r.error_code }}</span>
                     <span v-else>-</span>
@@ -340,7 +354,7 @@
 import type { OrderListItem, BatchProcessResponse } from '~/composables/types'
 
 const { apiGet, apiPost } = useApi()
-const { currentRole, roleList } = useUserStore()
+const { currentRole, currentUserName, roleList } = useUserStore()
 const router = useRouter()
 
 const currentRoleName = computed(() => {
@@ -378,6 +392,24 @@ const total = ref(0)
 const stats = ref<Record<string, any>>({
   total: 0, pending_dispatch: 0, processing: 0, closed: 0, exception: 0, overdue: 0
 })
+
+const isMine = (order: OrderListItem) => {
+  return order.current_handler && order.current_handler === currentUserName.value
+}
+
+const getErrorCodeLabel = (code: string) => {
+  const labels: Record<string, string> = {
+    HANDLER_MISMATCH: '非当前值班人，订单保留原队列',
+    FORBIDDEN: '角色无权操作',
+    VERSION_CONFLICT: '数据版本冲突，请刷新重试',
+    INCOMPLETE: '资料不齐，订单停在原队列',
+    OVERDUE: '已逾期，不能批量推进',
+    NO_EVIDENCE: '缺少证据附件',
+    INVALID_STATE: '状态不允许此操作',
+    INVALID_DISPATCH_ROLE: '派发目标角色不合法'
+  }
+  return labels[code] || code
+}
 const loading = ref(false)
 const selectedIds = ref<number[]>([])
 

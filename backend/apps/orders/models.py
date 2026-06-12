@@ -119,6 +119,36 @@ class ForeignTradeOrder(models.Model):
                 return role == Role.REVIEWER
         return False
 
+    def can_process_by(self, username: str, role: str) -> bool:
+        if not self.can_process(role):
+            return False
+        if self.status == OrderStatus.PENDING_DISPATCH:
+            return True
+        if self.status == OrderStatus.PROCESSING:
+            if not self.current_handler:
+                return True
+            return self.current_handler == username
+        return False
+
+    def is_mine_or_waiting(self, username: str, role: str) -> bool:
+        if self.status == OrderStatus.CLOSED:
+            return False
+        if self.status == OrderStatus.PENDING_DISPATCH:
+            if role == Role.CLERK:
+                return self.stage == OrderStage.INQUIRY
+            if role == Role.SUPERVISOR:
+                return self.stage in [OrderStage.INQUIRY, OrderStage.QUOTE_CONFIRMATION]
+            if role == Role.REVIEWER:
+                return False
+            return False
+        if self.status == OrderStatus.PROCESSING:
+            if self.current_handler and self.current_handler == username:
+                return True
+            if not self.current_handler and self.current_handler_role == role:
+                return True
+            return False
+        return False
+
 
 class OrderAttachment(models.Model):
     order = models.ForeignKey(ForeignTradeOrder, on_delete=models.CASCADE, related_name='attachments', verbose_name='外贸订单')
