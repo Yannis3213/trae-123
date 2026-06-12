@@ -1,0 +1,9 @@
+{
+  "name": "展会主办方-月底集中处理展商申请系统",
+  "short_name": "展商申请系统",
+  "description": "展会主办方展商申请管理系统",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6"
+}
