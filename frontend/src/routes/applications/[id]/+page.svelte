@@ -116,14 +116,17 @@
 
 			if (processAction === 'resubmit' || processAction === 'submit') {
 				const changedEvidence = evidenceUpdates
-					.filter(er => er.provided !== detail.evidence_requirements.find(d => d.id === er.id)?.provided || er.remark);
+					.filter(er => {
+						const orig = detail.evidence_requirements.find(d => d.id === er.id);
+						return er.provided !== orig?.provided || er.remark?.trim();
+					});
 				req.evidence_updates = changedEvidence.map(er => ({
 					id: er.id,
 					evidence_type: er.evidence_type,
 					evidence_name: er.evidence_name,
 					provided: !!er.provided,
 					attachment_id: er.attachment_id || undefined,
-					remark: er.remark || undefined
+					remark: er.remark?.trim() || undefined
 				}));
 				req.evidence_provided = evidenceUpdates
 					.filter(er => er.provided)
@@ -355,13 +358,45 @@
 											</span>
 										</div>
 									{/if}
-									{#if rec.evidence_required || rec.evidence_provided}
+									{#if rec.evidence_required || rec.evidence_provided || rec.evidence_changes || rec.evidence_remarks}
 										<div class="td-row">
-											<span class="td-label">证据：</span>
+											<span class="td-label">证据台账：</span>
 											<span class="td-val">
-												要求: {rec.evidence_required || '-'}
-												<br>
-												提供: {rec.evidence_provided || '-'}
+												{#if rec.evidence_required || rec.evidence_provided}
+													<div class="ev-summary">
+														<span class="ev-label">📋 全量要求：</span>
+														<span class="ev-req">{rec.evidence_required || '-'}</span>
+													</div>
+													<div class="ev-summary">
+														<span class="ev-label">✅ 全量提供：</span>
+														<span class="ev-prov">{rec.evidence_provided || '-'}</span>
+													</div>
+												{/if}
+												{#if rec.evidence_changes}
+													<div class="ev-summary ev-changes">
+														<span class="ev-label">🔄 本次变更：</span>
+														<span class="ev-chg">
+															{#each rec.evidence_changes.split(',') as chg}
+																{@const isAdd = chg.startsWith('+')}
+																<span class="chg-tag" style="background: {isAdd ? '#f6ffed' : '#fff1f0'}; color: {isAdd ? '#389e0d' : '#cf1322'}; border: 1px solid {isAdd ? '#b7eb8f' : '#ffa39e'}">
+																	{isAdd ? '＋' : '－'} {chg.slice(1)}
+																</span>
+															{/each}
+														</span>
+													</div>
+												{/if}
+												{#if rec.evidence_remarks}
+													<div class="ev-summary ev-remarks">
+														<span class="ev-label">📝 变更备注：</span>
+														<span class="ev-rmk">
+															{#each rec.evidence_remarks.split(';') as rmk}
+																{#if rmk}
+																	<div class="rmk-item">· {rmk}</div>
+																{/if}
+															{/each}
+														</span>
+													</div>
+												{/if}
 											</span>
 										</div>
 									{/if}
@@ -843,6 +878,44 @@
 	}
 	.td-label { color: #999; display: inline-block; min-width: 80px; }
 	.td-val.version { font-family: monospace; color: #722ed1; }
+
+	.ev-summary {
+		display: flex;
+		align-items: flex-start;
+		gap: 6px;
+		padding: 4px 0;
+		border-bottom: 1px dashed #f0f0f0;
+	}
+	.ev-summary:last-child { border-bottom: none; }
+	.ev-label {
+		flex-shrink: 0;
+		color: #888;
+		font-size: 12px;
+	}
+	.ev-req { color: #d46b08; }
+	.ev-prov { color: #389e0d; }
+	.ev-changes {
+		background: #fafafa;
+		border-radius: 4px;
+		padding: 6px 8px !important;
+	}
+	.ev-chg {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	.chg-tag {
+		padding: 1px 8px;
+		border-radius: 10px;
+		font-size: 11px;
+	}
+	.ev-remarks {
+		background: #fffbe6;
+		border-radius: 4px;
+		padding: 6px 8px !important;
+	}
+	.ev-rmk { color: #874d00; }
+	.rmk-item { line-height: 1.6; }
 
 	.evidence-section .ev-header {
 		margin-bottom: 16px;

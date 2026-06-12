@@ -473,7 +473,7 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, application_id, from_status, to_status, from_node, to_node, action, 
                     handler, handler_role, acting_role, comment, correction_note, 
-                    evidence_required, evidence_provided,
+                    evidence_required, evidence_provided, evidence_changes, evidence_remarks,
                     invoice_status_before, invoice_status_after, loan_status_before, loan_status_after,
                     version_before, version_after, created_at
              FROM processing_records WHERE application_id = ?1 ORDER BY created_at ASC, id ASC"
@@ -518,13 +518,15 @@ impl Database {
                 correction_note: row.get(11)?,
                 evidence_required: row.get(12)?,
                 evidence_provided: row.get(13)?,
-                invoice_status_before: row.get(14)?,
-                invoice_status_after: row.get(15)?,
-                loan_status_before: row.get(16)?,
-                loan_status_after: row.get(17)?,
-                version_before: row.get(18)?,
-                version_after: row.get(19)?,
-                created_at: row.get(20)?,
+                evidence_changes: row.get(14)?,
+                evidence_remarks: row.get(15)?,
+                invoice_status_before: row.get(16)?,
+                invoice_status_after: row.get(17)?,
+                loan_status_before: row.get(18)?,
+                loan_status_after: row.get(19)?,
+                version_before: row.get(20)?,
+                version_after: row.get(21)?,
+                created_at: row.get(22)?,
             })
         })?;
 
@@ -671,12 +673,14 @@ impl Database {
             "INSERT INTO processing_records 
              (id, application_id, from_status, to_status, from_node, to_node, action, 
               handler, handler_role, acting_role, comment, evidence_required, evidence_provided,
+              evidence_changes, evidence_remarks,
               version_before, version_after, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 record_id, id, None::<String>, "pending_verify", None::<String>, "register_done",
                 "create", user.id, "register", acting_role, "创建融资申请单",
-                ev_req_str.clone(), None::<String>, None::<i64>, 1, now
+                ev_req_str.clone(), None::<String>, None::<String>, None::<String>,
+                None::<i64>, 1, now
             ]
         )?;
 
@@ -685,12 +689,14 @@ impl Database {
             "INSERT INTO processing_records 
              (id, application_id, from_status, to_status, from_node, to_node, action, 
               handler, handler_role, acting_role, comment, evidence_required, evidence_provided,
+              evidence_changes, evidence_remarks,
               version_before, version_after, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 submit_record_id, id, "draft", "pending_verify", "register", "register_done",
                 "submit", user.id, "register", acting_role, "提交核验",
-                ev_req_str, ev_req_str, 1_i64, 2_i64, now
+                ev_req_str, ev_req_str, None::<String>, None::<String>,
+                1_i64, 2_i64, now
             ]
         )?;
 
@@ -792,14 +798,14 @@ impl Database {
                     "INSERT INTO processing_records 
                      (id, application_id, from_status, to_status, from_node, to_node, action, 
                       handler, handler_role, acting_role, comment, correction_note,
-                      evidence_required, evidence_provided,
+                      evidence_required, evidence_provided, evidence_changes, evidence_remarks,
                       invoice_status_before, invoice_status_after,
                       version_before, version_after, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                     params![
                         record_id, id, app.status, "verify_passed", "register_done", "verify_done",
                         "pass", user.id, "auditor", acting_role, req.comment, correction_note.clone(),
-                        ev_req, ev_prov,
+                        ev_req, ev_prov, None::<String>, None::<String>,
                         old_invoice_status, inv_status,
                         app.version, new_version, now
                     ]
@@ -841,14 +847,14 @@ impl Database {
                     "INSERT INTO processing_records 
                      (id, application_id, from_status, to_status, from_node, to_node, action, 
                       handler, handler_role, acting_role, comment, correction_note,
-                      evidence_required, evidence_provided,
+                      evidence_required, evidence_provided, evidence_changes, evidence_remarks,
                       invoice_status_before, invoice_status_after,
                       version_before, version_after, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                     params![
                         record_id, id, app.status, "pending_correction", "register_done", "verify_rejected",
                         "reject", user.id, "auditor", acting_role, req.comment, correction_note.clone(),
-                        ev_req, ev_prov,
+                        ev_req, ev_prov, None::<String>, None::<String>,
                         old_invoice_status, inv_status,
                         app.version, new_version, now
                     ]
@@ -933,14 +939,27 @@ impl Database {
                     }
                 }
 
-                let resubmit_ev_provided = req.evidence_updates.as_ref()
+                let evidence_changes_str = req.evidence_updates.as_ref()
                     .map(|list| {
                         list.iter()
-                            .filter(|e| e.provided)
-                            .map(|e| e.evidence_name.clone())
+                            .map(|e| {
+                                let status = if e.provided { "+" } else { "-" };
+                                format!("{}{}", status, e.evidence_name)
+                            })
                             .collect::<Vec<_>>()
                             .join(",")
-                    });
+                    })
+                    .filter(|s| !s.is_empty());
+
+                let evidence_remarks_str = req.evidence_updates.as_ref()
+                    .map(|list| {
+                        list.iter()
+                            .filter(|e| e.remark.as_ref().map(|r| !r.is_empty()).unwrap_or(false))
+                            .map(|e| format!("{}:{}", e.evidence_name, e.remark.as_ref().unwrap_or(&String::new())))
+                            .collect::<Vec<_>>()
+                            .join(";")
+                    })
+                    .filter(|s| !s.is_empty());
 
                 let resubmit_ev_required = {
                     let mut stmt = self.conn.prepare(
@@ -954,17 +973,30 @@ impl Database {
                     if names.is_empty() { None } else { Some(names.join(",")) }
                 };
 
+                let resubmit_ev_provided = {
+                    let mut stmt = self.conn.prepare(
+                        "SELECT evidence_name FROM evidence_requirements 
+                         WHERE application_id = ?1 AND required = 1 AND provided = 1"
+                    )?;
+                    let rows = stmt.query_map(params![id], |row| {
+                        row.get::<_, String>(0)
+                    })?;
+                    let names: Vec<String> = rows.filter_map(|r| r.ok()).collect();
+                    if names.is_empty() { None } else { Some(names.join(",")) }
+                };
+
                 self.conn.execute(
                     "INSERT INTO processing_records 
                      (id, application_id, from_status, to_status, from_node, to_node, action, 
                       handler, handler_role, acting_role, comment, correction_note,
-                      evidence_required, evidence_provided,
+                      evidence_required, evidence_provided, evidence_changes, evidence_remarks,
                       version_before, version_after, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                     params![
                         record_id, id, "pending_correction", new_status, app.current_node, new_node,
                         "resubmit", user.id, "register", acting_role, req.comment, correction_note.clone(),
                         resubmit_ev_required, resubmit_ev_provided,
+                        evidence_changes_str, evidence_remarks_str,
                         app.version, new_version, now
                     ]
                 )?;
@@ -1047,14 +1079,14 @@ impl Database {
                     "INSERT INTO processing_records 
                      (id, application_id, from_status, to_status, from_node, to_node, action, 
                       handler, handler_role, acting_role, comment, correction_note,
-                      evidence_required, evidence_provided,
+                      evidence_required, evidence_provided, evidence_changes, evidence_remarks,
                       loan_status_before, loan_status_after,
                       version_before, version_after, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                     params![
                         record_id, id, "verify_passed", "archived", "verify_done", "review_done",
                         "archive", user.id, "reviewer", acting_role, req.comment, correction_note.clone(),
-                        ev_req, ev_prov,
+                        ev_req, ev_prov, None::<String>, None::<String>,
                         old_loan_status, loan_status,
                         app.version, new_version, now
                     ]
@@ -1088,13 +1120,13 @@ impl Database {
                     "INSERT INTO processing_records 
                      (id, application_id, from_status, to_status, from_node, to_node, action, 
                       handler, handler_role, acting_role, comment, correction_note,
-                      evidence_required, evidence_provided,
+                      evidence_required, evidence_provided, evidence_changes, evidence_remarks,
                       version_before, version_after, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                     params![
                         record_id, id, "verify_passed", "pending_correction", "verify_done", "review_returned",
                         "return", user.id, "reviewer", acting_role, req.comment, correction_note.clone(),
-                        ev_req, ev_prov,
+                        ev_req, ev_prov, None::<String>, None::<String>,
                         app.version, new_version, now
                     ]
                 )?;

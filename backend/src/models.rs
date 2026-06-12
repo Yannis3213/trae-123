@@ -156,6 +156,8 @@ pub struct ProcessingRecord {
     pub correction_note: Option<String>,
     pub evidence_required: Option<String>,
     pub evidence_provided: Option<String>,
+    pub evidence_changes: Option<String>,
+    pub evidence_remarks: Option<String>,
     pub invoice_status_before: Option<String>,
     pub invoice_status_after: Option<String>,
     pub loan_status_before: Option<String>,
