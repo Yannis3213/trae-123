@@ -104,6 +104,10 @@ func createTables(db *sql.DB) error {
 		module_type TEXT,
 		resolved INTEGER NOT NULL DEFAULT 0,
 		resolved_at DATETIME,
+		material_complete INTEGER,
+		evidence_complete INTEGER,
+		opinion TEXT,
+		summary TEXT,
 		FOREIGN KEY (application_id) REFERENCES trademark_applications(id) ON DELETE CASCADE
 	);
 
@@ -119,5 +123,19 @@ func createTables(db *sql.DB) error {
 	`
 
 	_, err := db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	migrations := []string{
+		"ALTER TABLE exception_reasons ADD COLUMN material_complete INTEGER",
+		"ALTER TABLE exception_reasons ADD COLUMN evidence_complete INTEGER",
+		"ALTER TABLE exception_reasons ADD COLUMN opinion TEXT",
+		"ALTER TABLE exception_reasons ADD COLUMN summary TEXT",
+	}
+	for _, m := range migrations {
+		db.Exec(m)
+	}
+
+	return nil
 }

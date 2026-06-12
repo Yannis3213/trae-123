@@ -113,16 +113,20 @@ type AuditRemark struct {
 }
 
 type ExceptionReason struct {
-	ID            string    `json:"id"`
-	ApplicationID string    `json:"application_id"`
-	Reason        string    `json:"reason"`
-	ReasonType    string    `json:"reason_type"`
-	CreatedBy     string    `json:"created_by"`
-	CreatedByName string    `json:"created_by_name"`
-	CreatedAt     time.Time `json:"created_at"`
-	ModuleType    ModuleType `json:"module_type"`
-	Resolved      bool      `json:"resolved"`
-	ResolvedAt    *time.Time `json:"resolved_at"`
+	ID               string     `json:"id"`
+	ApplicationID    string     `json:"application_id"`
+	Reason           string     `json:"reason"`
+	ReasonType       string     `json:"reason_type"`
+	CreatedBy        string     `json:"created_by"`
+	CreatedByName    string     `json:"created_by_name"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ModuleType       ModuleType `json:"module_type"`
+	Resolved         bool       `json:"resolved"`
+	ResolvedAt       *time.Time `json:"resolved_at"`
+	MaterialComplete *bool      `json:"material_complete"`
+	EvidenceComplete *bool      `json:"evidence_complete"`
+	Opinion          string     `json:"opinion"`
+	Summary          string     `json:"summary"`
 }
 
 type BatchResultItem struct {

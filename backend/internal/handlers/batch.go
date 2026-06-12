@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 	"trademark-system/internal/database"
@@ -268,14 +269,17 @@ func (h *BatchHandler) Process(w http.ResponseWriter, r *http.Request) {
 
 			if req.Action == "correct" {
 				excID := generateID()
+				batchSummary := fmt.Sprintf("[批量补正] 异常类型:batch_correction | 材料完整:true | 证据完整:true | 说明:批量补正 | 处理意见:%s", opinion)
 				_, err = tx.Exec(`
 					INSERT INTO exception_reasons (
 						id, application_id, reason, reason_type, created_by,
-						created_at, module_type, resolved
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+						created_at, module_type, resolved,
+						material_complete, evidence_complete, opinion, summary
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				`,
 					excID, id, "批量补正处理", "batch_correction", user.ID,
 					now, moduleType, true,
+					1, 1, opinion, batchSummary,
 				)
 				if err != nil {
 					tx.Rollback()
@@ -387,15 +391,20 @@ func (h *BatchHandler) AdvanceOverdue(w http.ResponseWriter, r *http.Request) {
 
 			tx, _ := h.db.Begin()
 			now := time.Now()
+			excOpinion := "批量推进被拦截：材料不完整，需要补正"
+			excSummary := fmt.Sprintf("[逾期拦截] 异常类型:material_missing | 材料完整:false | 证据完整:%v | 说明:批量推进拦截：材料不完整 | 处理意见:%s",
+				evidenceComplete, excOpinion)
 			excID := generateID()
 			tx.Exec(`
 				INSERT INTO exception_reasons (
 					id, application_id, reason, reason_type, created_by,
-					created_at, module_type, resolved
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+					created_at, module_type, resolved,
+					material_complete, evidence_complete, opinion, summary
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`,
 				excID, id, "批量推进拦截：材料不完整", "material_missing", user.ID,
 				now, string(models.ModuleCorrection), false,
+				0, boolToInt(evidenceComplete), excOpinion, excSummary,
 			)
 			recordID := generateID()
 			tx.Exec(`
@@ -405,7 +414,7 @@ func (h *BatchHandler) AdvanceOverdue(w http.ResponseWriter, r *http.Request) {
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`,
 				recordID, id, "correct_attempt", currentStatus, currentStatus,
-				user.ID, "批量推进被拦截：材料不完整，需要补正", now, string(models.ModuleCorrection),
+				user.ID, excOpinion, now, string(models.ModuleCorrection),
 			)
 			tx.Commit()
 			continue
@@ -419,15 +428,20 @@ func (h *BatchHandler) AdvanceOverdue(w http.ResponseWriter, r *http.Request) {
 
 			tx, _ := h.db.Begin()
 			now := time.Now()
+			stOpinion := "批量推进被拦截：状态冲突，需要先处理当前状态"
+			stSummary := fmt.Sprintf("[逾期拦截] 异常类型:status_conflict | 材料完整:true | 证据完整:true | 说明:批量推进拦截：状态不正确 | 处理意见:%s",
+				stOpinion)
 			excID := generateID()
 			tx.Exec(`
 				INSERT INTO exception_reasons (
 					id, application_id, reason, reason_type, created_by,
-					created_at, module_type, resolved
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+					created_at, module_type, resolved,
+					material_complete, evidence_complete, opinion, summary
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`,
 				excID, id, "批量推进拦截：状态不正确", "status_conflict", user.ID,
 				now, string(models.ModuleApplication), false,
+				1, 1, stOpinion, stSummary,
 			)
 			recordID := generateID()
 			tx.Exec(`
@@ -502,14 +516,18 @@ func (h *BatchHandler) AdvanceOverdue(w http.ResponseWriter, r *http.Request) {
 		}
 
 		excID := generateID()
+		overdueSummary := fmt.Sprintf("[逾期推进] 异常类型:overdue_advance | 材料完整:true | 证据完整:%v | 说明:逾期批量推进处理 | 处理意见:%s",
+			evidenceComplete, opinion)
 		_, err = tx.Exec(`
 			INSERT INTO exception_reasons (
 				id, application_id, reason, reason_type, created_by,
-				created_at, module_type, resolved
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				created_at, module_type, resolved,
+				material_complete, evidence_complete, opinion, summary
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			excID, id, "逾期批量推进处理", "overdue_advance", user.ID,
 			now, string(models.ModuleApplication), true,
+			1, boolToInt(evidenceComplete), opinion, overdueSummary,
 		)
 		if err != nil {
 			tx.Rollback()

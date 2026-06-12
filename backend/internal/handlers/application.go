@@ -251,7 +251,8 @@ func (h *ApplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	exceptionSQL := `
-		SELECT id, reason, reason_type, created_by, created_at, module_type, resolved, resolved_at
+		SELECT id, reason, reason_type, created_by, created_at, module_type, resolved, resolved_at,
+			material_complete, evidence_complete, opinion, summary
 		FROM exception_reasons WHERE application_id = ? ORDER BY created_at DESC
 	`
 	excRows, err := h.db.Query(exceptionSQL, id)
@@ -266,9 +267,12 @@ func (h *ApplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 		exc := &models.ExceptionReason{}
 		var createdAt, resolvedAt *time.Time
 		var resolved int
+		var materialComplete, evidenceComplete sql.NullInt64
+		var opinion, summary sql.NullString
 		err := excRows.Scan(
 			&exc.ID, &exc.Reason, &exc.ReasonType, &exc.CreatedBy, &createdAt,
 			&exc.ModuleType, &resolved, &resolvedAt,
+			&materialComplete, &evidenceComplete, &opinion, &summary,
 		)
 		if err == nil {
 			exc.ApplicationID = id
@@ -279,6 +283,20 @@ func (h *ApplicationHandler) Get(w http.ResponseWriter, r *http.Request) {
 			exc.Resolved = resolved == 1
 			if resolvedAt != nil {
 				exc.ResolvedAt = resolvedAt
+			}
+			if materialComplete.Valid {
+				b := materialComplete.Int64 == 1
+				exc.MaterialComplete = &b
+			}
+			if evidenceComplete.Valid {
+				b := evidenceComplete.Int64 == 1
+				exc.EvidenceComplete = &b
+			}
+			if opinion.Valid {
+				exc.Opinion = opinion.String
+			}
+			if summary.Valid {
+				exc.Summary = summary.String
 			}
 			exceptions = append(exceptions, exc)
 		}
@@ -876,15 +894,21 @@ func (h *ApplicationHandler) Correct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ExceptionReason != "" {
+		mc := req.MaterialComplete
+		ec := req.EvidenceComplete
+		correctSummary := fmt.Sprintf("[补正] 异常类型:correction_note | 材料完整:%v | 证据完整:%v | 说明:%s | 处理意见:%s",
+			mc, ec, req.ExceptionReason, opinion)
 		excID := generateID()
 		_, err = tx.Exec(`
 			INSERT INTO exception_reasons (
 				id, application_id, reason, reason_type, created_by,
-				created_at, module_type, resolved
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				created_at, module_type, resolved,
+				material_complete, evidence_complete, opinion, summary
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 			excID, id, req.ExceptionReason, "correction_note", user.ID,
 			now, moduleType, false,
+			boolToInt(mc), boolToInt(ec), opinion, correctSummary,
 		)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, "创建异常记录失败")
@@ -1056,11 +1080,14 @@ func (h *ApplicationHandler) Return(w http.ResponseWriter, r *http.Request) {
 	_, err = tx.Exec(`
 		INSERT INTO exception_reasons (
 			id, application_id, reason, reason_type, created_by,
-			created_at, module_type, resolved
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			created_at, module_type, resolved,
+			material_complete, evidence_complete, opinion, summary
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		excID, id, exceptionReason, reasonType, user.ID,
 		now, moduleType, false,
+		boolToInt(materialComplete), boolToInt(evidenceComplete),
+		opinion, recordOpinion,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "创建异常记录失败")
@@ -1483,4 +1510,11 @@ func (h *ApplicationHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 		Approaching:       approaching,
 		Overdue:           overdue,
 	})
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

@@ -410,22 +410,68 @@ function ApplicationDetail({ id }) {
           {exceptions && exceptions.length > 0 && (
             <div className="detail-section">
               <h3>异常原因（{exceptions.length}）</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {exceptions.map(ex => (
                   <div key={ex.id} className={`alert ${ex.resolved ? 'alert-success' : 'alert-error'}`}>
-                    <div style={{ fontWeight: '500', marginBottom: '4px' }}>
-                      {moduleLabel(ex.module_type || ex.module)} · {ex.created_by_name || ex.created_by} · {formatDateTime(ex.created_at)}
+                    <div style={{ fontWeight: '500', marginBottom: '6px' }}>
+                      <span style={{ marginRight: '8px' }}>
+                        {moduleLabel(ex.module_type || ex.module)}
+                      </span>
+                      <span className={`status-tag status-${ex.reason_type === 'material_missing' ? 'correction' :
+                        ex.reason_type === 'evidence_missing' ? 'returned' :
+                        ex.reason_type === 'overdue_advance' ? 'transferred' :
+                        ex.reason_type === 'status_conflict' ? 'visited' :
+                        ex.reason_type === 'batch_correction' ? 'correction' : 'pending_assign'}`}
+                        style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '12px', marginRight: '8px' }}>
+                        {ex.reason_type === 'material_missing' ? '材料缺失' :
+                         ex.reason_type === 'evidence_missing' ? '证据缺失' :
+                         ex.reason_type === 'correction_note' ? '补正备注' :
+                         ex.reason_type === 'overdue_advance' ? '逾期推进' :
+                         ex.reason_type === 'status_conflict' ? '状态冲突' :
+                         ex.reason_type === 'batch_correction' ? '批量补正' : ex.reason_type}
+                      </span>
+                      <span style={{ fontSize: '13px', color: '#666' }}>
+                        {ex.created_by_name || ex.created_by} · {formatDateTime(ex.created_at)}
+                      </span>
                     </div>
-                    <div>{ex.reason}</div>
-                    {ex.reason_type && (
-                      <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
-                        类型：{ex.reason_type === 'material_missing' ? '材料缺失' :
-                              ex.reason_type === 'evidence_missing' ? '证据缺失' :
-                              ex.reason_type === 'correction_note' ? '补正备注' : ex.reason_type}
+                    {(ex.material_complete !== undefined && ex.material_complete !== null) || (ex.evidence_complete !== undefined && ex.evidence_complete !== null) ? (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '6px' }}>
+                        {ex.material_complete !== undefined && ex.material_complete !== null && (
+                          <span style={{
+                            padding: '3px 10px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            background: ex.material_complete ? '#f6ffed' : '#fff2f0',
+                            color: ex.material_complete ? '#52c41a' : '#ff4d4f',
+                            border: `1px solid ${ex.material_complete ? '#b7eb8f' : '#ffa39e'}`,
+                          }}>
+                            材料完整：{ex.material_complete ? '是' : '否'}
+                          </span>
+                        )}
+                        {ex.evidence_complete !== undefined && ex.evidence_complete !== null && (
+                          <span style={{
+                            padding: '3px 10px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            background: ex.evidence_complete ? '#f6ffed' : '#fff2f0',
+                            color: ex.evidence_complete ? '#52c41a' : '#ff4d4f',
+                            border: `1px solid ${ex.evidence_complete ? '#b7eb8f' : '#ffa39e'}`,
+                          }}>
+                            证据完整：{ex.evidence_complete ? '是' : '否'}
+                          </span>
+                        )}
+                      </div>
+                    ) : null}
+                    <div style={{ lineHeight: '1.6' }}>
+                      <strong>异常说明：</strong>{ex.reason}
+                    </div>
+                    {ex.opinion && (
+                      <div style={{ marginTop: '4px', lineHeight: '1.6' }}>
+                        <strong>处理意见：</strong>{ex.opinion}
                       </div>
                     )}
                     {ex.resolved && (
-                      <div style={{ marginTop: '4px', color: '#52c41a', fontSize: '12px' }}>
+                      <div style={{ marginTop: '6px', color: '#52c41a', fontSize: '12px' }}>
                         ✓ 已解决 {ex.resolved_at ? `（${formatDate(ex.resolved_at)}）` : ''}
                       </div>
                     )}
