@@ -1,0 +1,33 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "ts-node -r tsconfig-paths/register src/main.ts",
+    "dev": "ts-node -r tsconfig-paths/register src/main.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@nestjs/common": "^11.1.26",
+    "@nestjs/core": "^11.1.26",
+    "@nestjs/mapped-types": "^2.1.1",
+    "@nestjs/platform-express": "^11.1.26",
+    "@nestjs/typeorm": "^11.0.1",
+    "better-sqlite3": "^12.10.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "cors": "^2.8.6",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typeorm": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^6.0.3"
+  }
+}
