@@ -933,6 +933,27 @@ impl Database {
                     }
                 }
 
+                let resubmit_ev_provided = req.evidence_updates.as_ref()
+                    .map(|list| {
+                        list.iter()
+                            .filter(|e| e.provided)
+                            .map(|e| e.evidence_name.clone())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    });
+
+                let resubmit_ev_required = {
+                    let mut stmt = self.conn.prepare(
+                        "SELECT evidence_name FROM evidence_requirements 
+                         WHERE application_id = ?1 AND required = 1"
+                    )?;
+                    let rows = stmt.query_map(params![id], |row| {
+                        row.get::<_, String>(0)
+                    })?;
+                    let names: Vec<String> = rows.filter_map(|r| r.ok()).collect();
+                    if names.is_empty() { None } else { Some(names.join(",")) }
+                };
+
                 self.conn.execute(
                     "INSERT INTO processing_records 
                      (id, application_id, from_status, to_status, from_node, to_node, action, 
@@ -943,7 +964,7 @@ impl Database {
                     params![
                         record_id, id, "pending_correction", new_status, app.current_node, new_node,
                         "resubmit", user.id, "register", acting_role, req.comment, correction_note.clone(),
-                        ev_req, ev_prov,
+                        resubmit_ev_required, resubmit_ev_provided,
                         app.version, new_version, now
                     ]
                 )?;
@@ -953,7 +974,16 @@ impl Database {
                 } else {
                     vec!["reject_correction"]
                 };
-                for et in exc_types {
+
+                let mut resolved_exc_ids: Vec<String> = Vec::new();
+                for et in &exc_types {
+                    let mut stmt = self.conn.prepare(
+                        "SELECT id FROM exception_reasons 
+                         WHERE application_id = ?1 AND exception_type = ?2 AND resolved = 0
+                         ORDER BY created_at DESC LIMIT 1"
+                    )?;
+                    let exc_id_result: Option<String> = stmt.query_row(params![id, et], |row| row.get(0)).ok();
+                    
                     self.conn.execute(
                         "UPDATE exception_reasons SET resolved = 1, resolved_by = ?1, resolved_by_role = ?2, resolved_at = ?3, resolved_note = ?4
                          WHERE application_id = ?5 AND exception_type = ?6 AND resolved = 0",
@@ -961,6 +991,10 @@ impl Database {
                             correction_note.clone().unwrap_or_else(|| "已补正材料".to_string()),
                             id, et]
                     )?;
+
+                    if let Some(eid) = exc_id_result {
+                        resolved_exc_ids.push(eid);
+                    }
                 }
 
                 let evidence_summary = req.evidence_updates.as_ref()
@@ -977,12 +1011,13 @@ impl Database {
                 } else {
                     format!("登记员补正提交，已提供证据：{}", evidence_summary)
                 };
+                let related_exc_id = resolved_exc_ids.first().cloned();
                 let note_id = Uuid::new_v4().to_string();
                 self.conn.execute(
                     "INSERT INTO audit_notes 
-                     (id, application_id, note, note_type, related_record_id, created_by, created_by_role, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![note_id, id, resubmit_note, "correction", record_id, user.id, acting_role, now]
+                     (id, application_id, note, note_type, related_record_id, related_exception_id, created_by, created_by_role, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![note_id, id, resubmit_note, "correction", record_id, related_exc_id, user.id, acting_role, now]
                 )?;
             }
             "archive" => {
@@ -1189,11 +1224,11 @@ impl Database {
                 params_vec.push(user.id.clone());
             }
             "auditor" => {
-                conditions.push("(current_handler = ? OR current_node IN ('register_done', 'verify_rejected'))".to_string());
+                conditions.push("(current_handler = ? OR (status = 'pending_verify' AND current_node = 'register_done') OR status = 'overdue')".to_string());
                 params_vec.push(user.id.clone());
             }
             "reviewer" => {
-                conditions.push("(current_handler = ? OR current_node = 'verify_done')".to_string());
+                conditions.push("(current_handler = ? OR (status = 'verify_passed' AND current_node = 'verify_done'))".to_string());
                 params_vec.push(user.id.clone());
             }
             _ => {}

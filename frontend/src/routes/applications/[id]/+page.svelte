@@ -115,16 +115,19 @@
 			if (processLoanStatus) req.loan_status = processLoanStatus;
 
 			if (processAction === 'resubmit' || processAction === 'submit') {
-				req.evidence_updates = evidenceUpdates
-					.filter(er => er.provided !== detail.evidence_requirements.find(d => d.id === er.id)?.provided || er.remark)
-					.map(er => ({
-						id: er.id,
-						evidence_type: er.evidence_type,
-						evidence_name: er.evidence_name,
-						provided: !!er.provided,
-						attachment_id: er.attachment_id || undefined,
-						remark: er.remark || undefined
-					}));
+				const changedEvidence = evidenceUpdates
+					.filter(er => er.provided !== detail.evidence_requirements.find(d => d.id === er.id)?.provided || er.remark);
+				req.evidence_updates = changedEvidence.map(er => ({
+					id: er.id,
+					evidence_type: er.evidence_type,
+					evidence_name: er.evidence_name,
+					provided: !!er.provided,
+					attachment_id: er.attachment_id || undefined,
+					remark: er.remark || undefined
+				}));
+				req.evidence_provided = evidenceUpdates
+					.filter(er => er.provided)
+					.map(er => er.evidence_name);
 			}
 
 			const res = await api.processApplication(detail.application.id, req);
