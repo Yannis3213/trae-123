@@ -1,6 +1,4 @@
-import { defineConfig } from '@tanstack/react-start/config'
-
-export default defineConfig({
+export default {
   server: {
     preset: 'node-server',
     port: 3106,
@@ -16,4 +14,4 @@ export default defineConfig({
       },
     },
   },
-})
+}

@@ -102,6 +102,8 @@ class TrainingProject(Base):
     attachments = relationship("Attachment", back_populates="project", cascade="all, delete-orphan")
     processing_records = relationship("ProcessingRecord", back_populates="project", cascade="all, delete-orphan")
     audit_notes = relationship("AuditNote", back_populates="project", cascade="all, delete-orphan")
+    exceptions = relationship("ExceptionRecord", back_populates="project", cascade="all, delete-orphan",
+                              foreign_keys="ExceptionRecord.project_id")
 
 
 class Attachment(Base):
@@ -187,6 +189,25 @@ class ExceptionRecord(Base):
     TYPE_VERSION_CONFLICT = "version_conflict"
     TYPE_PERMISSION_DENIED = "permission_denied"
     TYPE_DUPLICATE_SUBMIT = "duplicate_submit"
+
+    project = relationship("TrainingProject", back_populates="exceptions", foreign_keys=[project_id])
+    responsible_user = relationship("User", foreign_keys=[responsible_user_id])
+    resolved_by = relationship("User", foreign_keys=[resolved_by_id])
+
+    ROLE_LABELS = {
+        "registrar": "课程顾问（培训项目登记员）",
+        "auditor": "讲师运营（培训项目审核主管）",
+        "reviewer": "项目经理（企业培训公司复核负责人）",
+    }
+
+    TYPE_LABELS = {
+        TYPE_MISSING_EVIDENCE: "缺少必备证据",
+        TYPE_OVERDUE: "节点超时/逾期",
+        TYPE_STATUS_CONFLICT: "状态冲突",
+        TYPE_VERSION_CONFLICT: "版本冲突",
+        TYPE_PERMISSION_DENIED: "越权/无权限",
+        TYPE_DUPLICATE_SUBMIT: "重复提交",
+    }
 
 
 def get_db():

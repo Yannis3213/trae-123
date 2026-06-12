@@ -68,7 +68,7 @@ def get_detail(project_id: int, db: Session = Depends(get_db), user: User = Depe
     ).first()
     if not p:
         raise HTTPException(status_code=404, detail="项目单不存在")
-    return project_to_detail_dict(p, user)
+    return project_to_detail_dict(p, db, user)
 
 
 @router.post("", response_model=TrainingProjectDetailResponse)
@@ -76,7 +76,7 @@ def create(data: TrainingProjectCreate, db: Session = Depends(get_db), user: Use
     if user.role != User.ROLE_REGISTRAR:
         raise HTTPException(status_code=403, detail="仅课程顾问可创建项目单")
     p = create_project(db, data, user)
-    return project_to_detail_dict(p, user)
+    return project_to_detail_dict(p, db, user)
 
 
 @router.put("/{project_id}", response_model=TrainingProjectDetailResponse)
@@ -90,7 +90,7 @@ def update(project_id: int, data: TrainingProjectUpdate,
     ok, msg = update_project(db, p, data, user)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
-    return project_to_detail_dict(p, user)
+    return project_to_detail_dict(p, db, user)
 
 
 @router.post("/{project_id}/action", response_model=TrainingProjectDetailResponse)
@@ -104,7 +104,7 @@ def do_action(project_id: int, req: ProcessActionRequest,
     ok, msg = process_action(db, p, req, user)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
-    return project_to_detail_dict(p, user)
+    return project_to_detail_dict(p, db, user)
 
 
 @router.delete("/{project_id}")

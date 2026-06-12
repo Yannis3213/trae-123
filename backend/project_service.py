@@ -53,8 +53,26 @@ def project_to_simple_dict(p: TrainingProject) -> dict:
     }
 
 
-def project_to_detail_dict(p: TrainingProject, current_user: Optional[User] = None) -> dict:
+def project_to_detail_dict(p: TrainingProject, db: Optional[Session] = None, current_user: Optional[User] = None) -> dict:
     d = project_to_simple_dict(p)
+
+    missing_evidence: List[str] = []
+    supplement_notes = []
+    if db is not None:
+        _, missing_evidence = validate_required_evidence(db, p, p.stage)
+
+    if p.status in [TrainingProject.STATUS_AUDIT_REJECTED, TrainingProject.STATUS_REVIEW_REJECTED]:
+        supplement_notes = [
+            {
+                "id": n.id,
+                "note_content": n.note_content,
+                "created_at": n.created_at,
+                "created_by": user_simple_response(n.created_by),
+            }
+            for n in sorted(p.audit_notes, key=lambda x: x.created_at, reverse=True)
+            if n.note_type == AuditNote.TYPE_SUPPLEMENT
+        ]
+
     d.update({
         "demand_description": p.demand_description,
         "plan_content": p.plan_content,
@@ -71,6 +89,18 @@ def project_to_detail_dict(p: TrainingProject, current_user: Optional[User] = No
                 "file_type": a.file_type,
                 "file_size": a.file_size,
                 "category": a.category,
+                "category_label": {
+                    "demand": "需求材料",
+                    "plan": "方案材料",
+                    "contract": "合同材料",
+                    "other": "其他材料",
+                }.get(a.category, a.category),
+                "request_stage_label": {
+                    "demand": "培训需求阶段请求",
+                    "plan": "方案报价阶段请求",
+                    "contract": "合同确认阶段请求",
+                    "other": "通用补充",
+                }.get(a.category, "其他"),
                 "is_required": a.is_required,
                 "uploaded_by": user_simple_response(a.uploaded_by),
                 "uploaded_at": a.uploaded_at
@@ -88,6 +118,7 @@ def project_to_detail_dict(p: TrainingProject, current_user: Optional[User] = No
                 "to_stage": r.to_stage,
                 "operator": user_simple_response(r.operator),
                 "operator_role": r.operator_role,
+                "operator_role_label": User.ROLE_NAMES.get(r.operator_role, r.operator_role or ''),
                 "remark": r.remark,
                 "evidence_checked": r.evidence_checked,
                 "processed_at": r.processed_at,
@@ -99,13 +130,42 @@ def project_to_detail_dict(p: TrainingProject, current_user: Optional[User] = No
                 "id": n.id,
                 "project_id": n.project_id,
                 "note_type": n.note_type,
+                "note_type_label": {
+                    "status_change": "状态变更",
+                    "exception": "异常记录",
+                    "supplement": "补正记录",
+                    "deadline": "到期提醒",
+                }.get(n.note_type, n.note_type),
                 "note_content": n.note_content,
                 "created_by": user_simple_response(n.created_by),
                 "created_at": n.created_at
             } for n in sorted(p.audit_notes, key=lambda x: x.created_at, reverse=True)
         ],
-        "exceptions": [],
-        "allowed_actions": get_allowed_actions(p, current_user) if current_user else []
+        "exceptions": [
+            {
+                "id": e.id,
+                "project_id": e.project_id,
+                "exception_type": e.exception_type,
+                "exception_type_label": ExceptionRecord.TYPE_LABELS.get(e.exception_type, e.exception_type),
+                "exception_code": e.exception_code,
+                "exception_message": e.exception_message,
+                "responsible_role": e.responsible_role,
+                "responsible_role_label": (User.ROLE_NAMES.get(e.responsible_role) or ExceptionRecord.ROLE_LABELS.get(e.responsible_role) or e.responsible_role or '-'),
+                "responsible_user": user_simple_response(e.responsible_user),
+                "created_at": e.created_at,
+                "resolved": e.resolved,
+                "resolved_at": e.resolved_at,
+                "resolution": e.resolution,
+            } for e in sorted(p.exceptions, key=lambda x: x.created_at, reverse=True)
+        ],
+        "allowed_actions": get_allowed_actions(p, current_user) if current_user else [],
+        "supplement": {
+            "is_supplement_needed": p.status in [TrainingProject.STATUS_AUDIT_REJECTED, TrainingProject.STATUS_REVIEW_REJECTED],
+            "missing_items": missing_evidence,
+            "reject_reasons": supplement_notes,
+            "current_stage": p.stage,
+            "current_stage_label": TrainingProject.STAGE_NAMES.get(p.stage, p.stage),
+        }
     })
     return d
 
@@ -237,21 +297,22 @@ def add_processing_record(db: Session, project_id: int, action: str,
     return r
 
 
-def check_deadline_overdue(db: Session, project: TrainingProject) -> bool:
+def check_deadline_overdue(db: Session, project: TrainingProject) -> Tuple[bool, int]:
     if project.deadline and datetime.utcnow() > project.deadline:
         if project.status not in [TrainingProject.STATUS_SYNCED, TrainingProject.STATUS_ARCHIVED]:
-            status, _ = get_deadline_status(project)
+            status, days = get_deadline_status(project)
             if status == "overdue":
                 add_exception(
                     db, project.id,
                     ExceptionRecord.TYPE_OVERDUE,
-                    f"项目已逾期，截止日期为 {project.deadline.strftime('%Y-%m-%d')}，已逾期 {get_deadline_status(project)[1]} 天",
+                    f"项目已逾期，截止日期为 {project.deadline.strftime('%Y-%m-%d')}，已逾期 {days} 天",
                     resp_role=project.current_handler_role,
                     resp_user_id=project.current_handler_id,
                     exc_code="OVERDUE-001"
                 )
-                return True
-    return False
+                return (True, days)
+    status, days = get_deadline_status(project)
+    return (False, days)
 
 
 def validate_required_evidence(db: Session, project: TrainingProject, stage: str) -> Tuple[bool, List[str]]:
@@ -403,7 +464,7 @@ def process_action(db: Session, p: TrainingProject, req: ProcessActionRequest, u
         db.commit()
         return (False, "该单据分配给其他处理人，您无法办理")
 
-    check_deadline_overdue(db, p)
+    overdue_flag, overdue_days = check_deadline_overdue(db, p)
 
     old_status = p.status
     old_stage = p.stage
@@ -411,13 +472,21 @@ def process_action(db: Session, p: TrainingProject, req: ProcessActionRequest, u
     evidence_info = ""
 
     try:
+        if action == ACTION_AUDIT_REJECT or action == ACTION_REVIEW_REJECT:
+            if not req.remark or not req.remark.strip():
+                add_exception(db, p.id, ExceptionRecord.TYPE_MISSING_EVIDENCE,
+                              f"[{ACTION_NAMES.get(action, action)}]必须填写退回原因，便于下岗位补正",
+                              resp_role=user.role, resp_user_id=user.id, exc_code="EVI-RJ-001")
+                db.commit()
+                return (False, "退回原因必填，请填写明确的补正说明")
+
         if action == ACTION_SUBMIT:
             ok, missing = validate_required_evidence(db, p, p.stage)
             if not ok:
                 for m in missing:
                     add_exception(db, p.id, ExceptionRecord.TYPE_MISSING_EVIDENCE,
                                   f"提交审核时缺少必要材料：{m}",
-                                  resp_role=user.role, resp_user_id=user.id, exc_code="EVI-001")
+                                  resp_role=User.ROLE_REGISTRAR, resp_user_id=p.created_by_id or user.id, exc_code="EVI-001")
                 db.commit()
                 return (False, "缺少必要材料：" + "；".join(missing))
 
@@ -434,9 +503,13 @@ def process_action(db: Session, p: TrainingProject, req: ProcessActionRequest, u
                 for m in missing:
                     add_exception(db, p.id, ExceptionRecord.TYPE_MISSING_EVIDENCE,
                                   f"审核通过时缺少必要材料：{m}",
-                                  resp_role=user.role, resp_user_id=user.id, exc_code="EVI-002")
+                                  resp_role=User.ROLE_AUDITOR, resp_user_id=user.id, exc_code="EVI-002")
                 db.commit()
                 return (False, "缺少必要材料，无法通过审核：" + "；".join(missing))
+            if overdue_flag:
+                add_exception(db, p.id, ExceptionRecord.TYPE_OVERDUE,
+                              f"节点超时：审核通过时已逾期 {overdue_days} 天，责任人：{p.current_handler_role or user.role}",
+                              resp_role=User.ROLE_AUDITOR, resp_user_id=p.current_handler_id or user.id, exc_code="DUE-AUD-001")
             p.status = TrainingProject.STATUS_AUDIT_PASSED
             p.current_handler_role = User.ROLE_REVIEWER
             p.current_handler_id = None
@@ -444,12 +517,15 @@ def process_action(db: Session, p: TrainingProject, req: ProcessActionRequest, u
             evidence_info = "过程核对完成，材料齐全"
 
         elif action == ACTION_AUDIT_REJECT:
+            add_exception(db, p.id, ExceptionRecord.TYPE_STATUS_CONFLICT,
+                          f"讲师运营退回补正：{req.remark}",
+                          resp_role=User.ROLE_REGISTRAR, resp_user_id=p.created_by_id, exc_code="FLOW-AUD-REJ")
             p.status = TrainingProject.STATUS_AUDIT_REJECTED
             p.current_handler_role = User.ROLE_REGISTRAR
             p.current_handler_id = p.created_by_id
-            msg = f"已退回补正：{req.remark or '无备注'}"
+            msg = f"已退回补正：{req.remark}"
             add_audit_note(db, p.id, AuditNote.TYPE_SUPPLEMENT,
-                           f"讲师运营退回补正，原因：{req.remark or '未填写'}", user.id)
+                           f"讲师运营退回补正，原因：{req.remark}", user.id)
 
         elif action == ACTION_REVIEW_PASS:
             ok, missing = validate_required_evidence(db, p, p.stage)
@@ -457,9 +533,13 @@ def process_action(db: Session, p: TrainingProject, req: ProcessActionRequest, u
                 for m in missing:
                     add_exception(db, p.id, ExceptionRecord.TYPE_MISSING_EVIDENCE,
                                   f"复核通过时缺少必要材料：{m}",
-                                  resp_role=user.role, resp_user_id=user.id, exc_code="EVI-003")
+                                  resp_role=User.ROLE_REVIEWER, resp_user_id=user.id, exc_code="EVI-003")
                 db.commit()
                 return (False, "缺少必要材料，无法同步：" + "；".join(missing))
+            if overdue_flag:
+                add_exception(db, p.id, ExceptionRecord.TYPE_OVERDUE,
+                              f"节点超时：复核同步时已逾期 {overdue_days} 天，责任人：项目经理",
+                              resp_role=User.ROLE_REVIEWER, resp_user_id=user.id, exc_code="DUE-REV-001")
             p.status = TrainingProject.STATUS_SYNCED
             p.current_handler_role = User.ROLE_REVIEWER
             p.current_handler_id = user.id
@@ -467,23 +547,38 @@ def process_action(db: Session, p: TrainingProject, req: ProcessActionRequest, u
             evidence_info = "结果确认完成，已同步归档队列"
 
         elif action == ACTION_REVIEW_REJECT:
+            add_exception(db, p.id, ExceptionRecord.TYPE_STATUS_CONFLICT,
+                          f"项目经理复核退回：{req.remark}",
+                          resp_role=User.ROLE_AUDITOR, resp_user_id=None, exc_code="FLOW-REV-REJ")
             p.status = TrainingProject.STATUS_REVIEW_REJECTED
             auditor = db.query(User).filter(User.role == User.ROLE_AUDITOR, User.is_active == True).first()
             p.current_handler_role = User.ROLE_AUDITOR
             p.current_handler_id = auditor.id if auditor else None
-            msg = f"复核退回：{req.remark or '无备注'}"
+            msg = f"复核退回：{req.remark}"
             add_audit_note(db, p.id, AuditNote.TYPE_SUPPLEMENT,
-                           f"项目经理复核退回，原因：{req.remark or '未填写'}", user.id)
+                           f"项目经理复核退回，原因：{req.remark}", user.id)
 
         elif action == ACTION_SUPPLEMENT:
+            ok, missing = validate_required_evidence(db, p, p.stage)
+            if not ok:
+                for m in missing:
+                    add_exception(db, p.id, ExceptionRecord.TYPE_MISSING_EVIDENCE,
+                                  f"补正提交时仍缺少：{m}",
+                                  resp_role=User.ROLE_REGISTRAR, resp_user_id=p.current_handler_id or user.id, exc_code="EVI-SUP-001")
+                db.commit()
+                return (False, "补正未完成，仍缺少必要材料：" + "；".join(missing))
+            if overdue_flag:
+                add_exception(db, p.id, ExceptionRecord.TYPE_OVERDUE,
+                              f"节点超时：补正提交时已逾期 {overdue_days} 天，责任：课程顾问",
+                              resp_role=User.ROLE_REGISTRAR, resp_user_id=user.id, exc_code="DUE-SUP-001")
             auditor = db.query(User).filter(User.role == User.ROLE_AUDITOR, User.is_active == True).first()
             p.status = TrainingProject.STATUS_PENDING_AUDIT
             p.current_handler_role = User.ROLE_AUDITOR
             p.current_handler_id = auditor.id if auditor else None
             msg = f"补正完成，重新提交审核"
-            evidence_info = "补正材料已上传"
+            evidence_info = "补正材料已上传，必备项核查通过"
             add_audit_note(db, p.id, AuditNote.TYPE_SUPPLEMENT,
-                           f"课程顾问补正完成，备注：{req.remark or '无'}", user.id)
+                           f"课程顾问补正完成，备注：{req.remark or '无'}，已重新进入待审核", user.id)
 
         elif action == ACTION_ADVANCE_STAGE:
             ok, missing = validate_required_evidence(db, p, p.stage)
@@ -494,6 +589,10 @@ def process_action(db: Session, p: TrainingProject, req: ProcessActionRequest, u
                                   resp_role=user.role, resp_user_id=user.id, exc_code="EVI-004")
                 db.commit()
                 return (False, "当前阶段材料不完整，无法推进：" + "；".join(missing))
+            if overdue_flag:
+                add_exception(db, p.id, ExceptionRecord.TYPE_OVERDUE,
+                              f"节点超时：阶段推进时已逾期 {overdue_days} 天",
+                              resp_role=user.role, resp_user_id=user.id, exc_code="DUE-ADV-001")
             stage_order = [TrainingProject.STAGE_DEMAND, TrainingProject.STAGE_PLAN, TrainingProject.STAGE_CONTRACT]
             idx = stage_order.index(p.stage) if p.stage in stage_order else -1
             if idx < len(stage_order) - 1:

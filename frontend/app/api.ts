@@ -53,6 +53,76 @@ export interface AuditNote {
   created_at: string
 }
 
+export interface Attachment {
+  id: number
+  file_name: string
+  file_type?: string
+  file_size?: number
+  category: string
+  category_label?: string
+  request_stage_label?: string
+  is_required: boolean
+  uploaded_by?: User
+  uploaded_at: string
+}
+
+export interface ProcessingRecord {
+  id: number
+  project_id: number
+  action: string
+  action_name: string
+  from_status?: string
+  to_status?: string
+  from_stage?: string
+  to_stage?: string
+  operator?: User
+  operator_role?: string
+  operator_role_label?: string
+  remark?: string
+  evidence_checked?: string
+  processed_at: string
+  version_at_action?: number
+}
+
+export interface AuditNote {
+  id: number
+  project_id: number
+  note_type: string
+  note_type_label?: string
+  note_content: string
+  created_by?: User
+  created_at: string
+}
+
+export interface ExceptionRecordItem {
+  id: number
+  project_id: number
+  exception_type: string
+  exception_type_label?: string
+  exception_code?: string
+  exception_message: string
+  responsible_role?: string
+  responsible_role_label?: string
+  responsible_user?: User
+  created_at: string
+  resolved: boolean
+  resolved_at?: string
+  resolution?: string
+}
+
+export interface SupplementInfo {
+  is_supplement_needed: boolean
+  missing_items: string[]
+  reject_reasons: Array<{
+    id: number
+    note_content: string
+    created_at: string
+    created_by?: User
+  }>
+  current_stage: string
+  current_stage_label: string
+}
+
 export interface TrainingProjectSimple {
   id: number
   project_no: string
@@ -88,8 +158,9 @@ export interface TrainingProjectDetail extends TrainingProjectSimple {
   attachments: Attachment[]
   processing_records: ProcessingRecord[]
   audit_notes: AuditNote[]
-  exceptions: any[]
+  exceptions: ExceptionRecordItem[]
   allowed_actions: string[]
+  supplement: SupplementInfo
 }
 
 export interface DashboardStats {
