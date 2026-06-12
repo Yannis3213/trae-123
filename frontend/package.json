@@ -1,0 +1,23 @@
+{
+  "name": "pet-hospital-frontend",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "宠物医院-月底集中处理宠物就诊单系统 - 前端",
+  "scripts": {
+    "dev": "astro dev --port 3109",
+    "start": "astro dev --port 3109",
+    "build": "astro build",
+    "preview": "astro preview --port 3109"
+  },
+  "dependencies": {
+    "astro": "^4.4.0",
+    "@astrojs/react": "^3.0.10",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "axios": "^1.6.7"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.56",
+    "@types/react-dom": "^18.2.19"
+  }
+}

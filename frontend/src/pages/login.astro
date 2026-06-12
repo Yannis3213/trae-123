@@ -1,0 +1,13 @@
+---
+import Layout from '../layouts/Layout.astro';
+import LoginForm from '../components/LoginForm';
+---
+<Layout title="登录 - 宠物医院就诊单系统">
+  <div class="login-wrap">
+    <div class="login-card">
+      <h2>🐾 宠物医院就诊单系统</h2>
+      <p class="sub">月底集中处理 · 高效流转 · 全程留痕</p>
+      <LoginForm client:load />
+    </div>
+  </div>
+</Layout>

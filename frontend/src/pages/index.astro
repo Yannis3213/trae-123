@@ -1,0 +1,10 @@
+---
+import Layout from '../layouts/Layout.astro';
+import AppShell from '../components/AppShell';
+import VisitList from '../components/VisitList';
+---
+<Layout title="就诊单列表 - 宠物医院就诊单系统">
+  <AppShell client:load>
+    <VisitList client:load />
+  </AppShell>
+</Layout>

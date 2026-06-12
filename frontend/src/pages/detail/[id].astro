@@ -1,0 +1,11 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import AppShell from '../../components/AppShell';
+import VisitDetail from '../../components/VisitDetail';
+const { id } = Astro.params;
+---
+<Layout title="就诊单详情 - 宠物医院就诊单系统">
+  <AppShell client:load>
+    <VisitDetail client:load id={id} />
+  </AppShell>
+</Layout>

@@ -1,0 +1,16 @@
+---
+import '../styles/global.css';
+import LoginForm from '../components/LoginForm';
+const { title = '宠物医院就诊单系统' } = Astro.props;
+---
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title}</title>
+</head>
+<body>
+  <slot />
+</body>
+</html>
