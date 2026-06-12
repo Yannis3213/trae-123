@@ -8,6 +8,7 @@ import type {
   AppointmentDetail,
   UserRole,
   ProcessAppointmentRequest,
+  AttachmentInput,
 } from '../types';
 
 const EVIDENCE_LABELS: Record<string, string> = {
@@ -124,6 +125,10 @@ export default function DetailPage() {
   const [correctionNote, setCorrectionNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showProcessModal, setShowProcessModal] = useState(false);
+  const [newAttachments, setNewAttachments] = useState<AttachmentInput[]>([]);
+  const [newEvidenceType, setNewEvidenceType] = useState('customer_appointment');
+  const [newFileName, setNewFileName] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const showToast = (message: string, type: ToastType = 'info') => {
     setToast({ message, type, key: Date.now() });
@@ -153,6 +158,14 @@ export default function DetailPage() {
 
   const currentAction = availableActions.find((a) => a.key === selectedAction);
 
+  useEffect(() => {
+    if (selectedAction && currentAction?.requireEvidence?.[0]) {
+      setNewEvidenceType(currentAction.requireEvidence[0]);
+    }
+    setNewAttachments([]);
+    setNewFileName('');
+  }, [selectedAction, currentAction]);
+
   const deadlineClass = detail?.deadline_status === 'overdue'
     ? 'overdue'
     : detail?.deadline_status === 'approaching'
@@ -169,9 +182,6 @@ export default function DetailPage() {
     if (!currentAction || !detail || !id) return;
     setSubmitting(true);
 
-    const existingTypes = new Set(detail.attachments.map((a) => a.evidence_type));
-    const missingEvidence = currentAction.requireEvidence.filter((e) => !existingTypes.has(e));
-
     const body: ProcessAppointmentRequest = {
       action: currentAction.key,
       remark: remark || null,
@@ -180,7 +190,7 @@ export default function DetailPage() {
       correction_note: correctionNote || null,
       version: detail.appointment.version,
       evidence_required: currentAction.requireEvidence,
-      attachments: [],
+      attachments: newAttachments,
     };
 
     const resp = await api.processAppointment(id, body);
@@ -188,14 +198,36 @@ export default function DetailPage() {
 
     if (resp.success) {
       showToast('操作成功', 'success');
+      sessionStorage.setItem('listNeedRefresh', 'true');
       setSelectedAction(null);
       setRemark('');
       setExceptionReason('');
       setCorrectionNote('');
+      setNewAttachments([]);
+      setNewFileName('');
+      setRefreshKey((k) => k + 1);
       loadDetail();
     } else {
       showToast(resp.message, 'error');
     }
+  };
+
+  const handleAddAttachment = () => {
+    if (!newFileName.trim()) {
+      showToast('请输入文件名', 'info');
+      return;
+    }
+    const newAtt: AttachmentInput = {
+      evidence_type: newEvidenceType,
+      file_name: newFileName.trim(),
+      file_url: `/static/evidence/uploaded_${Date.now()}.jpg`,
+    };
+    setNewAttachments([...newAttachments, newAtt]);
+    setNewFileName('');
+  };
+
+  const handleRemoveAttachment = (index: number) => {
+    setNewAttachments(newAttachments.filter((_, i) => i !== index));
   };
 
   if (loading || userLoading) {
@@ -361,13 +393,26 @@ export default function DetailPage() {
                     borderRadius: 6,
                     marginBottom: 12,
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <strong>{r.handler}（{r.handler_role === 'beautician' ? '护理师' : r.handler_role === 'consultant' ? '美容顾问' : r.handler_role === 'store_manager' ? '店长' : r.handler_role}）</strong>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center' }}>
+                      <div>
+                        <strong>{r.handler}（{r.handler_role === 'beautician' ? '护理师' : r.handler_role === 'consultant' ? '美容顾问' : r.handler_role === 'store_manager' ? '店长' : r.handler_role === 'system' ? '系统' : r.handler_role}）</strong>
+                        {(r.from_version != null || r.to_version != null) && (
+                          <span style={{ fontSize: 10, color: '#ff6b9d', marginLeft: 8, background: '#fff5f8', padding: '1px 5px', borderRadius: 3 }}>
+                            v{r.from_version ?? '-'} → v{r.to_version ?? '-'}
+                          </span>
+                        )}
+                      </div>
                       <span style={{ fontSize: 12, color: '#909399' }}>{r.created_at}</span>
                     </div>
+                    {r.action && (
+                      <div style={{ fontSize: 12, color: '#67c23a', marginBottom: 4 }}>
+                        {r.action === 'correction' ? '补正处理' : r.action === 'return_to_correct' ? '退回补正' : r.action === 'batch_fail' ? '批量处理失败' : r.action === 'mark_overdue' ? '标记逾期' : r.action}
+                      </div>
+                    )}
                     {r.detail && <div style={{ fontSize: 13, color: '#606266', marginTop: 4 }}>处理详情：{r.detail}</div>}
                     {r.exception_reason && <div style={{ fontSize: 13, color: '#f56c6c', marginTop: 4 }}>异常原因：{r.exception_reason}</div>}
                     {r.correction_note && <div style={{ fontSize: 13, color: '#67c23a', marginTop: 4 }}>补正内容：{r.correction_note}</div>}
+                    {r.batch_fail_reason && <div style={{ fontSize: 13, color: '#e6a23c', marginTop: 4 }}>失败原因：{r.batch_fail_reason}</div>}
                   </div>
                 ))}
               </div>
@@ -383,6 +428,11 @@ export default function DetailPage() {
                       {t.from_status && t.to_status && t.from_status !== t.to_status && (
                         <span style={{ fontSize: 12, color: '#909399', fontWeight: 'normal', marginLeft: 8 }}>
                           {t.from_status === 'draft' ? '草稿' : t.from_status === 'pending_review' ? '待复核' : t.from_status} → {t.to_status === 'draft' ? '草稿' : t.to_status === 'pending_review' ? '待复核' : t.to_status === 'archived' ? '已归档' : t.to_status}
+                        </span>
+                      )}
+                      {(t.from_version != null || t.to_version != null) && (
+                        <span style={{ fontSize: 11, color: '#ff6b9d', fontWeight: 'normal', marginLeft: 8, background: '#fff5f8', padding: '2px 6px', borderRadius: 3 }}>
+                          v{t.from_version ?? '-'} → v{t.to_version ?? '-'}
                         </span>
                       )}
                     </div>
@@ -493,17 +543,79 @@ export default function DetailPage() {
 
                   {currentAction && currentAction.requireEvidence.length > 0 && (
                     <div className="form-group">
-                      <div className="form-label">所需证据（后端校验）</div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      <div className="form-label">证据材料（可补传）</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
                         {currentAction.requireEvidence.map((e) => {
-                          const has = (detail.evidence_summary[e as keyof typeof detail.evidence_summary] || []).length > 0;
+                          const existingCount = (detail.evidence_summary[e as keyof typeof detail.evidence_summary] || []).length;
+                          const newCount = newAttachments.filter((a) => a.evidence_type === e).length;
+                          const total = existingCount + newCount;
                           return (
-                            <span key={e} className={`evidence-item ${has ? '' : 'missing'}`}>
-                              {has ? '✓' : '⚠'} {EVIDENCE_LABELS[e] || e}
+                            <span key={e} className={`evidence-item ${total > 0 ? '' : 'missing'}`}>
+                              {total > 0 ? '✓' : '⚠'} {EVIDENCE_LABELS[e] || e}
+                              {total > 0 && <span style={{ marginLeft: 4, fontSize: 11 }}>({total}份)</span>}
                             </span>
                           );
                         })}
                       </div>
+
+                      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                        <select
+                          className="form-select"
+                          style={{ flex: 1 }}
+                          value={newEvidenceType}
+                          onChange={(e) => setNewEvidenceType(e.target.value)}
+                        >
+                          <option value="customer_appointment">顾客预约凭证</option>
+                          <option value="project_confirmation">项目确认单</option>
+                          <option value="service_followup">服务回访记录</option>
+                        </select>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                        <input
+                          className="form-input"
+                          style={{ flex: 1 }}
+                          placeholder="输入文件名（模拟上传）"
+                          value={newFileName}
+                          onChange={(e) => setNewFileName(e.target.value)}
+                        />
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '0 12px', fontSize: 12 }}
+                          onClick={handleAddAttachment}
+                        >
+                          + 添加
+                        </button>
+                      </div>
+
+                      {newAttachments.length > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ fontSize: 12, color: '#606266', marginBottom: 6 }}>本次新增证据：</div>
+                          {newAttachments.map((att, idx) => (
+                            <div key={idx} style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              padding: '6px 8px',
+                              background: '#f5f7fa',
+                              borderRadius: 4,
+                              marginBottom: 4,
+                              fontSize: 12,
+                            }}>
+                              <span>📄 {att.file_name}
+                                <span style={{ fontSize: 11, color: '#909399', marginLeft: 6 }}>
+                                  （{EVIDENCE_LABELS[att.evidence_type] || att.evidence_type}）
+                                </span>
+                              </span>
+                              <span
+                                style={{ color: '#f56c6c', cursor: 'pointer' }}
+                                onClick={() => handleRemoveAttachment(idx)}
+                              >
+                                删除
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 

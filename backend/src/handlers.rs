@@ -229,6 +229,8 @@ impl AppointmentApi {
                 action_label: action_label(&row.try_get::<String, _>("action").unwrap_or_default()),
                 from_status: row.try_get("from_status").ok(),
                 to_status: row.try_get("to_status").ok(),
+                from_version: row.try_get("from_version").ok(),
+                to_version: row.try_get("to_version").ok(),
                 operator: row.try_get("operator").unwrap_or_default(),
                 operator_role: row.try_get("operator_role").unwrap_or_default(),
                 operator_role_label: role_label(&row.try_get::<String, _>("operator_role").unwrap_or_default()),
@@ -314,7 +316,7 @@ impl AppointmentApi {
         }
 
         let username = state.current_user.lock().await.clone();
-        insert_audit(&state.pool, &apt.id, "create", None, Some("draft"), &username, &role, Some("新建预约单".to_string())).await;
+        insert_audit(&state.pool, &apt.id, "create", None, Some("draft"), None, Some(1), &username, &role, Some("新建预约单".to_string())).await;
 
         Json(AppointmentApiResponse { success: true, message: "创建成功".to_string(), data: Some(apt) })
     }
@@ -428,7 +430,7 @@ impl AppointmentApi {
             .ok();
         }
 
-        insert_audit(&state.pool, &id, &body.action, Some(&apt.status), Some(&new_status), &username, &role, body.remark.clone()).await;
+        insert_audit(&state.pool, &id, &body.action, Some(&apt.status), Some(&new_status), Some(apt.version), Some(new_version), &username, &role, body.remark.clone()).await;
 
         if body.action == "correction_submit" || body.action == "return_to_correct" {
             insert_processing_record(
@@ -441,6 +443,9 @@ impl AppointmentApi {
                 body.remark.as_deref(),
                 exc_reason.as_deref(),
                 body.correction_note.as_deref(),
+                Some(apt.version),
+                Some(new_version),
+                None,
                 &now,
             ).await;
         }
@@ -489,7 +494,7 @@ impl AppointmentApi {
                         success: false,
                         message: msg.clone(),
                     });
-                    insert_processing_record(&state.pool, aid, "未知", "batch_fail", &username, &role, Some(&msg), None, None, &now).await;
+                    insert_processing_record(&state.pool, aid, "未知", "batch_fail", &username, &role, Some(&msg), None, None, None, None, Some(&msg), &now).await;
                     continue;
                 }
             };
@@ -519,7 +524,7 @@ impl AppointmentApi {
                     success: false,
                     message: e.message.clone(),
                 });
-                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, &now).await;
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), &now).await;
                 continue;
             }
 
@@ -532,7 +537,7 @@ impl AppointmentApi {
                     success: false,
                     message: msg.clone(),
                 });
-                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref().or(Some("逾期未处理")), None, &now).await;
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref().or(Some("逾期未处理")), None, Some(version), None, Some(&msg), &now).await;
                 continue;
             }
 
@@ -545,7 +550,7 @@ impl AppointmentApi {
                         success: false,
                         message: e.message.clone(),
                     });
-                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, &now).await;
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), &now).await;
                     continue;
                 }
                 _ => {}
@@ -582,7 +587,7 @@ impl AppointmentApi {
                         success: false,
                         message: e.message.clone(),
                     });
-                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, &now).await;
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), &now).await;
                     continue;
                 }
                 _ => {}
@@ -605,7 +610,7 @@ impl AppointmentApi {
                     success: false,
                     message: e.message.clone(),
                 });
-                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, &now).await;
+                insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&e.message), exception_reason.as_deref(), None, Some(version), None, Some(&e.message), &now).await;
                 continue;
             }
 
@@ -655,12 +660,33 @@ impl AppointmentApi {
                             success: false,
                             message: msg.clone(),
                         });
-                        insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, &now).await;
+                        insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, Some(version), None, Some(&msg), &now).await;
                     } else {
                         success_count += 1;
-                        insert_audit(&state.pool, aid, &body.action, Some(&status), Some(&new_status), &username, &role, body.remark.clone()).await;
+                        insert_audit(&state.pool, aid, &body.action, Some(&status), Some(&new_status), Some(version), Some(new_version), &username, &role, body.remark.clone()).await;
                         if body.action == "return_to_correct" || body.action == "correction_submit" {
-                            insert_processing_record(&state.pool, aid, &order_no, if body.action == "correction_submit" { "correction" } else { &body.action }, &username, &role, body.remark.as_deref(), new_exception_reason.as_deref(), None, &now).await;
+                            let corr_note = body.correction_note.clone();
+                            insert_processing_record(&state.pool, aid, &order_no, if body.action == "correction_submit" { "correction" } else { &body.action }, &username, &role, body.remark.as_deref(), new_exception_reason.as_deref(), corr_note.as_deref(), Some(version), Some(new_version), None, &now).await;
+                        }
+                        if let Some(attachments) = &body.attachments {
+                            for att in attachments {
+                                sqlx::query(
+                                    r#"
+                                    INSERT INTO appointment_attachments (id, appointment_id, evidence_type, file_name, file_url, uploaded_by, uploaded_at)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                    "#
+                                )
+                                .bind(Uuid::new_v4().to_string())
+                                .bind(aid)
+                                .bind(&att.evidence_type)
+                                .bind(&att.file_name)
+                                .bind(&att.file_url)
+                                .bind(&username)
+                                .bind(&now)
+                                .execute(&state.pool)
+                                .await
+                                .ok();
+                            }
                         }
                         results.push(BatchResultItem {
                             appointment_id: aid.clone(),
@@ -679,7 +705,7 @@ impl AppointmentApi {
                         success: false,
                         message: msg.clone(),
                     });
-                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, &now).await;
+                    insert_processing_record(&state.pool, aid, &order_no, "batch_fail", &username, &role, Some(&msg), exception_reason.as_deref(), None, Some(version), None, Some(&msg), &now).await;
                 }
             }
         }
@@ -739,6 +765,8 @@ async fn insert_audit(
     action: &str,
     from_s: Option<&str>,
     to_s: Option<&str>,
+    from_v: Option<i64>,
+    to_v: Option<i64>,
     operator: &str,
     operator_role: &str,
     remark: Option<String>,
@@ -746,8 +774,8 @@ async fn insert_audit(
     let now = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     sqlx::query(
         r#"
-        INSERT INTO audit_trails (id, appointment_id, action, from_status, to_status, operator, operator_role, remark, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO audit_trails (id, appointment_id, action, from_status, to_status, from_version, to_version, operator, operator_role, remark, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#
     )
     .bind(Uuid::new_v4().to_string())
@@ -755,6 +783,8 @@ async fn insert_audit(
     .bind(action)
     .bind(from_s)
     .bind(to_s)
+    .bind(from_v)
+    .bind(to_v)
     .bind(operator)
     .bind(operator_role)
     .bind(remark.as_deref())
@@ -774,12 +804,15 @@ async fn insert_processing_record(
     detail: Option<&str>,
     exception_reason: Option<&str>,
     correction_note: Option<&str>,
+    from_version: Option<i64>,
+    to_version: Option<i64>,
+    batch_fail_reason: Option<&str>,
     now: &str,
 ) {
     sqlx::query(
         r#"
-        INSERT INTO processing_records (id, appointment_id, action, handler, handler_role, detail, exception_reason, correction_note, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO processing_records (id, appointment_id, action, handler, handler_role, detail, exception_reason, correction_note, from_version, to_version, batch_fail_reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#
     )
     .bind(Uuid::new_v4().to_string())
@@ -790,6 +823,9 @@ async fn insert_processing_record(
     .bind(detail)
     .bind(exception_reason)
     .bind(correction_note)
+    .bind(from_version)
+    .bind(to_version)
+    .bind(batch_fail_reason)
     .bind(now)
     .execute(pool)
     .await

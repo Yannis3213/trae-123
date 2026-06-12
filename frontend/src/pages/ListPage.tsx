@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import { useUser } from '../hooks/useUser';
 import Toast, { type ToastType } from '../components/Toast';
@@ -36,6 +36,7 @@ const STATUS_FILTERS: { key: string; label: string }[] = [
 
 export default function ListPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, loading: userLoading, switchRole } = useUser();
   const [data, setData] = useState<AppointmentsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -68,7 +69,14 @@ export default function ListPage() {
 
   useEffect(() => {
     loadData();
-  }, [statusFilter]);
+  }, [statusFilter, user?.role]);
+
+  useEffect(() => {
+    if (location.pathname === '/' && sessionStorage.getItem('listNeedRefresh') === 'true') {
+      sessionStorage.removeItem('listNeedRefresh');
+      loadData();
+    }
+  }, [location.pathname]);
 
   const allItems = useMemo(() => {
     if (!data) return [];

@@ -47,6 +47,8 @@ export interface AuditTrail {
   action_label: string;
   from_status?: string | null;
   to_status?: string | null;
+  from_version?: number | null;
+  to_version?: number | null;
   operator: string;
   operator_role: string;
   operator_role_label: string;
@@ -63,6 +65,10 @@ export interface ProcessingRecord {
   detail?: string | null;
   exception_reason?: string | null;
   correction_note?: string | null;
+  from_version?: number | null;
+  to_version?: number | null;
+  batch_fail_reason?: string | null;
+  audit_remark?: string | null;
   created_at: string;
 }
 
@@ -156,6 +162,10 @@ export interface BatchProcessRequest {
   action: string;
   remark?: string | null;
   version_map?: Record<string, number>;
+  exception_type?: string | null;
+  exception_reason?: string | null;
+  correction_note?: string | null;
+  attachments?: AttachmentInput[];
 }
 
 export interface BatchResultItem {

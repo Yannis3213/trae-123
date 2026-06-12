@@ -87,6 +87,8 @@ pub struct AuditTrail {
     pub action_label: String,
     pub from_status: Option<String>,
     pub to_status: Option<String>,
+    pub from_version: Option<i64>,
+    pub to_version: Option<i64>,
     pub operator: String,
     pub operator_role: String,
     pub operator_role_label: String,
@@ -104,6 +106,10 @@ pub struct ProcessingRecord {
     pub detail: Option<String>,
     pub exception_reason: Option<String>,
     pub correction_note: Option<String>,
+    pub from_version: Option<i64>,
+    pub to_version: Option<i64>,
+    pub batch_fail_reason: Option<String>,
+    pub audit_remark: Option<String>,
     pub created_at: String,
 }
 
@@ -246,6 +252,10 @@ pub struct BatchProcessRequest {
     pub action: String,
     pub remark: Option<String>,
     pub version_map: Option<serde_json::Value>,
+    pub exception_type: Option<String>,
+    pub exception_reason: Option<String>,
+    pub correction_note: Option<String>,
+    pub attachments: Option<Vec<AttachmentInput>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Object)]
