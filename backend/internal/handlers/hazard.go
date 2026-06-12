@@ -863,23 +863,29 @@ type BatchRequest struct {
 }
 
 type BatchResultItem struct {
-	ID             int64               `json:"id"`
-	HazardNo       string              `json:"hazard_no"`
-	Title          string              `json:"title"`
-	Success        bool                `json:"success"`
-	Message        string              `json:"message"`
-	ErrorCode      string              `json:"error_code"`
-	FromStatus     models.HazardStatus `json:"from_status"`
-	FromStatusName string              `json:"from_status_name"`
-	ToStatus       models.HazardStatus `json:"to_status"`
-	ToStatusName   string              `json:"to_status_name"`
-	FixByRole      string              `json:"fix_by_role"`
-	FixByName      string              `json:"fix_by_name"`
-	CurrentVersion int64               `json:"current_version"`
-	PageVersion    int64               `json:"page_version"`
-	WarningLevel   string              `json:"warning_level"`
-	Responsible    string              `json:"responsible"`
-	CurrentHandler string              `json:"current_handler"`
+	ID                    int64               `json:"id"`
+	HazardID              int64               `json:"hazard_id"`
+	HazardNo              string              `json:"hazard_no"`
+	Title                 string              `json:"title"`
+	Success               bool                `json:"success"`
+	Message               string              `json:"message"`
+	ErrorCode             string              `json:"error_code"`
+	AbnormalCategory      string              `json:"abnormal_category"`
+	FromStatus            models.HazardStatus `json:"from_status"`
+	FromStatusName        string              `json:"from_status_name"`
+	ToStatus              models.HazardStatus `json:"to_status"`
+	ToStatusName          string              `json:"to_status_name"`
+	SuggestNextStatus     models.HazardStatus `json:"suggest_next_status"`
+	SuggestNextStatusName string              `json:"suggest_next_status_name"`
+	FixByRole             string              `json:"fix_by_role"`
+	FixByRoleName         string              `json:"fix_by_role_name"`
+	FixByName             string              `json:"fix_by_name"`
+	CurrentVersion        int64               `json:"current_version"`
+	PageVersion           int64               `json:"page_version"`
+	WarningLevel          string              `json:"warning_level"`
+	Responsible           string              `json:"responsible"`
+	CurrentHandler        string              `json:"current_handler"`
+	AbnormalReasonID      int64               `json:"abnormal_reason_id"`
 }
 
 func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
@@ -899,6 +905,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 	for _, item := range req.Items {
 		result := BatchResultItem{
 			ID:          item.ID,
+			HazardID:    item.ID,
 			Success:     false,
 			PageVersion: item.Version,
 		}
@@ -907,6 +914,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			result.Message = "事务启动失败"
 			result.ErrorCode = "tx_error"
+			result.AbnormalCategory = "系统错误"
 			results = append(results, result)
 			continue
 		}
@@ -923,6 +931,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		if err == sql.ErrNoRows {
 			result.Message = "隐患单不存在"
 			result.ErrorCode = "not_found"
+			result.AbnormalCategory = "数据不存在"
 			tx.Rollback()
 			results = append(results, result)
 			continue
@@ -930,6 +939,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			result.Message = "查询失败"
 			result.ErrorCode = "db_error"
+			result.AbnormalCategory = "系统错误"
 			tx.Rollback()
 			results = append(results, result)
 			continue
@@ -946,7 +956,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		result.ToStatusName = getStatusName(req.ToStatus)
 
 		if item.Version > 0 && item.Version != currentVersion {
-			h.handleFailure(tx, item.ID,
+			abnID := h.handleFailure(tx, item.ID,
 				fmt.Sprintf("版本冲突：页面 v%d / 后端 v%d", item.Version, currentVersion),
 				"版本冲突", user.Name)
 			result.Message = fmt.Sprintf("版本冲突：页面 v%d / 后端 v%d", item.Version, currentVersion)
@@ -954,32 +964,20 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 			if result.FixByRole == "" {
 				result.FixByRole = string(user.Role)
 			}
-			if strings.TrimSpace(result.FixByName) == "" {
-				if strings.TrimSpace(currentHandler) != "" {
-					result.FixByName = currentHandler
-				} else if strings.TrimSpace(currentResponsible) != "" {
-					result.FixByName = currentResponsible
-				}
-			}
+			result.finalize(currentStatus, currentHandler, currentResponsible, abnID, "版本冲突")
 			results = append(results, result)
 			continue
 		}
 
 		if item.PageStatus != "" && item.PageStatus != currentStatus {
-			h.handleFailure(tx, item.ID,
+			abnID := h.handleFailure(tx, item.ID,
 				fmt.Sprintf("状态冲突：页面「%s」/ 后端「%s」",
 					getStatusName(item.PageStatus), getStatusName(currentStatus)),
 				"状态冲突", user.Name)
 			result.Message = fmt.Sprintf("状态冲突：页面「%s」/ 后端「%s」",
 				getStatusName(item.PageStatus), getStatusName(currentStatus))
 			result.ErrorCode = "status_conflict"
-			if strings.TrimSpace(result.FixByName) == "" {
-				if strings.TrimSpace(currentHandler) != "" {
-					result.FixByName = currentHandler
-				} else if strings.TrimSpace(currentResponsible) != "" {
-					result.FixByName = currentResponsible
-				}
-			}
+			result.finalize(currentStatus, currentHandler, currentResponsible, abnID, "状态冲突")
 			results = append(results, result)
 			continue
 		}
@@ -992,21 +990,18 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		result.WarningLevel = string(warningLevel)
 
 		if warningLevel == models.WarningOverdue && req.ToStatus != models.StatusReturned && req.ToStatus != "" {
-			h.handleFailure(tx, item.ID, "已逾期不能直接推进", "逾期", user.Name)
+			abnID := h.handleFailure(tx, item.ID, "已逾期不能直接推进", "逾期", user.Name)
 			result.Message = "已逾期，不能直接推进。请先到详情页补正或退回"
 			result.ErrorCode = "overdue_blocked"
 			if result.FixByRole == "" {
 				result.FixByRole = string(models.RoleSupervisor)
 			}
 			if strings.TrimSpace(result.FixByName) == "" {
-				if strings.TrimSpace(currentHandler) != "" {
-					result.FixByName = currentHandler
-				} else if strings.TrimSpace(currentResponsible) != "" {
-					result.FixByName = currentResponsible
-				} else {
+				if strings.TrimSpace(currentHandler) == "" && strings.TrimSpace(currentResponsible) == "" {
 					result.FixByName = getRoleName(models.RoleSupervisor)
 				}
 			}
+			result.finalize(currentStatus, currentHandler, currentResponsible, abnID, "逾期")
 			results = append(results, result)
 			continue
 		}
@@ -1026,14 +1021,13 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		if isHandlerCheckRequired && strings.TrimSpace(currentHandler) != "" &&
 			strings.TrimSpace(currentHandler) != user.Name &&
 			req.ToStatus != models.StatusReturned {
-			h.handleFailure(tx, item.ID,
+			abnID := h.handleFailure(tx, item.ID,
 				fmt.Sprintf("非当前处理人操作：%s 尝试操作，处理人为 %s", user.Name, currentHandler),
 				"越权操作", user.Name)
 			result.Message = fmt.Sprintf("非当前处理人：该单据处理人为「%s」", currentHandler)
 			result.ErrorCode = "not_current_handler"
-			if strings.TrimSpace(result.FixByName) == "" {
-				result.FixByName = currentHandler
-			}
+			result.FixByName = currentHandler
+			result.finalize(currentStatus, currentHandler, currentResponsible, abnID, "越权操作")
 			results = append(results, result)
 			continue
 		}
@@ -1041,7 +1035,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		if req.ToStatus != "" {
 			vr := h.validateTransition(currentStatus, req.ToStatus, user)
 			if !vr.Valid {
-				h.handleFailure(tx, item.ID,
+				abnID := h.handleFailure(tx, item.ID,
 					fmt.Sprintf("状态流转校验失败：%s → %s，原因：%s", currentStatus, req.ToStatus, vr.Message),
 					"状态冲突", user.Name)
 				result.Message = vr.Message
@@ -1052,13 +1046,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 				if vr.FixByName != "" && strings.TrimSpace(result.FixByName) == "" {
 					result.FixByName = vr.FixByName
 				}
-				if strings.TrimSpace(result.FixByName) == "" {
-					if strings.TrimSpace(currentHandler) != "" {
-						result.FixByName = currentHandler
-					} else if strings.TrimSpace(currentResponsible) != "" {
-						result.FixByName = currentResponsible
-					}
-				}
+				result.finalize(currentStatus, currentHandler, currentResponsible, abnID, "状态冲突")
 				results = append(results, result)
 				continue
 			}
@@ -1080,7 +1068,7 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		evr := h.validateRequiredEvidence(req.ToStatus, paReq)
 		if !evr.Valid {
-			h.handleFailure(tx, item.ID,
+			abnID := h.handleFailure(tx, item.ID,
 				fmt.Sprintf("必填证据缺失：%s", evr.Message),
 				"缺材料", user.Name)
 			result.Message = evr.Message
@@ -1090,11 +1078,8 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 			}
 			if evr.FixByName != "" {
 				result.FixByName = evr.FixByName
-			} else if strings.TrimSpace(currentHandler) != "" {
-				result.FixByName = currentHandler
-			} else if strings.TrimSpace(currentResponsible) != "" {
-				result.FixByName = currentResponsible
 			}
+			result.finalize(currentStatus, currentHandler, currentResponsible, abnID, "缺材料")
 			results = append(results, result)
 			continue
 		}
@@ -1136,35 +1121,23 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 
 		res, err := tx.Exec(updateSQL, updateArgs...)
 		if err != nil {
-			h.handleFailure(tx, item.ID,
+			abnID := h.handleFailure(tx, item.ID,
 				fmt.Sprintf("更新数据库失败：%s", err.Error()),
 				"系统错误", user.Name)
 			result.Message = "更新失败：" + err.Error()
 			result.ErrorCode = "update_error"
-			if strings.TrimSpace(result.FixByName) == "" {
-				if strings.TrimSpace(currentHandler) != "" {
-					result.FixByName = currentHandler
-				} else if strings.TrimSpace(currentResponsible) != "" {
-					result.FixByName = currentResponsible
-				}
-			}
+			result.finalize(currentStatus, currentHandler, currentResponsible, abnID, "系统错误")
 			results = append(results, result)
 			continue
 		}
 		affected, _ := res.RowsAffected()
 		if affected == 0 {
-			h.handleFailure(tx, item.ID,
+			abnID := h.handleFailure(tx, item.ID,
 				"更新冲突：状态或版本已在别处被修改",
 				"更新冲突", user.Name)
 			result.Message = "状态冲突或已被他人修改，请刷新后重试"
 			result.ErrorCode = "update_conflict"
-			if strings.TrimSpace(result.FixByName) == "" {
-				if strings.TrimSpace(currentHandler) != "" {
-					result.FixByName = currentHandler
-				} else if strings.TrimSpace(currentResponsible) != "" {
-					result.FixByName = currentResponsible
-				}
-			}
+			result.finalize(currentStatus, currentHandler, currentResponsible, abnID, "更新冲突")
 			results = append(results, result)
 			continue
 		}
@@ -1181,18 +1154,12 @@ func (h *Handler) BatchProcess(w http.ResponseWriter, r *http.Request) {
 		h.insertProcessRecordTx(tx, item.ID, req.Action, currentStatus, newStatus, user, req.Remark, allEvidence)
 
 		if err = tx.Commit(); err != nil {
-			h.handleFailure(tx, item.ID,
+			abnID := h.handleFailure(tx, item.ID,
 				fmt.Sprintf("事务提交失败：%s", err.Error()),
 				"系统错误", user.Name)
 			result.Message = "提交失败"
 			result.ErrorCode = "commit_error"
-			if strings.TrimSpace(result.FixByName) == "" {
-				if strings.TrimSpace(currentHandler) != "" {
-					result.FixByName = currentHandler
-				} else if strings.TrimSpace(currentResponsible) != "" {
-					result.FixByName = currentResponsible
-				}
-			}
+			result.finalize(currentStatus, currentHandler, currentResponsible, abnID, "系统错误")
 			results = append(results, result)
 			continue
 		}
@@ -1514,9 +1481,10 @@ func (h *Handler) insertAbnormalReasonTx(tx *sql.Tx, hazardID int64, reason stri
 		VALUES (?, ?, ?, ?, 0)`, hazardID, reason, category, reportedBy)
 }
 
-func (h *Handler) insertAbnormalReason(hazardID int64, reason string, category string, reportedBy string) {
-	db.DB.Exec(`INSERT INTO abnormal_reasons (hazard_id, reason, category, reported_by, resolved) 
+func (h *Handler) insertAbnormalReason(hazardID int64, reason string, category string, reportedBy string) int64 {
+	result, _ := db.DB.Exec(`INSERT INTO abnormal_reasons (hazard_id, reason, category, reported_by, resolved) 
 		VALUES (?, ?, ?, ?, 0)`, hazardID, reason, category, reportedBy)
+	abnormalID, _ := result.LastInsertId()
 	if category != "" {
 		var abnormalTagsStr string
 		db.DB.QueryRow("SELECT abnormal_tags FROM fire_hazards WHERE id = ?", hazardID).Scan(&abnormalTagsStr)
@@ -1536,11 +1504,74 @@ func (h *Handler) insertAbnormalReason(hazardID int64, reason string, category s
 				string(tagsJSON), hazardID)
 		}
 	}
+	return abnormalID
 }
 
-func (h *Handler) handleFailure(tx *sql.Tx, hazardID int64, reason string, category string, reportedBy string) {
+func (h *Handler) handleFailure(tx *sql.Tx, hazardID int64, reason string, category string, reportedBy string) int64 {
 	if tx != nil {
 		tx.Rollback()
 	}
-	h.insertAbnormalReason(hazardID, reason, category, reportedBy)
+	return h.insertAbnormalReason(hazardID, reason, category, reportedBy)
+}
+
+func suggestNextStatusByError(errorCode string, currentStatus models.HazardStatus) models.HazardStatus {
+	switch errorCode {
+	case "missing_evidence", "missing_rectify_notice", "missing_recheck_result", "missing_return_reason", "missing_handler":
+		return currentStatus
+	case "not_current_handler", "version_conflict", "status_conflict", "update_conflict":
+		return currentStatus
+	case "overdue_blocked":
+		return models.StatusReturned
+	case "role_permission", "invalid_transition":
+		return currentStatus
+	}
+	return currentStatus
+}
+
+func abnormalCategoryByError(errorCode string) string {
+	switch errorCode {
+	case "version_conflict", "update_conflict":
+		return "更新冲突"
+	case "status_conflict", "invalid_transition":
+		return "状态冲突"
+	case "overdue_blocked":
+		return "逾期"
+	case "not_current_handler", "role_permission":
+		return "越权操作"
+	case "missing_evidence", "missing_rectify_notice", "missing_recheck_result", "missing_return_reason", "missing_handler":
+		return "缺材料"
+	case "update_error", "commit_error", "tx_error", "db_error":
+		return "系统错误"
+	case "not_found":
+		return "数据不存在"
+	}
+	return "异常"
+}
+
+func (result *BatchResultItem) finalize(currentStatus models.HazardStatus, currentHandler string, currentResponsible string, abnormalID int64, categoryOverride string) {
+	if result.ErrorCode != "" && result.AbnormalCategory == "" {
+		if categoryOverride != "" {
+			result.AbnormalCategory = categoryOverride
+		} else {
+			result.AbnormalCategory = abnormalCategoryByError(result.ErrorCode)
+		}
+	}
+	if abnormalID > 0 && result.AbnormalReasonID == 0 {
+		result.AbnormalReasonID = abnormalID
+	}
+	if strings.TrimSpace(result.FixByName) == "" {
+		if strings.TrimSpace(currentHandler) != "" {
+			result.FixByName = currentHandler
+		} else if strings.TrimSpace(currentResponsible) != "" {
+			result.FixByName = currentResponsible
+		}
+	}
+	if result.FixByRole != "" && result.FixByRoleName == "" {
+		result.FixByRoleName = getRoleName(models.Role(result.FixByRole))
+	}
+	suggestStatus := suggestNextStatusByError(result.ErrorCode, currentStatus)
+	if result.SuggestNextStatus == "" {
+		result.SuggestNextStatus = suggestStatus
+		result.SuggestNextStatusName = getStatusName(suggestStatus)
+	}
 }

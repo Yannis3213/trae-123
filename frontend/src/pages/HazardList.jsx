@@ -212,6 +212,7 @@ export default function HazardList({ store, onViewDetail, onCreate, onBatchProce
               <th>责任人</th>
               <th>当前处理人</th>
               <th>状态</th>
+              <th>版本</th>
               <th>截止时间</th>
               <th>预警</th>
               <th>异常标签</th>
@@ -221,12 +222,13 @@ export default function HazardList({ store, onViewDetail, onCreate, onBatchProce
           <tbody>
             {groupedHazards.length === 0 ? (
               <tr>
-                <td colSpan="11">
+                <td colSpan="12">
                   <div className="empty-state">暂无符合条件的消防隐患单</div>
                 </td>
               </tr>
             ) : groupedHazards.map(h => {
               const days = daysUntil(h.deadline)
+              const hasAbnormal = h.abnormal_tags && h.abnormal_tags.length > 0
               return (
                 <tr key={h.id} className={selectedIds.includes(h.id) ? 'selected' : ''}>
                   <td>
@@ -250,8 +252,18 @@ export default function HazardList({ store, onViewDetail, onCreate, onBatchProce
                   <td>{h.responsible || '-'}</td>
                   <td>{h.current_handler || '-'}</td>
                   <td>
-                    <span className="status-badge" style={{background: STATUS_COLORS[h.status] + '20', color: STATUS_COLORS[h.status]}}>
+                    <span className="status-badge" style={{
+                      background: STATUS_COLORS[h.status] + '20',
+                      color: STATUS_COLORS[h.status],
+                      fontWeight: '600',
+                      border: '1px solid ' + STATUS_COLORS[h.status] + '40'
+                    }}>
                       {STATUS_NAMES[h.status]}
+                    </span>
+                  </td>
+                  <td>
+                    <span style={{fontFamily: 'monospace', fontSize: '12px', color: '#6b7280', fontWeight: '500'}}>
+                      v{h.version || 1}
                     </span>
                   </td>
                   <td>
@@ -265,19 +277,33 @@ export default function HazardList({ store, onViewDetail, onCreate, onBatchProce
                   <td>
                     <span>
                       <span className="warning-icon" style={{background: WARNING_COLORS[h.warning_level]}}></span>
-                      <span style={{color: WARNING_COLORS[h.warning_level], fontWeight: '500'}}>
+                      <span style={{color: WARNING_COLORS[h.warning_level], fontWeight: '600'}}>
                         {WARNING_NAMES[h.warning_level]}
                       </span>
                     </span>
                   </td>
                   <td>
-                    {(h.abnormal_tags || []).map((t, i) => (
-                      <span key={i} className="tag tag-sm abnormal-tag">{t}</span>
-                    ))}
-                    {(!h.abnormal_tags || h.abnormal_tags.length === 0) && <span style={{color: '#9ca3af', fontSize: '12px'}}>-</span>}
+                    {hasAbnormal ? (
+                      <div style={{display: 'flex', flexWrap: 'wrap', gap: '4px'}}>
+                        {(h.abnormal_tags || []).map((t, i) => (
+                          <span key={i} className="tag tag-sm abnormal-tag" style={{
+                            background: '#fef2f2',
+                            color: '#dc2626',
+                            border: '1px solid #fecaca',
+                            fontWeight: '600'
+                          }}>{t}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span style={{color: '#d1d5db', fontSize: '12px'}}>-</span>
+                    )}
                   </td>
                   <td>
-                    <button className="link-btn" onClick={() => onViewDetail(h.id)}>查看/办理</button>
+                    <button
+                      className="link-btn"
+                      onClick={() => onViewDetail(h.id)}
+                      style={{fontWeight: '500'}}
+                    >查看/办理</button>
                   </td>
                 </tr>
               )

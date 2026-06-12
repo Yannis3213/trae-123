@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks'
 import { api } from '../api'
 import { STATUS_NAMES, STATUS_COLORS } from '../types'
 
-export default function BatchProcessModal({ config, store, onClose }) {
+export default function BatchProcessModal({ config, store, onClose, onOpenDetail }) {
   const { items, label, to_status, action } = config
   const { showToast, refresh } = store
   const [form, setForm] = useState({
@@ -269,10 +269,34 @@ export default function BatchProcessModal({ config, store, onClose }) {
                       <div style={{fontSize: '12px', color: r.success ? '#059669' : '#dc2626', marginTop: '2px'}}>
                         {r.message}
                       </div>
-                      {!r.success && r.error_code && (
-                        <div style={{fontSize: '11px', color: '#6b7280', marginTop: '2px'}}>
-                          错误码：{r.error_code}
-                          {errorCodeDescriptions[r.error_code] && `（${errorCodeDescriptions[r.error_code]}）`}
+                      {!r.success && (
+                        <div style={{display: 'flex', flexWrap: 'wrap', gap: '6px 10px', marginTop: '4px', fontSize: '11px', color: '#6b7280'}}>
+                          {r.error_code && (
+                            <span>
+                              错误码：<span style={{color: '#374151', fontWeight: '500'}}>{r.error_code}</span>
+                              {errorCodeDescriptions[r.error_code] && `（${errorCodeDescriptions[r.error_code]}）`}
+                            </span>
+                          )}
+                          {r.abnormal_category && (
+                            <span>
+                              分类：<span style={{color: '#dc2626', fontWeight: '500'}}>{r.abnormal_category}</span>
+                            </span>
+                          )}
+                          {r.suggest_next_status_name && r.suggest_next_status !== r.from_status && (
+                            <span>
+                              建议状态：<span style={{color: '#2563eb', fontWeight: '500'}}>{r.suggest_next_status_name}</span>
+                            </span>
+                          )}
+                          {r.fix_by_role_name && (
+                            <span>
+                              补正角色：<span style={{fontWeight: '500'}}>{r.fix_by_role_name}</span>
+                            </span>
+                          )}
+                          {r.current_version && r.page_version && (
+                            <span>
+                              版本：页面 v{r.page_version} / 后端 v{r.current_version}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -286,13 +310,26 @@ export default function BatchProcessModal({ config, store, onClose }) {
                       ) : null}
                     </div>
                     {!r.success && r.fix_by_name && (
-                      <div style={{minWidth: '100px', textAlign: 'right', fontSize: '12px'}}>
-                        <span style={{color: '#dc2626'}}>补正：{r.fix_by_name}</span>
+                      <div style={{minWidth: '110px', textAlign: 'right', fontSize: '12px'}}>
+                        <div style={{color: '#dc2626', fontWeight: '500'}}>补正：{r.fix_by_name}</div>
                       </div>
                     )}
-                    {!r.success && r.current_version && r.page_version && (
-                      <div style={{minWidth: '100px', textAlign: 'right', fontSize: '11px', color: '#6b7280'}}>
-                        页面 v{r.page_version} / 后端 v{r.current_version}
+                    {!r.success && onOpenDetail && r.hazard_id && (
+                      <div style={{minWidth: '88px', textAlign: 'right'}}>
+                        <button
+                          className="btn btn-sm"
+                          style={{
+                            background: '#eff6ff',
+                            color: '#2563eb',
+                            border: '1px solid #bfdbfe',
+                            padding: '4px 10px',
+                            fontSize: '12px',
+                            fontWeight: '500'
+                          }}
+                          onClick={() => onOpenDetail(r.hazard_id)}
+                        >
+                          🔧 详情补正
+                        </button>
                       </div>
                     )}
                   </div>

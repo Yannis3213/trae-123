@@ -495,17 +495,45 @@ export default function HazardDetail({ id, store, onClose }) {
               </div>
 
               <div className="detail-section">
-                <div className="section-title"><span className="dot"></span>异常原因记录</div>
+                <div className="section-title">
+                  <span className="dot"></span>异常原因记录
+                  {abnormal_reasons.filter(a => !a.resolved).length > 0 && (
+                    <span className="tag" style={{
+                      marginLeft: '10px',
+                      background: '#fef2f2',
+                      color: '#dc2626',
+                      border: '1px solid #fecaca',
+                      fontSize: '12px'
+                    }}>
+                      {abnormal_reasons.filter(a => !a.resolved).length} 项待补正
+                    </span>
+                  )}
+                </div>
                 <div className="abnormal-list">
                   {abnormal_reasons.length === 0 ? (
                     <div style={{color: '#9ca3af', fontSize: '13px', padding: '10px 0'}}>暂无异常记录</div>
                   ) : abnormal_reasons.map(a => (
-                    <div key={a.id} className="abnormal-item">
+                    <div key={a.id} className="abnormal-item" style={{
+                      borderLeft: a.resolved ? '4px solid #10b981' : '4px solid #dc2626',
+                      background: a.resolved ? '#f9fafb' : '#fff1f2',
+                      border: a.resolved ? '1px solid #e5e7eb' : '1px solid #fecaca'
+                    }}>
                       <div className="abnormal-header">
                         <span className="abnormal-reporter">
                           {a.reported_by}
-                          {a.category && <span className="tag" style={{marginLeft: '8px', background: '#fef3c7', color: '#92400e'}}>{a.category}</span>}
-                          {a.resolved && <span className="tag" style={{marginLeft: '8px', background: '#d1fae5', color: '#065f46'}}>已解决</span>}
+                          {a.category && (
+                            <span className="tag" style={{
+                              marginLeft: '8px',
+                              background: a.resolved ? '#e5e7eb' : '#fef3c7',
+                              color: a.resolved ? '#4b5563' : '#92400e',
+                              fontWeight: '600'
+                            }}>{a.category}</span>
+                          )}
+                          {a.resolved ? (
+                            <span className="tag" style={{marginLeft: '8px', background: '#d1fae5', color: '#065f46'}}>已解决</span>
+                          ) : (
+                            <span className="tag" style={{marginLeft: '8px', background: '#fee2e2', color: '#991b1b', fontWeight: '600'}}>待补正</span>
+                          )}
                         </span>
                         <span className="abnormal-time">{formatDate(a.created_at)}</span>
                       </div>

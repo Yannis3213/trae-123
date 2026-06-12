@@ -46,6 +46,7 @@ export default function App() {
           config={batchConfig}
           store={store}
           onClose={() => setBatchConfig(null)}
+          onOpenDetail={(id) => { setBatchConfig(null); setDetailId(id) }}
         />
       )}
 
