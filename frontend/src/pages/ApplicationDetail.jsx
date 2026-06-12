@@ -586,6 +586,12 @@ function ApplicationDetail({ id }) {
               )}
               {currentAction === 'return' && (
                 <>
+                  {!actionForm.materialComplete && (
+                    <div className="alert alert-warning">材料不完整，退回后将进入待补正状态</div>
+                  )}
+                  {!actionForm.evidenceComplete && actionForm.materialComplete && (
+                    <div className="alert alert-warning">证据不完整，退回后将进入已退回状态</div>
+                  )}
                   <div className="form-group">
                     <label>材料是否完整</label>
                     <select
@@ -607,12 +613,15 @@ function ApplicationDetail({ id }) {
                     </select>
                   </div>
                   <div className="form-group">
-                    <label>异常原因说明 *</label>
+                    <label>异常原因说明 <span style={{ color: '#ff4d4f' }}>*</span></label>
                     <textarea
-                      placeholder="请详细说明退回原因或异常情况"
+                      placeholder="请详细说明退回原因或异常情况（必填）"
                       value={actionForm.exceptionReason}
                       onInput={(e) => setActionForm({ ...actionForm, exceptionReason: e.target.value })}
                     />
+                    {!actionForm.exceptionReason?.trim() && (
+                      <div style={{ color: '#ff4d4f', fontSize: '12px', marginTop: '4px' }}>异常原因说明为必填项</div>
+                    )}
                   </div>
                   <div className="form-group">
                     <label>处理意见</label>
@@ -685,7 +694,8 @@ function ApplicationDetail({ id }) {
                 disabled={
                   (currentAction === 'visit' && !app?.evidence_complete) ||
                   (currentAction === 'review' && (!app?.material_complete || !app?.evidence_complete)) ||
-                  (currentAction === 'return' && !actionForm.reason)
+                  (currentAction === 'return' && !actionForm.exceptionReason?.trim()) ||
+                  (currentAction === 'assign' && !actionForm.opinion?.trim())
                 }
               >
                 确认提交

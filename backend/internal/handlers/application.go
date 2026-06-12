@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -958,6 +959,27 @@ func (h *ApplicationHandler) Return(w http.ResponseWriter, r *http.Request) {
 		evidenceComplete = *req.EvidenceComplete
 	}
 
+	exceptionReason := req.ExceptionReason
+	if exceptionReason == "" {
+		exceptionReason = req.Reason
+	}
+	if exceptionReason == "" {
+		if !materialComplete {
+			exceptionReason = "商标申请材料不完整"
+		} else if !evidenceComplete {
+			exceptionReason = "递交通知证据不完整"
+		} else {
+			exceptionReason = "其他原因"
+		}
+	}
+
+	reasonType := "other"
+	if !materialComplete {
+		reasonType = "material_missing"
+	} else if !evidenceComplete {
+		reasonType = "evidence_missing"
+	}
+
 	var newStatus string
 	var moduleType string
 	if !materialComplete {
@@ -994,19 +1016,8 @@ func (h *ApplicationHandler) Return(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	exceptionReason := req.ExceptionReason
-	if exceptionReason == "" {
-		exceptionReason = req.Reason
-	}
-	if exceptionReason == "" {
-		if !materialComplete {
-			exceptionReason = "商标申请材料不完整"
-		} else if !evidenceComplete {
-			exceptionReason = "递交通知证据不完整"
-		} else {
-			exceptionReason = "其他原因"
-		}
-	}
+	recordOpinion := fmt.Sprintf("[退回] 异常类型:%s | 材料完整:%v | 证据完整:%v | 异常说明:%s | 处理意见:%s",
+		reasonType, materialComplete, evidenceComplete, exceptionReason, opinion)
 
 	_, err = tx.Exec(`
 		UPDATE trademark_applications SET
@@ -1034,18 +1045,11 @@ func (h *ApplicationHandler) Return(w http.ResponseWriter, r *http.Request) {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		recordID, id, "return", currentStatus, newStatus,
-		user.ID, opinion, now, moduleType,
+		user.ID, recordOpinion, now, moduleType,
 	)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "创建处理记录失败")
 		return
-	}
-
-	reasonType := "other"
-	if !materialComplete {
-		reasonType = "material_missing"
-	} else if !evidenceComplete {
-		reasonType = "evidence_missing"
 	}
 
 	excID := generateID()
