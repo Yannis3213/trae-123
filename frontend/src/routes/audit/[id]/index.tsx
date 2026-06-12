@@ -8,7 +8,7 @@ import {
   type QualificationReview,
   type OnDutyConfirmation,
 } from "../../../utils/api";
-import { loadAuthFromStorage, getAuth, type UserRole } from "../../../stores/auth";
+import { loadAuthFromStorage, getAuth, ROLE_LABELS, type UserRole } from "../../../stores/auth";
 import { STATUS_MAP, EXPIRY_MAP, getExpiryStatus, ACTION_LABELS } from "../../../utils/constants";
 
 export default component$(() => {
@@ -94,10 +94,11 @@ export default component$(() => {
         version: audit.value.version,
       });
       if (res.success) {
-        showToast("操作成功", "success");
+        const actionLabel = ACTION_LABELS[action] || action;
+        showToast(`${actionLabel}成功`, "success");
         comment.value = "";
         exceptionReason.value = "";
-        fetchAudit();
+        await fetchAudit();
       } else {
         showToast(res.error_message || "操作失败", "error");
       }
@@ -115,7 +116,7 @@ export default component$(() => {
       const res = await api.withdrawAudit(id);
       if (res.success) {
         showToast("撤回成功", "success");
-        fetchAudit();
+        await fetchAudit();
       } else {
         showToast(res.error_message || "撤回失败", "error");
       }
@@ -465,7 +466,8 @@ export default component$(() => {
                         <div class="absolute -left-1.5 top-1 w-2.5 h-2.5 rounded-full bg-primary" />
                         <div class="text-xs font-medium text-stone-700">
                           {log.operator_name}
-                          <span class="text-stone-400 ml-1">({ACTION_LABELS[log.action] || log.action})</span>
+                          <span class="text-stone-400 ml-1">({log.operator_role ? ROLE_LABELS[log.operator_role as UserRole] || log.operator_role : ""})</span>
+                          <span class="text-stone-400 ml-1">· {ACTION_LABELS[log.action] || log.action}</span>
                         </div>
                         {log.from_status && (
                           <div class="text-xs text-stone-400">

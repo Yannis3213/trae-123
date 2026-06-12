@@ -1,6 +1,6 @@
 import { component$, useSignal, $, useVisibleTask$ } from "@builder.io/qwik";
 import { type DocumentHead, Link } from "@builder.io/qwik-city";
-import { api, type AuditOrder } from "../../utils/api";
+import { api, type AuditOrder, type BatchProcessItemResult } from "../../utils/api";
 import { loadAuthFromStorage, getAuth } from "../../stores/auth";
 import { STATUS_MAP } from "../../utils/constants";
 
@@ -9,6 +9,8 @@ export default component$(() => {
   const loading = useSignal(false);
   const batchLoading = useSignal(false);
   const toast = useSignal({ show: false, message: "", type: "" });
+  const batchResults = useSignal<BatchProcessItemResult[] | null>(null);
+  const showBatchResults = useSignal(false);
 
   // eslint-disable-next-line qwik/no-use-visible-task
   useVisibleTask$(() => {
@@ -43,6 +45,7 @@ export default component$(() => {
   });
 
   const getResponsiblePerson = (audit: AuditOrder): string => {
+    if (audit.responsible_name) return audit.responsible_name;
     const status = audit.status;
     if (status === "pending") return audit.creator_name || "派单客服";
     if (status === "processing" || status === "correction_needed") return audit.current_handler_name || "服务督导";
@@ -66,6 +69,8 @@ export default component$(() => {
         comment: "逾期批量推进",
         exception_reason: null,
       });
+      batchResults.value = res.results;
+      showBatchResults.value = true;
       const failed = res.results.filter((r: any) => !r.success);
       if (failed.length === 0) {
         showToast(`逾期批量推进成功：${res.success_count}条`, "success");
@@ -185,6 +190,35 @@ export default component$(() => {
           </div>
         )}
       </div>
+
+      {showBatchResults.value && batchResults.value && (
+        <div class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick$={() => (showBatchResults.value = false)}>
+          <div class="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[80vh] overflow-auto" onClick$={(e) => e.stopPropagation()}>
+            <div class="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
+              <h3 class="font-bold text-stone-800">逾期批量推进结果</h3>
+              <button onClick$={() => (showBatchResults.value = false)} class="text-stone-400 hover:text-stone-600">✕</button>
+            </div>
+            <div class="p-6 space-y-2">
+              {batchResults.value.map((item) => (
+                <div
+                  key={item.audit_id}
+                  class={`flex items-center gap-3 p-3 rounded-lg text-sm ${
+                    item.success ? "bg-green-50" : "bg-red-50"
+                  }`}
+                >
+                  <span class={item.success ? "text-status-green" : "text-status-red"}>
+                    {item.success ? "✓" : "✗"}
+                  </span>
+                  <span class="font-mono text-xs">{item.order_no}</span>
+                  <span class={item.success ? "text-green-700" : "text-red-700"}>
+                    {item.success ? "成功" : item.error_message || "失败"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

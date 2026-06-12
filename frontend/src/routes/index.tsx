@@ -1,6 +1,6 @@
 import { component$, useSignal, $, useVisibleTask$ } from "@builder.io/qwik";
 import { type DocumentHead, Link } from "@builder.io/qwik-city";
-import { api, type AuditOrder, type AuditListQuery } from "../utils/api";
+import { api, type AuditOrder, type AuditListQuery, type BatchProcessItemResult } from "../utils/api";
 import { loadAuthFromStorage, getAuth, setAuthState, ROLE_LABELS, type UserRole } from "../stores/auth";
 import { STATUS_MAP, EXPIRY_MAP, getExpiryStatus } from "../utils/constants";
 
@@ -17,6 +17,8 @@ export default component$(() => {
   const search = useSignal("");
   const selectedIds = useSignal<Set<string>>(new Set());
   const toast = useSignal({ show: false, message: "", type: "" });
+  const batchResults = useSignal<BatchProcessItemResult[] | null>(null);
+  const showBatchResults = useSignal(false);
 
   // eslint-disable-next-line qwik/no-use-visible-task
   useVisibleTask$(() => {
@@ -110,6 +112,8 @@ export default component$(() => {
         comment: "",
         exception_reason: null,
       });
+      batchResults.value = res.results;
+      showBatchResults.value = true;
       const failed = res.results.filter((r: any) => !r.success);
       if (failed.length === 0) {
         showToast(`批量操作成功：${res.success_count}条`, "success");
@@ -344,6 +348,35 @@ export default component$(() => {
                 {item.label}
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {showBatchResults.value && batchResults.value && (
+        <div class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick$={() => (showBatchResults.value = false)}>
+          <div class="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[80vh] overflow-auto" onClick$={(e) => e.stopPropagation()}>
+            <div class="px-6 py-4 border-b border-stone-200 flex items-center justify-between">
+              <h3 class="font-bold text-stone-800">批量处理结果</h3>
+              <button onClick$={() => (showBatchResults.value = false)} class="text-stone-400 hover:text-stone-600">✕</button>
+            </div>
+            <div class="p-6 space-y-2">
+              {batchResults.value.map((item) => (
+                <div
+                  key={item.audit_id}
+                  class={`flex items-center gap-3 p-3 rounded-lg text-sm ${
+                    item.success ? "bg-green-50" : "bg-red-50"
+                  }`}
+                >
+                  <span class={item.success ? "text-status-green" : "text-status-red"}>
+                    {item.success ? "✓" : "✗"}
+                  </span>
+                  <span class="font-mono text-xs">{item.order_no}</span>
+                  <span class={item.success ? "text-green-700" : "text-red-700"}>
+                    {item.success ? "成功" : item.error_message || "失败"}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

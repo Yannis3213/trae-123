@@ -60,6 +60,8 @@ pub struct AuditLog {
     pub id: String,
     pub audit_id: String,
     pub operator_id: String,
+    pub operator_name: String,
+    pub operator_role: String,
     pub action: String,
     pub from_status: String,
     pub to_status: String,

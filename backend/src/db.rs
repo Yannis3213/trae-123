@@ -13,6 +13,7 @@ pub fn init_db() -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open(&db_path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
     create_tables(&conn)?;
+    migrate_tables(&conn)?;
     seed_data(&conn)?;
     Ok(conn)
 }
@@ -85,6 +86,12 @@ fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+fn migrate_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let _ = conn.execute_batch("ALTER TABLE audit_logs ADD COLUMN operator_name TEXT NOT NULL DEFAULT ''");
+    let _ = conn.execute_batch("ALTER TABLE audit_logs ADD COLUMN operator_role TEXT NOT NULL DEFAULT ''");
+    Ok(())
+}
+
 fn seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
     if count > 0 {
@@ -101,31 +108,47 @@ fn seed_data(conn: &Connection) -> Result<(), rusqlite::Error> {
             ('a1', 'AUD-2026-001', 'pending', '2026-07-15', 'u1', NULL, 1, '2026-06-10T09:00:00Z', '2026-06-10T09:00:00Z'),
             ('a2', 'AUD-2026-002', 'pending', '2026-07-10', 'u1', NULL, 1, '2026-06-08T10:30:00Z', '2026-06-08T10:30:00Z'),
             ('a3', 'AUD-2026-003', 'processing', '2026-06-05', 'u1', 'u2', 2, '2026-05-20T14:00:00Z', '2026-06-01T11:00:00Z'),
-            ('a4', 'AUD-2026-004', 'correction_needed', '2026-07-20', 'u1', 'u2', 3, '2026-05-25T08:00:00Z', '2026-06-05T16:00:00Z');
+            ('a4', 'AUD-2026-004', 'correction_needed', '2026-07-20', 'u1', NULL, 3, '2026-05-25T08:00:00Z', '2026-06-05T16:00:00Z'),
+            ('a5', 'AUD-2026-005', 'reviewing', '2026-06-18', 'u1', NULL, 3, '2026-06-01T09:00:00Z', '2026-06-08T15:00:00Z'),
+            ('a6', 'AUD-2026-006', 'pending', '2026-06-10', 'u1', NULL, 1, '2026-06-09T08:00:00Z', '2026-06-09T08:00:00Z');
 
         INSERT INTO nanny_profiles (id, audit_id, name, id_card, phone, service_type, work_experience) VALUES
             ('np1', 'a1', '王小花', '110101199001011234', '13800001111', '育婴师', '5年育婴经验'),
             ('np2', 'a2', '李小芳', '', '13800002222', '月嫂', '3年月嫂经验'),
             ('np3', 'a3', '张大梅', '110101198505052345', '13800003333', '家政保洁', '8年保洁经验'),
-            ('np4', 'a4', '赵小丽', '110101199203033456', '13800004444', '养老护理', '4年养老护理经验');
+            ('np4', 'a4', '赵小丽', '110101199203033456', '13800004444', '养老护理', '4年养老护理经验'),
+            ('np5', 'a5', '孙小红', '110101199506064567', '13800005555', '育婴师', '6年育婴经验'),
+            ('np6', 'a6', '周小兰', '110101198808085678', '13800006666', '月嫂', '2年月嫂经验');
 
         INSERT INTO qualification_reviews (id, audit_id, health_cert, health_cert_expiry, training_cert, training_cert_expiry, background_check, background_check_result) VALUES
-            ('qr1', 'a1', 'yes', '2027-01-01', 'yes', '2027-06-01', 'yes', 'pass'),
-            ('qr2', 'a2', 'yes', '2027-03-01', '', '', 'yes', 'pass'),
-            ('qr3', 'a3', 'yes', '2026-12-01', 'yes', '2027-01-01', 'yes', 'pass'),
-            ('qr4', 'a4', 'yes', '2027-02-01', 'yes', '2027-03-01', 'yes', 'pass');
+            ('qr1', 'a1', 'HC-2026-001', '2027-01-01', 'TC-2026-001', '2027-06-01', 'BC-2026-001', 'pass'),
+            ('qr2', 'a2', 'HC-2026-002', '2027-03-01', '', '', 'BC-2026-002', 'pass'),
+            ('qr3', 'a3', 'HC-2026-003', '2026-12-01', 'TC-2026-003', '2027-01-01', 'BC-2026-003', 'pass'),
+            ('qr4', 'a4', 'HC-2026-004', '2027-02-01', 'TC-2026-004', '2027-03-01', 'BC-2026-004', 'pass'),
+            ('qr5', 'a5', 'HC-2026-005', '2027-04-01', 'TC-2026-005', '2027-05-01', 'BC-2026-005', 'pass'),
+            ('qr6', 'a6', 'HC-2026-006', '2027-01-01', 'TC-2026-006', '2027-02-01', 'BC-2026-006', 'pass');
 
         INSERT INTO on_duty_confirmations (id, audit_id, on_duty_date, service_area, contract_no, confirmation_status) VALUES
-            ('od1', 'a1', '', '', '', ''),
+            ('od1', 'a1', '2026-06-20', '朝阳区', 'CT-2026-001', 'confirmed'),
             ('od2', 'a2', '', '', '', ''),
             ('od3', 'a3', '2026-06-10', '朝阳区', 'CT-2026-003', 'confirmed'),
-            ('od4', 'a4', '2026-06-15', '海淀区', 'CT-2026-004', 'confirmed');
+            ('od4', 'a4', '2026-06-15', '海淀区', 'CT-2026-004', 'confirmed'),
+            ('od5', 'a5', '2026-06-12', '西城区', 'CT-2026-005', 'confirmed'),
+            ('od6', 'a6', '', '', '', '');
 
-        INSERT INTO audit_logs (id, audit_id, operator_id, action, from_status, to_status, comment, exception_reason, created_at) VALUES
-            ('log1', 'a3', 'u1', 'advance', 'pending', 'processing', '提交审核', '', '2026-05-20T14:00:00Z'),
-            ('log2', 'a4', 'u1', 'advance', 'pending', 'processing', '提交审核', '', '2026-05-25T08:00:00Z'),
-            ('log3', 'a4', 'u2', 'advance', 'processing', 'reviewing', '审核完成，提交复核', '', '2026-05-28T10:00:00Z'),
-            ('log4', 'a4', 'u3', 'return_correction', 'reviewing', 'correction_needed', '资质材料不完整', '健康证过期需更新', '2026-06-05T16:00:00Z');"
+        INSERT INTO audit_logs (id, audit_id, operator_id, operator_name, operator_role, action, from_status, to_status, comment, exception_reason, created_at) VALUES
+            ('log01', 'a1', 'u1', '调度员张三', 'dispatcher', 'create', '', 'pending', '创建审核单', '', '2026-06-10T09:00:00Z'),
+            ('log02', 'a2', 'u1', '调度员张三', 'dispatcher', 'create', '', 'pending', '创建审核单（身份证缺失）', '', '2026-06-08T10:30:00Z'),
+            ('log03', 'a3', 'u1', '调度员张三', 'dispatcher', 'create', '', 'pending', '创建审核单', '', '2026-05-20T14:00:00Z'),
+            ('log04', 'a3', 'u2', '主管李四', 'supervisor', 'advance', 'pending', 'processing', '受理审核', '', '2026-05-21T09:00:00Z'),
+            ('log05', 'a4', 'u1', '调度员张三', 'dispatcher', 'create', '', 'pending', '创建审核单', '', '2026-05-25T08:00:00Z'),
+            ('log06', 'a4', 'u2', '主管李四', 'supervisor', 'advance', 'pending', 'processing', '受理审核', '', '2026-05-25T10:00:00Z'),
+            ('log07', 'a4', 'u2', '主管李四', 'supervisor', 'advance', 'processing', 'reviewing', '审核完成，提交复核', '', '2026-05-28T10:00:00Z'),
+            ('log08', 'a4', 'u3', '经理王五', 'manager', 'return_correction', 'reviewing', 'correction_needed', '资质材料不完整', '健康证过期需更新', '2026-06-05T16:00:00Z'),
+            ('log09', 'a5', 'u1', '调度员张三', 'dispatcher', 'create', '', 'pending', '创建审核单', '', '2026-06-01T09:00:00Z'),
+            ('log10', 'a5', 'u2', '主管李四', 'supervisor', 'advance', 'pending', 'processing', '受理审核', '', '2026-06-02T10:00:00Z'),
+            ('log11', 'a5', 'u2', '主管李四', 'supervisor', 'advance', 'processing', 'reviewing', '审核完成，提交复核', '', '2026-06-08T15:00:00Z'),
+            ('log12', 'a6', 'u1', '调度员张三', 'dispatcher', 'create', '', 'pending', '创建审核单', '', '2026-06-09T08:00:00Z');"
     )?;
     Ok(())
 }
@@ -244,19 +267,21 @@ pub fn query_on_duty_confirmation(conn: &Connection, audit_id: &str) -> Result<O
 
 pub fn query_audit_logs(conn: &Connection, audit_id: &str) -> Result<Vec<AuditLog>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, audit_id, operator_id, action, from_status, to_status, comment, exception_reason, created_at FROM audit_logs WHERE audit_id = ?1 ORDER BY created_at ASC"
+        "SELECT id, audit_id, operator_id, operator_name, operator_role, action, from_status, to_status, comment, exception_reason, created_at FROM audit_logs WHERE audit_id = ?1 ORDER BY created_at ASC"
     )?;
     let rows = stmt.query_map([audit_id], |row| {
         Ok(AuditLog {
             id: row.get(0)?,
             audit_id: row.get(1)?,
             operator_id: row.get(2)?,
-            action: row.get(3)?,
-            from_status: row.get(4)?,
-            to_status: row.get(5)?,
-            comment: row.get(6)?,
-            exception_reason: row.get(7)?,
-            created_at: row.get(8)?,
+            operator_name: row.get(3)?,
+            operator_role: row.get(4)?,
+            action: row.get(5)?,
+            from_status: row.get(6)?,
+            to_status: row.get(7)?,
+            comment: row.get(8)?,
+            exception_reason: row.get(9)?,
+            created_at: row.get(10)?,
         })
     })?;
     rows.collect()

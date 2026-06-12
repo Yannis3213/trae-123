@@ -47,6 +47,8 @@ export interface AuditOrder {
   qualification_review: QualificationReview | null;
   on_duty_confirmation: OnDutyConfirmation | null;
   audit_logs?: AuditLog[];
+  expiry_status?: "normal" | "expiring_soon" | "overdue";
+  responsible_name?: string;
   created_at: string;
   updated_at: string;
 }
@@ -63,9 +65,11 @@ export interface ProcessRequest {
 
 export interface ProcessResponse {
   success: boolean;
-  error_code: string | null;
-  error_message: string | null;
-  audit_order: AuditOrder | null;
+  id?: string;
+  status?: string;
+  version?: number;
+  error_code?: string | null;
+  error_message?: string | null;
 }
 
 export interface BatchProcessRequest {

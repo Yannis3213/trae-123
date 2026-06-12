@@ -228,12 +228,18 @@ pub async fn create_audit(
     )?;
 
     let log_id = Uuid::new_v4().to_string();
+    let operator_name = query_user_by_id(&conn, &auth.user_id)
+        .ok()
+        .flatten()
+        .map(|u| u.display_name)
+        .unwrap_or_default();
     conn.execute(
-        "INSERT INTO audit_logs (id, audit_id, operator_id, action, from_status, to_status, comment, exception_reason, created_at) VALUES (?1, ?2, ?3, 'create', '', 'pending', '创建审核单', '', ?4)",
-        rusqlite::params![log_id, audit_id, auth.user_id, now],
+        "INSERT INTO audit_logs (id, audit_id, operator_id, operator_name, operator_role, action, from_status, to_status, comment, exception_reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 'create', '', 'pending', '创建审核单', '', ?6)",
+        rusqlite::params![log_id, audit_id, auth.user_id, operator_name, auth.role, now],
     )?;
 
     Ok(Json(serde_json::json!({
+        "success": true,
         "id": audit_id,
         "order_no": order_no,
     })))
@@ -433,12 +439,18 @@ fn do_process_audit(
     let log_id = Uuid::new_v4().to_string();
     let comment = req.comment.clone().unwrap_or_default();
     let exception_reason = req.exception_reason.clone().unwrap_or_default();
+    let operator_name = query_user_by_id(conn, &auth.user_id)
+        .ok()
+        .flatten()
+        .map(|u| u.display_name)
+        .unwrap_or_default();
     conn.execute(
-        "INSERT INTO audit_logs (id, audit_id, operator_id, action, from_status, to_status, comment, exception_reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        rusqlite::params![log_id, id, auth.user_id, req.action, audit.status, new_status, comment, exception_reason, now],
+        "INSERT INTO audit_logs (id, audit_id, operator_id, operator_name, operator_role, action, from_status, to_status, comment, exception_reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        rusqlite::params![log_id, id, auth.user_id, operator_name, auth.role, req.action, audit.status, new_status, comment, exception_reason, now],
     )?;
 
     Ok(Json(serde_json::json!({
+        "success": true,
         "id": id,
         "status": new_status,
         "version": new_version,
@@ -550,12 +562,18 @@ pub async fn withdraw_audit(
     )?;
 
     let log_id = Uuid::new_v4().to_string();
+    let operator_name = query_user_by_id(&conn, &auth.user_id)
+        .ok()
+        .flatten()
+        .map(|u| u.display_name)
+        .unwrap_or_default();
     conn.execute(
-        "INSERT INTO audit_logs (id, audit_id, operator_id, action, from_status, to_status, comment, exception_reason, created_at) VALUES (?1, ?2, ?3, 'withdraw', 'pending', 'withdrawn', '撤回审核单', '', ?4)",
-        rusqlite::params![log_id, id, auth.user_id, now],
+        "INSERT INTO audit_logs (id, audit_id, operator_id, operator_name, operator_role, action, from_status, to_status, comment, exception_reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 'withdraw', 'pending', 'withdrawn', '撤回审核单', '', ?6)",
+        rusqlite::params![log_id, id, auth.user_id, operator_name, auth.role, now],
     )?;
 
     Ok(Json(serde_json::json!({
+        "success": true,
         "id": id,
         "status": "withdrawn",
         "version": new_version,
@@ -666,10 +684,19 @@ pub async fn expiry_dashboard(
 
     for audit in audits {
         let nanny = query_nanny_profile(&conn, &audit.id).ok().flatten();
-        let responsible_name = if let Some(ref handler_id) = audit.current_handler_id {
-            query_user_by_id(&conn, handler_id).ok().flatten().map(|u| u.display_name)
-        } else {
-            query_user_by_id(&conn, &audit.creator_id).ok().flatten().map(|u| u.display_name)
+        let creator = query_user_by_id(&conn, &audit.creator_id).ok().flatten();
+        let creator_name = creator.as_ref().map(|u| u.display_name.clone()).unwrap_or_default();
+        let handler_name = audit
+            .current_handler_id
+            .as_ref()
+            .and_then(|hid| query_user_by_id(&conn, hid).ok().flatten())
+            .map(|u| u.display_name);
+
+        let responsible_name = match audit.status.as_str() {
+            "pending" => creator_name.clone(),
+            "processing" | "correction_needed" => handler_name.clone().unwrap_or_else(|| "服务督导".to_string()),
+            "reviewing" => handler_name.clone().unwrap_or_else(|| "城市经理".to_string()),
+            _ => creator_name.clone(),
         };
 
         let expiry_status = compute_expiry_status(&audit.expiry_date);
@@ -686,9 +713,10 @@ pub async fn expiry_dashboard(
             } else {
                 obj.insert("nanny_profile".into(), serde_json::Value::Null);
             }
-            obj.insert("creator_name".into(), serde_json::Value::String(query_user_by_id(&conn, &audit.creator_id).ok().flatten().map(|u| u.display_name).unwrap_or_default()));
-            obj.insert("current_handler_name".into(), audit.current_handler_id.as_ref().and_then(|hid| query_user_by_id(&conn, hid).ok().flatten()).map(|u| serde_json::Value::String(u.display_name)).unwrap_or(serde_json::Value::Null));
-            obj.insert("responsible_name".into(), responsible_name.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null));
+            obj.insert("creator_name".into(), serde_json::Value::String(creator_name));
+            obj.insert("current_handler_name".into(), handler_name.map(serde_json::Value::String).unwrap_or(serde_json::Value::Null));
+            obj.insert("responsible_name".into(), serde_json::Value::String(responsible_name));
+            obj.insert("expiry_status".into(), serde_json::Value::String(expiry_status.clone()));
         }
 
         match expiry_status.as_str() {
