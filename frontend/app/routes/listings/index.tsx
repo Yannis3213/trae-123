@@ -487,7 +487,7 @@ function ListingListPage() {
         <BatchProcessModal
           items={selectedItems}
           onClose={() => setShowBatch(false)}
-          onSuccess={() => {
+          onSuccess={(results) => {
             setRowSelection({})
             fetchData()
             fetchWarnings()

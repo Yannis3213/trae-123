@@ -1,6 +1,16 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { batchProcess } from '../lib/batch'
 import { getErrorMessage } from '../lib/apiClient'
+
+interface ProcessItem {
+  id: number | string
+  application_no: string
+  status?: string
+  version?: number
+  state: 'pending' | 'missing_fields' | 'processing' | 'success' | 'failure'
+  missing?: string[]
+  reason?: string
+}
 
 interface BatchProcessModalProps {
   items: any[]
@@ -24,9 +34,26 @@ export default function BatchProcessModal({
 }: BatchProcessModalProps) {
   const [action, setAction] = useState('')
   const [remark, setRemark] = useState('')
-  const [results, setResults] = useState<any[] | null>(null)
+  const [itemStates, setItemStates] = useState<ProcessItem[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    const initial: ProcessItem[] = items.map(item => {
+      const missing: string[] = []
+      if (!item.status) missing.push('状态')
+      if (!item.version) missing.push('版本')
+      return {
+        id: item.id,
+        application_no: item.application_no || String(item.id),
+        status: item.status,
+        version: item.version,
+        state: missing.length > 0 ? 'missing_fields' : 'pending',
+        missing,
+      }
+    })
+    setItemStates(initial)
+  }, [items])
 
   const availableActions: { value: string; label: string }[] = []
   if (currentRole === 'CONSULTANT') {
@@ -41,50 +68,76 @@ export default function BatchProcessModal({
   const handleSubmit = async () => {
     if (!action) return
     setError('')
-    setResults(null)
+
+    setItemStates(prev => prev.map(item => ({
+      ...item,
+      state: 'processing',
+    })))
     setLoading(true)
 
-    const missingFields: string[] = []
-    items.forEach((item) => {
-      const problems: string[] = []
-      if (!item.status) problems.push('状态')
-      if (!item.version) problems.push('版本')
-      if (problems.length > 0) {
-        missingFields.push(`${item.application_no || item.id} 缺少${problems.join('、')}`)
-      }
-    })
-
-    if (missingFields.length > 0) {
-      setError(`以下条目缺少页面参数，无法提交：\n${missingFields.join('\n')}`)
-      setLoading(false)
-      return
-    }
-
     try {
-      const payload = items.map((item) => ({
+      const validItems = itemStates.filter(i => i.state !== 'missing_fields')
+      const missingItems = itemStates.filter(i => i.state === 'missing_fields')
+
+      const payload = validItems.map((item) => ({
         application_id: item.id,
         action,
         remark,
         status: item.status,
         version: item.version,
       }))
-      const res = await batchProcess(payload)
-      setResults(res.data)
-      const hasAnySuccess = res.data.some((r: any) => r.success)
-      if (hasAnySuccess) {
-        onSuccess?.(res.data)
+
+      let backendResults: any[] = []
+      if (validItems.length > 0) {
+        const res = await batchProcess(payload)
+        backendResults = res.data
       }
+
+      const resultMap = new Map(backendResults.map((r: any) => [r.application_id, r]))
+
+      const finalStates: ProcessItem[] = itemStates.map(item => {
+        if (item.missing && item.missing.length > 0) {
+          return {
+            ...item,
+            state: 'failure',
+            reason: `${item.application_no} 缺少${item.missing?.join('、')}参数，无法执行批量操作`,
+          }
+        } else {
+          const result = resultMap.get(item.id)
+          if (result) {
+            return {
+              ...item,
+              state: result.success ? 'success' : 'failure',
+              reason: result.reason,
+            } as ProcessItem
+          }
+          return { ...item, state: 'failure', reason: '未处理' } as ProcessItem
+        }
+      })
+
+      setItemStates(finalStates)
+
+      const hasAnySuccess = finalStates.some(s => s.state === 'success')
+      if (hasAnySuccess) {
+        const mergedResults = finalStates.map(s => ({
+          application_id: s.id,
+          application_no: s.application_no,
+          success: s.state === 'success',
+          reason: s.reason,
+        }))
+        onSuccess?.(mergedResults)
+      }
+
     } catch (e) {
       setError(getErrorMessage(e))
+      setItemStates(prev => prev.map(item => ({
+        ...item,
+        state: item.missing?.length ? 'missing_fields' : 'pending',
+      })))
     } finally {
       setLoading(false)
     }
   }
-
-  const successCount = results
-    ? results.filter((r) => r.success).length
-    : 0
-  const failCount = results ? results.filter((r) => !r.success).length : 0
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -108,45 +161,72 @@ export default function BatchProcessModal({
           <p style={{ marginBottom: 16, color: '#6b7280' }}>
             已选择 <strong>{items.length}</strong> 条上架单
           </p>
-          {(() => {
-            const missing = items.filter(i => !i.status || !i.version)
-            if (missing.length === 0) return null
-            return (
-              <div style={{
-                marginBottom: 16,
-                padding: '8px 12px',
-                background: '#fef3c7',
-                border: '1px solid #f59e0b',
-                borderRadius: 4,
-                color: '#92400e',
-                fontSize: 13,
-              }}>
-                <strong>⚠ 提示：</strong>有 {missing.length} 条条目缺少页面状态或版本参数，
-                提交时将直接返回失败。建议刷新列表后重新选择。
-                <div style={{ marginTop: 6, fontSize: 12 }}>
-                  {missing.map((m, i) => (
-                    <div key={i}>· {m.application_no || m.id}</div>
-                  ))}
-                </div>
-              </div>
-            )
-          })()}
-          {loading && (
+          {(loading || itemStates.some(s => s.state === 'success' || s.state === 'failure')) && (
             <div>
-              {items.map((item, i) => (
+              {itemStates.map((item, i) => (
                 <div
                   key={i}
-                  className="batch-result-item batch-result-processing"
+                  className={`batch-result-item ${
+                    item.state === 'success' ? 'batch-result-success' :
+                    item.state === 'failure' ? 'batch-result-failure' :
+                    'batch-result-processing'
+                  }`}
                 >
-                  <span className="processing-spinner">⏳</span>
-                  <span>{item.application_no || item.id}</span>
-                  <span className="batch-result-reason">处理中...</span>
+                  <span>
+                    {item.state === 'processing' ? (
+                      <span className="processing-spinner">⏳</span>
+                    ) : item.state === 'success' ? '✓' : 
+                      item.state === 'missing_fields' ? '⚠' : '✗'}
+                  </span>
+                  <span>{item.application_no}</span>
+                  {item.reason && (
+                    <span className="batch-result-reason">{item.reason}</span>
+                  )}
+                  {!item.reason && item.state === 'processing' && (
+                    <span className="batch-result-reason">处理中...</span>
+                  )}
                 </div>
               ))}
+              {(itemStates.some(s => s.state === 'success' || s.state === 'failure') && !loading) && (
+                <div className="batch-summary">
+                  成功{' '}
+                  <span style={{ color: '#16a34a' }}>
+                    {itemStates.filter(s => s.state === 'success').length}
+                  </span>{' '}
+                  条，失败{' '}
+                  <span style={{ color: '#dc2626' }}>
+                    {itemStates.filter(s => s.state === 'failure').length}
+                  </span>{' '}
+                  条
+                </div>
+              )}
             </div>
           )}
-          {!loading && !results && (
+          {!loading && !itemStates.some(s => s.state === 'success' || s.state === 'failure') && (
             <>
+              {(() => {
+                const missing = itemStates.filter(i => i.state === 'missing_fields')
+                if (missing.length === 0) return null
+                return (
+                  <div style={{
+                    marginBottom: 16,
+                    padding: '8px 12px',
+                    background: '#fef3c7',
+                    border: '1px solid #f59e0b',
+                    borderRadius: 4,
+                    color: '#92400e',
+                    fontSize: 13,
+                  }}>
+                    <strong>⚠ 提示：</strong>有 {missing.length} 条条目缺少页面状态或版本参数，
+                    将直接标记为失败。
+                    <div style={{ marginTop: 6, fontSize: 12 }}>
+                      {missing.map((m, i) => (
+                        <div key={i}>· {m.application_no} 缺少{m.missing?.join('、')}</div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
               <div className="form-group">
                 <label>操作类型 *</label>
                 <select
@@ -170,32 +250,9 @@ export default function BatchProcessModal({
               </div>
             </>
           )}
-          {!loading && results && (
-            <div>
-              {results.map((r, i) => (
-                <div
-                  key={i}
-                  className={`batch-result-item ${r.success ? 'batch-result-success' : 'batch-result-failure'}`}
-                >
-                  <span>{r.success ? '✓' : '✗'}</span>
-                  <span>{r.application_no}</span>
-                  {r.reason && (
-                    <span className="batch-result-reason">{r.reason}</span>
-                  )}
-                </div>
-              ))}
-              <div className="batch-summary">
-                成功{' '}
-                <span style={{ color: '#16a34a' }}>{successCount}</span>{' '}
-                条，失败{' '}
-                <span style={{ color: '#dc2626' }}>{failCount}</span>{' '}
-                条
-              </div>
-            </div>
-          )}
         </div>
         <div className="modal-footer">
-          {results && !loading ? (
+          {itemStates.some(s => s.state === 'success' || s.state === 'failure') && !loading ? (
             <button className="btn-primary" onClick={onClose}>
               关闭
             </button>

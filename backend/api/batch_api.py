@@ -15,6 +15,13 @@ from listings.models import (
 from .auth import get_operator_from_session
 from .schemas import BatchProcessItem, BatchProcessResult
 
+ACTION_LABEL_MAP = {
+    'submit': '提交',
+    'supplement': '补正',
+    'process': '评估处理',
+    'review': '复核通过',
+}
+
 batch_router = Router()
 
 
@@ -53,7 +60,7 @@ def _record_batch_failure(app, operator, action, failure_reason):
 def _process_single_item(operator, item):
     with transaction.atomic():
         try:
-            app = VehicleListingApplication.objects.select_for_update().get(id=item.application_id)
+            app = VehicleListingApplication.objects.get(id=item.application_id)
         except VehicleListingApplication.DoesNotExist:
             return BatchProcessResult(
                 application_id=item.application_id,
@@ -82,15 +89,10 @@ def _process_single_item(operator, item):
                 success=False,
                 reason=reason,
             )
-        if app.status != item.status or app.version != item.version:
-            reason = f"车源上架单{app.application_no}：并发冲突：页面版本{item.version}与服务端版本{app.version}不一致，请刷新后重试"
-            _record_batch_failure(app, operator, action, reason)
-            return BatchProcessResult(
-                application_id=app.id,
-                application_no=app.application_no,
-                success=False,
-                reason=reason,
-            )
+
+        update_kwargs = {}
+        from_status = app.status
+        new_status = None
 
         if action == 'submit':
             if operator.role != RoleChoices.CONSULTANT:
@@ -125,7 +127,6 @@ def _process_single_item(operator, item):
                     success=False,
                     reason=reason,
                 )
-            from_status = app.status
             new_status = ApplicationStatus.PENDING_PROCESS if app.has_listing_evidence else ApplicationStatus.PENDING_SUPPLEMENT
             if new_status == ApplicationStatus.PENDING_SUPPLEMENT:
                 reason = f"车源上架单{app.application_no}：缺挂牌确认证据，无法推进到待处理"
@@ -136,26 +137,10 @@ def _process_single_item(operator, item):
                     success=False,
                     reason=reason,
                 )
-            app.status = new_status
-            app.version = F('version') + 1
-            app.save()
-            app.refresh_from_db()
-            role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
-            ProcessingRecord.objects.create(
-                application=app, operator=operator, operator_role=role_display,
-                action='batch_submit', from_status=from_status, to_status=new_status,
-                remark=item.remark or '批量提交',
-            )
-            AuditNote.objects.create(
-                application=app, operator=operator, operator_role=role_display,
-                note=f'批量提交: {item.remark}' if item.remark else '批量提交',
-            )
-            return BatchProcessResult(
-                application_id=app.id,
-                application_no=app.application_no,
-                success=True,
-                reason=f'提交成功，状态变更为{_get_status_display(new_status)}',
-            )
+            update_kwargs = {
+                'status': new_status,
+                'version': F('version') + 1,
+            }
 
         elif action == 'supplement':
             if operator.role != RoleChoices.CONSULTANT:
@@ -199,29 +184,13 @@ def _process_single_item(operator, item):
                     success=False,
                     reason=reason,
                 )
-            from_status = app.status
-            app.has_listing_evidence = True
-            app.missing_evidence_reason = ''
-            app.status = ApplicationStatus.PENDING_PROCESS
-            app.version = F('version') + 1
-            app.save()
-            app.refresh_from_db()
-            role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
-            ProcessingRecord.objects.create(
-                application=app, operator=operator, operator_role=role_display,
-                action='batch_supplement', from_status=from_status, to_status=ApplicationStatus.PENDING_PROCESS,
-                remark=item.remark or '批量补正',
-            )
-            AuditNote.objects.create(
-                application=app, operator=operator, operator_role=role_display,
-                note=f'批量补正: {item.remark}' if item.remark else '批量补正',
-            )
-            return BatchProcessResult(
-                application_id=app.id,
-                application_no=app.application_no,
-                success=True,
-                reason='补正成功，状态变更为待处理',
-            )
+            new_status = ApplicationStatus.PENDING_PROCESS
+            update_kwargs = {
+                'status': ApplicationStatus.PENDING_PROCESS,
+                'version': F('version') + 1,
+                'has_listing_evidence': True,
+                'missing_evidence_reason': '',
+            }
 
         elif action == 'process':
             if operator.role != RoleChoices.EVALUATOR:
@@ -247,28 +216,12 @@ def _process_single_item(operator, item):
                     success=False,
                     reason=reason,
                 )
-            from_status = app.status
-            app.evaluator = operator
-            app.status = ApplicationStatus.UNDER_REVIEW
-            app.version = F('version') + 1
-            app.save()
-            app.refresh_from_db()
-            role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
-            ProcessingRecord.objects.create(
-                application=app, operator=operator, operator_role=role_display,
-                action='batch_process', from_status=from_status, to_status=ApplicationStatus.UNDER_REVIEW,
-                remark=item.remark or '批量评估处理',
-            )
-            AuditNote.objects.create(
-                application=app, operator=operator, operator_role=role_display,
-                note=f'批量评估处理: {item.remark}' if item.remark else '批量评估处理',
-            )
-            return BatchProcessResult(
-                application_id=app.id,
-                application_no=app.application_no,
-                success=True,
-                reason='评估处理成功，状态变更为复核中',
-            )
+            new_status = ApplicationStatus.UNDER_REVIEW
+            update_kwargs = {
+                'status': ApplicationStatus.UNDER_REVIEW,
+                'version': F('version') + 1,
+                'evaluator': operator,
+            }
 
         elif action == 'review':
             if operator.role != RoleChoices.MANAGER:
@@ -293,28 +246,12 @@ def _process_single_item(operator, item):
                     success=False,
                     reason=reason,
                 )
-            from_status = app.status
-            app.reviewer = operator
-            app.status = ApplicationStatus.COMPLETED
-            app.version = F('version') + 1
-            app.save()
-            app.refresh_from_db()
-            role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
-            ProcessingRecord.objects.create(
-                application=app, operator=operator, operator_role=role_display,
-                action='batch_review', from_status=from_status, to_status=ApplicationStatus.COMPLETED,
-                remark=item.remark or '批量复核通过',
-            )
-            AuditNote.objects.create(
-                application=app, operator=operator, operator_role=role_display,
-                note=f'批量复核通过: {item.remark}' if item.remark else '批量复核通过',
-            )
-            return BatchProcessResult(
-                application_id=app.id,
-                application_no=app.application_no,
-                success=True,
-                reason='复核通过，状态变更为办结',
-            )
+            new_status = ApplicationStatus.COMPLETED
+            update_kwargs = {
+                'status': ApplicationStatus.COMPLETED,
+                'version': F('version') + 1,
+                'reviewer': operator,
+            }
 
         else:
             reason = f"不支持的操作类型: {action}"
@@ -325,6 +262,51 @@ def _process_single_item(operator, item):
                 success=False,
                 reason=reason,
             )
+
+        updated = VehicleListingApplication.objects.filter(
+            id=item.application_id,
+            status=item.status,
+            version=item.version,
+        ).update(**update_kwargs)
+
+        if updated == 0:
+            app.refresh_from_db()
+            reason = f"车源上架单{app.application_no}：并发冲突：页面版本{item.version}与服务端版本{app.version}不一致，请刷新后重试"
+            _record_batch_failure(app, operator, action, reason)
+            return BatchProcessResult(
+                application_id=app.id,
+                application_no=app.application_no,
+                success=False,
+                reason=reason,
+            )
+
+        app.refresh_from_db()
+        role_display = ROLE_DISPLAY_MAP.get(operator.role, operator.role)
+
+        to_status = update_kwargs.get('status', from_status)
+
+        ProcessingRecord.objects.create(
+            application=app,
+            operator=operator,
+            operator_role=role_display,
+            action=f'batch_{action}',
+            from_status=from_status,
+            to_status=to_status,
+            remark=item.remark or f'批量{ACTION_LABEL_MAP.get(action, action)}',
+        )
+        AuditNote.objects.create(
+            application=app,
+            operator=operator,
+            operator_role=role_display,
+            note=f'批量{ACTION_LABEL_MAP.get(action, action)}: {item.remark}' if item.remark else f'批量{ACTION_LABEL_MAP.get(action, action)}',
+        )
+
+        return BatchProcessResult(
+            application_id=app.id,
+            application_no=app.application_no,
+            success=True,
+            reason=f'{ACTION_LABEL_MAP.get(action, action)}成功，状态变更为{_get_status_display(to_status)}',
+        )
 
 
 @batch_router.post('process', response=list[BatchProcessResult])
@@ -354,7 +336,7 @@ def batch_advance_overdue(request):
     for app_id in overdue_app_ids:
         with transaction.atomic():
             try:
-                app = VehicleListingApplication.objects.select_for_update().select_related(
+                app = VehicleListingApplication.objects.select_related(
                     'applicant', 'evaluator', 'reviewer'
                 ).get(id=app_id)
             except VehicleListingApplication.DoesNotExist:
