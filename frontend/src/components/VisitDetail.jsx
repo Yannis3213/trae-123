@@ -377,6 +377,7 @@ export default function VisitDetail({ id }) {
               <div key={r.id} className="timeline-item" style={{
                 borderLeft: r.action === 'return_for_correction' ? '3px solid #dc2626' :
                             r.action === 'overdue_advance' ? '3px solid #f59e0b' :
+                            r.action === 'overdue_advance_blocked' ? '3px solid #ef4444' :
                             '3px solid #2563eb'
               }}>
                 <div className="time">{formatDate(r.created_at)}</div>
@@ -384,13 +385,16 @@ export default function VisitDetail({ id }) {
                   <span className="badge" style={{
                     background: r.action === 'return_for_correction' ? '#fee2e2' :
                                 r.action === 'overdue_advance' ? '#fef3c7' :
+                                r.action === 'overdue_advance_blocked' ? '#fee2e2' :
                                 r.action === 'reprocess' ? '#fed7aa' : '#eff6ff',
                     color: r.action === 'return_for_correction' ? '#991b1b' :
                            r.action === 'overdue_advance' ? '#92400e' :
+                           r.action === 'overdue_advance_blocked' ? '#991b1b' :
                            r.action === 'reprocess' ? '#9a3412' : '#1e40af'
                   }}>
                     {r.action === 'return_for_correction' ? '退回补正' :
                      r.action === 'overdue_advance' ? '逾期推进' :
+                     r.action === 'overdue_advance_blocked' ? '逾期拦截' :
                      r.action === 'reprocess' ? '开始补正' :
                      r.action === 'submit_correction' ? '补正提交' :
                      r.action === 'resume_process' ? '恢复处理' : r.action}

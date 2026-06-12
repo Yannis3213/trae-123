@@ -4,7 +4,8 @@ const { requireAuth, requireRole, requireAssigneeOrRole } = require('../middlewa
 const { validate } = require('../middleware/validator');
 const {
   STATUS_LABELS, ROLE_LABELS, PRIORITY_LABELS, EXCEPTION_TYPE_LABELS,
-  executeTransition, getAllowedActions, canViewOrder, getDeadlineStatus
+  executeTransition, getAllowedActions, canViewOrder, getDeadlineStatus,
+  validateOverdueAdvanceItem
 } = require('../utils/statusFlow');
 
 const router = express.Router();
@@ -208,6 +209,98 @@ router.post('/', requireRole('nurse'), validate({
   }
 });
 
+const persistOverdueBlock = (db, order, user, blocks, payload = {}) => {
+  const primaryBlock = blocks[0];
+  const allReasons = blocks.map(b => `[${EXCEPTION_TYPE_LABELS[b.type] || b.type}]${b.reason}`).join('；');
+
+  const recordStmt = db.prepare(`
+    INSERT INTO processing_records (
+      visit_order_id, action, from_status, to_status,
+      operator_id, operator_role, comment,
+      exception_type, exception_reason,
+      evidence_required, evidence_provided,
+      correction_action
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  recordStmt.run(
+    order.id,
+    'overdue_advance_blocked',
+    order.status,
+    order.status,
+    user.id,
+    user.role,
+    `逾期推进被拦截：${allReasons}`,
+    primaryBlock.type,
+    allReasons,
+    null,
+    payload.evidence_provided || null,
+    null
+  );
+
+  const auditStmt = db.prepare(`
+    INSERT INTO audit_notes (visit_order_id, content, operator_id)
+    VALUES (?, ?, ?)
+  `);
+
+  auditStmt.run(
+    order.id,
+    `逾期推进拦截：${ROLE_LABELS[user.role]}尝试逾期推进，被${EXCEPTION_TYPE_LABELS[primaryBlock.type]}规则拦截 — ${allReasons}`,
+    user.id
+  );
+};
+
+router.get('/overdue-queue', requireRole('director'), (req, res, next) => {
+  try {
+    const now = new Date().toISOString();
+    const orders = req.db.prepare(`
+      SELECT * FROM visit_orders
+      WHERE deadline < ? AND status != 'archived'
+      ORDER BY
+        is_overdue DESC,
+        CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,
+        deadline ASC
+    `).all(now);
+
+    const items = orders.map(order => {
+      const enriched = enrichOrder(req.db, order);
+      const check = validateOverdueAdvanceItem(req.db, order, req.user, { version: order.version });
+
+      return {
+        ...enriched,
+        canAdvance: check.canAdvance,
+        blocks: check.blocks,
+        advanceTo: check.advance ? check.advance.to : null,
+        advanceToLabel: check.advance ? STATUS_LABELS[check.advance.to] : null,
+        advanceLabel: check.advance ? check.advance.label : null,
+        requiresEvidence: check.advance ? !!check.advance.requiresEvidence : false,
+        requiresAssignee: check.advance ? !!check.advance.requiresAssignee : false
+      };
+    });
+
+    const canAdvanceCount = items.filter(i => i.canAdvance).length;
+    const blockedCount = items.filter(i => !i.canAdvance).length;
+
+    res.json({
+      success: true,
+      data: {
+        items,
+        total: items.length,
+        canAdvanceCount,
+        blockedCount,
+        blockSummary: items.filter(i => !i.canAdvance).reduce((acc, i) => {
+          i.blocks.forEach(b => {
+            acc[b.type] = (acc[b.type] || 0) + 1;
+          });
+          return acc;
+        }, {})
+      }
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id', requireAuth, (req, res, next) => {
   try {
     const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(req.params.id);
@@ -251,7 +344,7 @@ router.get('/:id', requireAuth, (req, res, next) => {
              comment, exception_type, exception_reason, correction_action,
              evidence_required, evidence_provided, created_at
       FROM processing_records
-      WHERE visit_order_id = ? AND (action IN ('return_for_correction', 'reprocess', 'submit_correction', 'overdue_advance', 'resume_process') OR correction_action IS NOT NULL)
+      WHERE visit_order_id = ? AND (action IN ('return_for_correction', 'reprocess', 'submit_correction', 'overdue_advance', 'overdue_advance_blocked', 'resume_process') OR correction_action IS NOT NULL)
       ORDER BY created_at DESC
     `).all(req.params.id);
 
@@ -410,85 +503,70 @@ router.post('/batch', requireAuth, (req, res, next) => {
 router.post('/overdue-batch', requireRole('director'), (req, res, next) => {
   try {
     const { ids, payload = {} } = req.body;
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      const now = new Date().toISOString();
-      const overdueOrders = req.db.prepare(`
+    const now = new Date().toISOString();
+
+    let targetIds;
+    if (ids && Array.isArray(ids) && ids.length > 0) {
+      targetIds = ids;
+    } else {
+      targetIds = req.db.prepare(`
         SELECT id FROM visit_orders
         WHERE deadline < ? AND status != 'archived' AND is_overdue = 1
       `).all(now).map(o => o.id);
+    }
 
-      if (overdueOrders.length === 0) {
-        return res.json({
-          success: true,
-          message: '当前无逾期单据需要处理',
-          total: 0,
-          successCount: 0,
-          failCount: 0,
-          results: []
-        });
-      }
-
-      const results = [];
-      const tx = req.db.transaction(() => {
-        for (const id of overdueOrders) {
-          try {
-            const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(id);
-            if (!order) {
-              results.push({ id, success: false, message: '就诊单不存在', exceptionType: 'material', reason: '单据不存在' });
-              continue;
-            }
-            const result = executeTransition(req.db, order, 'overdue_advance', req.user, { ...payload, version: order.version });
-            results.push({
-              id,
-              order_no: order.order_no,
-              success: true,
-              message: result.message,
-              from: result.from,
-              to: result.to,
-              exceptionType: result.exceptionType || null,
-              exceptionReason: result.exceptionReason || null,
-              correctionAction: result.correctionAction || null
-            });
-          } catch (err) {
-            const orderInfo = req.db.prepare('SELECT order_no, status FROM visit_orders WHERE id = ?').get(id);
-            results.push({
-              id,
-              order_no: orderInfo?.order_no || id,
-              success: false,
-              message: err.message,
-              exceptionType: err.exceptionType || 'status',
-              reason: `逾期推进被拦截：${err.message}`,
-              currentStatus: orderInfo?.status || null,
-              currentStatusLabel: orderInfo?.status ? STATUS_LABELS[orderInfo.status] : null
-            });
-          }
-        }
-      });
-      tx();
-
-      const successCount = results.filter(r => r.success).length;
-      const failCount = results.filter(r => !r.success).length;
-
+    if (targetIds.length === 0) {
       return res.json({
         success: true,
-        message: `逾期批量推进完成：成功 ${successCount} 条，失败 ${failCount} 条`,
-        total: overdueOrders.length,
-        successCount,
-        failCount,
-        results
+        message: '当前无逾期单据需要处理',
+        total: 0,
+        canAdvanceCount: 0,
+        blockedCount: 0,
+        results: []
       });
     }
 
     const results = [];
     const tx = req.db.transaction(() => {
-      for (const id of ids) {
+      for (const id of targetIds) {
         try {
           const order = req.db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(id);
           if (!order) {
-            results.push({ id, success: false, message: '就诊单不存在', exceptionType: 'material', reason: '单据不存在' });
+            results.push({
+              id,
+              success: false,
+              exceptionType: 'material',
+              reason: '单据ID不存在或已被删除',
+              blocks: [{ type: 'material', reason: '单据ID不存在或已被删除' }]
+            });
             continue;
           }
-          const result = executeTransition(req.db, order, 'overdue_advance', req.user, { ...payload, version: order.version });
+
+          const check = validateOverdueAdvanceItem(req.db, order, req.user, {
+            ...payload,
+            version: order.version
+          });
+
+          if (!check.canAdvance) {
+            persistOverdueBlock(req.db, order, req.user, check.blocks, payload);
+            results.push({
+              id,
+              order_no: order.order_no,
+              success: false,
+              exceptionType: check.blocks[0].type,
+              reason: `逾期推进被拦截：${check.blocks.map(b => b.reason).join('；')}`,
+              blocks: check.blocks,
+              currentStatus: order.status,
+              currentStatusLabel: STATUS_LABELS[order.status],
+              materialStatus: order.material_status
+            });
+            continue;
+          }
+
+          const result = executeTransition(req.db, order, 'overdue_advance', req.user, {
+            ...payload,
+            version: order.version
+          });
           results.push({
             id,
             order_no: order.order_no,
@@ -496,21 +574,24 @@ router.post('/overdue-batch', requireRole('director'), (req, res, next) => {
             message: result.message,
             from: result.from,
             to: result.to,
+            fromLabel: STATUS_LABELS[result.from],
+            toLabel: STATUS_LABELS[result.to],
             exceptionType: result.exceptionType || null,
             exceptionReason: result.exceptionReason || null,
             correctionAction: result.correctionAction || null
           });
         } catch (err) {
-          const orderInfo = req.db.prepare('SELECT order_no, status FROM visit_orders WHERE id = ?').get(id);
+          const orderInfo = req.db.prepare('SELECT order_no, status, material_status FROM visit_orders WHERE id = ?').get(id);
           results.push({
             id,
             order_no: orderInfo?.order_no || id,
             success: false,
-            message: err.message,
             exceptionType: err.exceptionType || 'status',
             reason: `逾期推进被拦截：${err.message}`,
+            blocks: [{ type: err.exceptionType || 'status', reason: err.message }],
             currentStatus: orderInfo?.status || null,
-            currentStatusLabel: orderInfo?.status ? STATUS_LABELS[orderInfo.status] : null
+            currentStatusLabel: orderInfo?.status ? STATUS_LABELS[orderInfo.status] : null,
+            materialStatus: orderInfo?.material_status || null
           });
         }
       }
@@ -520,12 +601,24 @@ router.post('/overdue-batch', requireRole('director'), (req, res, next) => {
     const successCount = results.filter(r => r.success).length;
     const failCount = results.filter(r => !r.success).length;
 
+    const blockSummary = results.filter(r => !r.success).reduce((acc, r) => {
+      if (r.blocks) {
+        r.blocks.forEach(b => {
+          acc[b.type] = (acc[b.type] || 0) + 1;
+        });
+      } else {
+        acc[r.exceptionType] = (acc[r.exceptionType] || 0) + 1;
+      }
+      return acc;
+    }, {});
+
     res.json({
       success: true,
-      message: `逾期批量推进完成：成功 ${successCount} 条，失败 ${failCount} 条`,
-      total: ids.length,
-      successCount,
-      failCount,
+      message: `逾期批量处置完成：成功推进 ${successCount} 条，拦截 ${failCount} 条`,
+      total: targetIds.length,
+      canAdvanceCount: successCount,
+      blockedCount: failCount,
+      blockSummary,
       results
     });
   } catch (err) {

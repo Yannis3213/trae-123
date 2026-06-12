@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
-const { STATUS_LABELS } = require('../utils/statusFlow');
+const { STATUS_LABELS, EXCEPTION_TYPE_LABELS } = require('../utils/statusFlow');
 
 const router = express.Router();
 
@@ -90,6 +90,15 @@ router.get('/', requireAuth, (req, res) => {
     ORDER BY overdue_count DESC, count DESC
   `).all(...handlerParams, nowStr);
 
+  const blockedCount = req.db.prepare(`
+    SELECT COUNT(*) as count FROM processing_records WHERE action = 'overdue_advance_blocked'
+  `).get().count;
+
+  const blockedByType = req.db.prepare(`
+    SELECT exception_type, COUNT(*) as count FROM processing_records
+    WHERE action = 'overdue_advance_blocked' GROUP BY exception_type
+  `).all();
+
   res.json({
     success: true,
     data: {
@@ -97,8 +106,9 @@ router.get('/', requireAuth, (req, res) => {
       byDeadline: { normal, approaching, overdue },
       byStatus: byStatus.map(s => ({ ...s, label: STATUS_LABELS[s.status] || s.status })),
       byPriority,
-      byException,
-      byHandler
+      byException: byException.map(e => ({ ...e, label: EXCEPTION_TYPE_LABELS[e.exception_type] || e.exception_type })),
+      byHandler,
+      overdueBlocked: { total: blockedCount, byType: blockedByType.map(b => ({ ...b, label: EXCEPTION_TYPE_LABELS[b.exception_type] || b.exception_type })) }
     }
   });
 });

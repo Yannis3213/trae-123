@@ -79,17 +79,69 @@ export default function VisitList() {
     }
   };
 
-  const handleOverdueBatch = async () => {
+  const [overduePanel, setOverduePanel] = useState(false);
+  const [overdueQueue, setOverdueQueue] = useState(null);
+  const [overdueLoading, setOverdueLoading] = useState(false);
+  const [overdueSelected, setOverdueSelected] = useState(new Set());
+  const [overdueEvidence, setOverdueEvidence] = useState('');
+  const [overdueResults, setOverdueResults] = useState(null);
+
+  const loadOverdueQueue = async () => {
+    setOverdueLoading(true);
     try {
-      const res = await visitsApi.overdueBatch({ ids: [...selected] });
+      const res = await visitsApi.overdueQueue();
+      if (res.success) {
+        setOverdueQueue(res.data);
+        setOverdueSelected(new Set());
+        setOverdueEvidence('');
+        setOverdueResults(null);
+      }
+    } catch (err) {
+      showToast(err.message || '加载逾期队列失败', 'error');
+    } finally {
+      setOverdueLoading(false);
+    }
+  };
+
+  const handleOpenOverduePanel = () => {
+    setOverduePanel(true);
+    loadOverdueQueue();
+  };
+
+  const toggleOverdueSelect = (id) => {
+    const next = new Set(overdueSelected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setOverdueSelected(next);
+  };
+
+  const toggleOverdueAll = () => {
+    if (!overdueQueue) return;
+    const advanceable = overdueQueue.items.filter(i => i.canAdvance);
+    if (overdueSelected.size === advanceable.length) {
+      setOverdueSelected(new Set());
+    } else {
+      setOverdueSelected(new Set(advanceable.map(i => i.id)));
+    }
+  };
+
+  const handleOverdueBatch = async () => {
+    setOverdueLoading(true);
+    try {
+      const payload = {};
+      if (overdueEvidence.trim()) payload.evidence_provided = overdueEvidence.trim();
+      const ids = overdueSelected.size > 0 ? [...overdueSelected] : undefined;
+      const res = await visitsApi.overdueBatch({ ids, payload });
       if (res.success) {
         showToast(res.message);
-        setBatchResults(res);
-        setSelected(new Set());
+        setOverdueResults(res);
+        loadOverdueQueue();
         loadData();
       }
     } catch (err) {
-      showToast(err.message || '逾期批量推进失败', 'error');
+      showToast(err.message || '逾期批量处置失败', 'error');
+    } finally {
+      setOverdueLoading(false);
     }
   };
 
@@ -110,7 +162,6 @@ export default function VisitList() {
     if (hasRole('director')) {
       actions.push({ key: 'archive', label: '批量复核归档' });
       actions.push({ key: 'return_for_correction', label: '批量退回补正', needPayload: true, payloadField: 'exception_reason', labelField: '退回原因' });
-      actions.push({ key: 'overdue_advance', label: '逾期批量推进', isOverdueAction: true });
     }
     return actions;
   };
@@ -156,8 +207,8 @@ export default function VisitList() {
               </button>
             )}
             {hasRole('director') && stats && stats.byDeadline.overdue > 0 && (
-              <button className="btn btn-danger" onClick={handleOverdueBatch}>
-                ⚠️ 一键逾期推进（{stats.byDeadline.overdue}条）
+              <button className="btn btn-danger" onClick={handleOpenOverduePanel}>
+                ⚠️ 逾期处置（{stats.byDeadline.overdue}条）
               </button>
             )}
           </div>
@@ -392,6 +443,234 @@ export default function VisitList() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {overduePanel && hasRole('director') && (
+        <div className="card">
+          <div className="card-title">
+            <span>⚠️ 逾期单据处置队列</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-sm" onClick={loadOverdueQueue} disabled={overdueLoading}>
+                {overdueLoading ? '加载中...' : '🔄 刷新'}
+              </button>
+              <button className="btn btn-sm" onClick={() => { setOverduePanel(false); setOverdueQueue(null); setOverdueResults(null); }}>
+                关闭
+              </button>
+            </div>
+          </div>
+
+          {overdueLoading && !overdueQueue && (
+            <div className="empty">加载逾期队列中...</div>
+          )}
+
+          {overdueQueue && (
+            <>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+                <div className="stat-card overdue" style={{ flex: '1 1 120px' }}>
+                  <h4>逾期总数</h4>
+                  <div className="num">{overdueQueue.total}</div>
+                </div>
+                <div className="stat-card" style={{ flex: '1 1 120px', background: '#dcfce7' }}>
+                  <h4>可推进</h4>
+                  <div className="num" style={{ color: '#16a34a' }}>{overdueQueue.canAdvanceCount}</div>
+                </div>
+                <div className="stat-card" style={{ flex: '1 1 120px', background: '#fee2e2' }}>
+                  <h4>被拦截</h4>
+                  <div className="num" style={{ color: '#dc2626' }}>{overdueQueue.blockedCount}</div>
+                </div>
+                {Object.entries(overdueQueue.blockSummary || {}).map(([type, count]) => (
+                  <div key={type} style={{ flex: '1 1 120px', background: '#fef3c7', borderRadius: 8, padding: 8, textAlign: 'center' }}>
+                    <div style={{ fontSize: 12, color: '#64748b' }}>{EXCEPTION_LABELS[type] || type}</div>
+                    <div style={{ fontWeight: 700, color: '#92400e' }}>{count}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <div className="form-group" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}>
+                  <label>逾期推进证据（可选，适用于需要证据的单据）</label>
+                  <input
+                    value={overdueEvidence}
+                    onChange={(e) => setOverdueEvidence(e.target.value)}
+                    placeholder="如：逾期处理说明、补正材料确认"
+                  />
+                </div>
+                <button
+                  className="btn btn-danger"
+                  onClick={handleOverdueBatch}
+                  disabled={overdueLoading || (overdueSelected.size === 0 && overdueQueue.canAdvanceCount === 0)}
+                >
+                  {overdueLoading ? '处置中...' : `⚠️ 处置选中（${overdueSelected.size || overdueQueue.canAdvanceCount}条）`}
+                </button>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th className="checkbox-cell">
+                        <input type="checkbox"
+                          checked={overdueQueue.items.filter(i => i.canAdvance).length > 0 && overdueSelected.size === overdueQueue.items.filter(i => i.canAdvance).length}
+                          onChange={toggleOverdueAll}
+                        />
+                      </th>
+                      <th>单号</th>
+                      <th>宠物</th>
+                      <th>当前状态</th>
+                      <th>到期</th>
+                      <th>材料</th>
+                      <th>推进目标</th>
+                      <th>处置判定</th>
+                      <th>拦截原因</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {overdueQueue.items.map(item => {
+                      const dl = getDeadlineStatus(item.deadline);
+                      const ss = statusStyle(item.status);
+                      return (
+                        <tr key={item.id} style={!item.canAdvance ? { background: '#fef2f2' } : { background: '#f0fdf4' }}>
+                          <td className="checkbox-cell">
+                            <input type="checkbox"
+                              checked={overdueSelected.has(item.id)}
+                              disabled={!item.canAdvance}
+                              onChange={() => toggleOverdueSelect(item.id)}
+                            />
+                          </td>
+                          <td>
+                            <a href={`/detail/${item.id}`}>{item.order_no}</a>
+                          </td>
+                          <td>{item.pet_name}</td>
+                          <td>
+                            <span className="badge" style={{ background: ss.bg, color: ss.color }}>
+                              {STATUS_LABELS[item.status]}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="badge" style={{ background: `${dl.color}20`, color: dl.color }}>
+                              {dl.label}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="badge" style={{
+                              background: item.material_status === 'complete' ? '#dcfce7' : '#fef3c7',
+                              color: item.material_status === 'complete' ? '#166534' : '#92400e',
+                              fontSize: 11
+                            }}>
+                              {item.material_status === 'complete' ? '齐全' : '不全'}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: 12 }}>
+                            {item.canAdvance ? (
+                              <span style={{ color: '#16a34a', fontWeight: 600 }}>
+                                → {item.advanceToLabel}
+                              </span>
+                            ) : (
+                              <span style={{ color: '#dc2626' }}>不可推进</span>
+                            )}
+                          </td>
+                          <td>
+                            {item.canAdvance ? (
+                              <span className="badge" style={{ background: '#dcfce7', color: '#166534' }}>✅ 可推进</span>
+                            ) : (
+                              <span className="badge" style={{ background: '#fee2e2', color: '#991b1b' }}>❌ 拦截</span>
+                            )}
+                          </td>
+                          <td style={{ fontSize: 11, maxWidth: 250, wordBreak: 'break-all' }}>
+                            {item.blocks && item.blocks.length > 0 ? (
+                              <div>
+                                {item.blocks.map((b, bi) => (
+                                  <div key={bi} style={{ marginBottom: 2 }}>
+                                    <span className="exception-tag" style={{ fontSize: 10 }}>
+                                      {EXCEPTION_LABELS[b.type] || b.type}
+                                    </span>
+                                    <span style={{ color: '#dc2626', marginLeft: 4 }}>{b.reason}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <span style={{ color: '#16a34a' }}>—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {overdueResults && (
+            <div style={{ marginTop: 16 }}>
+              <div className="card-title" style={{ borderTop: '1px solid #e2e8f0', paddingTop: 12 }}>
+                <span>📊 逾期处置结果</span>
+                <button className="btn btn-sm" onClick={() => setOverdueResults(null)}>关闭结果</button>
+              </div>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+                <div style={{ color: '#16a34a', fontWeight: 600 }}>✅ 成功推进：{overdueResults.canAdvanceCount} 条</div>
+                <div style={{ color: '#dc2626', fontWeight: 600 }}>❌ 拦截：{overdueResults.blockedCount} 条</div>
+                <div style={{ color: '#64748b' }}>总计：{overdueResults.total} 条</div>
+              </div>
+              {overdueResults.blockSummary && Object.keys(overdueResults.blockSummary).length > 0 && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                  {Object.entries(overdueResults.blockSummary).map(([type, count]) => (
+                    <span key={type} className="badge" style={{ background: '#fef3c7', color: '#92400e' }}>
+                      {EXCEPTION_LABELS[type] || type}：{count}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <table>
+                <thead>
+                  <tr>
+                    <th>单号</th>
+                    <th>结果</th>
+                    <th>状态变更</th>
+                    <th>拦截类型</th>
+                    <th>处置人</th>
+                    <th>详情/拦截原因</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overdueResults.results.map((r, i) => (
+                    <tr key={i} style={!r.success ? { background: '#fef2f2' } : { background: '#f0fdf4' }}>
+                      <td style={{ fontSize: 12 }}>{r.order_no || r.id}</td>
+                      <td>
+                        <span className="badge" style={{
+                          background: r.success ? '#dcfce7' : '#fee2e2',
+                          color: r.success ? '#166534' : '#991b1b'
+                        }}>
+                          {r.success ? '✅ 推进' : '❌ 拦截'}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 12 }}>
+                        {r.success ? (
+                          <span>{r.fromLabel || STATUS_LABELS[r.from] || r.from} → {r.toLabel || STATUS_LABELS[r.to] || r.to}</span>
+                        ) : (
+                          <span style={{ color: '#64748b' }}>{r.currentStatusLabel || STATUS_LABELS[r.currentStatus] || '-'}</span>
+                        )}
+                      </td>
+                      <td>
+                        {r.exceptionType ? (
+                          <span className="exception-tag" style={{ fontSize: 10 }}>
+                            {EXCEPTION_LABELS[r.exceptionType] || r.exceptionType}
+                          </span>
+                        ) : '-'}
+                      </td>
+                      <td style={{ fontSize: 12 }}>
+                        {r.success ? '院长' : '-'}
+                      </td>
+                      <td style={{ fontSize: 11, color: r.success ? '#16a34a' : '#dc2626', maxWidth: 280, wordBreak: 'break-all' }}>
+                        {r.success ? (r.correctionAction || r.message) : (r.reason || r.message)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

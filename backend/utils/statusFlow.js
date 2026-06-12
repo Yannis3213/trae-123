@@ -313,71 +313,85 @@ const validateTransition = (db, order, action, user, payload = {}) => {
   return transition;
 };
 
-const validateOverdueAdvance = (db, order, user, payload = {}) => {
+const validateOverdueAdvanceItem = (db, order, user, payload = {}) => {
+  const blocks = [];
+
   if (user.role !== 'director') {
-    throw new AppError(
-      `逾期推进权限不足：仅院长可执行逾期强制推进，当前角色「${ROLE_LABELS[user.role]}」无此权限`,
-      403,
-      'permission'
-    );
+    return {
+      canAdvance: false,
+      blocks: [{ type: 'permission', reason: `逾期推进权限不足：仅院长可执行逾期强制推进，当前角色「${ROLE_LABELS[user.role]}」无此权限` }]
+    };
   }
 
   if (order.status === 'archived') {
-    throw new AppError(
-      '状态冲突：已归档的单据无法进行逾期推进',
-      400,
-      'status'
-    );
+    return {
+      canAdvance: false,
+      blocks: [{ type: 'status', reason: '状态冲突：已归档的单据无法进行逾期推进' }]
+    };
   }
 
   const advance = OVERDUE_ADVANCE_MAP[order.status];
   if (!advance) {
-    throw new AppError(
-      `逾期推进不支持当前状态「${STATUS_LABELS[order.status]}」`,
-      400,
-      'status'
-    );
+    return {
+      canAdvance: false,
+      blocks: [{ type: 'status', reason: `逾期推进不支持当前状态「${STATUS_LABELS[order.status]}」` }]
+    };
   }
 
   const dlStatus = getDeadlineStatus(order.deadline);
   if (dlStatus !== 'overdue') {
-    throw new AppError(
-      `逾期推进校验失败：该就诊单当前未逾期（到期状态：${dlStatus === 'approaching' ? '临期' : '正常'}），不可使用逾期强制推进`,
-      400,
-      'timeline'
-    );
+    blocks.push({ type: 'timeline', reason: `该就诊单当前未逾期（到期状态：${dlStatus === 'approaching' ? '临期' : '正常'}），不可使用逾期强制推进` });
   }
 
   if (payload.version !== undefined && payload.version !== order.version) {
-    throw new AppError(
-      `版本冲突：当前版本 ${order.version}，提交版本 ${payload.version}，请刷新后重试`,
-      409,
-      'status'
-    );
+    blocks.push({ type: 'status', reason: `版本冲突：当前版本 ${order.version}，提交版本 ${payload.version}` });
   }
 
-  if (advance.requiresAssignee && !payload.assignee_id) {
-    throw new AppError(
-      '逾期推进「强制分派」必须指定兽医师',
-      400,
-      'material'
-    );
+  if (advance.requiresAssignee && !payload.assignee_id && !order.assignee_id) {
+    blocks.push({ type: 'material', reason: '逾期推进「强制分派」必须指定兽医师' });
+  }
+
+  const isMaterialReady = order.material_status === 'complete';
+  const needsMaterialCompletion = ['processing', 'transferred', 'returned_for_correction', 'reprocessing'].includes(order.status);
+  if (needsMaterialCompletion && !isMaterialReady && !payload.evidence_provided) {
+    blocks.push({ type: 'material', reason: `材料状态为「${order.material_status === 'incomplete' ? '不完整' : order.material_status}」，需补齐材料或提供证据后方可推进` });
   }
 
   if (advance.requiresEvidence && !payload.evidence_provided) {
-    throw new AppError(
-      `逾期推进「${advance.label}」必须提供证据材料`,
-      400,
-      'material'
-    );
+    blocks.push({ type: 'material', reason: `逾期推进「${advance.label}」必须提供证据材料` });
   }
+
+  const hasResponsible = order.assignee_id || order.handler_id || payload.assignee_id;
+  if (!hasResponsible && advance.requiresAssignee) {
+    blocks.push({ type: 'material', reason: '当前无责任人（分派兽医师），逾期推进需指定责任人' });
+  }
+
+  if (blocks.length > 0) {
+    return { canAdvance: false, blocks, advance };
+  }
+
+  return {
+    canAdvance: true,
+    blocks: [],
+    advance
+  };
+};
+
+const validateOverdueAdvance = (db, order, user, payload = {}) => {
+  const result = validateOverdueAdvanceItem(db, order, user, payload);
+  if (!result.canAdvance) {
+    const block = result.blocks[0];
+    throw new AppError(block.reason, block.type === 'timeline' ? 400 : (block.type === 'permission' ? 403 : 400), block.type);
+  }
+
+  const advance = result.advance;
 
   return {
     to: advance.to,
     allowedRoles: ['director'],
     label: advance.label,
     requiresEvidence: advance.requiresEvidence ? ['逾期处理证据'] : [],
-    updates: payload.assignee_id ? { assignee_id: true } : {},
+    updates: (payload.assignee_id || advance.requiresAssignee) ? { assignee_id: true } : {},
     onExecute: () => ({
       exception_type: 'timeline',
       exception_reason: `逾期强制推进：${advance.label}（操作人：${ROLE_LABELS[user.role]}）`,
@@ -578,6 +592,7 @@ module.exports = {
   getDeadlineStatus,
   checkDeadline,
   validateTransition,
+  validateOverdueAdvanceItem,
   executeTransition,
   getAllowedActions,
   canViewOrder
