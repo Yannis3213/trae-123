@@ -48,16 +48,34 @@ USERS = [
         "name": "李登记员"
     },
     {
+        "username": "registrar2",
+        "password": "123456",
+        "role": Roles.REGISTRAR,
+        "name": "赵登记员"
+    },
+    {
         "username": "supervisor1",
         "password": "123456",
         "role": Roles.AUDIT_SUPERVISOR,
         "name": "王审核主管"
     },
     {
+        "username": "supervisor2",
+        "password": "123456",
+        "role": Roles.AUDIT_SUPERVISOR,
+        "name": "孙审核主管"
+    },
+    {
         "username": "leader1",
         "password": "123456",
         "role": Roles.REVIEW_LEADER,
         "name": "张复核负责人"
+    },
+    {
+        "username": "leader2",
+        "password": "123456",
+        "role": Roles.REVIEW_LEADER,
+        "name": "周复核负责人"
     }
 ]
 

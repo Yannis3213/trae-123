@@ -79,12 +79,12 @@ async def init_sample_data():
             "booth_preference": "B区中央位置",
             "status": ApplicationStatus.CORRECTION_REQUIRED,
             "queue": Roles.QUEUES[Roles.REGISTRAR],
-            "current_handler": "registrar1",
+            "current_handler": "registrar2",
             "version": 3,
             "deadline_offset": 24,
             "submitted_offset_days": 5,
             "updated_offset_hours": 12,
-            "created_by": "registrar1",
+            "created_by": "registrar2",
             "sync_status": "pending",
             "booth_confirmation_evidence": None,
             "evidence_status_present": ["营业执照副本"],
@@ -93,12 +93,12 @@ async def init_sample_data():
                     "reason": "缺少法人授权委托书和参展产品详细名录",
                     "evidence_required": "1. 法人授权委托书(加盖公章)；2. 参展产品详细名录(含规格型号)",
                     "deadline_hours": 72,
-                    "returned_by": "supervisor1",
-                    "returned_by_name": "王审核主管",
+                    "returned_by": "supervisor2",
+                    "returned_by_name": "孙审核主管",
                     "returned_at": (now - timedelta(hours=12)).isoformat(),
                 }
             ],
-            "description": "【退回补正】需补正材料：展商登记员补正后可重新提交→审核→复核→展位确认→归档→同步",
+            "description": "【退回补正-赵登记员】registrar2 创建和持有：展商登记员registrar2补正后可重新提交→supervisor2审核→复核→展位确认→归档→同步",
             "overdue_exception": False,
         },
         {
@@ -136,17 +136,17 @@ async def init_sample_data():
             "booth_preference": "D区精品展示区",
             "status": ApplicationStatus.PENDING_BOOTH_CONFIRM,
             "queue": Roles.QUEUES[Roles.REVIEW_LEADER],
-            "current_handler": "leader1",
+            "current_handler": "leader2",
             "version": 5,
             "deadline_offset": 18,
             "submitted_offset_days": 7,
             "updated_offset_days": 1,
-            "created_by": "registrar1",
+            "created_by": "registrar2",
             "sync_status": "pending",
             "booth_confirmation_evidence": None,
             "evidence_status_present": ["营业执照副本", "法人授权委托书", "审核意见签字确认", "资质材料复核通过"],
             "pending_corrections": None,
-            "description": "【临期+证据闭环】待展位确认，临期预警18小时，缺少展位确认函证据，上传证据后→归档→同步",
+            "description": "【临期+证据闭环-周复核负责人】leader2持有：待展位确认，临期预警18小时，缺少展位确认函证据，上传证据后→归档→同步",
             "overdue_exception": False,
         },
     ]
@@ -203,7 +203,10 @@ async def init_sample_data():
                 meta["contact_phone"], meta["contact_email"], meta["exhibition_type"],
                 meta["booth_area"], meta["booth_preference"], status, meta["queue"],
                 meta["current_handler"], "李登记员" if meta["current_handler"] == "registrar1"
-                    else ("王审核主管" if meta["current_handler"] == "supervisor1" else "张复核负责人"),
+                    else ("赵登记员" if meta["current_handler"] == "registrar2"
+                    else ("王审核主管" if meta["current_handler"] == "supervisor1"
+                    else ("孙审核主管" if meta["current_handler"] == "supervisor2"
+                    else ("张复核负责人" if meta["current_handler"] == "leader1" else "周复核负责人")))),
                 resp_username, resp_name,
                 meta["version"], 1 if is_overdue else 0, warning_level, deadline.isoformat(),
                 submitted_at, last_updated_at, meta["created_by"], meta["booth_confirmation_evidence"],
@@ -223,7 +226,7 @@ async def init_sample_data():
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 app_id, "create", None, ApplicationStatus.DRAFT,
-                "registrar1", Roles.REGISTRAR, "创建展商申请",
+                meta["created_by"], Roles.REGISTRAR, "创建展商申请",
                 "步骤1：完善公司基础信息 步骤2：上传营业执照副本、法人授权委托书等资质 步骤3：提交进入审核流程",
                 None, None, None, 1
             ))
@@ -240,9 +243,9 @@ async def init_sample_data():
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     app_id, "submit", ApplicationStatus.DRAFT, ApplicationStatus.PENDING_AUDIT,
-                    "registrar1", Roles.REGISTRAR, "提交审核，已上传营业执照副本",
-                    "已完成：基础信息填写、营业执照副本上传；下一步：等待审核主管审核资质",
-                    "李登记员", Roles.REGISTRAR, "信息填写完成，提交审核", 2
+                    "registrar2", Roles.REGISTRAR, "提交审核，已上传营业执照副本",
+                    "已完成：基础信息填写、营业执照副本上传；下一步：等待孙审核主管审核资质",
+                    "赵登记员", Roles.REGISTRAR, "信息填写完成，提交审核", 2
                 ))
                 await cur.execute("""
                     INSERT INTO processing_records (
@@ -253,12 +256,12 @@ async def init_sample_data():
                 """, (
                     app_id, "return_for_correction", ApplicationStatus.PENDING_AUDIT,
                     ApplicationStatus.CORRECTION_REQUIRED,
-                    "supervisor1", Roles.AUDIT_SUPERVISOR,
+                    "supervisor2", Roles.AUDIT_SUPERVISOR,
                     "资质审核发现材料缺失，退回补正",
                     "缺少【法人授权委托书】和【参展产品详细名录】，营业执照副本已核验通过",
                     "1. 法人授权委托书(需法人签字并加盖公章)；2. 参展产品详细名录(含产品名称、规格、图片)",
-                    "请展商登记员在72小时内补充上述2份材料后重新提交审核",
-                    "李登记员", Roles.REGISTRAR, "已提交，营业执照副本已核验", 3
+                    "请展商登记员(赵登记员)在72小时内补充上述2份材料后重新提交审核",
+                    "赵登记员", Roles.REGISTRAR, "已提交，营业执照副本已核验", 3
                 ))
 
             elif app_no == "EX202406120003":
@@ -282,8 +285,8 @@ async def init_sample_data():
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     app_id, "approve_audit", ApplicationStatus.PENDING_AUDIT, ApplicationStatus.PENDING_REVIEW,
-                    "supervisor1", Roles.AUDIT_SUPERVISOR, "审核通过，资质材料齐全",
-                    "资质审核通过：营业执照有效、法人授权合规、参展产品符合展会主题；流转至主办方复核",
+                    "supervisor2", Roles.AUDIT_SUPERVISOR, "孙审核主管审核通过，资质材料齐全",
+                    "资质审核通过：营业执照有效、法人授权合规、参展产品符合展会主题；流转至张复核负责人(leader1)复核",
                     "李登记员", Roles.REGISTRAR, "提交完整资质材料", 3
                 ))
                 await cur.execute("""
@@ -320,9 +323,9 @@ async def init_sample_data():
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     app_id, "submit", ApplicationStatus.DRAFT, ApplicationStatus.PENDING_AUDIT,
-                    "registrar1", Roles.REGISTRAR, "提交审核",
-                    "完成基础信息和资质材料上传",
-                    "李登记员", Roles.REGISTRAR, "提交审核申请", 2
+                    "registrar2", Roles.REGISTRAR, "赵登记员提交审核",
+                    "完成基础信息和资质材料上传(赵登记员创建)",
+                    "赵登记员", Roles.REGISTRAR, "提交审核申请", 2
                 ))
                 await cur.execute("""
                     INSERT INTO processing_records (
@@ -333,12 +336,12 @@ async def init_sample_data():
                 """, (
                     app_id, "return_for_correction", ApplicationStatus.PENDING_AUDIT,
                     ApplicationStatus.CORRECTION_REQUIRED,
-                    "supervisor1", Roles.AUDIT_SUPERVISOR,
-                    "请补充参展产品名录",
+                    "supervisor2", Roles.AUDIT_SUPERVISOR,
+                    "孙审核主管：请补充参展产品名录",
                     "缺少参展产品详细名录，其余材料齐全",
                     "参展产品详细名录(含产品名称、规格型号、图片说明)",
-                    "补充产品名录后可重新提交",
-                    "李登记员", Roles.REGISTRAR, "营业执照、授权委托书齐全，缺少产品名录", 3
+                    "赵登记员补充产品名录后可重新提交",
+                    "赵登记员", Roles.REGISTRAR, "营业执照、授权委托书齐全，缺少产品名录", 3
                 ))
                 await cur.execute("""
                     INSERT INTO processing_records (
@@ -348,9 +351,9 @@ async def init_sample_data():
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     app_id, "correct", ApplicationStatus.CORRECTION_REQUIRED, ApplicationStatus.PENDING_AUDIT,
-                    "registrar1", Roles.REGISTRAR, "已补充参展产品名录",
+                    "registrar2", Roles.REGISTRAR, "赵登记员已补充参展产品名录",
                     "已上传《2024参展产品详细名录》PDF，含12款展品信息",
-                    "王审核主管", Roles.AUDIT_SUPERVISOR, "退回补正：补充产品名录", 4
+                    "孙审核主管", Roles.AUDIT_SUPERVISOR, "退回补正：补充产品名录", 4
                 ))
                 await cur.execute("""
                     INSERT INTO processing_records (
@@ -360,9 +363,9 @@ async def init_sample_data():
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     app_id, "approve_audit", ApplicationStatus.PENDING_AUDIT, ApplicationStatus.PENDING_REVIEW,
-                    "supervisor1", Roles.AUDIT_SUPERVISOR, "审核通过，材料齐全",
+                    "supervisor2", Roles.AUDIT_SUPERVISOR, "孙审核主管审核通过，材料齐全",
                     "资质材料齐全：营业执照、法人授权委托书、参展产品名录全部核验通过",
-                    "李登记员", Roles.REGISTRAR, "补正后重新提交，产品名录已补充", 5
+                    "赵登记员", Roles.REGISTRAR, "补正后重新提交，产品名录已补充", 5
                 ))
                 await cur.execute("""
                     INSERT INTO processing_records (
@@ -372,9 +375,9 @@ async def init_sample_data():
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     app_id, "approve_review", ApplicationStatus.PENDING_REVIEW, ApplicationStatus.PENDING_BOOTH_CONFIRM,
-                    "leader1", Roles.REVIEW_LEADER, "复核通过，待展位确认函签署",
+                    "leader2", Roles.REVIEW_LEADER, "周复核负责人复核通过，待展位确认函签署",
                     "主办方复核通过：审核意见签字齐全、资质材料复核通过。临期提醒：请在18小时内完成展位确认函上传并确认展位",
-                    "王审核主管", Roles.AUDIT_SUPERVISOR, "审核通过，材料完整核验", 5
+                    "孙审核主管", Roles.AUDIT_SUPERVISOR, "审核通过，材料完整核验", 5
                 ))
 
             await conn.commit()
@@ -423,7 +426,10 @@ async def init_sample_data():
         deadline, warning_level, is_overdue = await calc_deadline_and_warning(meta["status"], meta["deadline_offset"])
         wl_name = wl.get(warning_level, warning_level)
         handler_name = "李登记员" if meta["current_handler"] == "registrar1" else (
-            "王审核主管" if meta["current_handler"] == "supervisor1" else "张复核负责人")
+            "赵登记员" if meta["current_handler"] == "registrar2" else (
+            "王审核主管" if meta["current_handler"] == "supervisor1" else (
+            "孙审核主管" if meta["current_handler"] == "supervisor2" else (
+            "张复核负责人" if meta["current_handler"] == "leader1" else "周复核负责人"))))
         print(f"   当前状态: {status_name} | 预警: {wl_name} | 当前处理人: {handler_name}")
         resp_role = Roles.REGISTRAR
         s = meta["status"]

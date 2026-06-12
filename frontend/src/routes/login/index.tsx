@@ -119,12 +119,21 @@ export default component$(() => {
 
         <div style={{ marginTop: "24px", paddingTop: "20px", borderTop: "1px solid #e5e7eb" }}>
           <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "12px" }}>
-            演示账号：
+            演示账号（密码均为 123456）：
           </div>
-          <div style={{ fontSize: "12px", color: "#4b5563", lineHeight: "1.8" }}>
-            <div>展商登记员：registrar1 / 123456</div>
-            <div>展商审核主管：supervisor1 / 123456</div>
-            <div>主办方复核负责人：leader1 / 123456</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px", fontSize: "12px", color: "#4b5563", lineHeight: "1.8" }}>
+            <div style={{ fontWeight: 600, color: "#1f2937", gridColumn: "1 / -1", marginBottom: "4px" }}>展商登记员（展商服务补齐材料队列）：</div>
+            <div>registrar1 李登记员</div>
+            <div>registrar2 赵登记员</div>
+            <div style={{ fontWeight: 600, color: "#1f2937", gridColumn: "1 / -1", margin: "8px 0 4px" }}>展商审核主管（搭建审核办理队列）：</div>
+            <div>supervisor1 王审核主管</div>
+            <div>supervisor2 孙审核主管</div>
+            <div style={{ fontWeight: 600, color: "#1f2937", gridColumn: "1 / -1", margin: "8px 0 4px" }}>主办方复核负责人（项目负责人收口队列）：</div>
+            <div>leader1 张复核负责人</div>
+            <div>leader2 周复核负责人</div>
+          </div>
+          <div style={{ fontSize: "12px", color: "#6b7280", marginTop: "12px", padding: "8px 12px", background: "#f3f4f6", borderRadius: "6px" }}>
+            💡 切换账号请退出后重新登录。同一角色不同账号分配的单据不同，按账号精确办理。
           </div>
         </div>
       </div>

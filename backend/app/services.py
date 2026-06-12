@@ -8,7 +8,7 @@ from .middleware import (
     check_state_conflict,
     get_next_status,
     get_target_queue,
-    get_target_handler,
+    get_target_role,
     calculate_warning_level
 )
 from .schemas import (
@@ -20,6 +20,19 @@ from .schemas import (
     BatchActionResponse
 )
 from .security import USERS as DEFAULT_USERS
+
+
+ROLE_HANDLER_POOL = {
+    Roles.REGISTRAR: ["registrar1", "registrar2"],
+    Roles.AUDIT_SUPERVISOR: ["supervisor1", "supervisor2"],
+    Roles.REVIEW_LEADER: ["leader1", "leader2"],
+}
+
+ROUND_ROBIN_COUNTER: Dict[str, int] = {
+    Roles.REGISTRAR: 0,
+    Roles.AUDIT_SUPERVISOR: 0,
+    Roles.REVIEW_LEADER: 0,
+}
 
 
 RESPONSIBLE_MAP = {
@@ -74,6 +87,75 @@ def calculate_deadline_based_on_status(status: str) -> Optional[datetime]:
     if hours:
         return datetime.now() + timedelta(hours=hours)
     return None
+
+
+def get_role_handlers(role: str) -> List[str]:
+    return ROLE_HANDLER_POOL.get(role, [])
+
+
+def get_handler_for_action(
+    action: str,
+    db: Optional[aiosqlite.Connection] = None,
+    app_id: Optional[int] = None,
+    previous_handler: Optional[str] = None,
+    current_application: Optional[Dict[str, Any]] = None
+) -> Tuple[Optional[str], Optional[str]]:
+    target_role = get_target_role(action)
+    if not target_role:
+        return None, None
+
+    if action == Actions.SYNC and current_application:
+        ch = current_application.get("current_handler")
+        if ch:
+            return ch, format_handler_name(ch)
+
+    if action == Actions.ARCHIVE and current_application:
+        ch = current_application.get("current_handler")
+        if ch:
+            return ch, format_handler_name(ch)
+
+    if action == Actions.CONFIRM_BOOTH and current_application:
+        ch = current_application.get("current_handler")
+        if ch:
+            return ch, format_handler_name(ch)
+
+    if action == Actions.APPROVE_REVIEW and current_application:
+        ch = current_application.get("current_handler")
+        if ch:
+            return ch, format_handler_name(ch)
+
+    if action == Actions.RETURN_FOR_CORRECTION:
+        if previous_handler:
+            for u in DEFAULT_USERS:
+                if u["username"] == previous_handler and u["role"] == Roles.REGISTRAR:
+                    return previous_handler, u["name"]
+        if current_application:
+            creator = current_application.get("created_by")
+            if creator:
+                for u in DEFAULT_USERS:
+                    if u["username"] == creator and u["role"] == Roles.REGISTRAR:
+                        return creator, u["name"]
+        pool = get_role_handlers(Roles.REGISTRAR)
+        if pool:
+            selected = pool[0]
+            return selected, format_handler_name(selected)
+        return None, None
+
+    if action in [Actions.APPROVE_AUDIT, Actions.SUBMIT, Actions.CORRECT]:
+        pool = get_role_handlers(target_role)
+        if not pool:
+            return None, None
+
+        global ROUND_ROBIN_COUNTER
+        idx = ROUND_ROBIN_COUNTER.get(target_role, 0)
+        selected = pool[idx % len(pool)]
+        ROUND_ROBIN_COUNTER[target_role] = (idx + 1) % len(pool)
+        return selected, format_handler_name(selected)
+
+    pool = get_role_handlers(target_role)
+    if pool:
+        return pool[0], format_handler_name(pool[0])
+    return None, None
 
 
 def get_error_correction_suggestion(error_code: str, status: str, action: str) -> str:
@@ -395,6 +477,10 @@ async def get_application_list(
             ]
         query += f" AND queue IN ({','.join('?' * len(allowed_queues))})"
         params.extend(allowed_queues)
+
+    if username:
+        query += " AND (current_handler = ? OR created_by = ?)"
+        params.extend([username, username])
 
     if stat_group and stat_group in ApplicationStatus.STAT_GROUPS:
         statuses = ApplicationStatus.STAT_GROUPS[stat_group]
@@ -733,7 +819,13 @@ async def execute_action(
 
     next_status = get_next_status(data.action)
     target_queue = get_target_queue(data.action)
-    target_handler = get_target_handler(data.action)
+    target_handler, target_handler_name = get_handler_for_action(
+        data.action,
+        db=db,
+        app_id=app_id,
+        previous_handler=app.get("current_handler"),
+        current_application=app
+    )
     new_version = app["version"] + 1
 
     new_deadline = calculate_deadline_based_on_status(next_status or app["status"])
@@ -741,8 +833,8 @@ async def execute_action(
 
     new_resp_user, new_resp_name = (None, None)
     if target_handler:
-        new_resp_user, new_resp_name = get_responsible_by_role(target_handler)
-    current_handler_name = format_handler_name(target_handler) if target_handler else None
+        new_resp_user, new_resp_name = target_handler, target_handler_name
+    current_handler_name = target_handler_name or (format_handler_name(target_handler) if target_handler else None)
 
     new_checklist = app.get("evidence_checklist")
     if next_status in DEFAULT_EVIDENCE_CHECKLIST:
@@ -936,13 +1028,20 @@ async def get_statistics(
     }
 
     async with db.cursor() as cur:
-        await cur.execute("""
+        extra_filter = ""
+        extra_params: List[Any] = []
+        if username:
+            extra_filter = " AND (current_handler = ? OR created_by = ?)"
+            extra_params = [username, username]
+
+        all_params = allowed_queues + extra_params
+        await cur.execute(f"""
             SELECT status, queue, warning_level, is_overdue,
                    responsible_person, responsible_person_name, COUNT(*) as cnt
             FROM exhibitor_applications
-            WHERE queue IN ({})
+            WHERE queue IN ({','.join('?' * len(allowed_queues))}){extra_filter}
             GROUP BY status, queue, warning_level, is_overdue, responsible_person, responsible_person_name
-        """.format(','.join('?' * len(allowed_queues))), allowed_queues)
+        """, all_params)
 
         rows = await cur.fetchall()
 
