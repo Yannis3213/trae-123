@@ -192,7 +192,7 @@ insertOrder.run(
   '疑似髋关节发育不良', 'X光检查+止痛消炎', null,
   'urgent', 'transferred',
   2, 2, null,
-  daysLater(2), 3, 'incomplete', 'material', '缺少X光影像资料及检查报告，需补充后恢复处理',
+  daysLater(2), 4, 'incomplete', 'material', '缺少X光影像资料及检查报告，需补充后恢复处理',
   null, 0, 1
 );
 
@@ -222,7 +222,7 @@ insertOrder.run(
   null, null, null,
   'normal', 'processing',
   2, 2, null,
-  daysAgo(1), 2, 'incomplete', 'timeline', '就诊单已逾期，截止时间已过，当前责任人：分派兽医师',
+  daysAgo(1), 3, 'incomplete', 'timeline', '就诊单已逾期，截止时间已过，当前责任人：分派兽医师',
   null, 1, 1
 );
 
@@ -238,7 +238,7 @@ insertOrder.run(
   '体重略有下降，主人依从性好',
   'low', 'reviewing',
   2, 2, 3,
-  daysAgo(2), 5, 'complete', 'timeline', '就诊单已逾期，截止时间已过，当前责任人：分派兽医师',
+  daysAgo(2), 6, 'complete', 'timeline', '就诊单已逾期，截止时间已过，当前责任人：分派兽医师',
   null, 1, 1
 );
 
@@ -254,7 +254,7 @@ insertOrder.run(
   '症状缓解，仍需巩固治疗',
   'high', 'returned_for_correction',
   2, 2, null,
-  daysAgo(4), 3, 'incomplete', 'material', '复诊记录缺失，药浴执行记录不完整',
+  daysAgo(4), 7, 'incomplete', 'material', '复诊记录缺失，药浴执行记录不完整',
   null, 1, 1
 );
 
@@ -270,7 +270,7 @@ insertOrder.run(
   '精神好转，食欲恢复',
   'normal', 'reprocessing',
   2, 2, null,
-  daysLater(3), 4, 'incomplete', null, '补正中：补充诊后回访记录及处方执行确认',
+  daysLater(3), 8, 'incomplete', 'material', '补正中：补充诊后回访记录及处方执行确认',
   '补充诊后回访记录及处方执行确认', 0, 1
 );
 
@@ -385,7 +385,7 @@ insertRecord.run(7, 'schedule_follow_up', 'processing', 'follow_up_scheduled', 2
 insertRecord.run(7, 'do_follow_up', 'follow_up_scheduled', 'followed_up', 1, 'nurse', '回访完成', null, null, '回访记录', '回访记录', null);
 insertRecord.run(7, 'submit_review', 'followed_up', 'reviewing', 2, 'doctor', '提交复核', null, null, null, null, null);
 insertRecord.run(7, 'return_for_correction', 'reviewing', 'returned_for_correction', 3, 'director', '院长退回：回访记录缺少处方执行确认', 'material', '回访记录缺少处方执行确认', '退回原因说明', '回访记录缺少处方执行确认', null);
-insertRecord.run(7, 'reprocess', 'returned_for_correction', 'reprocessing', 2, 'doctor', '开始补正：补充诊后回访记录及处方执行确认', null, '补正中：补充诊后回访记录及处方执行确认', null, null, '补充诊后回访记录及处方执行确认');
+insertRecord.run(7, 'reprocess', 'returned_for_correction', 'reprocessing', 2, 'doctor', '开始补正：补充诊后回访记录及处方执行确认', 'material', '补正中：补充诊后回访记录及处方执行确认', null, null, '补充诊后回访记录及处方执行确认');
 
 // V202606008 正常流转 - 已回访
 insertRecord.run(8, 'create', null, 'pending_assign', 1, 'nurse', '前台护士创建就诊单', null, null, '宠物建档、预约单', '宠物建档、预约单', null);
@@ -411,13 +411,18 @@ const insertAudit = db.prepare(`
   VALUES (?, ?, ?)
 `);
 
+insertAudit.run(1, '新单待分派：高优先级，请前台护士尽快分派给兽医师', 1);
 insertAudit.run(2, '需要催促主人尽快补充X光检查资料，否则影响后续诊断', 1);
+insertAudit.run(2, '材料缺失预警：已转办待补充，请注意跟进补料进度', 2);
 insertAudit.run(3, '超时预警：已通知王医师优先处理此单据，截止时间已过', 1);
+insertAudit.run(3, '逾期提醒：已分派未接诊，已电话告知兽医师加急处理', 3);
 insertAudit.run(4, '逾期提醒：处理中的就诊单已超过截止时间，需加快进度', 1);
 insertAudit.run(5, '逾期审核：该单据已逾期，请院长尽快复核', 1);
 insertAudit.run(6, '重点关注：药浴执行情况需要兽医师电话确认并补录', 3);
 insertAudit.run(6, '退回补正说明：复诊记录和药浴执行记录必须完整后才能重新提交', 3);
 insertAudit.run(7, '补正进行中：兽医师正在补充回访记录和处方执行确认', 2);
+insertAudit.run(8, '临期提醒：距截止还有18小时，请尽快提交复核', 1);
+insertAudit.run(9, '已归档：流程完整，材料齐全，可作为月底正常结案样例', 3);
 
 console.log('✅ 审计备注样例创建完成');
 

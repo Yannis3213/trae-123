@@ -172,6 +172,7 @@ const TRANSITIONS = {
       onExecute: () => ({
         exception_type: null,
         exception_reason: null,
+        correction_action: null,
         is_overdue: 0
       })
     },
@@ -391,52 +392,69 @@ const executeTransition = (db, order, action, user, payload = {}) => {
 
   const deadlineCheck = checkDeadline(order);
 
-  let extraUpdates = {};
-  if (transition.onExecute) {
-    extraUpdates = transition.onExecute(order, payload);
+  const extraUpdates = transition.onExecute
+    ? transition.onExecute(order, payload)
+    : {};
+
+  const setClauses = ['status = ?', 'version = version + 1', 'updated_at = CURRENT_TIMESTAMP'];
+  const params = [transition.to];
+
+  if (payload.assignee_id || (transition.updates?.assignee_id && payload.assignee_id !== undefined)) {
+    setClauses.push('assignee_id = ?');
+    params.push(payload.assignee_id);
   }
 
-  const stmt = db.prepare(`
-    UPDATE visit_orders
-    SET status = ?,
-        version = version + 1,
-        assignee_id = COALESCE(?, assignee_id),
-        handler_id = COALESCE(?, handler_id),
-        reviewer_id = COALESCE(?, reviewer_id),
-        is_overdue = ?,
-        material_status = COALESCE(?, material_status),
-        exception_type = COALESCE(?, exception_type),
-        exception_reason = COALESCE(?, exception_reason),
-        correction_action = COALESCE(?, correction_action),
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND version = ?
-  `);
+  const newHandlerId = payload.handler_id || (transition.updates?.handler_id ? user.id : null);
+  if (newHandlerId !== null) {
+    setClauses.push('handler_id = ?');
+    params.push(newHandlerId);
+  }
 
-  const newOverdue = extraUpdates.is_overdue !== undefined
-    ? extraUpdates.is_overdue
-    : (deadlineCheck.isOverdue ? 1 : (order.is_overdue || 0));
+  const newReviewerId = payload.reviewer_id || (transition.updates?.reviewer_id ? user.id : null);
+  if (newReviewerId !== null) {
+    setClauses.push('reviewer_id = ?');
+    params.push(newReviewerId);
+  }
 
-  const newExceptionType = extraUpdates.exception_type !== undefined
-    ? (extraUpdates.exception_type === null ? null : extraUpdates.exception_type)
-    : (deadlineCheck.exceptionType || null);
+  if ('is_overdue' in extraUpdates) {
+    setClauses.push('is_overdue = ?');
+    params.push(extraUpdates.is_overdue);
+  } else {
+    setClauses.push('is_overdue = ?');
+    params.push(deadlineCheck.isOverdue ? 1 : (order.is_overdue || 0));
+  }
 
-  const newExceptionReason = extraUpdates.exception_reason !== undefined
-    ? (extraUpdates.exception_reason === null ? null : extraUpdates.exception_reason)
-    : (deadlineCheck.exceptionReason || null);
+  if ('material_status' in extraUpdates) {
+    setClauses.push('material_status = ?');
+    params.push(extraUpdates.material_status);
+  }
 
-  const result = stmt.run(
-    transition.to,
-    payload.assignee_id || null,
-    payload.handler_id || (transition.updates?.handler_id ? user.id : null),
-    payload.reviewer_id || (transition.updates?.reviewer_id ? user.id : null),
-    newOverdue,
-    extraUpdates.material_status || null,
-    newExceptionType,
-    newExceptionReason,
-    extraUpdates.correction_action || null,
-    order.id,
-    payload.version || order.version
-  );
+  if ('exception_type' in extraUpdates) {
+    setClauses.push('exception_type = ?');
+    params.push(extraUpdates.exception_type);
+  } else if (deadlineCheck.exceptionType && !order.exception_type) {
+    setClauses.push('exception_type = ?');
+    params.push(deadlineCheck.exceptionType);
+  }
+
+  if ('exception_reason' in extraUpdates) {
+    setClauses.push('exception_reason = ?');
+    params.push(extraUpdates.exception_reason);
+  } else if (deadlineCheck.exceptionReason && !order.exception_reason) {
+    setClauses.push('exception_reason = ?');
+    params.push(deadlineCheck.exceptionReason);
+  }
+
+  if ('correction_action' in extraUpdates) {
+    setClauses.push('correction_action = ?');
+    params.push(extraUpdates.correction_action);
+  }
+
+  const whereParams = [order.id, payload.version !== undefined ? payload.version : order.version];
+
+  const sql = `UPDATE visit_orders SET ${setClauses.join(', ')} WHERE id = ? AND version = ?`;
+  const stmt = db.prepare(sql);
+  const result = stmt.run(...params, ...whereParams);
 
   if (result.changes === 0) {
     throw new AppError(
@@ -446,8 +464,15 @@ const executeTransition = (db, order, action, user, payload = {}) => {
     );
   }
 
-  const effectiveExceptionType = newExceptionType || (deadlineCheck.exceptionType);
-  const effectiveExceptionReason = newExceptionReason || (deadlineCheck.exceptionReason);
+  const recordExceptionType = ('exception_type' in extraUpdates)
+    ? extraUpdates.exception_type
+    : (deadlineCheck.exceptionType || order.exception_type || null);
+  const recordExceptionReason = ('exception_reason' in extraUpdates)
+    ? extraUpdates.exception_reason
+    : (deadlineCheck.exceptionReason || order.exception_reason || null);
+  const recordCorrectionAction = ('correction_action' in extraUpdates)
+    ? extraUpdates.correction_action
+    : (payload.correction_action || order.correction_action || null);
 
   const recordStmt = db.prepare(`
     INSERT INTO processing_records (
@@ -467,11 +492,11 @@ const executeTransition = (db, order, action, user, payload = {}) => {
     user.id,
     user.role,
     payload.comment || transition.label,
-    effectiveExceptionType,
-    effectiveExceptionReason,
+    recordExceptionType,
+    recordExceptionReason,
     transition.requiresEvidence ? transition.requiresEvidence.join('、') : null,
     payload.evidence_provided || null,
-    extraUpdates.correction_action || payload.correction_action || null
+    recordCorrectionAction
   );
 
   const updated = db.prepare('SELECT * FROM visit_orders WHERE id = ?').get(order.id);
@@ -482,9 +507,9 @@ const executeTransition = (db, order, action, user, payload = {}) => {
     to: transition.to,
     order: updated,
     message: `已${transition.label}`,
-    exceptionType: effectiveExceptionType,
-    exceptionReason: effectiveExceptionReason,
-    correctionAction: extraUpdates.correction_action || payload.correction_action || null
+    exceptionType: updated.exception_type,
+    exceptionReason: updated.exception_reason,
+    correctionAction: updated.correction_action
   };
 };
 
