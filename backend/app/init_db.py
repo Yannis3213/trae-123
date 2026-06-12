@@ -161,16 +161,13 @@ async def init_sample_data():
                 continue
 
             status = meta["status"]
-            responsible_role = Roles.REGISTRAR
-            if status in [ApplicationStatus.PENDING_AUDIT]:
-                responsible_role = Roles.AUDIT_SUPERVISOR
-            elif status in [ApplicationStatus.PENDING_REVIEW, ApplicationStatus.PENDING_BOOTH_CONFIRM,
-                           ApplicationStatus.AUDIT_PASSED, ApplicationStatus.BOOTH_CONFIRMED]:
-                responsible_role = Roles.REVIEW_LEADER
-            elif status == ApplicationStatus.CORRECTION_REQUIRED:
-                responsible_role = Roles.REGISTRAR
-
-            resp_username, resp_name = RESPONSIBLE_MAP.get(responsible_role, ("unknown", "未知责任人"))
+            resp_username = meta["current_handler"]
+            resp_name = "李登记员" if resp_username == "registrar1" else (
+                "赵登记员" if resp_username == "registrar2" else (
+                "王审核主管" if resp_username == "supervisor1" else (
+                "孙审核主管" if resp_username == "supervisor2" else (
+                "张复核负责人" if resp_username == "leader1" else (
+                "周复核负责人" if resp_username == "leader2" else "未知责任人")))))
             deadline, warning_level, is_overdue = await calc_deadline_and_warning(status, meta["deadline_offset"])
 
             submitted_at = (now - timedelta(days=meta.get("submitted_offset_days", 0))).isoformat()
@@ -390,9 +387,14 @@ async def init_sample_data():
                 overdue_hours = int(overdue_delta.total_seconds() / 3600)
                 overdue_days = overdue_delta.days
                 status_name = ApplicationStatus.STATUS_NAMES.get(status, status)
+                resp_role = Roles.REGISTRAR
+                if resp_username in ["supervisor1", "supervisor2"]:
+                    resp_role = Roles.AUDIT_SUPERVISOR
+                elif resp_username in ["leader1", "leader2"]:
+                    resp_role = Roles.REVIEW_LEADER
                 correction_required = (
                     f"当前状态[{status_name}]已逾期{overdue_days}天{overdue_hours % 24}小时，"
-                    f"责任人[张复核负责人]需立即处理。"
+                    f"责任人[{resp_name}]需立即处理。"
                     f"处理步骤：1) 进入详情页记录逾期原因 2) 上传展位确认函执行确认展位或退回补正 "
                     f"3) 在处理备注中注明逾期处理说明"
                 )
@@ -407,7 +409,7 @@ async def init_sample_data():
                     """, (
                         app_id, meta["application_no"], dl.isoformat(), dl.isoformat(),
                         overdue_days, overdue_hours, resp_username, resp_name,
-                        responsible_role, status, meta["queue"],
+                        resp_role, status, meta["queue"],
                         correction_required
                     ))
 

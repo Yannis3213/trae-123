@@ -35,6 +35,63 @@ ROUND_ROBIN_COUNTER: Dict[str, int] = {
 }
 
 
+async def check_application_access(
+    db: aiosqlite.Connection,
+    app_id: int,
+    user_role: str,
+    username: str
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    async with db.cursor() as cur:
+        await cur.execute(
+            "SELECT id, queue, current_handler, created_by, status FROM exhibitor_applications WHERE id = ?",
+            (app_id,)
+        )
+        row = await cur.fetchone()
+
+    if not row:
+        return False, "NOT_FOUND", "展商申请不存在"
+
+    queue = row["queue"]
+    allowed_queues = [Roles.QUEUES.get(user_role, "")]
+    if user_role == Roles.REVIEW_LEADER:
+        allowed_queues = [
+            Roles.QUEUES[Roles.AUDIT_SUPERVISOR],
+            Roles.QUEUES[Roles.REVIEW_LEADER]
+        ]
+
+    if queue not in allowed_queues:
+        return False, "QUEUE_DENIED", f"当前队列[{Roles.QUEUE_NAMES.get(queue, queue)}]无权限访问"
+
+    ch = row["current_handler"]
+    creator = row["created_by"]
+    if ch != username and creator != username:
+        ch_name = format_handler_name(ch) if ch else "未分配"
+        return False, "ACCESS_DENIED", (
+            f"当前处理人为[{ch_name}]，创建人为[{format_handler_name(creator) if creator else '未知'}]，"
+            f"当前账号[{format_handler_name(username)}]无权访问。"
+        )
+
+    return True, None, None
+
+
+async def _write_audit_exception_note(
+    db: aiosqlite.Connection,
+    app_id: int,
+    username: str,
+    error_code: str,
+    error_msg: str
+) -> None:
+    async with db.cursor() as cur:
+        await cur.execute("""
+            INSERT INTO audit_notes (application_id, note, created_by)
+            VALUES (?, ?, ?)
+        """, (
+            app_id,
+            f"【异常拦截】{error_code}：{error_msg}",
+            username
+        ))
+
+
 RESPONSIBLE_MAP = {
     Roles.REGISTRAR: ("registrar1", "李登记员"),
     Roles.AUDIT_SUPERVISOR: ("supervisor1", "王审核主管"),
@@ -401,7 +458,6 @@ async def create_application(
     application_no = await generate_application_no(db)
     deadline = calculate_deadline_based_on_status(ApplicationStatus.DRAFT)
     warning_level, is_overdue = calculate_warning_level(deadline)
-    resp_user, resp_name = get_responsible_by_role(Roles.REGISTRAR)
 
     default_checklist = DEFAULT_EVIDENCE_CHECKLIST.get(ApplicationStatus.PENDING_AUDIT, [])
 
@@ -419,7 +475,7 @@ async def create_application(
             data.contact_phone, data.contact_email, data.exhibition_type,
             data.booth_area, data.booth_preference, ApplicationStatus.DRAFT,
             Roles.QUEUES[Roles.REGISTRAR], username, format_handler_name(username),
-            resp_user, resp_name,
+            username, format_handler_name(username),
             1, is_overdue, warning_level,
             deadline.isoformat() if deadline else None,
             username, json.dumps(default_checklist, ensure_ascii=False)
@@ -525,8 +581,17 @@ async def get_application_list(
 
 async def get_application_detail(
     db: aiosqlite.Connection,
-    app_id: int
+    app_id: int,
+    user_role: Optional[str] = None,
+    username: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
+    if user_role and username:
+        can_access, err_code, err_msg = await check_application_access(db, app_id, user_role, username)
+        if not can_access:
+            if err_code == "NOT_FOUND":
+                return None
+            return False
+
     async with db.cursor() as cur:
         await cur.execute(
             "SELECT * FROM exhibitor_applications WHERE id = ?",
@@ -782,6 +847,7 @@ async def execute_action(
                 WHERE id = ?
             """, (error_code, error_msg, app_id))
 
+        await _write_audit_exception_note(db, app_id, user["username"], error_code or "VALIDATION_ERROR", error_msg or "")
         await db.commit()
         return False, error_code, error_msg, None
 
@@ -808,6 +874,7 @@ async def execute_action(
                 WHERE id = ?
             """, (error_code, error_msg, app_id))
 
+        await _write_audit_exception_note(db, app_id, user["username"], error_code or "MISSING_FIELDS", error_msg or "")
         await db.commit()
         return False, error_code, error_msg, None
 
@@ -1141,6 +1208,48 @@ async def execute_batch_action(
         status = app_info["status"]
         action_data.version = app_info["version"]
 
+        can_access, a_err_code, a_err_msg = await check_application_access(
+            db, app_id, user["role"], user["username"]
+        )
+        if not can_access:
+            results.append(BatchResultItem(
+                application_id=app_id,
+                application_no=application_no,
+                success=False,
+                error_code=a_err_code or "ACCESS_DENIED",
+                error_message=a_err_msg or "无权访问该申请",
+                correction_suggestion=get_error_correction_suggestion(a_err_code or "ACCESS_DENIED", status, data.action),
+            ))
+            fail_count += 1
+            async with db.cursor() as cur:
+                await cur.execute("""
+                    INSERT INTO batch_results (
+                        batch_id, application_id, application_no, success, error_code, error_message,
+                        correction_suggestion
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (batch_id, app_id, application_no, False, a_err_code or "ACCESS_DENIED",
+                      a_err_msg or "无权访问该申请",
+                      get_error_correction_suggestion(a_err_code or "ACCESS_DENIED", status, data.action)))
+                await cur.execute("""
+                    INSERT INTO processing_records (
+                        application_id, action, from_status, to_status, handler, handler_role,
+                        comment, error_code, error_message, version
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    app_id, "error_record", status, None,
+                    user["username"], user["role"],
+                    f"批量操作[{data.action}]因账号权限被拦截",
+                    a_err_code or "ACCESS_DENIED", a_err_msg or "无权访问", app_info["version"]
+                ))
+                await cur.execute("""
+                    UPDATE exhibitor_applications
+                    SET last_error_code = ?, last_error_message = ?, last_updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (a_err_code or "ACCESS_DENIED", a_err_msg or "无权访问", app_id))
+            await _write_audit_exception_note(db, app_id, user["username"], a_err_code or "ACCESS_DENIED", a_err_msg or "")
+            await db.commit()
+            continue
+
         if app_info["is_overdue"] and data.action not in [Actions.CORRECT, Actions.RETURN_FOR_CORRECTION]:
             error_code = "OVERDUE_BLOCKED"
             error_msg = (
@@ -1189,6 +1298,7 @@ async def execute_batch_action(
                     WHERE id = ?
                 """, (error_code, error_msg, app_id))
 
+            await _write_audit_exception_note(db, app_id, user["username"], error_code or "OVERDUE_BLOCKED", error_msg or "")
             await db.commit()
             continue
 

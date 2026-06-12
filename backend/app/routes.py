@@ -18,7 +18,8 @@ from .services import (
     execute_action,
     execute_batch_action,
     add_audit_note,
-    get_user_info
+    get_user_info,
+    check_application_access
 )
 from .schemas import (
     LoginRequest,
@@ -165,6 +166,13 @@ async def list_applications(request: Request):
 
 async def create_new_application(request: Request):
     user = request.state.user
+
+    if user["role"] != Roles.REGISTRAR:
+        return JSONResponse(status_code=403, content={
+            "detail": "仅展商登记员角色可发起展商申请",
+            "error_code": "ROLE_NOT_ALLOWED"
+        })
+
     try:
         body = await request.json()
         data = ApplicationCreate(**body)
@@ -184,11 +192,23 @@ async def create_new_application(request: Request):
 
 
 async def get_application(request: Request):
+    user = request.state.user
     app_id = int(request.path_params["id"])
 
     db_gen = get_db()
     db = await anext(db_gen)
     try:
+        can_access, err_code, err_msg = await check_application_access(
+            db, app_id, user["role"], user["username"]
+        )
+        if not can_access:
+            if err_code == "NOT_FOUND":
+                return JSONResponse(status_code=404, content={"detail": "展商申请不存在"})
+            return JSONResponse(status_code=403, content={
+                "detail": err_msg or "无权访问该展商申请，非当前处理人或创建人",
+                "error_code": err_code or "ACCESS_DENIED"
+            })
+
         application = await get_application_detail(db, app_id)
         if not application:
             return JSONResponse(status_code=404, content={"detail": "展商申请不存在"})
@@ -301,6 +321,15 @@ async def add_note(request: Request):
     db_gen = get_db()
     db = await anext(db_gen)
     try:
+        can_access, err_code, err_msg = await check_application_access(
+            db, app_id, user["role"], user["username"]
+        )
+        if not can_access:
+            return JSONResponse(status_code=403, content={
+                "detail": err_msg or "无权访问该展商申请",
+                "error_code": err_code or "ACCESS_DENIED"
+            })
+
         new_note = await add_audit_note(db, app_id, note.strip(), user["username"])
         notes = await get_audit_notes(db, app_id)
         return JSONResponse({
