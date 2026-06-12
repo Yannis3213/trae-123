@@ -18,6 +18,11 @@ const ACTION_COLORS: Record<string, string> = {
   '复核归档': 'bg-green-600',
   '异常回传': 'bg-red-500',
   '创建': 'bg-gray-500',
+  '发起传播计划单': 'bg-gray-500',
+  '批量签收拦截': 'bg-red-400',
+  '批量复核拦截': 'bg-red-400',
+  '批量复核拦截-逾期': 'bg-yellow-600',
+  '批量签收拦截-逾期': 'bg-yellow-600',
 };
 
 const OPERATION_INSTRUCTIONS: Record<string, { title: string; actions: string[]; results: string[]; pitfalls: string[] }> = {
@@ -735,11 +740,27 @@ export default function PlanDetail() {
                     <div class="relative pl-6">
                       <div class="absolute left-2 top-1 bottom-1 w-0.5 bg-gray-200"></div>
                       <For each={sortedRecords()}>
-                        {(record) => (
+                        {(record) => {
+                          const interceptTag = (() => {
+                            const reason = record.exceptionReason || '';
+                            if (record.action.includes('拦截')) {
+                              if (reason.includes('越权')) return { label: '越权拦截', cls: 'bg-red-100 text-red-700 border border-red-200' };
+                              if (reason.includes('版本冲突')) return { label: '版本冲突', cls: 'bg-orange-100 text-orange-700 border border-orange-200' };
+                              if (reason.includes('逾期')) return { label: '逾期拦截', cls: 'bg-yellow-100 text-yellow-700 border border-yellow-200' };
+                              if (reason.includes('状态冲突')) return { label: '状态冲突', cls: 'bg-purple-100 text-purple-700 border border-purple-200' };
+                              if (reason.includes('处理人不匹配')) return { label: '处理人不匹配', cls: 'bg-red-100 text-red-700 border border-red-200' };
+                              if (reason.includes('资料缺失')) return { label: '资料缺失', cls: 'bg-amber-100 text-amber-700 border border-amber-200' };
+                              return { label: '拦截', cls: 'bg-red-100 text-red-700 border border-red-200' };
+                            }
+                            return null;
+                          })();
+                          return (
                           <div class={`relative pb-4 last:pb-0 ${
                             isCorrectionAction(record) ? 'bg-yellow-50/50 -mx-2 px-2 py-2 rounded' : ''
                           } ${
                             isExceptionAction(record) ? 'bg-red-50/50 -mx-2 px-2 py-2 rounded' : ''
+                          } ${
+                            interceptTag ? 'bg-orange-50/50 -mx-2 px-2 py-2 rounded' : ''
                           }`}>
                             <div class={`absolute -left-[22px] top-1 w-4 h-4 rounded-full ${getActionColor(record.action)} ring-4 ring-white`}></div>
                             <div class="flex-1">
@@ -750,6 +771,9 @@ export default function PlanDetail() {
                                 </Show>
                                 <Show when={isExceptionAction(record)}>
                                   <span class="tag tag-rejected text-xs">异常</span>
+                                </Show>
+                                <Show when={interceptTag}>
+                                  <span class={`text-[10px] px-1.5 py-0.5 rounded font-medium ${interceptTag!.cls}`}>{interceptTag!.label}</span>
                                 </Show>
                                 <span class="text-xs text-gray-400">
                                   {ROLE_LABELS[record.operatorRole as any] || record.operatorRole} · {record.operator}
@@ -781,7 +805,8 @@ export default function PlanDetail() {
                               </Show>
                             </div>
                           </div>
-                        )}
+                          );
+                        }}
                       </For>
                     </div>
                   </div>

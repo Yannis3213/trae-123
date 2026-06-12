@@ -347,7 +347,22 @@ export class PlanService {
       try {
         plan = await this.findOne(pid);
         this.validatePlanAction(plan, 'sign', plan.version);
-        await this.sign(pid, plan.version);
+
+        plan.status = 'reviewing';
+        plan.currentHandler = user.name;
+        plan.currentHandlerRole = 'reviewer';
+        plan.version += 1;
+        await this.planRepo.save(plan);
+
+        await this.recordRepo.save({
+          planId: plan.id,
+          action: '签收',
+          operator: user.name,
+          operatorRole: user.role,
+          fromStatus: 'pending_sign',
+          toStatus: 'reviewing',
+        });
+
         results.push({ planId: pid, planNo: plan.planNo, success: true, reason: null });
       } catch (e: any) {
         if (!plan) plan = await this.planRepo.findOneBy({ id: pid });
@@ -403,7 +418,47 @@ export class PlanService {
           continue;
         }
 
-        await this.verify(pid, { ...dto, version: plan.version });
+        if (dto.result === 'approve') {
+          plan.status = 'archived';
+          plan.currentHandler = '';
+          plan.currentHandlerRole = '';
+          plan.verifyResult = '复核通过，已归档';
+          plan.returnReason = null;
+          plan.exceptionTag = null;
+          plan.version += 1;
+          await this.planRepo.save(plan);
+          await this.recordRepo.save({
+            planId: plan.id,
+            action: '复核归档',
+            operator: user.name,
+            operatorRole: user.role,
+            fromStatus: 'pending_verify',
+            toStatus: 'archived',
+            result: '复核通过',
+            auditNote: dto.auditNote,
+          });
+        } else if (dto.result === 'reject') {
+          plan.status = 'rejected';
+          plan.currentHandler = '张晓明';
+          plan.currentHandlerRole = 'registrar';
+          plan.exceptionTag = '异常回传';
+          plan.returnReason = '异常回传';
+          plan.verifyResult = '异常回传';
+          plan.version += 1;
+          await this.planRepo.save(plan);
+          await this.recordRepo.save({
+            planId: plan.id,
+            action: '异常回传',
+            operator: user.name,
+            operatorRole: user.role,
+            fromStatus: 'pending_verify',
+            toStatus: 'rejected',
+            result: '异常回传',
+            exceptionReason: '异常回传',
+            auditNote: dto.auditNote,
+          });
+        }
+
         results.push({ planId: pid, planNo: plan.planNo, success: true, reason: null });
       } catch (e: any) {
         if (!plan) plan = await this.planRepo.findOneBy({ id: pid });
@@ -986,8 +1041,11 @@ export class PlanService {
       throw new HttpException(`越权：仅${roleNames[config.requiredRole]}可${config.actionName}`, HttpStatus.FORBIDDEN);
     }
 
-    if (user.name !== plan.currentHandler && user.role !== plan.currentHandlerRole) {
-      throw new HttpException('当前处理人不匹配，您无权处理此计划单', HttpStatus.FORBIDDEN);
+    if (user.name !== plan.currentHandler || user.role !== plan.currentHandlerRole) {
+      throw new HttpException(
+        `处理人不匹配：当前处理人为${plan.currentHandler}(${plan.currentHandlerRole})，您是${user.name}(${user.role})`,
+        HttpStatus.FORBIDDEN,
+      );
     }
 
     if (!config.allowedStatuses.includes(plan.status)) {

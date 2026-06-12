@@ -519,22 +519,41 @@ export default function PlanList() {
       <Show when={showBatchModal() && batchResults()}>
         <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowBatchModal(false)}>
           <div class="bg-white rounded-lg p-6 max-w-lg w-full max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 class="text-lg font-bold text-[var(--color-primary)] mb-4">批量处理结果</h3>
+            <h3 class="text-lg font-bold text-[var(--color-primary)] mb-2">批量处理结果</h3>
+            <div class="flex gap-3 mb-3 text-xs text-gray-500">
+              <span>成功 {batchResults()!.filter(r => r.success).length}</span>
+              <span>失败 {batchResults()!.filter(r => !r.success).length}</span>
+            </div>
             <div class="space-y-2">
               <For each={batchResults()!}>
-                {(r) => (
-                  <div class={`flex items-center gap-2 p-2 rounded ${r.success ? 'bg-green-50' : 'bg-red-50'}`}>
-                    <span class={`text-lg ${r.success ? 'text-green-600' : 'text-red-600'}`}>
-                      {r.success ? '✓' : '✗'}
-                    </span>
-                    <div class="flex-1">
-                      <span class="font-mono text-xs">{r.planNo}</span>
-                      <Show when={r.reason}>
-                        <span class="text-xs text-red-600 ml-2">{r.reason}</span>
-                      </Show>
+                {(r) => {
+                  const tagInfo = (() => {
+                    if (r.success) return { label: '成功', cls: 'bg-green-100 text-green-700' };
+                    if (r.reason?.includes('越权')) return { label: '越权', cls: 'bg-red-100 text-red-700' };
+                    if (r.reason?.includes('版本冲突')) return { label: '版本冲突', cls: 'bg-orange-100 text-orange-700' };
+                    if (r.reason?.includes('逾期')) return { label: '逾期拦截', cls: 'bg-yellow-100 text-yellow-700' };
+                    if (r.reason?.includes('状态冲突')) return { label: '状态冲突', cls: 'bg-purple-100 text-purple-700' };
+                    if (r.reason?.includes('处理人不匹配')) return { label: '处理人不匹配', cls: 'bg-red-100 text-red-700' };
+                    if (r.reason?.includes('资料缺失')) return { label: '资料缺失', cls: 'bg-amber-100 text-amber-700' };
+                    return { label: '失败', cls: 'bg-red-100 text-red-700' };
+                  })();
+                  return (
+                    <div class={`flex items-start gap-2 p-2.5 rounded border ${r.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                      <span class={`text-lg mt-0.5 ${r.success ? 'text-green-600' : 'text-red-600'}`}>
+                        {r.success ? '✓' : '✗'}
+                      </span>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                          <span class="font-mono text-xs font-bold">{r.planNo}</span>
+                          <span class={`text-[10px] px-1.5 py-0.5 rounded font-medium ${tagInfo.cls}`}>{tagInfo.label}</span>
+                        </div>
+                        <Show when={r.reason}>
+                          <div class="text-xs text-red-600 mt-1 break-all">{r.reason}</div>
+                        </Show>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                }}
               </For>
             </div>
             <button class="btn btn-primary mt-4 w-full" onClick={() => setShowBatchModal(false)}>关闭</button>

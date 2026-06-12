@@ -2,10 +2,10 @@ import { Injectable, Scope, HttpException, HttpStatus } from '@nestjs/common';
 // @ts-ignore
 import { AsyncLocalStorage } from 'async_hooks';
 
-const DEMO_USERS = [
-  { id: 1, username: 'registrar', role: 'registrar' as const, name: '张晓明' },
-  { id: 2, username: 'reviewer', role: 'reviewer' as const, name: '李审核' },
-  { id: 3, username: 'director', role: 'director' as const, name: '王总监' },
+export const DEMO_USERS: { id: number; username: string; role: 'registrar' | 'reviewer' | 'director'; name: string }[] = [
+  { id: 1, username: 'registrar', role: 'registrar', name: '张晓明' },
+  { id: 2, username: 'reviewer', role: 'reviewer', name: '李审核' },
+  { id: 3, username: 'director', role: 'director', name: '王总监' },
 ];
 
 export interface CurrentUser {
@@ -47,15 +47,11 @@ export function resolveUserFromHeaders(headers: Record<string, any>): CurrentUse
   const name = headers['x-user-name'];
   const id = headers['x-user-id'];
 
-  if (role && name) {
-    const matched = DEMO_USERS.find((u) => u.role === role && u.name === name);
+  if (role && name && id) {
+    const matched = DEMO_USERS.find(
+      (u) => u.role === role && u.name === name && u.id === parseInt(id, 10),
+    );
     if (matched) return matched;
-    return {
-      id: parseInt(id, 10) || 0,
-      username: role,
-      role: role as any,
-      name: name,
-    };
   }
 
   const headerUser = headers['x-demo-user'];
