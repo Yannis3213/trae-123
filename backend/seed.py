@@ -544,7 +544,7 @@ def seed_database(db: Session):
             add_pr("MEDICATION_ISSUE", STATUS_PENDING_AUDIT, STATUS_PENDING_AUDIT, u_nurse1, "新增药品发放：硝苯地平、阿司匹林", vs=2)
             add_pr("AUDIT_PASS", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "审核通过，版本 3", vs=3)
             add_pr("REVIEW_SYNC", STATUS_PENDING_REVIEW, STATUS_SYNCED, u_director, "复核归档同步，版本 5", vs=5)
-            add_an("evidence_state", "证据状态：已归档（全部证据齐全，已完成复核归档同步）", u_director)
+            add_an("evidence_state", "证据状态变更：COMPLETE→ARCHIVED（批量复核归档成功，状态已同步）", u_director)
             add_an("evidence_state", "证据齐全：护理记录表、用药签名单、生命体征表均已完整提供", u_head)
 
         elif tag == "normal_pending_audit":
@@ -576,22 +576,22 @@ def seed_database(db: Session):
             add_pr("SUBMIT", STATUS_PENDING_SUBMIT, STATUS_PENDING_AUDIT, u_nurse2, "提交审核", vs=2)
             add_pr("ABNORMAL_REPORT", STATUS_PENDING_AUDIT, STATUS_PENDING_AUDIT, u_nurse2, "异常上报：血压持续偏高，已上报值班医生", vs=2)
             add_an("abnormal", "异常复核: 血压偏高，建议调整降压方案", u_nurse2)
-            add_an("evidence_state", "证据状态：逾期待处理（逾期4天仍未审核，且缺失用药签名单）", u_head)
+            add_an("evidence_state", "证据状态：OVERDUE_PENDING（逾期4天仍未审核，且缺失用药签名单）", u_head)
             add_an("overdue", "记录已逾期，需尽快审核处理", u_head)
             add_pr("OVERDUE_ADVANCE", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "逾期推进：审核通过并送复核", vs=3)
             add_an("overdue_advance", "逾期记录审核推进成功，状态变更为待复核", u_head)
             add_an("abnormal", "逾期推进异常留痕: 血压持续偏高，收缩压超过160mmHg", u_head)
-            add_an("evidence_state", "证据状态：逾期待处理（已逾期推进至复核环节，但仍处于逾期状态）", u_head)
+            add_an("evidence_state", "证据状态变更：OVERDUE_PENDING→OVERDUE_PENDING（逾期推进成功，状态变更待复核但仍逾期）", u_head)
 
         elif tag == "overdue_review":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse1, "创建临终关怀记录", vs=1)
             add_pr("SUBMIT", STATUS_PENDING_SUBMIT, STATUS_PENDING_AUDIT, u_nurse1, "提交审核", vs=2)
             add_pr("AUDIT_PASS", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "关怀记录完整。", vs=3)
-            add_an("evidence_state", "证据状态：逾期待处理（逾期5天仍未复核归档，证据齐全）", u_director)
+            add_an("evidence_state", "证据状态：OVERDUE_PENDING（逾期5天仍未复核归档，证据齐全）", u_director)
             add_an("overdue", "记录已逾期，需尽快复核归档", u_director)
             add_pr("OVERDUE_ADVANCE", STATUS_PENDING_REVIEW, STATUS_SYNCED, u_director, "逾期推进：复核归档同步完成", vs=4)
             add_an("overdue_advance", "逾期记录复核推进成功，已完成归档同步", u_director)
-            add_an("evidence_state", "证据状态：已归档（逾期推进成功，已完成复核归档同步）", u_director)
+            add_an("evidence_state", "证据状态变更：OVERDUE_PENDING→ARCHIVED（逾期推进归档成功）", u_director)
 
         elif tag == "returned_correction":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse1, "创建术后护理记录", vs=1)

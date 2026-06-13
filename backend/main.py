@@ -786,6 +786,8 @@ def batch_operation(body: BatchOperationRequest,
                 missing_evidence=list(record.missing_evidence or []),
                 abnormal_reported=record.abnormal_reported,
                 abnormal_reason=record.abnormal_reason or "",
+                evidence_state=ev_state,
+                status=record.status,
             ))
             record.evidence_state = ev_state
 
@@ -805,6 +807,8 @@ def batch_operation(body: BatchOperationRequest,
                 missing_evidence=list(record.missing_evidence or []),
                 abnormal_reported=record.abnormal_reported,
                 abnormal_reason=record.abnormal_reason or "",
+                evidence_state=ev_state,
+                status=record.status,
             ))
 
         except Exception as e:
@@ -953,25 +957,34 @@ def batch_advance_overdue(body: BatchAdvanceOverdueRequest,
                 add_audit_note(db, record.id, "abnormal_reason",
                                f"批量逾期推进异常留痕: {record.abnormal_reason}", current_user)
 
+            check_overdue_and_update(db, record)
+            ev_state = get_evidence_state(record)
             results.append(BatchResultItem(
                 id=rid, record_no=record.record_no, success=True,
                 has_missing_evidence=has_missing, missing_evidence=miss,
                 abnormal_reported=record.abnormal_reported,
                 abnormal_reason=record.abnormal_reason or "",
+                evidence_state=ev_state,
+                status=record.status,
             ))
 
         except HTTPException as e:
             check_overdue_and_update(db, record)
+            ev_state = get_evidence_state(record)
             add_process_record(
                 db, record.id, "BATCH_OVERDUE_ADVANCE_FAIL", record.status, record.status, current_user,
                 result="fail", error_message=e.detail, version_snapshot=record.version,
             )
+            add_audit_note(db, record.id, "overdue_advance",
+                           f"批量逾期推进失败: {e.detail}", current_user)
             results.append(BatchResultItem(
                 id=rid, record_no=record.record_no, success=False, error_message=str(e.detail),
                 has_missing_evidence=len(list(record.missing_evidence or [])) > 0,
                 missing_evidence=list(record.missing_evidence or []),
                 abnormal_reported=record.abnormal_reported,
                 abnormal_reason=record.abnormal_reason or "",
+                evidence_state=ev_state,
+                status=record.status,
             ))
 
         except Exception as e:
@@ -1012,13 +1025,16 @@ def batch_validate_candidates(body: BatchOperationRequest,
 
     valid_ids = []
     invalid_items = []
+    all_items = []
 
     for rid in body.ids:
         record = db.query(CareRecord).filter(CareRecord.id == rid).first()
         if not record:
-            invalid_items.append({"id": rid, "error": "记录不存在"})
+            invalid_items.append({"id": rid, "error": "记录不存在", "record_no": "", "evidence_state": "", "status": ""})
+            all_items.append({"id": rid, "valid": False, "error": "记录不存在", "record_no": "", "evidence_state": "", "status": ""})
             continue
         check_overdue_and_update(db, record)
+        ev_state = get_evidence_state(record)
 
         errors = []
         if record.status not in allowed_status_map[action]:
@@ -1038,18 +1054,28 @@ def batch_validate_candidates(body: BatchOperationRequest,
         if action == "overdue_advance" and not record.overdue:
             errors.append("未逾期")
 
+        item_info = {
+            "id": rid,
+            "record_no": record.record_no,
+            "evidence_state": ev_state,
+            "status": record.status,
+            "overdue": record.overdue,
+            "missing_evidence": list(record.missing_evidence or []),
+        }
+
         if errors:
-            invalid_items.append({
-                "id": rid, "record_no": record.record_no,
-                "error": "、".join(errors),
-            })
+            item_info["error"] = "、".join(errors)
+            invalid_items.append(item_info)
+            all_items.append({**item_info, "valid": False})
         else:
             valid_ids.append(rid)
+            all_items.append({**item_info, "valid": True})
 
     return {
         "action": action,
         "valid_ids": valid_ids,
         "invalid_items": invalid_items,
+        "all_items": all_items,
         "valid_count": len(valid_ids),
         "invalid_count": len(invalid_items),
     }

@@ -274,6 +274,8 @@ class BatchResultItem(BaseModel):
     missing_evidence: List[str] = Field(default_factory=list)
     abnormal_reported: bool = False
     abnormal_reason: str = ""
+    evidence_state: str = ""
+    status: str = ""
 
 
 class BatchAdvanceOverdueRequest(BaseModel):

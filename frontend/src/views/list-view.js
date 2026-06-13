@@ -105,19 +105,14 @@ export default class ListView extends LitElement {
       return;
     }
 
-    if (action === 'overdue_advance') {
-      await this.batchOverdueAdvance(items);
-      return;
-    }
-
     const validateBody = {
       ids: items.map(r => r.id),
       action,
     };
     try {
       const v = await api.batchValidate(validateBody);
+      this._validateResult = v;
       if (v.invalid_count > 0) {
-        this._validateResult = v;
         const proceed = confirm(`候选验证：${v.valid_count}条可操作，${v.invalid_count}条不符合条件。\n是否仅处理符合条件的${v.valid_count}条？`);
         if (!proceed) return;
         if (v.valid_count === 0) {
@@ -130,11 +125,16 @@ export default class ListView extends LitElement {
       return;
     }
 
-    const role = this.props.user.role;
+    const validIds = this._validateResult?.valid_ids || items.map(r => r.id);
+
+    if (action === 'overdue_advance') {
+      await this.batchOverdueAdvance(items, validIds);
+      return;
+    }
+
     const missingMap = {};
     const passedMap = {};
     const versionMap = {};
-    const validIds = this._validateResult?.valid_ids || items.map(r => r.id);
     const validItems = items.filter(r => validIds.includes(r.id));
     validItems.forEach(r => {
       versionMap[r.id] = r.version;
@@ -181,27 +181,32 @@ export default class ListView extends LitElement {
     }
   }
 
-  async batchOverdueAdvance(items) {
-    const overdueItems = items.filter(r => r.overdue);
-    if (overdueItems.length === 0) {
-      this.props.notify('error', '选中的记录中没有逾期记录');
+  async batchOverdueAdvance(items, validIds) {
+    const validItems = items.filter(r => validIds.includes(r.id));
+    if (validItems.length === 0) {
+      this.props.notify('error', '选中的记录中没有符合条件的逾期记录');
       return;
     }
-    const hasMiss = overdueItems.some(r => r.missing_evidence?.length);
-    if (!confirm(`确认对 ${overdueItems.length} 条逾期记录进行批量推进？${hasMiss ? '\n⚠ 注意：其中包含缺证据记录，推进后仍需补正' : ''}`)) return;
+    const hasMiss = validItems.some(r => r.missing_evidence?.length);
+    const nonOverdue = items.filter(r => !validIds.includes(r.id));
+    let msg = `确认对 ${validItems.length} 条逾期记录进行批量推进？`;
+    if (nonOverdue.length) msg += `\n⚠ ${nonOverdue.length}条不符合条件（非逾期）将跳过`;
+    if (hasMiss) msg += '\n⚠ 注意：其中包含缺证据记录，推进后仍需补正';
+    if (!confirm(msg)) return;
 
     this.loading = true;
     try {
       const versionMap = {};
-      overdueItems.forEach(r => { versionMap[r.id] = r.version; });
+      validItems.forEach(r => { versionMap[r.id] = r.version; });
       const res = await api.batchAdvanceOverdue({
-        ids: overdueItems.map(r => r.id),
+        ids: validItems.map(r => r.id),
         version_map: versionMap,
       });
       this._overdueResult = res;
       this.props.notify(res.failed_count === 0 ? 'success' : 'info',
         `逾期批量推进完成：成功 ${res.success_count} 条，失败 ${res.failed_count} 条`);
       this.selected = {};
+      this._validateResult = null;
       this.load();
       if (this.props.loadStats) this.props.loadStats();
     } catch (e) {
@@ -451,7 +456,7 @@ export default class ListView extends LitElement {
         ` : ''}
       </div>
 
-      ${this._validateResult && this._validateResult.invalid_count > 0 ? html`
+      ${this._validateResult ? html`
         <div class="result-modal" @click=${e => { if (e.target === e.currentTarget) this._validateResult = null; }}>
           <div class="result-box">
             <div class="result-head">
@@ -459,12 +464,13 @@ export default class ListView extends LitElement {
               <button class="close" @click=${() => this._validateResult = null}>×</button>
             </div>
             <div class="result-body">
-              ${this._validateResult.invalid_items.map(item => html`
-                <div class="result-item fail">
-                  <span class="tag">不符合</span>
+              ${(this._validateResult.all_items || []).map(item => html`
+                <div class="result-item ${item.valid ? 'ok' : 'fail'}">
+                  <span class="tag">${item.valid ? '可操作' : '不符合'}</span>
                   <span style="font-family:monospace">${item.record_no || 'ID' + item.id}</span>
+                  ${item.evidence_state ? html`<span class="ev-chip" style="color:${EVIDENCE_STATE_MAP[item.evidence_state]?.color || '#999'};background:${EVIDENCE_STATE_MAP[item.evidence_state]?.bg || '#f4f4f5'}">${EVIDENCE_STATE_MAP[item.evidence_state]?.label || item.evidence_state}</span>` : ''}
                   <span style="flex:1"></span>
-                  <span>${item.error}</span>
+                  ${!item.valid ? html`<span>${item.error}</span>` : ''}
                 </div>
               `)}
             </div>
@@ -484,8 +490,10 @@ export default class ListView extends LitElement {
                 <div class="result-item ${r.success ? 'ok' : 'fail'}">
                   <span class="tag">${r.success ? '成功' : '失败'}</span>
                   <span style="font-family:monospace">${r.record_no}</span>
+                  ${r.evidence_state ? html`<span class="ev-chip" style="color:${EVIDENCE_STATE_MAP[r.evidence_state]?.color || '#999'};background:${EVIDENCE_STATE_MAP[r.evidence_state]?.bg || '#f4f4f5'}">${EVIDENCE_STATE_MAP[r.evidence_state]?.label || r.evidence_state}</span>` : ''}
                   <span style="flex:1"></span>
-                  <span>${r.error_message || '处理完成'}</span>
+                  <span>${r.error_message || (r.has_missing_evidence ? `缺证据: ${(r.missing_evidence || []).join('、')}` : '处理完成')}</span>
+                  ${r.abnormal_reported ? html`<span style="color:#e6a23c;margin-left:4px">异常</span>` : ''}
                 </div>
               `)}
             </div>
@@ -505,8 +513,9 @@ export default class ListView extends LitElement {
                 <div class="result-item ${r.success ? 'ok' : 'fail'}">
                   <span class="tag">${r.success ? '成功' : '失败'}</span>
                   <span style="font-family:monospace">${r.record_no}</span>
+                  ${r.evidence_state ? html`<span class="ev-chip" style="color:${EVIDENCE_STATE_MAP[r.evidence_state]?.color || '#999'};background:${EVIDENCE_STATE_MAP[r.evidence_state]?.bg || '#f4f4f5'}">${EVIDENCE_STATE_MAP[r.evidence_state]?.label || r.evidence_state}</span>` : ''}
                   <span style="flex:1"></span>
-                  <span>${r.error_message || (r.has_missing_evidence ? `推进成功但缺证据: ${(r.missing_evidence || []).join('、')}` : '推进完成')}</span>
+                  <span>${r.error_message || (r.has_missing_evidence ? `缺证据: ${(r.missing_evidence || []).join('、')}` : '推进完成')}</span>
                   ${r.abnormal_reported ? html`<span style="color:#e6a23c;margin-left:4px">异常: ${r.abnormal_reason || ''}</span>` : ''}
                 </div>
               `)}
