@@ -189,8 +189,15 @@ export default class ListView extends LitElement {
     }
     const hasMiss = validItems.some(r => r.missing_evidence?.length);
     const nonOverdue = items.filter(r => !validIds.includes(r.id));
-    let msg = `确认对 ${validItems.length} 条逾期记录进行批量推进？`;
-    if (nonOverdue.length) msg += `\n⚠ ${nonOverdue.length}条不符合条件（非逾期）将跳过`;
+    const role = this.props.user.role;
+    const roleName = ROLE_MAP[role]?.label || role;
+    const auditItems = validItems.filter(r => r.status === 'PENDING_AUDIT');
+    const reviewItems = validItems.filter(r => r.status === 'PENDING_REVIEW');
+    let msg = `当前角色：${roleName}\n`;
+    if (auditItems.length) msg += `可推进审核逾期：${auditItems.length} 条\n`;
+    if (reviewItems.length) msg += `可推进复核逾期：${reviewItems.length} 条\n`;
+    msg += `\n确认对 ${validItems.length} 条逾期记录进行批量推进？`;
+    if (nonOverdue.length) msg += `\n⚠ ${nonOverdue.length}条不符合条件将跳过`;
     if (hasMiss) msg += '\n⚠ 注意：其中包含缺证据记录，推进后仍需补正';
     if (!confirm(msg)) return;
 
@@ -464,13 +471,19 @@ export default class ListView extends LitElement {
               <button class="close" @click=${() => this._validateResult = null}>×</button>
             </div>
             <div class="result-body">
+              ${this._validateResult.action === 'overdue_advance' ? html`
+                <div style="margin-bottom:8px;padding:6px 10px;background:#fdf6ec;border-radius:4px;font-size:13px;color:#e6a23c">
+                  当前角色：${ROLE_MAP[this._validateResult.current_user_role]?.label || this._validateResult.current_user_role}｜护士长可推进「待审核」逾期记录，院区主任可推进「待复核」逾期记录
+                </div>
+              ` : ''}
               ${(this._validateResult.all_items || []).map(item => html`
                 <div class="result-item ${item.valid ? 'ok' : 'fail'}">
                   <span class="tag">${item.valid ? '可操作' : '不符合'}</span>
                   <span style="font-family:monospace">${item.record_no || 'ID' + item.id}</span>
                   ${item.evidence_state ? html`<span class="ev-chip" style="color:${EVIDENCE_STATE_MAP[item.evidence_state]?.color || '#999'};background:${EVIDENCE_STATE_MAP[item.evidence_state]?.bg || '#f4f4f5'}">${EVIDENCE_STATE_MAP[item.evidence_state]?.label || item.evidence_state}</span>` : ''}
+                  ${item.responsible_role ? html`<span class="ev-chip" style="color:${ROLE_MAP[item.responsible_role]?.color || '#999'};background:#f0f2f5;font-size:11px">${ROLE_MAP[item.responsible_role]?.label || item.responsible_role}${item.handler_name ? '·' + item.handler_name : ''}</span>` : ''}
                   <span style="flex:1"></span>
-                  ${!item.valid ? html`<span>${item.error}</span>` : ''}
+                  ${!item.valid ? html`<span style="color:#f56c6c;font-size:12px">${item.error}</span>` : ''}
                 </div>
               `)}
             </div>

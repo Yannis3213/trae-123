@@ -932,6 +932,14 @@ def batch_advance_overdue(body: BatchAdvanceOverdueRequest,
                 raise HTTPException(status_code=409, detail=f"版本冲突（当前{record.version}）")
             if record.status not in [STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW]:
                 raise HTTPException(status_code=400, detail=f"状态「{STATUS_DISPLAY.get(record.status)}」不适用逾期推进")
+            if record.status == STATUS_PENDING_AUDIT and current_user.role != ROLE_AUDITOR:
+                raise HTTPException(status_code=403, detail="跨角色拦截：该记录处于待审核，需由照护审核主管（护士长）推进，您无权操作")
+            if record.status == STATUS_PENDING_REVIEW and current_user.role != ROLE_REVIEWER:
+                raise HTTPException(status_code=403, detail="跨角色拦截：该记录处于待复核，需由复核负责人（院区主任）推进，您无权操作")
+            if record.status == STATUS_PENDING_AUDIT and record.auditor_id and record.auditor_id != current_user.id:
+                raise HTTPException(status_code=403, detail=f"该记录已分配给 {record.auditor_name}，非当前处理人")
+            if record.status == STATUS_PENDING_REVIEW and record.reviewer_id and record.reviewer_id != current_user.id:
+                raise HTTPException(status_code=403, detail=f"该记录已分配给 {record.reviewer_name}，非当前处理人")
 
             miss = record.missing_evidence or []
             has_missing = len(miss) > 0
@@ -971,12 +979,21 @@ def batch_advance_overdue(body: BatchAdvanceOverdueRequest,
         except HTTPException as e:
             check_overdue_and_update(db, record)
             ev_state = get_evidence_state(record)
+            is_cross_role = "跨角色拦截" in str(e.detail)
+            action_type = "BATCH_OVERDUE_CROSS_ROLE_BLOCK" if is_cross_role else "BATCH_OVERDUE_ADVANCE_FAIL"
             add_process_record(
-                db, record.id, "BATCH_OVERDUE_ADVANCE_FAIL", record.status, record.status, current_user,
+                db, record.id, action_type, record.status, record.status, current_user,
                 result="fail", error_message=e.detail, version_snapshot=record.version,
             )
             add_audit_note(db, record.id, "overdue_advance",
-                           f"批量逾期推进失败: {e.detail}", current_user)
+                           f"批量逾期推进失败: {e.detail}" +
+                           (f" | evidence_state={ev_state} status={record.status}" if ev_state else ""),
+                           current_user)
+            if is_cross_role:
+                add_audit_note(db, record.id, "cross_role_block",
+                               f"跨角色拦截: {current_user.full_name}({ROLE_DISPLAY.get(current_user.role, current_user.role)}) " +
+                               f"尝试逾期推进，但该记录需由{'照护审核主管' if record.status == STATUS_PENDING_AUDIT else '复核负责人'}处理",
+                               current_user)
             results.append(BatchResultItem(
                 id=rid, record_no=record.record_no, success=False, error_message=str(e.detail),
                 has_missing_evidence=len(list(record.missing_evidence or [])) > 0,
@@ -1003,7 +1020,6 @@ def batch_advance_overdue(body: BatchAdvanceOverdueRequest,
 def batch_validate_candidates(body: BatchOperationRequest,
                               db: Session = Depends(get_db),
                               current_user: User = Depends(get_current_user)):
-    """批量操作候选验证：检查选中的记录是否符合操作条件（角色、状态、处理人、证据）"""
     action = body.action
     allowed_status_map = {
         "submit": [STATUS_PENDING_SUBMIT, STATUS_RETURNED],
@@ -1030,29 +1046,58 @@ def batch_validate_candidates(body: BatchOperationRequest,
     for rid in body.ids:
         record = db.query(CareRecord).filter(CareRecord.id == rid).first()
         if not record:
-            invalid_items.append({"id": rid, "error": "记录不存在", "record_no": "", "evidence_state": "", "status": ""})
-            all_items.append({"id": rid, "valid": False, "error": "记录不存在", "record_no": "", "evidence_state": "", "status": ""})
+            item = {"id": rid, "error": "记录不存在", "record_no": "", "evidence_state": "", "status": "", "responsible_role": "", "handler_name": ""}
+            invalid_items.append(item)
+            all_items.append({**item, "valid": False})
             continue
         check_overdue_and_update(db, record)
         ev_state = get_evidence_state(record)
 
         errors = []
-        if record.status not in allowed_status_map[action]:
-            errors.append(f"状态「{STATUS_DISPLAY.get(record.status)}」不支持此操作")
-        if action == "submit" and record.submitter_id != current_user.id:
-            errors.append("非本人创建")
-        if action in ["audit_pass", "audit_reject"] and record.auditor_id and record.auditor_id != current_user.id:
-            errors.append(f"已分配给 {record.auditor_name}")
-        if action == "review_sync":
-            if not record.auditor_id:
-                errors.append("护士长尚未处理")
-            if record.missing_evidence and len(record.missing_evidence) > 0:
-                errors.append(f"仍缺证据: {', '.join(record.missing_evidence)}")
-        if action == "audit_pass":
-            if record.missing_evidence and len(record.missing_evidence) > 0:
-                errors.append(f"仍缺证据: {', '.join(record.missing_evidence)}")
-        if action == "overdue_advance" and not record.overdue:
-            errors.append("未逾期")
+        responsible_role = ""
+        handler_name = ""
+
+        if action == "overdue_advance":
+            if not record.overdue:
+                errors.append("未逾期")
+            if record.status == STATUS_PENDING_AUDIT:
+                responsible_role = "AUDITOR"
+                handler_name = record.auditor_name or ""
+                if current_user.role != ROLE_AUDITOR:
+                    errors.append(f"该记录处于待审核，需由照护审核主管（护士长）推进")
+                elif record.auditor_id and record.auditor_id != current_user.id:
+                    errors.append(f"已分配给 {record.auditor_name}，非当前处理人")
+            elif record.status == STATUS_PENDING_REVIEW:
+                responsible_role = "REVIEWER"
+                handler_name = record.reviewer_name or ""
+                if current_user.role != ROLE_REVIEWER:
+                    errors.append(f"该记录处于待复核，需由复核负责人（院区主任）推进")
+                elif record.reviewer_id and record.reviewer_id != current_user.id:
+                    errors.append(f"已分配给 {record.reviewer_name}，非当前处理人")
+            elif record.status not in [STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW]:
+                errors.append(f"状态「{STATUS_DISPLAY.get(record.status)}」不适用逾期推进")
+            if record.version != (body.version_map or {}).get(rid, record.version):
+                errors.append(f"版本冲突（当前{record.version}）")
+        else:
+            if record.status not in allowed_status_map[action]:
+                errors.append(f"状态「{STATUS_DISPLAY.get(record.status)}」不支持此操作")
+            if action == "submit" and record.submitter_id != current_user.id:
+                errors.append("非本人创建")
+            if action in ["audit_pass", "audit_reject"]:
+                responsible_role = "AUDITOR"
+                handler_name = record.auditor_name or ""
+                if record.auditor_id and record.auditor_id != current_user.id:
+                    errors.append(f"已分配给 {record.auditor_name}")
+            if action == "review_sync":
+                responsible_role = "REVIEWER"
+                handler_name = record.reviewer_name or ""
+                if not record.auditor_id:
+                    errors.append("护士长尚未处理")
+                if record.missing_evidence and len(record.missing_evidence) > 0:
+                    errors.append(f"仍缺证据: {', '.join(record.missing_evidence)}")
+            if action == "audit_pass":
+                if record.missing_evidence and len(record.missing_evidence) > 0:
+                    errors.append(f"仍缺证据: {', '.join(record.missing_evidence)}")
 
         item_info = {
             "id": rid,
@@ -1061,6 +1106,8 @@ def batch_validate_candidates(body: BatchOperationRequest,
             "status": record.status,
             "overdue": record.overdue,
             "missing_evidence": list(record.missing_evidence or []),
+            "responsible_role": responsible_role,
+            "handler_name": handler_name,
         }
 
         if errors:
@@ -1078,6 +1125,7 @@ def batch_validate_candidates(body: BatchOperationRequest,
         "all_items": all_items,
         "valid_count": len(valid_ids),
         "invalid_count": len(invalid_items),
+        "current_user_role": current_user.role,
     }
 
 

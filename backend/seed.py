@@ -578,8 +578,11 @@ def seed_database(db: Session):
             add_an("abnormal", "异常复核: 血压偏高，建议调整降压方案", u_nurse2)
             add_an("evidence_state", "证据状态：OVERDUE_PENDING（逾期4天仍未审核，且缺失用药签名单）", u_head)
             add_an("overdue", "记录已逾期，需尽快审核处理", u_head)
+            add_pr("BATCH_OVERDUE_CROSS_ROLE_BLOCK", STATUS_PENDING_AUDIT, STATUS_PENDING_AUDIT, u_director, "院区主任尝试逾期推进待审核记录", result="failed", err="跨角色拦截：该记录处于待审核，需由照护审核主管（护士长）推进", vs=2)
+            add_an("cross_role_block", "跨角色拦截: 院区主任(复核负责人) 尝试逾期推进，但该记录需由照护审核主管处理", u_director)
+            add_an("overdue_advance", "批量逾期推进失败: 跨角色拦截：该记录处于待审核，需由照护审核主管（护士长）推进 | evidence_state=OVERDUE_PENDING status=PENDING_AUDIT", u_director)
             add_pr("OVERDUE_ADVANCE", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "逾期推进：审核通过并送复核", vs=3)
-            add_an("overdue_advance", "逾期记录审核推进成功，状态变更为待复核", u_head)
+            add_an("overdue_advance", "逾期记录审核推进成功，状态变更为待复核 | evidence_state=OVERDUE_PENDING status=PENDING_REVIEW", u_head)
             add_an("abnormal", "逾期推进异常留痕: 血压持续偏高，收缩压超过160mmHg", u_head)
             add_an("evidence_state", "证据状态变更：OVERDUE_PENDING→OVERDUE_PENDING（逾期推进成功，状态变更待复核但仍逾期）", u_head)
 
@@ -589,8 +592,11 @@ def seed_database(db: Session):
             add_pr("AUDIT_PASS", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "关怀记录完整。", vs=3)
             add_an("evidence_state", "证据状态：OVERDUE_PENDING（逾期5天仍未复核归档，证据齐全）", u_director)
             add_an("overdue", "记录已逾期，需尽快复核归档", u_director)
+            add_pr("BATCH_OVERDUE_CROSS_ROLE_BLOCK", STATUS_PENDING_REVIEW, STATUS_PENDING_REVIEW, u_head, "护士长尝试逾期推进待复核记录", result="failed", err="跨角色拦截：该记录处于待复核，需由复核负责人（院区主任）推进", vs=3)
+            add_an("cross_role_block", "跨角色拦截: 护士长(照护审核主管) 尝试逾期推进，但该记录需由复核负责人处理", u_head)
+            add_an("overdue_advance", "批量逾期推进失败: 跨角色拦截：该记录处于待复核，需由复核负责人（院区主任）推进 | evidence_state=OVERDUE_PENDING status=PENDING_REVIEW", u_head)
             add_pr("OVERDUE_ADVANCE", STATUS_PENDING_REVIEW, STATUS_SYNCED, u_director, "逾期推进：复核归档同步完成", vs=4)
-            add_an("overdue_advance", "逾期记录复核推进成功，已完成归档同步", u_director)
+            add_an("overdue_advance", "逾期记录复核推进成功，已完成归档同步 | evidence_state=ARCHIVED status=SYNCED", u_director)
             add_an("evidence_state", "证据状态变更：OVERDUE_PENDING→ARCHIVED（逾期推进归档成功）", u_director)
 
         elif tag == "returned_correction":
