@@ -1,0 +1,487 @@
+package handlers
+
+import (
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"pharmacy-nearexpiry/internal/database"
+	"pharmacy-nearexpiry/internal/middleware"
+	"pharmacy-nearexpiry/internal/models"
+)
+
+type ProcessOrderRequest struct {
+	Version    int    `json:"version"`
+	Remark     string `json:"remark"`
+	Action     string `json:"action"`
+	EvidenceType string `json:"evidence_type"`
+	FileName   string `json:"file_name"`
+	ExceptionReason string `json:"exception_reason"`
+}
+
+type BatchProcessRequest struct {
+	OrderIDs []string `json:"order_ids"`
+	Action   string   `json:"action"`
+	Remark   string   `json:"remark"`
+}
+
+func ProcessOrder(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"未授权"}`, http.StatusUnauthorized)
+		return
+	}
+
+	orderID := chiURLParam(r, "id")
+
+	var req ProcessOrderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"请求参数错误"}`, http.StatusBadRequest)
+		return
+	}
+
+	tx, err := database.DB.Begin()
+	if err != nil {
+		http.Error(w, `{"error":"处理失败"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	var order models.NearExpiryOrder
+	var currentVersion int
+	err = tx.QueryRow(`SELECT id, order_no, status, current_handler, version, due_date, created_by
+		FROM near_expiry_orders WHERE id = ?`, orderID).Scan(
+		&order.ID, &order.OrderNo, &order.Status, &order.CurrentHandler,
+		&currentVersion, &order.DueDate, &order.CreatedBy,
+	)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error":"处理单不存在"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error":"查询失败"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if req.Version != currentVersion {
+		http.Error(w, `{"error":"版本冲突，请刷新后重试"}`, http.StatusConflict)
+		return
+	}
+
+	if order.Status == models.StatusClosed {
+		http.Error(w, `{"error":"处理单已关闭，无法操作"}`, http.StatusBadRequest)
+		return
+	}
+
+	var newStatus models.OrderStatus
+	var actionName string
+	var newHandler string
+
+	switch req.Action {
+	case "process":
+		if user.Role != models.RolePharmacist {
+			http.Error(w, `{"error":"只有执业药师可以处理"}`, http.StatusForbidden)
+			return
+		}
+		if order.Status != models.StatusPendingDispatch && order.Status != models.StatusReturned {
+			http.Error(w, `{"error":"当前状态不允许处理"}`, http.StatusBadRequest)
+			return
+		}
+		if order.CurrentHandler != user.ID && order.Status != models.StatusReturned {
+			http.Error(w, `{"error":"不是当前处理人，越权操作"}`, http.StatusForbidden)
+			return
+		}
+		if order.Status == models.StatusReturned && order.CreatedBy != user.ID {
+			var clerkMatch bool
+			tx.QueryRow("SELECT 1 FROM users WHERE id = ? AND role = ? AND store = (SELECT store FROM users WHERE id = ?)",
+				user.ID, models.RolePharmacist, order.CreatedBy).Scan(&clerkMatch)
+		}
+		newStatus = models.StatusProcessing
+		actionName = "处理完成"
+		newHandler = "manager01"
+
+		missing := getMissingEvidencesTx(tx, orderID)
+		if len(missing) > 0 {
+			_ = missing
+		}
+
+	case "submit_review":
+		if user.Role != models.RolePharmacist {
+			http.Error(w, `{"error":"只有执业药师可以提交复核"}`, http.StatusForbidden)
+			return
+		}
+		if order.Status != models.StatusProcessing {
+			http.Error(w, `{"error":"当前状态不允许提交复核"}`, http.StatusBadRequest)
+			return
+		}
+		if order.CurrentHandler != user.ID {
+			http.Error(w, `{"error":"不是当前处理人，越权操作"}`, http.StatusForbidden)
+			return
+		}
+		missing := getMissingEvidencesTx(tx, orderID)
+		if len(missing) > 0 {
+			http.Error(w, `{"error":"缺少必要证据材料，无法提交复核"}`, http.StatusBadRequest)
+			return
+		}
+		newStatus = models.StatusProcessing
+		actionName = "提交复核"
+		newHandler = "manager01"
+
+	case "review_approve":
+		if user.Role != models.RoleAreaManager {
+			http.Error(w, `{"error":"只有区域经理可以复核"}`, http.StatusForbidden)
+			return
+		}
+		if order.Status != models.StatusProcessing {
+			http.Error(w, `{"error":"当前状态不允许复核"}`, http.StatusBadRequest)
+			return
+		}
+		if order.CurrentHandler != user.ID {
+			http.Error(w, `{"error":"不是当前处理人，越权操作"}`, http.StatusForbidden)
+			return
+		}
+		missing := getMissingEvidencesTx(tx, orderID)
+		if len(missing) > 0 {
+			http.Error(w, `{"error":"缺少必要证据材料，无法通过复核"}`, http.StatusBadRequest)
+			return
+		}
+		newStatus = models.StatusClosed
+		actionName = "复核通过"
+		newHandler = ""
+
+	case "review_reject":
+		if user.Role != models.RoleAreaManager {
+			http.Error(w, `{"error":"只有区域经理可以退回"}`, http.StatusForbidden)
+			return
+		}
+		if order.Status != models.StatusProcessing {
+			http.Error(w, `{"error":"当前状态不允许退回"}`, http.StatusBadRequest)
+			return
+		}
+		if order.CurrentHandler != user.ID {
+			http.Error(w, `{"error":"不是当前处理人，越权操作"}`, http.StatusForbidden)
+			return
+		}
+		if req.ExceptionReason == "" {
+			http.Error(w, `{"error":"请填写退回原因"}`, http.StatusBadRequest)
+			return
+		}
+		newStatus = models.StatusReturned
+		actionName = "退回补正"
+		newHandler = order.CreatedBy
+
+		_, err = tx.Exec(`INSERT INTO exception_reasons 
+			(id, order_id, reason, exception_type, reported_by, created_at, resolved)
+			VALUES (?, ?, ?, ?, ?, ?, 0)`,
+			uuid.NewString(), orderID, req.ExceptionReason, "return_reject", user.ID, time.Now(),
+		)
+		if err != nil {
+			http.Error(w, `{"error":"记录异常失败"}`, http.StatusInternalServerError)
+			return
+		}
+
+	case "correct":
+		if user.Role != models.RoleShopClerk {
+			http.Error(w, `{"error":"只有门店店员可以补正"}`, http.StatusForbidden)
+			return
+		}
+		if order.Status != models.StatusReturned && order.Status != models.StatusPendingDispatch {
+			http.Error(w, `{"error":"当前状态不允许补正"}`, http.StatusBadRequest)
+			return
+		}
+		newStatus = models.StatusPendingDispatch
+		actionName = "补正提交"
+
+		var pharmacistID string
+		tx.QueryRow("SELECT current_handler FROM near_expiry_orders WHERE id = ?", orderID).Scan(&pharmacistID)
+		if pharmacistID == "" {
+			var phid string
+			tx.QueryRow(`SELECT id FROM users WHERE role = ? AND store = (SELECT store_name FROM near_expiry_orders WHERE id = ?) LIMIT 1`,
+				models.RolePharmacist, orderID).Scan(&phid)
+			pharmacistID = phid
+		}
+		newHandler = pharmacistID
+
+	default:
+		http.Error(w, `{"error":"未知操作"}`, http.StatusBadRequest)
+		return
+	}
+
+	now := time.Now()
+	var updateSQL string
+	var args []interface{}
+
+	if newStatus == models.StatusClosed {
+		updateSQL = `UPDATE near_expiry_orders SET status = ?, current_handler = ?, updated_at = ?, version = version + 1, closed_at = ? WHERE id = ? AND version = ?`
+		args = []interface{}{newStatus, newHandler, now, now, orderID, currentVersion}
+	} else {
+		updateSQL = `UPDATE near_expiry_orders SET status = ?, current_handler = ?, updated_at = ?, version = version + 1 WHERE id = ? AND version = ?`
+		args = []interface{}{newStatus, newHandler, now, orderID, currentVersion}
+	}
+
+	result, err := tx.Exec(updateSQL, args...)
+	if err != nil {
+		http.Error(w, `{"error":"更新失败"}`, http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, `{"error":"状态已变更，请刷新后重试"}`, http.StatusConflict)
+		return
+	}
+
+	if req.EvidenceType != "" && req.FileName != "" {
+		evType := models.EvidenceType(req.EvidenceType)
+		if evType == models.EvidenceInspection || evType == models.EvidenceTransfer || evType == models.EvidenceRemoval {
+			_, err = tx.Exec(`INSERT INTO attachments 
+				(id, order_id, evidence_type, file_name, uploaded_by, uploaded_at, remark)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				uuid.NewString(), orderID, evType, req.FileName, user.ID, now, req.Remark,
+			)
+			if err != nil {
+				http.Error(w, `{"error":"上传附件失败"}`, http.StatusInternalServerError)
+				return
+			}
+		}
+	}
+
+	_, err = tx.Exec(`INSERT INTO processing_records
+		(id, order_id, action, from_status, to_status, operator, operator_role, remark, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid.NewString(), orderID, actionName, order.Status, newStatus,
+		user.ID, user.Role, req.Remark, now,
+	)
+	if err != nil {
+		http.Error(w, `{"error":"记录操作日志失败"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if err = tx.Commit(); err != nil {
+		http.Error(w, `{"error":"提交失败"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"new_status":   newStatus,
+		"new_version":  currentVersion + 1,
+		"new_handler":  newHandler,
+		"action":       actionName,
+	})
+}
+
+func chiURLParam(r *http.Request, key string) string {
+	chiCtx := chi.RouteContext(r.Context())
+	if chiCtx != nil {
+		for i, k := range chiCtx.URLParams.Keys {
+			if k == key && i < len(chiCtx.URLParams.Values) {
+				return chiCtx.URLParams.Values[i]
+			}
+		}
+	}
+	return ""
+}
+
+func getMissingEvidencesTx(tx *sql.Tx, orderID string) []models.EvidenceType {
+	rows, _ := tx.Query("SELECT DISTINCT evidence_type FROM attachments WHERE order_id = ?", orderID)
+	defer rows.Close()
+
+	exists := make(map[models.EvidenceType]bool)
+	for rows.Next() {
+		var et string
+		rows.Scan(&et)
+		exists[models.EvidenceType(et)] = true
+	}
+
+	var missing []models.EvidenceType
+	required := []models.EvidenceType{models.EvidenceInspection, models.EvidenceTransfer, models.EvidenceRemoval}
+	for _, req := range required {
+		if !exists[req] {
+			missing = append(missing, req)
+		}
+	}
+	return missing
+}
+
+func BatchProcess(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"未授权"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req BatchProcessRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"请求参数错误"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.OrderIDs) == 0 {
+		http.Error(w, `{"error":"请选择要处理的单据"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.OrderIDs) > 50 {
+		http.Error(w, `{"error":"批量处理最多50条"}`, http.StatusBadRequest)
+		return
+	}
+
+	var results []models.BatchResult
+
+	for _, orderID := range req.OrderIDs {
+		result := processSingleOrder(user, orderID, req.Action, req.Remark)
+		results = append(results, result)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+func processSingleOrder(user *models.User, orderID string, action string, remark string) models.BatchResult {
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return models.BatchResult{OrderID: orderID, Success: false, Message: "数据库错误"}
+	}
+	defer tx.Rollback()
+
+	var order models.NearExpiryOrder
+	var currentVersion int
+	err = tx.QueryRow(`SELECT id, status, current_handler, version, created_by
+		FROM near_expiry_orders WHERE id = ?`, orderID).Scan(
+		&order.ID, &order.Status, &order.CurrentHandler, &currentVersion, &order.CreatedBy,
+	)
+	if err == sql.ErrNoRows {
+		return models.BatchResult{OrderID: orderID, Success: false, Message: "处理单不存在"}
+	}
+	if err != nil {
+		return models.BatchResult{OrderID: orderID, Success: false, Message: "查询失败"}
+	}
+
+	if order.Status == models.StatusClosed {
+		return models.BatchResult{OrderID: orderID, Success: false, Message: "处理单已关闭"}
+	}
+
+	var newStatus models.OrderStatus
+	var actionName string
+	var newHandler string
+	canProcess := true
+	errMsg := ""
+
+	switch action {
+	case "process":
+		if user.Role != models.RolePharmacist {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "权限不足，只有执业药师可以处理"}
+		}
+		if order.Status != models.StatusPendingDispatch && order.Status != models.StatusReturned {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "状态不允许处理"}
+		}
+		if order.CurrentHandler != user.ID {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "不是当前处理人，越权操作"}
+		}
+		newStatus = models.StatusProcessing
+		actionName = "批量处理"
+		newHandler = user.ID
+
+	case "submit_review":
+		if user.Role != models.RolePharmacist {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "权限不足，只有执业药师可以提交复核"}
+		}
+		if order.Status != models.StatusProcessing {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "状态不允许提交复核"}
+		}
+		if order.CurrentHandler != user.ID {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "不是当前处理人，越权操作"}
+		}
+		missing := getMissingEvidencesTx(tx, orderID)
+		if len(missing) > 0 {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "缺少必要证据材料"}
+		}
+		newStatus = models.StatusProcessing
+		actionName = "批量提交复核"
+		newHandler = "manager01"
+
+	case "review_approve":
+		if user.Role != models.RoleAreaManager {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "权限不足，只有区域经理可以复核"}
+		}
+		if order.Status != models.StatusProcessing {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "状态不允许复核"}
+		}
+		if order.CurrentHandler != user.ID {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "不是当前处理人，越权操作"}
+		}
+		missing := getMissingEvidencesTx(tx, orderID)
+		if len(missing) > 0 {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "缺少必要证据材料"}
+		}
+		newStatus = models.StatusClosed
+		actionName = "批量复核通过"
+		newHandler = ""
+
+	case "review_reject":
+		if user.Role != models.RoleAreaManager {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "权限不足，只有区域经理可以退回"}
+		}
+		if order.Status != models.StatusProcessing {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "状态不允许退回"}
+		}
+		if order.CurrentHandler != user.ID {
+			return models.BatchResult{OrderID: orderID, Success: false, Message: "不是当前处理人，越权操作"}
+		}
+		newStatus = models.StatusReturned
+		actionName = "批量退回补正"
+		newHandler = order.CreatedBy
+		canProcess = true
+
+	default:
+		return models.BatchResult{OrderID: orderID, Success: false, Message: "未知操作"}
+	}
+
+	if !canProcess {
+		return models.BatchResult{OrderID: orderID, Success: false, Message: errMsg}
+	}
+
+	now := time.Now()
+	var updateSQL string
+	var args []interface{}
+
+	if newStatus == models.StatusClosed {
+		updateSQL = `UPDATE near_expiry_orders SET status = ?, current_handler = ?, updated_at = ?, version = version + 1, closed_at = ? WHERE id = ? AND version = ?`
+		args = []interface{}{newStatus, newHandler, now, now, orderID, currentVersion}
+	} else {
+		updateSQL = `UPDATE near_expiry_orders SET status = ?, current_handler = ?, updated_at = ?, version = version + 1 WHERE id = ? AND version = ?`
+		args = []interface{}{newStatus, newHandler, now, orderID, currentVersion}
+	}
+
+	result, err := tx.Exec(updateSQL, args...)
+	if err != nil {
+		return models.BatchResult{OrderID: orderID, Success: false, Message: "更新失败"}
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return models.BatchResult{OrderID: orderID, Success: false, Message: "状态冲突，请刷新后重试"}
+	}
+
+	_, err = tx.Exec(`INSERT INTO processing_records
+		(id, order_id, action, from_status, to_status, operator, operator_role, remark, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid.NewString(), orderID, actionName, order.Status, newStatus,
+		user.ID, user.Role, remark, now,
+	)
+	if err != nil {
+		return models.BatchResult{OrderID: orderID, Success: false, Message: "记录日志失败"}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return models.BatchResult{OrderID: orderID, Success: false, Message: "提交失败"}
+	}
+
+	return models.BatchResult{OrderID: orderID, Success: true, Message: actionName + "成功"}
+}
