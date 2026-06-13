@@ -182,7 +182,7 @@ interface ActionOption {
                   <div *ngIf="availableActions.length > 0">
                     <h4 style="font-size:14px;color:#374151;margin:0 0 14px;font-weight:600;">✅ 办理操作（按当前角色与状态可用）</h4>
                     <form [formGroup]="actionForm" style="padding:18px 20px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">
-                      <div style="display:grid;gap:10px;margin-bottom:14px;" [style.grid-template-columns]="'repeat(' + Math.min(availableActions.length, 4) + ', 1fr)'">
+                      <div style="display:grid;gap:10px;margin-bottom:14px;" [style.grid-template-columns]="actionGridColumns">
                         <div
                           *ngFor="let a of availableActions"
                           (click)="selectAction(a)"
@@ -562,6 +562,11 @@ export class TopicDetailPageComponent implements OnInit {
       interview: atts.some((a) => a.attachment_type.includes('采访安排')),
       manuscript: atts.some((a) => a.attachment_type.includes('稿件提交')),
     };
+  }
+
+  get actionGridColumns(): string {
+    const cols = Math.min(this.availableActions.length, 4);
+    return `repeat(${cols}, 1fr)`;
   }
 
   get availableActions(): ActionOption[] {

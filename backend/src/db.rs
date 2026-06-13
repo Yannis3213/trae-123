@@ -130,11 +130,16 @@ pub async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
 }
 
 pub async fn seed_data(pool: &SqlitePool) -> anyhow::Result<()> {
-    sqlx::query("DELETE FROM audit_logs").execute(pool).await?;
-    sqlx::query("DELETE FROM process_records").execute(pool).await?;
-    sqlx::query("DELETE FROM attachments").execute(pool).await?;
-    sqlx::query("DELETE FROM topics").execute(pool).await?;
-    sqlx::query("DELETE FROM users").execute(pool).await?;
+    #[derive(sqlx::FromRow)]
+    struct CountRow { count: i64 }
+    let existing: Option<CountRow> = sqlx::query_as::<_, CountRow>(
+        "SELECT COUNT(*) AS count FROM users LIMIT 1"
+    ).fetch_optional(pool).await?;
+    if existing.map(|r| r.count > 0).unwrap_or(false) {
+        tracing::info!("Database has existing users, skip seed data init");
+        return Ok(());
+    }
+    tracing::info!("Empty database detected, initialize seed demo data");
 
     let now = Utc::now();
 

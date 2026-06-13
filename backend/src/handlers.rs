@@ -766,6 +766,16 @@ pub async fn batch_process(
             Ok(r) => {
                 success_count += 1;
                 let new_status_saved = r.topic.status.clone();
+                let from_status = topic.status.clone();
+                let ver_after = r.topic.version;
+                write_audit(
+                    pool,
+                    Some(id.clone()),
+                    &claims,
+                    &r.action_performed,
+                    &format!("[批量] {} -> {}: {}", from_status, new_status_saved, req.opinion),
+                    None,
+                ).await;
                 results.push(BatchResultItem {
                     id: id.clone(),
                     title: topic.title.clone(),
@@ -774,15 +784,6 @@ pub async fn batch_process(
                     error_message: None,
                     new_status: Some(new_status_saved.clone()),
                 });
-                let rec_id = uuid::Uuid::new_v4().to_string();
-                let _ = sqlx::query(
-                    "INSERT INTO process_records (id, topic_id, action, from_status, to_status, handler_id, handler_name, handler_role, opinion, remark, created_at, version_after) VALUES (?, ?, '批量备注', ?, ?, ?, ?, ?, ?, '[批量处理]', ?, ?)"
-                )
-                .bind(&rec_id).bind(id)
-                .bind(&topic.status).bind(&new_status_saved)
-                .bind(&claims.user_id).bind(&claims.display_name).bind(&claims.role)
-                .bind(&req.opinion).bind(Utc::now().to_rfc3339()).bind(r.topic.version)
-                .execute(pool).await;
             }
             Err(e) => {
                 results.push(BatchResultItem {

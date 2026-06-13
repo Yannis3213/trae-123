@@ -1,4 +1,4 @@
-import { Component, OnInit, ViewChild } from '@angular/core';
+import { Component, OnInit, ViewChild, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule, ReactiveFormsModule, FormGroup, FormBuilder } from '@angular/forms';
 import { RouterModule, Router } from '@angular/router';
@@ -16,6 +16,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDatepickerModule } from '@angular/material/datepicker';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatSort, MatSortModule } from '@angular/material/sort';
 import { SelectionModel } from '@angular/cdk/collections';
 import { TopicService, AuthService } from '../services/api.service';
 import {
@@ -66,6 +67,7 @@ const WARNINGS: { value: string; label: string }[] = [
     MatSnackBarModule,
     MatTooltipModule,
     MatProgressSpinnerModule,
+    MatSortModule,
   ],
   template: `
     <div>
@@ -161,26 +163,26 @@ const WARNINGS: { value: string; label: string }[] = [
             </td>
           </ng-container>
           <ng-container matColumnDef="id">
-            <th mat-header-cell *matHeaderCellDef style="width:80px;">编号</th>
+            <th mat-header-cell *matHeaderCellDef mat-sort-header style="width:80px;">编号</th>
             <td mat-cell *matCellDef="let row">
               <span style="font-family:monospace;font-size:11px;color:#6b7280;">{{ shortId(row.id) }}</span>
             </td>
           </ng-container>
           <ng-container matColumnDef="title">
-            <th mat-header-cell *matHeaderCellDef style="min-width:260px;">选题名称</th>
+            <th mat-header-cell *matHeaderCellDef mat-sort-header style="min-width:260px;">选题名称</th>
             <td mat-cell *matCellDef="let row" style="cursor:pointer;" (click)="goDetail(row.id)">
               <div style="font-weight:600;color:#1f2937;margin-bottom:3px;">{{ row.title }}</div>
               <div style="font-size:12px;color:#6b7280;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">{{ row.description }}</div>
             </td>
           </ng-container>
           <ng-container matColumnDef="category">
-            <th mat-header-cell *matHeaderCellDef style="width:100px;">分类</th>
+            <th mat-header-cell *matHeaderCellDef mat-sort-header style="width:100px;">分类</th>
             <td mat-cell *matCellDef="let row">
               <mat-chip style="background:#e0e7ff;color:#4338ca;font-size:11px;padding:0 8px;">{{ row.category }}</mat-chip>
             </td>
           </ng-container>
           <ng-container matColumnDef="priority">
-            <th mat-header-cell *matHeaderCellDef style="width:80px;">优先级</th>
+            <th mat-header-cell *matHeaderCellDef mat-sort-header style="width:80px;">优先级</th>
             <td mat-cell *matCellDef="let row">
               <mat-chip [style.background]="priorityBg(row.priority)" [style.color]="priorityColor(row.priority)" style="font-size:11px;padding:0 8px;">
                 {{ priorityLabel(row.priority) }}
@@ -188,7 +190,7 @@ const WARNINGS: { value: string; label: string }[] = [
             </td>
           </ng-container>
           <ng-container matColumnDef="status">
-            <th mat-header-cell *matHeaderCellDef style="width:100px;">状态</th>
+            <th mat-header-cell *matHeaderCellDef mat-sort-header style="width:100px;">状态</th>
             <td mat-cell *matCellDef="let row">
               <span
                 style="display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:3px 10px;border-radius:20px;font-weight:600;color:white;"
@@ -200,7 +202,7 @@ const WARNINGS: { value: string; label: string }[] = [
             </td>
           </ng-container>
           <ng-container matColumnDef="warning">
-            <th mat-header-cell *matHeaderCellDef style="width:90px;">预警</th>
+            <th mat-header-cell *matHeaderCellDef mat-sort-header style="width:90px;">预警</th>
             <td mat-cell *matCellDef="let row">
               <span
                 *ngIf="row.warning_level"
@@ -217,14 +219,14 @@ const WARNINGS: { value: string; label: string }[] = [
             </td>
           </ng-container>
           <ng-container matColumnDef="handler">
-            <th mat-header-cell *matHeaderCellDef style="width:130px;">当前处理人</th>
+            <th mat-header-cell *matHeaderCellDef mat-sort-header style="width:130px;">当前处理人</th>
             <td mat-cell *matCellDef="let row">
               <div style="font-size:12.5px;color:#1f2937;">{{ row.current_handler_name || '—' }}</div>
               <div *ngIf="row.is_overdue && row.current_handler_name" style="font-size:11px;color:#dc2626;font-weight:600;">⚠ 责任人节点超时</div>
             </td>
           </ng-container>
           <ng-container matColumnDef="deadline">
-            <th mat-header-cell *matHeaderCellDef style="width:160px;">截止时间</th>
+            <th mat-header-cell *matHeaderCellDef mat-sort-header style="width:160px;">截止时间</th>
             <td mat-cell *matCellDef="let row">
               <div style="font-size:12px;color:#374151;">
                 <span *ngIf="row.submission_deadline">稿件：{{ formatDate(row.submission_deadline) }}</span>
@@ -237,7 +239,7 @@ const WARNINGS: { value: string; label: string }[] = [
             </td>
           </ng-container>
           <ng-container matColumnDef="version">
-            <th mat-header-cell *matHeaderCellDef style="width:70px;">版本</th>
+            <th mat-header-cell *matHeaderCellDef mat-sort-header style="width:70px;">版本</th>
             <td mat-cell *matCellDef="let row">
               <span style="font-family:monospace;font-size:12px;color:#6b7280;">v{{ row.version }}</span>
             </td>
@@ -287,7 +289,7 @@ const WARNINGS: { value: string; label: string }[] = [
     </div>
   `,
 })
-export class TopicListPageComponent implements OnInit {
+export class TopicListPageComponent implements OnInit, AfterViewInit {
   columns = ['select', 'id', 'title', 'category', 'priority', 'status', 'warning', 'handler', 'deadline', 'version', 'action'];
   STATUSES = STATUSES;
   WARNINGS = WARNINGS;
@@ -307,6 +309,7 @@ export class TopicListPageComponent implements OnInit {
   selection = new SelectionModel<Topic>(true, []);
 
   @ViewChild('paginator', { static: false }) paginator!: MatPaginator;
+  @ViewChild(MatSort, { static: false }) sort!: MatSort;
 
   constructor(
     private fb: FormBuilder,
@@ -327,6 +330,10 @@ export class TopicListPageComponent implements OnInit {
   ngOnInit() {
     this.loadPage(1);
     this.auth.user$.subscribe((u) => (this.user = u));
+  }
+
+  ngAfterViewInit() {
+    this.dataSource.sort = this.sort;
   }
 
   shortId(id: string): string {
