@@ -553,6 +553,27 @@ async function fetchDetail() {
   try {
     const res = await getFollowupDetailApi(id)
     detail.value = res
+
+    const query = route.query
+    if (query.edit === '1' && detail.value.permissions?.canEdit) {
+      Object.assign(editForm, {
+        patient_name: detail.value.form.patient_name,
+        id_card: detail.value.form.id_card,
+        gender: detail.value.form.gender,
+        age: detail.value.form.age,
+        chronic_type: detail.value.form.chronic_type,
+        due_date: detail.value.form.due_date
+      })
+      editDialog.visible = true
+    } else if (query.action === 'process' && detail.value.permissions?.canProcess) {
+      processDialog.visible = true
+    } else if (query.action === 'review' && detail.value.permissions?.canReview) {
+      reviewDialog.visible = true
+    } else if (query.action === 'return' && detail.value.permissions?.canReturn) {
+      returnDialog.visible = true
+    } else if (query.action === 'complete' && detail.value.permissions?.canComplete) {
+      handleComplete()
+    }
   } catch (err) {
     console.error(err)
   } finally {

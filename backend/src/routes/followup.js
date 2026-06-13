@@ -256,11 +256,15 @@ followupRouter.put('/:id', async (c) => {
   }
 
   if (current.status !== STATUS.DRAFT && current.status !== STATUS.RETURNED) {
-    return c.json({ error: '当前状态不可编辑' }, 400)
+    const message = '当前状态不可编辑，仅草稿或已退回状态可编辑'
+    await recordInterception(id, user.id, 'invalid_status', message, { current_status: current.status })
+    return c.json({ error: message }, 400)
   }
 
   if (user.role !== ROLES.TRIAGE_NURSE) {
-    return c.json({ error: '只有导诊护士可以编辑' }, 403)
+    const message = '只有导诊护士可以编辑随访单'
+    await recordInterception(id, user.id, 'unauthorized_action', message, { user_role: user.role })
+    return c.json({ error: message }, 403)
   }
 
   await db.run(`
@@ -556,7 +560,9 @@ followupRouter.post('/:id/archive', requireRole(ROLES.MEDICAL_DIRECTOR), async (
   }
 
   if (current.status !== STATUS.COMPLETED) {
-    return c.json({ error: '只有已完成的单据可以归档' }, 400)
+    const message = '只有已完成的单据可以归档'
+    await recordInterception(id, user.id, 'invalid_status', message, { current_status: current.status, target: 'archive' })
+    return c.json({ error: message }, 400)
   }
 
   await db.run(`

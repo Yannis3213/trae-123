@@ -120,7 +120,7 @@
             {{ formatDateTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link @click="goToDetail(row.id)">查看</el-button>
             <el-button 
@@ -153,6 +153,12 @@
               link 
               @click="handleReviewRow(row)"
             >审核</el-button>
+            <el-button 
+              v-if="canCompleteRow(row)" 
+              type="success" 
+              link 
+              @click="handleCompleteRow(row)"
+            >完成</el-button>
             <el-button 
               v-if="canReturnRow(row)" 
               type="warning" 
@@ -286,6 +292,10 @@ function canReviewRow(row) {
   return userStore.isMedicalDirector && row.status === STATUS.DOCTOR_PROCESSING
 }
 
+function canCompleteRow(row) {
+  return userStore.isMedicalDirector && row.status === STATUS.DIRECTOR_REVIEW
+}
+
 function canReturnRow(row) {
   if (userStore.isGeneralDoctor) {
     return [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED].includes(row.status)
@@ -330,6 +340,10 @@ function handleProcessRow(row) {
 
 function handleReviewRow(row) {
   router.push(`/followup/${row.id}?action=review`)
+}
+
+function handleCompleteRow(row) {
+  router.push(`/followup/${row.id}?action=complete`)
 }
 
 function handleReturnRow(row) {
