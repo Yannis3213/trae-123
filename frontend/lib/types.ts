@@ -30,6 +30,16 @@ export interface NearExpiryOrder {
   closed_at?: string | null;
 }
 
+export interface OrderListItem extends NearExpiryOrder {
+  has_inspection: boolean;
+  has_transfer: boolean;
+  has_removal: boolean;
+  missing_evidences: EvidenceType[];
+  evidence_complete: boolean;
+  is_overdue: boolean;
+  is_near_due: boolean;
+}
+
 export interface Attachment {
   id: string;
   order_id: string;

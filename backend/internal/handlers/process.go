@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -15,11 +16,11 @@ import (
 )
 
 type ProcessOrderRequest struct {
-	Version    int    `json:"version"`
-	Remark     string `json:"remark"`
-	Action     string `json:"action"`
-	EvidenceType string `json:"evidence_type"`
-	FileName   string `json:"file_name"`
+	Version         int    `json:"version"`
+	Remark          string `json:"remark"`
+	Action          string `json:"action"`
+	EvidenceType    string `json:"evidence_type"`
+	FileName        string `json:"file_name"`
 	ExceptionReason string `json:"exception_reason"`
 }
 
@@ -27,6 +28,25 @@ type BatchProcessRequest struct {
 	OrderIDs []string `json:"order_ids"`
 	Action   string   `json:"action"`
 	Remark   string   `json:"remark"`
+}
+
+func recordInterception(tx *sql.Tx, orderID string, user *models.User, action string, reason string) {
+	now := time.Now()
+	tx.Exec(`INSERT INTO processing_records
+		(id, order_id, action, from_status, to_status, operator, operator_role, remark, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid.NewString(), orderID, "拦截: "+action, "", "",
+		user.ID, user.Role, reason, now,
+	)
+	tx.Exec(`INSERT INTO exception_reasons
+		(id, order_id, reason, exception_type, reported_by, created_at, resolved)
+		VALUES (?, ?, ?, ?, ?, ?, 0)`,
+		uuid.NewString(), orderID, reason, "interception", user.ID, now,
+	)
+	tx.Exec(`INSERT INTO audit_notes (id, order_id, content, author, created_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		uuid.NewString(), orderID, fmt.Sprintf("[拦截] %s: %s", action, reason), user.ID, now,
+	)
 }
 
 func ProcessOrder(w http.ResponseWriter, r *http.Request) {
@@ -68,11 +88,17 @@ func ProcessOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Version != currentVersion {
-		http.Error(w, `{"error":"版本冲突，请刷新后重试"}`, http.StatusConflict)
+		reason := fmt.Sprintf("版本冲突: 提交版本%d, 当前版本%d", req.Version, currentVersion)
+		recordInterception(tx, orderID, user, req.Action, reason)
+		tx.Commit()
+		http.Error(w, fmt.Sprintf(`{"error":"版本冲突，请刷新后重试"}`), http.StatusConflict)
 		return
 	}
 
 	if order.Status == models.StatusClosed {
+		reason := "处理单已关闭，无法操作"
+		recordInterception(tx, orderID, user, req.Action, reason)
+		tx.Commit()
 		http.Error(w, `{"error":"处理单已关闭，无法操作"}`, http.StatusBadRequest)
 		return
 	}
@@ -84,46 +110,57 @@ func ProcessOrder(w http.ResponseWriter, r *http.Request) {
 	switch req.Action {
 	case "process":
 		if user.Role != models.RolePharmacist {
+			reason := fmt.Sprintf("角色越权: %s尝试处理，只有执业药师可以处理", user.Role)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"只有执业药师可以处理"}`, http.StatusForbidden)
 			return
 		}
 		if order.Status != models.StatusPendingDispatch && order.Status != models.StatusReturned {
+			reason := fmt.Sprintf("状态不允许: 当前%s，不允许处理", order.Status)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"当前状态不允许处理"}`, http.StatusBadRequest)
 			return
 		}
-		if order.CurrentHandler != user.ID && order.Status != models.StatusReturned {
+		if order.CurrentHandler != user.ID {
+			reason := fmt.Sprintf("越权操作: 当前处理人%s，操作人%s", order.CurrentHandler, user.ID)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"不是当前处理人，越权操作"}`, http.StatusForbidden)
 			return
 		}
-		if order.Status == models.StatusReturned && order.CreatedBy != user.ID {
-			var clerkMatch bool
-			tx.QueryRow("SELECT 1 FROM users WHERE id = ? AND role = ? AND store = (SELECT store FROM users WHERE id = ?)",
-				user.ID, models.RolePharmacist, order.CreatedBy).Scan(&clerkMatch)
-		}
 		newStatus = models.StatusProcessing
 		actionName = "处理完成"
-		newHandler = "manager01"
-
-		missing := getMissingEvidencesTx(tx, orderID)
-		if len(missing) > 0 {
-			_ = missing
-		}
+		newHandler = user.ID
 
 	case "submit_review":
 		if user.Role != models.RolePharmacist {
+			reason := fmt.Sprintf("角色越权: %s尝试提交复核，只有执业药师可以提交复核", user.Role)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"只有执业药师可以提交复核"}`, http.StatusForbidden)
 			return
 		}
 		if order.Status != models.StatusProcessing {
+			reason := fmt.Sprintf("状态不允许: 当前%s，不允许提交复核", order.Status)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"当前状态不允许提交复核"}`, http.StatusBadRequest)
 			return
 		}
 		if order.CurrentHandler != user.ID {
+			reason := fmt.Sprintf("越权操作: 当前处理人%s，操作人%s", order.CurrentHandler, user.ID)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"不是当前处理人，越权操作"}`, http.StatusForbidden)
 			return
 		}
 		missing := getMissingEvidencesTx(tx, orderID)
 		if len(missing) > 0 {
+			reason := fmt.Sprintf("缺少必要证据材料: %v", missing)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"缺少必要证据材料，无法提交复核"}`, http.StatusBadRequest)
 			return
 		}
@@ -133,19 +170,31 @@ func ProcessOrder(w http.ResponseWriter, r *http.Request) {
 
 	case "review_approve":
 		if user.Role != models.RoleAreaManager {
+			reason := fmt.Sprintf("角色越权: %s尝试复核，只有区域经理可以复核", user.Role)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"只有区域经理可以复核"}`, http.StatusForbidden)
 			return
 		}
 		if order.Status != models.StatusProcessing {
+			reason := fmt.Sprintf("状态不允许: 当前%s，不允许复核", order.Status)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"当前状态不允许复核"}`, http.StatusBadRequest)
 			return
 		}
 		if order.CurrentHandler != user.ID {
+			reason := fmt.Sprintf("越权操作: 当前处理人%s，操作人%s", order.CurrentHandler, user.ID)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"不是当前处理人，越权操作"}`, http.StatusForbidden)
 			return
 		}
 		missing := getMissingEvidencesTx(tx, orderID)
 		if len(missing) > 0 {
+			reason := fmt.Sprintf("缺少必要证据材料: %v", missing)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"缺少必要证据材料，无法通过复核"}`, http.StatusBadRequest)
 			return
 		}
@@ -155,14 +204,23 @@ func ProcessOrder(w http.ResponseWriter, r *http.Request) {
 
 	case "review_reject":
 		if user.Role != models.RoleAreaManager {
+			reason := fmt.Sprintf("角色越权: %s尝试退回，只有区域经理可以退回", user.Role)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"只有区域经理可以退回"}`, http.StatusForbidden)
 			return
 		}
 		if order.Status != models.StatusProcessing {
+			reason := fmt.Sprintf("状态不允许: 当前%s，不允许退回", order.Status)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"当前状态不允许退回"}`, http.StatusBadRequest)
 			return
 		}
 		if order.CurrentHandler != user.ID {
+			reason := fmt.Sprintf("越权操作: 当前处理人%s，操作人%s", order.CurrentHandler, user.ID)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"不是当前处理人，越权操作"}`, http.StatusForbidden)
 			return
 		}
@@ -184,27 +242,58 @@ func ProcessOrder(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		_, err = tx.Exec(`INSERT INTO audit_notes (id, order_id, content, author, created_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			uuid.NewString(), orderID, fmt.Sprintf("[退回补正] %s", req.ExceptionReason), user.ID, time.Now(),
+		)
+		if err != nil {
+			http.Error(w, `{"error":"记录审计备注失败"}`, http.StatusInternalServerError)
+			return
+		}
+
 	case "correct":
 		if user.Role != models.RoleShopClerk {
+			reason := fmt.Sprintf("角色越权: %s尝试补正，只有门店店员可以补正", user.Role)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"只有门店店员可以补正"}`, http.StatusForbidden)
 			return
 		}
 		if order.Status != models.StatusReturned && order.Status != models.StatusPendingDispatch {
+			reason := fmt.Sprintf("状态不允许: 当前%s，不允许补正", order.Status)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
 			http.Error(w, `{"error":"当前状态不允许补正"}`, http.StatusBadRequest)
+			return
+		}
+		if order.Status == models.StatusReturned && order.CurrentHandler != user.ID {
+			reason := fmt.Sprintf("越权操作: 退回处理人%s，操作人%s", order.CurrentHandler, user.ID)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
+			http.Error(w, `{"error":"不是退回处理人，越权操作"}`, http.StatusForbidden)
 			return
 		}
 		newStatus = models.StatusPendingDispatch
 		actionName = "补正提交"
 
 		var pharmacistID string
-		tx.QueryRow("SELECT current_handler FROM near_expiry_orders WHERE id = ?", orderID).Scan(&pharmacistID)
-		if pharmacistID == "" {
-			var phid string
-			tx.QueryRow(`SELECT id FROM users WHERE role = ? AND store = (SELECT store_name FROM near_expiry_orders WHERE id = ?) LIMIT 1`,
-				models.RolePharmacist, orderID).Scan(&phid)
-			pharmacistID = phid
-		}
+		tx.QueryRow(`SELECT id FROM users WHERE role = ? AND store = (SELECT store_name FROM near_expiry_orders WHERE id = ?) LIMIT 1`,
+			models.RolePharmacist, orderID).Scan(&pharmacistID)
 		newHandler = pharmacistID
+
+		_, err = tx.Exec(`UPDATE exception_reasons SET resolved = 1 WHERE order_id = ? AND resolved = 0`,
+			orderID,
+		)
+
+		_, err = tx.Exec(`INSERT INTO audit_notes (id, order_id, content, author, created_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			uuid.NewString(), orderID, fmt.Sprintf("[补正提交] %s", func() string {
+				if req.Remark != "" {
+					return req.Remark
+				}
+				return "门店店员补正后重新提交"
+			}()), user.ID, time.Now(),
+		)
 
 	default:
 		http.Error(w, `{"error":"未知操作"}`, http.StatusBadRequest)
@@ -231,6 +320,9 @@ func ProcessOrder(w http.ResponseWriter, r *http.Request) {
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
+		reason := "状态已变更，更新时版本冲突"
+		recordInterception(tx, orderID, user, req.Action, reason)
+		tx.Commit()
 		http.Error(w, `{"error":"状态已变更，请刷新后重试"}`, http.StatusConflict)
 		return
 	}
@@ -352,9 +444,9 @@ func processSingleOrder(user *models.User, orderID string, action string, remark
 
 	var order models.NearExpiryOrder
 	var currentVersion int
-	err = tx.QueryRow(`SELECT id, status, current_handler, version, created_by
+	err = tx.QueryRow(`SELECT id, order_no, status, current_handler, version, created_by
 		FROM near_expiry_orders WHERE id = ?`, orderID).Scan(
-		&order.ID, &order.Status, &order.CurrentHandler, &currentVersion, &order.CreatedBy,
+		&order.ID, &order.OrderNo, &order.Status, &order.CurrentHandler, &currentVersion, &order.CreatedBy,
 	)
 	if err == sql.ErrNoRows {
 		return models.BatchResult{OrderID: orderID, Success: false, Message: "处理单不存在"}
@@ -370,18 +462,22 @@ func processSingleOrder(user *models.User, orderID string, action string, remark
 	var newStatus models.OrderStatus
 	var actionName string
 	var newHandler string
-	canProcess := true
-	errMsg := ""
 
 	switch action {
 	case "process":
 		if user.Role != models.RolePharmacist {
+			recordInterception(tx, orderID, user, action, fmt.Sprintf("角色越权: %s尝试批量处理", user.Role))
+			tx.Commit()
 			return models.BatchResult{OrderID: orderID, Success: false, Message: "权限不足，只有执业药师可以处理"}
 		}
 		if order.Status != models.StatusPendingDispatch && order.Status != models.StatusReturned {
+			recordInterception(tx, orderID, user, action, fmt.Sprintf("状态不允许: %s", order.Status))
+			tx.Commit()
 			return models.BatchResult{OrderID: orderID, Success: false, Message: "状态不允许处理"}
 		}
 		if order.CurrentHandler != user.ID {
+			recordInterception(tx, orderID, user, action, fmt.Sprintf("越权: 处理人%s，操作人%s", order.CurrentHandler, user.ID))
+			tx.Commit()
 			return models.BatchResult{OrderID: orderID, Success: false, Message: "不是当前处理人，越权操作"}
 		}
 		newStatus = models.StatusProcessing
@@ -390,6 +486,8 @@ func processSingleOrder(user *models.User, orderID string, action string, remark
 
 	case "submit_review":
 		if user.Role != models.RolePharmacist {
+			recordInterception(tx, orderID, user, action, fmt.Sprintf("角色越权: %s尝试批量提交复核", user.Role))
+			tx.Commit()
 			return models.BatchResult{OrderID: orderID, Success: false, Message: "权限不足，只有执业药师可以提交复核"}
 		}
 		if order.Status != models.StatusProcessing {
@@ -400,6 +498,8 @@ func processSingleOrder(user *models.User, orderID string, action string, remark
 		}
 		missing := getMissingEvidencesTx(tx, orderID)
 		if len(missing) > 0 {
+			recordInterception(tx, orderID, user, action, fmt.Sprintf("缺少证据: %v", missing))
+			tx.Commit()
 			return models.BatchResult{OrderID: orderID, Success: false, Message: "缺少必要证据材料"}
 		}
 		newStatus = models.StatusProcessing
@@ -408,6 +508,8 @@ func processSingleOrder(user *models.User, orderID string, action string, remark
 
 	case "review_approve":
 		if user.Role != models.RoleAreaManager {
+			recordInterception(tx, orderID, user, action, fmt.Sprintf("角色越权: %s尝试批量复核", user.Role))
+			tx.Commit()
 			return models.BatchResult{OrderID: orderID, Success: false, Message: "权限不足，只有区域经理可以复核"}
 		}
 		if order.Status != models.StatusProcessing {
@@ -418,6 +520,8 @@ func processSingleOrder(user *models.User, orderID string, action string, remark
 		}
 		missing := getMissingEvidencesTx(tx, orderID)
 		if len(missing) > 0 {
+			recordInterception(tx, orderID, user, action, fmt.Sprintf("缺少证据: %v", missing))
+			tx.Commit()
 			return models.BatchResult{OrderID: orderID, Success: false, Message: "缺少必要证据材料"}
 		}
 		newStatus = models.StatusClosed
@@ -437,14 +541,14 @@ func processSingleOrder(user *models.User, orderID string, action string, remark
 		newStatus = models.StatusReturned
 		actionName = "批量退回补正"
 		newHandler = order.CreatedBy
-		canProcess = true
+		_, err = tx.Exec(`INSERT INTO exception_reasons 
+			(id, order_id, reason, exception_type, reported_by, created_at, resolved)
+			VALUES (?, ?, ?, ?, ?, ?, 0)`,
+			uuid.NewString(), orderID, remark, "batch_reject", user.ID, time.Now(),
+		)
 
 	default:
 		return models.BatchResult{OrderID: orderID, Success: false, Message: "未知操作"}
-	}
-
-	if !canProcess {
-		return models.BatchResult{OrderID: orderID, Success: false, Message: errMsg}
 	}
 
 	now := time.Now()

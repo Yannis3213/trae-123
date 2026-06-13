@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
-import { NearExpiryOrder, OrderStatus, statusLabels, statusColors, EvidenceType, evidenceTypeLabels, Stats } from '@/lib/types';
+import { OrderListItem, OrderStatus, statusLabels, statusColors, EvidenceType, evidenceTypeLabels, Stats } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
 import Link from 'next/link';
 import CreateOrderModal from '@/components/CreateOrderModal';
@@ -10,7 +10,7 @@ import BatchProcessModal from '@/components/BatchProcessModal';
 
 export default function HomePage() {
   const { user, loading: authLoading } = useAuth();
-  const [orders, setOrders] = useState<NearExpiryOrder[]>([]);
+  const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -60,31 +60,6 @@ export default function HomePage() {
     }
   };
 
-  const getUrgencyClass = (dueDate: string, status: OrderStatus) => {
-    if (status === 'closed') return '';
-    const due = new Date(dueDate).getTime();
-    const now = Date.now();
-    const diffDays = (due - now) / (1000 * 60 * 60 * 24);
-    if (diffDays < 0) return 'bg-red-50 border-red-200';
-    if (diffDays < 3) return 'bg-amber-50 border-amber-200';
-    return '';
-  };
-
-  const getUrgencyBadge = (dueDate: string, status: OrderStatus) => {
-    if (status === 'closed') return null;
-    const due = new Date(dueDate).getTime();
-    const now = Date.now();
-    const diffDays = (due - now) / (1000 * 60 * 60 * 24);
-    if (diffDays < 0) {
-      const overdueDays = Math.abs(Math.floor(diffDays));
-      return <span className="px-2 py-0.5 bg-red-500 text-white text-xs rounded">逾期{overdueDays}天</span>;
-    }
-    if (diffDays < 3) {
-      return <span className="px-2 py-0.5 bg-amber-500 text-white text-xs rounded">临期</span>;
-    }
-    return <span className="px-2 py-0.5 bg-green-500 text-white text-xs rounded">正常</span>;
-  };
-
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('zh-CN');
   };
@@ -99,7 +74,6 @@ export default function HomePage() {
 
   return (
     <div className="space-y-6">
-      {/* 统计卡片 */}
       {stats && (
         <div className="grid grid-cols-4 gap-4">
           <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -121,7 +95,6 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* 到期预警 */}
       {stats && (
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <h3 className="text-sm font-medium text-gray-700 mb-3">📊 到期预警队列</h3>
@@ -149,10 +122,8 @@ export default function HomePage() {
       )}
 
       <div className="flex gap-6">
-        {/* 左侧：处理单队列 */}
         <div className="flex-1 min-w-0">
           <div className="bg-white rounded-lg border border-gray-200">
-            {/* 工具栏 */}
             <div className="p-4 border-b border-gray-200 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-semibold text-gray-800">近效期处理单队列</h3>
@@ -248,7 +219,6 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* 列表 */}
             {loading ? (
               <div className="p-8 text-center text-gray-500">加载中...</div>
             ) : orders.length === 0 ? (
@@ -271,6 +241,7 @@ export default function HomePage() {
                       <th className="px-3 py-2 text-left font-medium text-gray-600">有效期</th>
                       <th className="px-3 py-2 text-left font-medium text-gray-600">状态</th>
                       <th className="px-3 py-2 text-left font-medium text-gray-600">到期预警</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">证据</th>
                       <th className="px-3 py-2 text-left font-medium text-gray-600">操作</th>
                     </tr>
                   </thead>
@@ -278,7 +249,9 @@ export default function HomePage() {
                     {orders.map((order) => (
                       <tr
                         key={order.id}
-                        className={`border-b border-gray-100 hover:bg-gray-50 ${getUrgencyClass(order.due_date, order.status)}`}
+                        className={`border-b border-gray-100 hover:bg-gray-50 ${
+                          order.is_overdue ? 'bg-red-50' : order.is_near_due ? 'bg-amber-50' : ''
+                        }`}
                       >
                         <td className="px-3 py-3">
                           <input
@@ -302,7 +275,20 @@ export default function HomePage() {
                           </span>
                         </td>
                         <td className="px-3 py-3">
-                          {getUrgencyBadge(order.due_date, order.status)}
+                          {order.status === 'closed' ? null : order.is_overdue ? (
+                            <span className="px-2 py-0.5 bg-red-500 text-white text-xs rounded">逾期</span>
+                          ) : order.is_near_due ? (
+                            <span className="px-2 py-0.5 bg-amber-500 text-white text-xs rounded">临期</span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-green-500 text-white text-xs rounded">正常</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex gap-1">
+                            <MiniEvidenceTag label="巡" ok={order.has_inspection} />
+                            <MiniEvidenceTag label="调" ok={order.has_transfer} />
+                            <MiniEvidenceTag label="架" ok={order.has_removal} />
+                          </div>
                         </td>
                         <td className="px-3 py-3">
                           <Link
@@ -321,32 +307,39 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* 右侧：证据摘要 */}
         <div className="w-80 shrink-0 space-y-4">
           <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <h3 className="text-sm font-medium text-gray-700 mb-3">📄 证据摘要</h3>
-            <div className="space-y-3">
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">近效期巡检</span>
-                  <EvidenceBadge type="inspection" />
-                </div>
-                <p className="text-xs text-gray-500 mt-1">门店店员提交的巡检记录</p>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">调拨申请</span>
-                  <EvidenceBadge type="transfer" />
-                </div>
-                <p className="text-xs text-gray-500 mt-1">执业药师发起的调拨单据</p>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">下架确认</span>
-                  <EvidenceBadge type="removal" />
-                </div>
-                <p className="text-xs text-gray-500 mt-1">下架处理确认凭证</p>
-              </div>
+            <h3 className="text-sm font-medium text-gray-700 mb-3">📄 证据摘要（按处理单）</h3>
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {orders.length === 0 ? (
+                <div className="text-xs text-gray-400">暂无数据</div>
+              ) : (
+                orders.slice(0, 10).map(order => (
+                  <Link
+                    key={order.id}
+                    href={`/orders/${order.id}`}
+                    className="block p-2.5 bg-gray-50 rounded-lg hover:bg-blue-50 transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-mono text-blue-600">{order.order_no}</span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${statusColors[order.status]}`}>
+                        {statusLabels[order.status]}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-700 font-medium truncate mb-1.5">{order.product_name}</div>
+                    <div className="flex items-center gap-2">
+                      <EvidenceLineTag label="巡检" ok={order.has_inspection} />
+                      <EvidenceLineTag label="调拨" ok={order.has_transfer} />
+                      <EvidenceLineTag label="下架" ok={order.has_removal} />
+                      {order.evidence_complete ? (
+                        <span className="text-xs text-green-600 ml-auto">✓ 已齐</span>
+                      ) : (
+                        <span className="text-xs text-red-500 ml-auto">缺{order.missing_evidences.length}项</span>
+                      )}
+                    </div>
+                  </Link>
+                ))
+              )}
             </div>
           </div>
 
@@ -364,14 +357,14 @@ export default function HomePage() {
                 <span className="text-green-600">💊</span>
                 <div>
                   <span className="font-medium text-gray-700">执业药师</span>
-                  <p className="text-gray-500">处理近效期药品、调拨、下架、提交复核</p>
+                  <p className="text-gray-500">处理药品、调拨/下架凭证、提交复核</p>
                 </div>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-purple-600">📊</span>
                 <div>
                   <span className="font-medium text-gray-700">区域经理</span>
-                  <p className="text-gray-500">复核处理单、通过或退回补正</p>
+                  <p className="text-gray-500">复核通过或退回补正</p>
                 </div>
               </div>
             </div>
@@ -402,15 +395,22 @@ export default function HomePage() {
   );
 }
 
-function EvidenceBadge({ type }: { type: EvidenceType }) {
-  const colors: Record<EvidenceType, string> = {
-    inspection: 'bg-green-100 text-green-700',
-    transfer: 'bg-blue-100 text-blue-700',
-    removal: 'bg-purple-100 text-purple-700',
-  };
+function MiniEvidenceTag({ label, ok }: { label: string; ok: boolean }) {
   return (
-    <span className={`px-2 py-0.5 rounded text-xs ${colors[type]}`}>
-      {evidenceTypeLabels[type]}
+    <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs font-bold ${
+      ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
+    }`}>
+      {label}
+    </span>
+  );
+}
+
+function EvidenceLineTag({ label, ok }: { label: string; ok: boolean }) {
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-xs ${
+      ok ? 'text-green-700' : 'text-red-500'
+    }`}>
+      {ok ? '✓' : '✗'}{label}
     </span>
   );
 }

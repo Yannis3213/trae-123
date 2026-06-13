@@ -53,7 +53,7 @@ export const api = {
     if (params?.store) query.set('store', params.store);
     if (params?.keyword) query.set('keyword', params.keyword);
     if (params?.only_my) query.set('only_my', 'true');
-    return request<NearExpiryOrder[]>(`/orders/?${query.toString()}`);
+    return request<OrderListItem[]>(`/orders/?${query.toString()}`);
   },
 
   getOrderDetail: (id: string) => 
@@ -132,6 +132,7 @@ export const api = {
 import type {
   User,
   NearExpiryOrder,
+  OrderListItem,
   OrderDetail,
   OrderStatus,
   EvidenceType,

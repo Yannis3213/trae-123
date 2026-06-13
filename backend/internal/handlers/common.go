@@ -126,22 +126,59 @@ func UploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var orderExists bool
-	database.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM near_expiry_orders WHERE id = ?)", orderID).Scan(&orderExists)
-	if !orderExists {
+	var orderStatus string
+	var currentHandler string
+	err := database.DB.QueryRow("SELECT status, current_handler FROM near_expiry_orders WHERE id = ?", orderID).Scan(&orderStatus, &currentHandler)
+	if err != nil {
 		http.Error(w, `{"error":"处理单不存在"}`, http.StatusNotFound)
+		return
+	}
+
+	if orderStatus == string(models.StatusClosed) {
+		http.Error(w, `{"error":"处理单已关闭，无法上传"}`, http.StatusBadRequest)
+		return
+	}
+
+	if user.Role == models.RoleShopClerk && evType != models.EvidenceInspection {
+		http.Error(w, `{"error":"门店店员只能上传近效期巡检记录"}`, http.StatusForbidden)
+		return
+	}
+
+	if user.Role == models.RolePharmacist && evType == models.EvidenceInspection {
+		http.Error(w, `{"error":"执业药师不能上传巡检记录，应由门店店员上传"}`, http.StatusForbidden)
+		return
+	}
+
+	if user.Role == models.RoleAreaManager {
+		http.Error(w, `{"error":"区域经理不能上传证据材料"}`, http.StatusForbidden)
+		return
+	}
+
+	if user.ID != currentHandler && user.Role != models.RoleShopClerk {
+		http.Error(w, `{"error":"不是当前处理人，无法上传"}`, http.StatusForbidden)
 		return
 	}
 
 	attachID := uuid.NewString()
 	now := time.Now()
 
-	_, err := database.DB.Exec(`INSERT INTO attachments (id, order_id, evidence_type, file_name, uploaded_by, uploaded_at, remark)
+	_, err = database.DB.Exec(`INSERT INTO attachments (id, order_id, evidence_type, file_name, uploaded_by, uploaded_at, remark)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		attachID, orderID, evType, req.FileName, user.ID, now, req.Remark,
 	)
 	if err != nil {
 		http.Error(w, `{"error":"上传失败"}`, http.StatusInternalServerError)
+		return
+	}
+
+	_, err = database.DB.Exec(`INSERT INTO processing_records
+		(id, order_id, action, from_status, to_status, operator, operator_role, remark, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid.NewString(), orderID, "上传证据: "+string(evType), orderStatus, orderStatus,
+		user.ID, user.Role, req.FileName, now,
+	)
+	if err != nil {
+		http.Error(w, `{"error":"记录日志失败"}`, http.StatusInternalServerError)
 		return
 	}
 

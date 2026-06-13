@@ -59,8 +59,8 @@ func ListOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if onlyMy == "true" {
-		query += " AND current_handler = ?"
-		args = append(args, user.ID)
+		query += " AND (current_handler = ? OR created_by = ?)"
+		args = append(args, user.ID, user.ID)
 	}
 
 	query += " ORDER BY created_at DESC"
@@ -72,7 +72,7 @@ func ListOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var orders []models.NearExpiryOrder
+	var items []models.OrderListItem
 	for rows.Next() {
 		var o models.NearExpiryOrder
 		var closedAt sql.NullTime
@@ -85,11 +85,59 @@ func ListOrders(w http.ResponseWriter, r *http.Request) {
 		if closedAt.Valid {
 			o.ClosedAt = &closedAt.Time
 		}
-		orders = append(orders, o)
+
+		hasInspection, hasTransfer, hasRemoval := getEvidenceStatus(o.ID)
+		var missing []models.EvidenceType
+		if !hasInspection {
+			missing = append(missing, models.EvidenceInspection)
+		}
+		if !hasTransfer {
+			missing = append(missing, models.EvidenceTransfer)
+		}
+		if !hasRemoval {
+			missing = append(missing, models.EvidenceRemoval)
+		}
+
+		now := time.Now()
+		isOverdue := o.DueDate.Before(now) && o.Status != models.StatusClosed
+		isNearDue := !isOverdue && o.DueDate.Sub(now).Hours() < 72
+
+		items = append(items, models.OrderListItem{
+			NearExpiryOrder:  o,
+			HasInspection:    hasInspection,
+			HasTransfer:      hasTransfer,
+			HasRemoval:       hasRemoval,
+			MissingEvidences: missing,
+			EvidenceComplete: len(missing) == 0,
+			IsOverdue:        isOverdue,
+			IsNearDue:        isNearDue,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(orders)
+	json.NewEncoder(w).Encode(items)
+}
+
+func getEvidenceStatus(orderID string) (hasInspection bool, hasTransfer bool, hasRemoval bool) {
+	rows, err := database.DB.Query("SELECT DISTINCT evidence_type FROM attachments WHERE order_id = ?", orderID)
+	if err != nil {
+		return false, false, false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var et string
+		rows.Scan(&et)
+		switch models.EvidenceType(et) {
+		case models.EvidenceInspection:
+			hasInspection = true
+		case models.EvidenceTransfer:
+			hasTransfer = true
+		case models.EvidenceRemoval:
+			hasRemoval = true
+		}
+	}
+	return
 }
 
 func GetOrderDetail(w http.ResponseWriter, r *http.Request) {

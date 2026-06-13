@@ -109,3 +109,14 @@ type OrderDetail struct {
 	IsOverdue         bool               `json:"is_overdue"`
 	IsNearDue         bool               `json:"is_near_due"`
 }
+
+type OrderListItem struct {
+	NearExpiryOrder
+	HasInspection bool         `json:"has_inspection"`
+	HasTransfer   bool         `json:"has_transfer"`
+	HasRemoval    bool         `json:"has_removal"`
+	MissingEvidences []EvidenceType `json:"missing_evidences"`
+	EvidenceComplete bool       `json:"evidence_complete"`
+	IsOverdue     bool         `json:"is_overdue"`
+	IsNearDue     bool         `json:"is_near_due"`
+}
