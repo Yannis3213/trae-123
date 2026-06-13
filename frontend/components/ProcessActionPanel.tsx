@@ -29,23 +29,27 @@ export default function ProcessActionPanel({ order, onProcessed }: Props) {
 
   const canProcess = user.role === 'pharmacist' &&
     (isPendingDispatch || isReturned) &&
-    (isCurrentHandler || isReturned);
+    isCurrentHandler &&
+    !(isPendingDispatch && hasMissingEvidence);
 
   const canSubmitReview = user.role === 'pharmacist' &&
-    isProcessing && isCurrentHandler;
+    isProcessing && isCurrentHandler && !hasMissingEvidence;
 
   const canReviewApprove = user.role === 'area_manager' &&
-    isProcessing && isCurrentHandler;
+    isProcessing && isCurrentHandler && !hasMissingEvidence;
 
   const canReviewReject = user.role === 'area_manager' &&
     isProcessing && isCurrentHandler;
 
   const canCorrect = user.role === 'shop_clerk' &&
-    isReturned &&
-    (isCurrentHandler || isCreator);
+    (isReturned || isPendingDispatch) &&
+    (isCreator || (isReturned && isCurrentHandler)) &&
+    !hasMissingEvidence;
+
+  const hasAnyAction = canProcess || canSubmitReview || canReviewApprove || canReviewReject || canCorrect;
 
   const handlerInfo = () => {
-    if (isPendingDispatch) return '等待执业药师接单处理';
+    if (isPendingDispatch) return order.current_handler || '待执业药师接单';
     if (isProcessing) return order.current_handler;
     if (isReturned) return order.current_handler + '（需补正）';
     if (isClosed) return '-';
@@ -54,8 +58,13 @@ export default function ProcessActionPanel({ order, onProcessed }: Props) {
 
   const nextStepHint = () => {
     if (isClosed) return '流程已结束';
-    if (isPendingDispatch && user.role === 'pharmacist') return '→ 点击「开始处理」接单';
-    if (isPendingDispatch && user.role !== 'pharmacist') return '→ 等待执业药师处理';
+    if (isPendingDispatch && user.role === 'pharmacist' && isCurrentHandler) {
+      return hasMissingEvidence ? '→ 证据不全，需门店店员补齐' : '→ 点击「开始处理」接单';
+    }
+    if (isPendingDispatch && user.role === 'shop_clerk' && isCreator) {
+      return hasMissingEvidence ? '→ 请补齐证据材料' : '→ 证据已齐，等待药师处理';
+    }
+    if (isPendingDispatch) return '→ 等待执业药师处理';
     if (isProcessing && user.role === 'pharmacist' && isCurrentHandler) {
       return hasMissingEvidence ? '→ 请补全证据材料后再提交' : '→ 补全证据后提交复核';
     }
@@ -63,7 +72,9 @@ export default function ProcessActionPanel({ order, onProcessed }: Props) {
       return hasMissingEvidence ? '→ 证据不全，建议退回补正' : '→ 可复核通过或退回';
     }
     if (isProcessing && !isCurrentHandler) return '→ 等待当前处理人操作';
-    if (isReturned && user.role === 'shop_clerk') return '→ 请补正后重新提交';
+    if (isReturned && user.role === 'shop_clerk' && (isCreator || isCurrentHandler)) {
+      return hasMissingEvidence ? '→ 请补齐证据后补正提交' : '→ 可补正后重新提交';
+    }
     if (isReturned && user.role !== 'shop_clerk') return '→ 等待门店店员补正';
     return '';
   };
@@ -126,12 +137,12 @@ export default function ProcessActionPanel({ order, onProcessed }: Props) {
               </div>
             )}
 
-            {hasMissingEvidence && (canSubmitReview || canReviewApprove) && (
+            {hasMissingEvidence && (canSubmitReview || canReviewApprove || canProcess) && (
               <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
                 ⚠️ 缺少证据：{order.missing_evidences.map(e => {
                   const map: Record<string, string> = { inspection: '巡检', transfer: '调拨', removal: '下架' };
                   return map[e] || e;
-                }).join('、')}，需补齐后才能提交
+                }).join('、')}，需补齐后才能推进
               </div>
             )}
 
@@ -151,7 +162,7 @@ export default function ProcessActionPanel({ order, onProcessed }: Props) {
                 disabled={loading || hasMissingEvidence}
                 className="w-full px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {hasMissingEvidence ? '缺少证据，无法提交复核' : '提交复核'}
+                提交复核
               </button>
             )}
 
@@ -161,7 +172,7 @@ export default function ProcessActionPanel({ order, onProcessed }: Props) {
                 disabled={loading || hasMissingEvidence}
                 className="w-full px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {hasMissingEvidence ? '证据不全，无法通过' : '复核通过并关闭'}
+                复核通过并关闭
               </button>
             )}
 
@@ -187,7 +198,7 @@ export default function ProcessActionPanel({ order, onProcessed }: Props) {
               </button>
             )}
 
-            {!canProcess && !canSubmitReview && !canReviewApprove && !canReviewReject && !canCorrect && !isClosed && (
+            {!hasAnyAction && !isClosed && (
               <div className="p-3 bg-gray-50 rounded-lg text-sm text-gray-500 text-center">
                 当前状态下无可执行操作
               </div>

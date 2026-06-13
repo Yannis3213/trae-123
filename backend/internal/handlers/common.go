@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -100,6 +101,25 @@ type UploadAttachmentRequest struct {
 	Remark       string `json:"remark"`
 }
 
+func uploadRecordInterception(orderID string, user *models.User, action string, reason string) {
+	now := time.Now()
+	database.DB.Exec(`INSERT INTO processing_records
+		(id, order_id, action, from_status, to_status, operator, operator_role, remark, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid.NewString(), orderID, "拦截: "+action, "", "",
+		user.ID, user.Role, reason, now,
+	)
+	database.DB.Exec(`INSERT INTO exception_reasons
+		(id, order_id, reason, exception_type, reported_by, created_at, resolved)
+		VALUES (?, ?, ?, ?, ?, ?, 0)`,
+		uuid.NewString(), orderID, reason, "interception", user.ID, now,
+	)
+	database.DB.Exec(`INSERT INTO audit_notes (id, order_id, content, author, created_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		uuid.NewString(), orderID, fmt.Sprintf("[拦截] %s: %s", action, reason), user.ID, now,
+	)
+}
+
 func UploadAttachment(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromContext(r.Context())
 	if user == nil {
@@ -128,34 +148,41 @@ func UploadAttachment(w http.ResponseWriter, r *http.Request) {
 
 	var orderStatus string
 	var currentHandler string
-	err := database.DB.QueryRow("SELECT status, current_handler FROM near_expiry_orders WHERE id = ?", orderID).Scan(&orderStatus, &currentHandler)
+	var createdBy string
+	err := database.DB.QueryRow("SELECT status, current_handler, created_by FROM near_expiry_orders WHERE id = ?", orderID).Scan(&orderStatus, &currentHandler, &createdBy)
 	if err != nil {
 		http.Error(w, `{"error":"处理单不存在"}`, http.StatusNotFound)
 		return
 	}
 
 	if orderStatus == string(models.StatusClosed) {
+		uploadRecordInterception(orderID, user, "upload_"+string(evType), "处理单已关闭，无法上传证据")
 		http.Error(w, `{"error":"处理单已关闭，无法上传"}`, http.StatusBadRequest)
 		return
 	}
 
 	if user.Role == models.RoleShopClerk && evType != models.EvidenceInspection {
+		uploadRecordInterception(orderID, user, "upload_"+string(evType), "角色越权: 门店店员只能上传近效期巡检记录")
 		http.Error(w, `{"error":"门店店员只能上传近效期巡检记录"}`, http.StatusForbidden)
 		return
 	}
 
 	if user.Role == models.RolePharmacist && evType == models.EvidenceInspection {
+		uploadRecordInterception(orderID, user, "upload_"+string(evType), "角色越权: 执业药师不能上传巡检记录")
 		http.Error(w, `{"error":"执业药师不能上传巡检记录，应由门店店员上传"}`, http.StatusForbidden)
 		return
 	}
 
 	if user.Role == models.RoleAreaManager {
+		uploadRecordInterception(orderID, user, "upload_"+string(evType), "角色越权: 区域经理不能上传证据材料")
 		http.Error(w, `{"error":"区域经理不能上传证据材料"}`, http.StatusForbidden)
 		return
 	}
 
-	if user.ID != currentHandler && user.Role != models.RoleShopClerk {
-		http.Error(w, `{"error":"不是当前处理人，无法上传"}`, http.StatusForbidden)
+	if user.ID != currentHandler && user.ID != createdBy && user.Role != models.RoleShopClerk {
+		reason := fmt.Sprintf("越权: 处理人%s，创建人%s，操作人%s", currentHandler, createdBy, user.ID)
+		uploadRecordInterception(orderID, user, "upload_"+string(evType), reason)
+		http.Error(w, `{"error":"不是当前处理人或创建人，无法上传"}`, http.StatusForbidden)
 		return
 	}
 
@@ -181,6 +208,11 @@ func UploadAttachment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"记录日志失败"}`, http.StatusInternalServerError)
 		return
 	}
+
+	_, err = database.DB.Exec(`INSERT INTO audit_notes (id, order_id, content, author, created_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		uuid.NewString(), orderID, fmt.Sprintf("[上传证据] %s: %s", evType, req.FileName), user.ID, now,
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

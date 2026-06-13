@@ -94,9 +94,11 @@ type User struct {
 }
 
 type BatchResult struct {
-	OrderID string `json:"order_id"`
-	Success bool   `json:"success"`
-	Message string `json:"message"`
+	OrderID   string `json:"order_id"`
+	OrderNo   string `json:"order_no"`
+	Success   bool   `json:"success"`
+	Message   string `json:"message"`
+	NewVersion int   `json:"new_version,omitempty"`
 }
 
 type OrderDetail struct {

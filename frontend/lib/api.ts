@@ -120,8 +120,10 @@ export const api = {
 
   batchProcess: (data: {
     order_ids: string[];
+    versions?: number[];
     action: string;
     remark?: string;
+    exception_reason?: string;
   }) =>
     request<BatchResult[]>('/batch-process', {
       method: 'POST',

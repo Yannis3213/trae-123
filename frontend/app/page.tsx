@@ -379,6 +379,7 @@ export default function HomePage() {
       {showBatchModal && (
         <BatchProcessModal
           orderIds={selectedOrders}
+          versions={selectedOrders.map(id => orders.find(o => o.id === id)?.version || 0)}
           action={batchAction}
           onClose={() => {
             setShowBatchModal(false);

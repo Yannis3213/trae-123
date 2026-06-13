@@ -6,6 +6,7 @@ import { BatchResult } from '@/lib/types';
 
 interface Props {
   orderIds: string[];
+  versions?: number[];
   action: string;
   onClose: () => void;
   onSuccess: () => void;
@@ -18,19 +19,27 @@ const actionLabels: Record<string, string> = {
   review_reject: '批量退回补正',
 };
 
-export default function BatchProcessModal({ orderIds, action, onClose, onSuccess }: Props) {
+export default function BatchProcessModal({ orderIds, versions, action, onClose, onSuccess }: Props) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<BatchResult[] | null>(null);
   const [remark, setRemark] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
   const [done, setDone] = useState(false);
 
   const handleSubmit = async () => {
+    if (action === 'review_reject' && !rejectReason.trim()) {
+      alert('请填写退回原因');
+      return;
+    }
+
     setLoading(true);
     try {
       const data = await api.batchProcess({
         order_ids: orderIds,
+        versions: versions || [],
         action,
         remark: remark || undefined,
+        exception_reason: action === 'review_reject' ? rejectReason : undefined,
       });
       setResults(data);
       setDone(true);
@@ -65,6 +74,19 @@ export default function BatchProcessModal({ orderIds, action, onClose, onSuccess
                   placeholder="可选"
                 />
               </div>
+
+              {action === 'review_reject' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">退回原因 *</label>
+                  <textarea
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    className="w-full px-3 py-2 border border-red-300 rounded-lg text-sm"
+                    rows={2}
+                    placeholder="请填写退回原因..."
+                  />
+                </div>
+              )}
 
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
                 ⚠️ 批量操作将逐条执行，失败的记录会返回具体原因，请确认后操作。
@@ -107,7 +129,7 @@ export default function BatchProcessModal({ orderIds, action, onClose, onSuccess
                       result.success ? 'bg-green-50' : 'bg-red-50'
                     }`}
                   >
-                    <span className="font-mono text-gray-700">{result.order_id.slice(0, 8)}...</span>
+                    <span className="font-mono text-gray-700">{result.order_no || result.order_id}</span>
                     <span className={result.success ? 'text-green-700' : 'text-red-700'}>
                       {result.success ? '✓ ' : '✗ '}{result.message}
                     </span>
