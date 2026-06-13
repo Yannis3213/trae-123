@@ -249,6 +249,11 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
       submitted_at: addDays(today, 0),
       attachments: [
         { type: 'followup_form', name: '随访单_张三.pdf', url: '/files/followup_1.pdf' }
+      ],
+      audits: [
+        { user_id: 1, action: 'edit', remark: '编辑补正：更新血压值为130/85', extra_data: { fields: ['blood_pressure'] } },
+        { user_id: 1, action: 'submit', remark: '提交随访单', extra_data: { fromStatus: 'draft', toStatus: 'pending_submit' } },
+        { user_id: 1, action: 'update_chronic_record', remark: '补正慢病档案：更新治疗史', extra_data: { followup_id: 1, changes: ['treatment_history'] } }
       ]
     },
     {
@@ -309,8 +314,48 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
         { type: 'followup_form', name: '随访单_赵六.pdf', url: '/files/followup_4.pdf' }
       ],
       processing: { user_id: 2, role: 'general_doctor', opinion: '缺少用药记录附件，请补充' },
+      audits: [
+        { user_id: 1, action: 'submit', remark: '首次提交随访单', extra_data: { fromStatus: 'draft', toStatus: 'pending_submit' } },
+        { user_id: 1, action: 'edit', remark: '编辑补正：补充联系方式', extra_data: { fields: ['phone', 'address'] } },
+        { user_id: 1, action: 'cancel_resubmit', remark: '取消重新提交，需继续完善用药记录', extra_data: { previousStatus: 'returned' } },
+        { user_id: 1, action: 'edit', remark: '编辑补正：更新用药依从性为良好', extra_data: { fields: ['medication_compliance'] } }
+      ],
       exceptions: [
-        { type: 'missing_evidence', reason: '缺少必要证据: medication_record', operator_id: 2, extra: { missing: ['medication_record'], status: 'pending_submit' } }
+        { type: 'missing_evidence', reason: '缺少必要证据: medication_record', operator_id: 2, extra: { missing: ['medication_record'], status: 'pending_submit' } },
+        { type: 'invalid_status', reason: '取消后重办：随访单未补正用药记录，暂不可重新提交', operator_id: 1, extra: { current_status: 'returned', missing_fields: ['medication_record'] } }
+      ]
+    },
+    {
+      patient_name: '钱九', id_card: '110101197212125678', gender: '男', age: 53,
+      phone: '13800138007', address: '北京市通州区',
+      chronic_type: '2型糖尿病', followup_type: '重点随访',
+      due_date: addDays(today, -2),
+      blood_pressure: '138/88', blood_sugar: '9.5', heart_rate: '80', weight: '78',
+      symptoms: '视物模糊', lifestyle: '久坐、饮食油腻', medication_compliance: '一般',
+      diagnosis: '2型糖尿病 血糖控制不佳', treatment_plan: '调整降糖方案，加测血糖',
+      doctor_opinion: '血糖偏高，建议主任审核后调整用药',
+      status: 'director_review', current_role: 'medical_director',
+      current_handler_id: 2, creator_id: 1,
+      submitted_at: addDays(today, -7),
+      doctor_processed_at: addDays(today, -4),
+      director_reviewed_at: addDays(today, -2),
+      attachments: [
+        { type: 'followup_form', name: '随访单_钱九.pdf', url: '/files/followup_7.pdf' },
+        { type: 'vital_signs', name: '生命体征_钱九.pdf', url: '/files/vital_7.pdf' },
+        { type: 'medication_record', name: '用药记录_钱九.pdf', url: '/files/med_7.pdf' },
+        { type: 'treatment_plan', name: '治疗方案_钱九.pdf', url: '/files/treatment_7.pdf' }
+      ],
+      processing: [
+        { user_id: 2, role: 'general_doctor', opinion: '血糖偏高，建议主任审核后调整用药', status: 'doctor_processing' },
+        { user_id: 3, role: 'medical_director', opinion: '已审核，待完成归档', status: 'director_review' }
+      ],
+      audits: [
+        { user_id: 1, action: 'submit', remark: '提交随访单', extra_data: { fromStatus: 'draft', toStatus: 'pending_submit' } },
+        { user_id: 3, action: 'review', remark: '主任审核通过，进入完成待办', extra_data: { fromStatus: 'doctor_processing', toStatus: 'director_review' } },
+        { user_id: 3, action: 'cancel_complete', remark: '取消完成：需补充血糖监测记录后再归档', extra_data: { previousStatus: 'director_review', missing: ['lab_report'] } }
+      ],
+      exceptions: [
+        { type: 'missing_evidence', reason: '主任完成前校验：缺少血糖监测报告(lab_report)', operator_id: 3, extra: { missing: ['lab_report'], action: 'complete' } }
       ]
     },
     {
@@ -338,6 +383,11 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
       processing: [
         { user_id: 2, role: 'general_doctor', opinion: '血压控制良好，继续保持', status: 'doctor_processing' },
         { user_id: 3, role: 'medical_director', opinion: '同意医生意见', status: 'completed' }
+      ],
+      audits: [
+        { user_id: 1, action: 'submit', remark: '提交随访单', extra_data: { fromStatus: 'draft', toStatus: 'pending_submit' } },
+        { user_id: 3, action: 'review', remark: '主任审核通过', extra_data: { fromStatus: 'doctor_processing', toStatus: 'director_review' } },
+        { user_id: 3, action: 'complete', remark: '主任完成：随访资料完整，归档完成', extra_data: { fromStatus: 'director_review', toStatus: 'completed' } }
       ]
     },
     {
@@ -414,6 +464,12 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
     }
 
     await insertAudit.run(followupId, form.creator_id, 'create', `创建随访单: ${form.patient_name}`, JSON.stringify({ status: form.status }))
+
+    if (form.audits) {
+      for (const a of form.audits) {
+        await insertAudit.run(followupId, a.user_id || form.creator_id, a.action, a.remark, a.extra_data ? JSON.stringify(a.extra_data) : null)
+      }
+    }
 
     if (form.processing) {
       const processList = Array.isArray(form.processing) ? form.processing : [form.processing]

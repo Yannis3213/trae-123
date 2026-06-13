@@ -213,7 +213,93 @@
       </el-col>
 
       <el-col :span="8">
-        <el-card class="info-card" v-if="detail.chronicRecord">
+        <el-card class="info-card">
+          <template #header>
+            <div class="card-title">
+              <el-icon><Operation /></el-icon>办理摘要
+            </div>
+          </template>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="当前状态">
+              <el-tag :type="STATUS_COLORS[detail.actionSummary?.currentStatus]" effect="dark">
+                {{ detail.actionSummary?.currentStatusName }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="当前角色">
+              <el-tag type="info">{{ detail.actionSummary?.currentRoleName }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="到期预警">
+              <el-tag :type="OVERDUE_COLORS[detail.actionSummary?.overdueLevel]" effect="light">
+                {{ OVERDUE_NAMES[detail.actionSummary?.overdueLevel] }}
+                <span v-if="detail.actionSummary?.overdueDays !== undefined">
+                  ({{ detail.actionSummary.overdueDays > 0 ? detail.actionSummary.overdueDays + '天' : Math.abs(detail.actionSummary.overdueDays) + '天前' }})
+                </span>
+              </el-tag>
+            </el-descriptions-item>
+          </el-descriptions>
+          <div v-if="detail.actionSummary?.availableActions?.length > 0" style="margin-top: 12px;">
+            <div style="color: #606266; font-size: 13px; margin-bottom: 8px;">可操作动作：</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+              <el-tag
+                v-for="action in detail.actionSummary.availableActions"
+                :key="action.key"
+                type="primary"
+                effect="plain"
+                size="small"
+              >{{ action.label }}</el-tag>
+            </div>
+          </div>
+          <el-empty v-else description="暂无可操作动作" :image-size="60" />
+        </el-card>
+
+        <el-card class="info-card" style="margin-top: 16px;" v-if="detail.lastProcessing">
+          <template #header>
+            <div class="card-title">
+              <el-icon><User /></el-icon>最近处理
+            </div>
+          </template>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="状态">
+              <el-tag :type="STATUS_COLORS[detail.lastProcessing.status]" size="small">
+                {{ detail.lastProcessing.statusName }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="处理人">
+              {{ detail.lastProcessing.user_name }}
+              <el-tag size="small" style="margin-left: 8px;">{{ detail.lastProcessing.roleName }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="意见">
+              <span class="opinion-text">{{ detail.lastProcessing.opinion || '无' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="时间">{{ formatDateTime(detail.lastProcessing.created_at) }}</el-descriptions-item>
+          </el-descriptions>
+        </el-card>
+
+        <el-card class="info-card" style="margin-top: 16px;" v-if="detail.lastInterception">
+          <template #header>
+            <div class="card-title">
+              <el-icon><Warning /></el-icon>最近拦截
+              <el-tag type="danger" size="small" style="margin-left: 12px;">
+                {{ detail.lastInterception.extraData?.type || '拦截' }}
+              </el-tag>
+            </div>
+          </template>
+          <el-alert
+            :title="detail.lastInterception.remark"
+            type="warning"
+            :closable="false"
+            show-icon
+          >
+            <template #default>
+              <div style="font-size: 12px; color: #909399; margin-top: 4px;">
+                <span>操作人：{{ detail.lastInterception.user_name }}</span>
+                <span style="margin-left: 12px;">时间：{{ formatDateTime(detail.lastInterception.created_at) }}</span>
+              </div>
+            </template>
+          </el-alert>
+        </el-card>
+
+        <el-card class="info-card" v-if="detail.chronicRecord" style="margin-top: 16px;">
           <template #header>
             <div class="card-title">
               <el-icon><FolderOpened /></el-icon>慢病档案
@@ -307,7 +393,7 @@
         </el-row>
       </el-form>
       <template #footer>
-        <el-button @click="editDialog.visible = false">取消</el-button>
+        <el-button @click="handleDialogCancel">取消</el-button>
         <el-button type="primary" :loading="saving" @click="saveEdit">保存</el-button>
       </template>
     </el-dialog>
@@ -325,7 +411,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="processDialog.visible = false">取消</el-button>
+        <el-button @click="handleDialogCancel">取消</el-button>
         <el-button type="primary" :loading="saving" @click="confirmProcess">确认处理</el-button>
       </template>
     </el-dialog>
@@ -337,7 +423,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="reviewDialog.visible = false">取消</el-button>
+        <el-button @click="handleDialogCancel">取消</el-button>
         <el-button type="primary" :loading="saving" @click="confirmReview">确认审核</el-button>
       </template>
     </el-dialog>
@@ -352,7 +438,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="returnDialog.visible = false">取消</el-button>
+        <el-button @click="handleDialogCancel">取消</el-button>
         <el-button type="warning" :loading="saving" @click="confirmReturn">确认退回</el-button>
       </template>
     </el-dialog>
@@ -372,7 +458,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="attachmentDialog.visible = false">取消</el-button>
+        <el-button @click="handleDialogCancel">取消</el-button>
         <el-button type="primary" :loading="saving" @click="saveAttachment">上传</el-button>
       </template>
     </el-dialog>
@@ -405,7 +491,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="chronicDialog.visible = false">取消</el-button>
+        <el-button @click="handleDialogCancel">取消</el-button>
         <el-button type="primary" :loading="saving" @click="saveChronic">保存</el-button>
       </template>
     </el-dialog>
@@ -436,7 +522,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="medicationDialog.visible = false">取消</el-button>
+        <el-button @click="handleDialogCancel">取消</el-button>
         <el-button type="primary" :loading="saving" @click="saveMedication">保存</el-button>
       </template>
     </el-dialog>
@@ -448,7 +534,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="remarkDialog.visible = false">取消</el-button>
+        <el-button @click="handleDialogCancel">取消</el-button>
         <el-button type="primary" :loading="saving" @click="confirmAction">确认</el-button>
       </template>
     </el-dialog>
@@ -548,6 +634,21 @@ function formatDateTime(date) {
   return date ? dayjs(date).format('YYYY-MM-DD HH:mm:ss') : '-'
 }
 
+function clearQueryParams() {
+  router.replace({ query: {} })
+}
+
+function closeAllDialogs() {
+  editDialog.visible = false
+  processDialog.visible = false
+  reviewDialog.visible = false
+  returnDialog.visible = false
+  remarkDialog.visible = false
+  attachmentDialog.visible = false
+  chronicDialog.visible = false
+  medicationDialog.visible = false
+}
+
 async function fetchDetail() {
   loading.value = true
   try {
@@ -555,24 +656,28 @@ async function fetchDetail() {
     detail.value = res
 
     const query = route.query
-    if (query.edit === '1' && detail.value.permissions?.canEdit) {
-      Object.assign(editForm, {
-        patient_name: detail.value.form.patient_name,
-        id_card: detail.value.form.id_card,
-        gender: detail.value.form.gender,
-        age: detail.value.form.age,
-        chronic_type: detail.value.form.chronic_type,
-        due_date: detail.value.form.due_date
-      })
-      editDialog.visible = true
-    } else if (query.action === 'process' && detail.value.permissions?.canProcess) {
-      processDialog.visible = true
-    } else if (query.action === 'review' && detail.value.permissions?.canReview) {
-      reviewDialog.visible = true
-    } else if (query.action === 'return' && detail.value.permissions?.canReturn) {
-      returnDialog.visible = true
-    } else if (query.action === 'complete' && detail.value.permissions?.canComplete) {
-      handleComplete()
+    const hasQuery = query.edit === '1' || query.action
+    if (hasQuery) {
+      if (query.edit === '1' && detail.value.permissions?.canEdit) {
+        Object.assign(editForm, {
+          patient_name: detail.value.form.patient_name,
+          id_card: detail.value.form.id_card,
+          gender: detail.value.form.gender,
+          age: detail.value.form.age,
+          chronic_type: detail.value.form.chronic_type,
+          due_date: detail.value.form.due_date
+        })
+        editDialog.visible = true
+      } else if (query.action === 'process' && detail.value.permissions?.canProcess) {
+        processDialog.visible = true
+      } else if (query.action === 'review' && detail.value.permissions?.canReview) {
+        reviewDialog.visible = true
+      } else if (query.action === 'return' && detail.value.permissions?.canReturn) {
+        returnDialog.visible = true
+      } else if (query.action === 'complete' && detail.value.permissions?.canComplete) {
+        handleComplete()
+      }
+      clearQueryParams()
     }
   } catch (err) {
     console.error(err)
@@ -619,6 +724,11 @@ async function handleArchive() {
       console.error(err)
     }
   }
+}
+
+function handleDialogCancel() {
+  closeAllDialogs()
+  fetchDetail()
 }
 
 async function confirmAction() {

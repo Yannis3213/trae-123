@@ -180,6 +180,49 @@ followupRouter.get('/:id', async (c) => {
     ORDER BY e.created_at DESC
   `, [id])
 
+  const interceptLogs = auditLogs.filter(l => l.action === 'intercept')
+  const lastInterception = interceptLogs.length > 0 ? {
+    ...interceptLogs[0],
+    extraData: interceptLogs[0].extra_data ? JSON.parse(interceptLogs[0].extra_data) : null
+  } : null
+
+  const lastProcessing = processingRecords.length > 0 ? {
+    ...processingRecords[0],
+    statusName: STATUS_NAMES[processingRecords[0].status],
+    roleName: ROLE_NAMES[processingRecords[0].role]
+  } : null
+
+  const permissions = {
+    canEdit: [STATUS.DRAFT, STATUS.RETURNED].includes(form.status) && user.role === ROLES.TRIAGE_NURSE,
+    canSubmit: form.status === STATUS.DRAFT && user.role === ROLES.TRIAGE_NURSE,
+    canResubmit: form.status === STATUS.RETURNED && user.role === ROLES.TRIAGE_NURSE,
+    canProcess: [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED].includes(form.status) && user.role === ROLES.GENERAL_DOCTOR,
+    canReview: form.status === STATUS.DOCTOR_PROCESSING && user.role === ROLES.MEDICAL_DIRECTOR,
+    canReturn: [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED, STATUS.DOCTOR_PROCESSING, STATUS.DIRECTOR_REVIEW].includes(form.status),
+    canComplete: form.status === STATUS.DIRECTOR_REVIEW && user.role === ROLES.MEDICAL_DIRECTOR,
+    canArchive: form.status === STATUS.COMPLETED && user.role === ROLES.MEDICAL_DIRECTOR
+  }
+
+  const availableActions = []
+  if (permissions.canEdit) availableActions.push({ key: 'edit', label: '编辑' })
+  if (permissions.canSubmit) availableActions.push({ key: 'submit', label: '提交' })
+  if (permissions.canResubmit) availableActions.push({ key: 'resubmit', label: '重新提交' })
+  if (permissions.canProcess) availableActions.push({ key: 'process', label: '处理' })
+  if (permissions.canReview) availableActions.push({ key: 'review', label: '审核' })
+  if (permissions.canReturn) availableActions.push({ key: 'return', label: '退回' })
+  if (permissions.canComplete) availableActions.push({ key: 'complete', label: '完成' })
+  if (permissions.canArchive) availableActions.push({ key: 'archive', label: '归档' })
+
+  const actionSummary = {
+    currentStatus: form.status,
+    currentStatusName: STATUS_NAMES[form.status],
+    currentRole: form.current_role,
+    currentRoleName: ROLE_NAMES[form.current_role],
+    overdueLevel: overdue.level,
+    overdueDays: overdue.days,
+    availableActions
+  }
+
   const chronicRecord = await db.get('SELECT * FROM chronic_records WHERE patient_id_card = ?', [form.id_card])
   const medicationReminders = await db.all('SELECT * FROM medication_reminders WHERE patient_id_card = ?', [form.id_card])
 
@@ -187,6 +230,7 @@ followupRouter.get('/:id', async (c) => {
     form: {
       ...form,
       statusName: STATUS_NAMES[form.status],
+      roleName: ROLE_NAMES[form.current_role],
       overdueLevel: overdue.level,
       overdueDays: overdue.days
     },
@@ -201,18 +245,12 @@ followupRouter.get('/:id', async (c) => {
       extraData: l.extra_data ? JSON.parse(l.extra_data) : null
     })),
     exceptions,
+    lastInterception,
+    lastProcessing,
+    actionSummary,
     chronicRecord,
     medicationReminders,
-    permissions: {
-      canEdit: [STATUS.DRAFT, STATUS.RETURNED].includes(form.status) && user.role === ROLES.TRIAGE_NURSE,
-      canSubmit: form.status === STATUS.DRAFT && user.role === ROLES.TRIAGE_NURSE,
-      canResubmit: form.status === STATUS.RETURNED && user.role === ROLES.TRIAGE_NURSE,
-      canProcess: [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED].includes(form.status) && user.role === ROLES.GENERAL_DOCTOR,
-      canReview: [STATUS.DOCTOR_PROCESSING].includes(form.status) && user.role === ROLES.MEDICAL_DIRECTOR,
-      canReturn: [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED, STATUS.DOCTOR_PROCESSING, STATUS.DIRECTOR_REVIEW].includes(form.status),
-      canComplete: form.status === STATUS.DIRECTOR_REVIEW && user.role === ROLES.MEDICAL_DIRECTOR,
-      canArchive: form.status === STATUS.COMPLETED && user.role === ROLES.MEDICAL_DIRECTOR
-    }
+    permissions
   })
 })
 
