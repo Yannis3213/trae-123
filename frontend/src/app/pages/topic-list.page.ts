@@ -36,7 +36,7 @@ const SORT_COLUMN_MAP: Record<string, string> = {
   category: 'category',
   priority: 'priority',
   status: 'status',
-  warning: 'submission_deadline',
+  warning: 'warning',
   handler: 'current_handler_name',
   deadline: 'submission_deadline',
   version: 'version',
@@ -343,14 +343,14 @@ export class TopicListPageComponent implements OnInit, AfterViewInit {
 
   ngOnInit() {
     this.loadPage(1);
-    this.auth.user$.subscribe(() => {
+    this.auth.user$.subscribe((u) => {
+      this.user = u;
       this.selection.clear();
       this.loadPage(1);
     });
   }
 
   ngAfterViewInit() {
-    this.dataSource.sort = this.sort;
     this.sort.sortChange.subscribe((s: Sort) => {
       this.sortBy = SORT_COLUMN_MAP[s.active] || 'updated_at';
       this.sortDir = s.direction || 'desc';

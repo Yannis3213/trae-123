@@ -138,7 +138,7 @@ pub async fn list_topics(
     let allowed_sort: std::collections::HashSet<&str> = [
         "updated_at", "created_at", "title", "status", "priority",
         "category", "current_handler_name", "interview_deadline",
-        "submission_deadline", "version",
+        "submission_deadline", "version", "warning",
     ].into_iter().collect();
     let sort_by_col = query.sort_by.as_deref()
         .filter(|s| allowed_sort.contains(*s))
@@ -152,13 +152,15 @@ pub async fn list_topics(
         format!("CASE WHEN priority = 'low' THEN 1 WHEN priority = 'medium' THEN 2 WHEN priority = 'high' THEN 3 ELSE 4 END {}", dir_upper)
     } else if sort_by_col == "status" {
         format!("CASE WHEN status = 'pending_dispatch' THEN 1 WHEN status = 'processing' THEN 2 WHEN status = 'returned' THEN 3 WHEN status = 'closed' THEN 4 WHEN status = 'archived' THEN 5 ELSE 6 END {}", dir_upper)
+    } else if sort_by_col == "warning" {
+        format!("CASE WHEN submission_deadline IS NULL THEN 1 ELSE 0 END, submission_deadline {}", dir_upper)
     } else {
         format!("CASE WHEN {} IS NULL THEN {} ELSE 0 END, {} {}", sort_by_col, nulls, sort_by_col, dir_upper)
     };
     let order_clause = format!("ORDER BY {}", order_expr);
 
+    let needs_memory_paging = query.warning.is_some() || sort_by_col == "warning";
     let count_sql = format!("SELECT COUNT(*) FROM topics {}", sql_where);
-    let list_sql = format!("SELECT * FROM topics {} {} LIMIT ? OFFSET ?", sql_where, order_clause);
 
     let total: i64 = {
         let mut q = sqlx::query_scalar(&count_sql);
@@ -182,6 +184,13 @@ pub async fn list_topics(
         q.fetch_one(pool).await.map_err(|e| AppError::Internal(format!("DB: {}", e)))?
     };
 
+    // 内存分页：查全部行，然后在 Rust 层做 warning 过滤/排序/分页
+    let list_sql = if needs_memory_paging {
+        format!("SELECT * FROM topics {} {}", sql_where, order_clause)
+    } else {
+        format!("SELECT * FROM topics {} {} LIMIT ? OFFSET ?", sql_where, order_clause)
+    };
+
     let mut rows: Vec<Topic> = {
         let mut q = sqlx::query_as::<_, Topic>(&list_sql);
         if let Some(status) = &query.status { q = q.bind(status); }
@@ -200,29 +209,83 @@ pub async fn list_topics(
                 q = q.bind(&claims.user_id);
             }
         }
-        q = q.bind(page_size as i64).bind(offset as i64);
+        if !needs_memory_paging {
+            q = q.bind(page_size as i64).bind(offset as i64);
+        }
         q.fetch_all(pool).await.map_err(|e| AppError::Internal(format!("DB: {}", e)))?
     };
 
+    // 对每行计算 warning_level
+    let mut enriched: Vec<(Topic, String, bool)> = rows.into_iter().map(|t| {
+        let (wl, is_overdue, _) = compute_warning(&t.interview_deadline, &t.submission_deadline, &t.status);
+        (t, wl, is_overdue)
+    }).collect();
+
+    // warning 过滤
     if let Some(warning) = &query.warning {
-        rows.retain(|t| {
-            let (wl, _, _) = compute_warning(&t.interview_deadline, &t.submission_deadline, &t.status);
-            wl == *warning
+        enriched.retain(|(_, wl, _)| wl == warning);
+    }
+
+    // 如果 sort_by=warning 在内存中重排（DB 的粗排不够精准），或者 warning 过滤后需要保持顺序
+    if sort_by_col == "warning" || needs_memory_paging {
+        let asc = sort_dir == "asc";
+        let wl_order = |wl: &str| -> i32 { match wl {
+            "normal" => 1, "warning" => 2, "overdue" => 3, _ => 0
+        }};
+        enriched.sort_by(|a, b| {
+            use std::cmp::Ordering;
+            let ord = if sort_by_col == "warning" {
+                wl_order(&a.1).cmp(&wl_order(&b.1))
+            } else if sort_by_col == "priority" {
+                let pa = match a.0.priority.as_str() { "low"=>1, "medium"=>2, "high"=>3, _=>4 };
+                let pb = match b.0.priority.as_str() { "low"=>1, "medium"=>2, "high"=>3, _=>4 };
+                pa.cmp(&pb)
+            } else if sort_by_col == "status" {
+                let sa = match a.0.status.as_str() { "pending_dispatch"=>1, "processing"=>2, "returned"=>3, "closed"=>4, "archived"=>5, _=>6 };
+                let sb = match b.0.status.as_str() { "pending_dispatch"=>1, "processing"=>2, "returned"=>3, "closed"=>4, "archived"=>5, _=>6 };
+                sa.cmp(&sb)
+            } else if sort_by_col == "title" {
+                a.0.title.cmp(&b.0.title)
+            } else if sort_by_col == "category" {
+                a.0.category.cmp(&b.0.category)
+            } else if sort_by_col == "version" {
+                a.0.version.cmp(&b.0.version)
+            } else if sort_by_col == "current_handler_name" {
+                a.0.current_handler_name.cmp(&b.0.current_handler_name)
+            } else if sort_by_col == "submission_deadline" {
+                a.0.submission_deadline.cmp(&b.0.submission_deadline)
+            } else if sort_by_col == "interview_deadline" {
+                a.0.interview_deadline.cmp(&b.0.interview_deadline)
+            } else if sort_by_col == "created_at" {
+                a.0.created_at.cmp(&b.0.created_at)
+            } else {
+                a.0.updated_at.cmp(&b.0.updated_at)
+            };
+            if asc { ord } else { ord.reverse() }
         });
     }
 
-    let items: Vec<serde_json::Value> = rows.into_iter().map(|t| {
-        let (wl, is_overdue, _) = compute_warning(&t.interview_deadline, &t.submission_deadline, &t.status);
+    // 内存分页切片（仅 needs_memory_paging 时）
+    let final_total = enriched.len() as i64;
+    let paginated: Vec<(Topic, String, bool)> = if needs_memory_paging {
+        let start_usize = (page - 1).saturating_mul(page_size) as usize;
+        let len = enriched.len();
+        let end_usize = (start_usize + page_size as usize).min(len);
+        enriched.into_iter().skip(start_usize).take(end_usize.saturating_sub(start_usize)).collect()
+    } else {
+        enriched
+    };
+    let reported_total = if needs_memory_paging { final_total } else { total };
+
+    let items: Vec<serde_json::Value> = paginated.into_iter().map(|(t, wl, is_overdue)| {
         let mut v = serde_json::to_value(&t).unwrap();
         v["warning_level"] = serde_json::Value::String(wl);
         v["is_overdue"] = serde_json::Value::Bool(is_overdue);
         v
     }).collect();
 
-    let final_total = if query.warning.is_some() { items.len() as i64 } else { total };
-
     Ok(serde_json::json!({
-        "total": final_total,
+        "total": reported_total,
         "page": page,
         "page_size": page_size,
         "items": items,

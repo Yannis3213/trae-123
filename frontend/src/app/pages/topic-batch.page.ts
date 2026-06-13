@@ -331,7 +331,14 @@ export class TopicBatchPageComponent implements OnInit {
   }
 
   ngOnInit() {
-    this.auth.user$.subscribe((u) => (this.user = u));
+    this.auth.user$.subscribe((u) => {
+      const roleChanged = this.user?.role !== u?.role;
+      this.user = u;
+      if (roleChanged) {
+        this.computeActions();
+        this.result = null;
+      }
+    });
     this.userService.list().subscribe({ next: (l) => (this.userList = l) });
     this.computeActions();
     this.route.queryParams.subscribe((q) => {
@@ -460,8 +467,32 @@ export class TopicBatchPageComponent implements OnInit {
           r.failed_count > 0 ? '查看明细' : '好的',
           { duration: r.failed_count > 0 ? 7000 : 4000 }
         );
+        const successMap = new Map(r.results.filter((x) => x.success).map((x) => [x.id, x]));
         const failedIds = new Set(r.results.filter((x) => !x.success).map((x) => x.id));
-        this.selectedTopics = this.selectedTopics.filter((t) => failedIds.has(t.id));
+        this.selectedTopics = this.selectedTopics
+          .map((t) => {
+            const s = successMap.get(t.id);
+            if (s) {
+              return {
+                ...t,
+                version: s.new_version ?? t.version + 1,
+                status: s.new_status ?? t.status,
+                warning_level: (t as any).warning_level,
+                is_overdue: (t as any).is_overdue,
+                current_handler_name: t.current_handler_name,
+              } as Topic;
+            }
+            return t;
+          })
+          .filter((t) => failedIds.has(t.id));
+        const newVersions = this.selectedTopics
+          .map((t) => `${t.id}:${t.version}`)
+          .join(',');
+        const newIds = this.selectedTopics.map((t) => t.id).join(',');
+        this.router.navigate([], {
+          queryParams: { ids: newIds || null, versions: newVersions || null },
+          queryParamsHandling: 'merge',
+        });
       },
       error: (e: ApiError) => {
         this.processing = false;
