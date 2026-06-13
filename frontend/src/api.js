@@ -69,4 +69,5 @@ export const api = {
   reviewRecord: (id, body) => request(`/api/care-records/${id}/review`, { method: 'POST', body }),
   batch: (body) => request('/api/care-records/batch', { method: 'POST', body }),
   advanceOverdue: (id) => request(`/api/care-records/${id}/advance-overdue`, { method: 'POST' }),
+  batchAdvanceOverdue: (body) => request('/api/care-records/batch-advance-overdue', { method: 'POST', body }),
 };

@@ -91,7 +91,7 @@ class CareRecordBase(BaseModel):
     care_type: str
     care_content: str
     record_date: datetime
-    medication_detail: Dict[str, Any] = Field(default_factory=dict)
+    medication_detail: Any = Field(default_factory=list)
     vital_signs: Dict[str, Any] = Field(default_factory=dict)
     evidence_required: List[str] = Field(default_factory=list)
     evidence_provided: List[str] = Field(default_factory=list)
@@ -105,7 +105,7 @@ class CareRecordCreate(CareRecordBase):
 class CareRecordUpdate(BaseModel):
     care_content: Optional[str] = None
     medication_issued: Optional[bool] = None
-    medication_detail: Optional[Dict[str, Any]] = None
+    medication_detail: Optional[Any] = None
     vital_signs: Optional[Dict[str, Any]] = None
     vital_signs_corrected: Optional[bool] = None
     abnormal_reported: Optional[bool] = None
@@ -136,7 +136,7 @@ class CareRecordReview(BaseModel):
 class CareRecordCorrect(BaseModel):
     version: int
     care_content: Optional[str] = None
-    medication_detail: Optional[Dict[str, Any]] = None
+    medication_detail: Optional[Any] = None
     vital_signs: Optional[Dict[str, Any]] = None
     vital_signs_corrected: Optional[bool] = None
     abnormal_reported: Optional[bool] = None
@@ -160,7 +160,7 @@ class CareRecordResponse(BaseModel):
     version: int
 
     medication_issued: bool
-    medication_detail: Dict[str, Any] = Field(default_factory=dict)
+    medication_detail: Any = Field(default_factory=list)
     vital_signs: Dict[str, Any] = Field(default_factory=dict)
     vital_signs_corrected: bool
 
@@ -247,6 +247,15 @@ class BatchResultItem(BaseModel):
     record_no: str
     success: bool
     error_message: str = ""
+    has_missing_evidence: bool = False
+    missing_evidence: List[str] = Field(default_factory=list)
+    abnormal_reported: bool = False
+    abnormal_reason: str = ""
+
+
+class BatchAdvanceOverdueRequest(BaseModel):
+    ids: List[int]
+    version_map: Dict[int, int] = Field(default_factory=dict)
 
 
 class BatchOperationResponse(BaseModel):

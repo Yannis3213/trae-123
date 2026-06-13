@@ -12,6 +12,7 @@ export class DetailView extends LitElement {
     form: { type: Object },
     editMode: { type: Boolean },
     processing: { type: Boolean },
+    _advanceResult: { state: true, type: Object },
   };
 
   constructor() {
@@ -22,6 +23,7 @@ export class DetailView extends LitElement {
     this.form = {};
     this.editMode = false;
     this.processing = false;
+    this._advanceResult = null;
   }
 
   connectedCallback() {
@@ -152,6 +154,10 @@ export class DetailView extends LitElement {
     const remark = sh.getElementById('audit-remark')?.value || '';
     const abReason = sh.getElementById('audit-abnormal')?.value || '';
     const missing = (r.evidence_required || []).filter(e => !(r.evidence_provided || []).includes(e));
+    if (passed && missing.length) {
+      this.props.notify('error', `审核通过被拦截：缺失 ${missing.join('、')}，请先退回补正`);
+      return;
+    }
     if (!passed && !remark && !missing.length) {
       if (!confirm('退回请填写退回理由，是否继续？')) return;
     }
@@ -192,11 +198,27 @@ export class DetailView extends LitElement {
   }
 
   async advanceOverdue() {
+    this.processing = true;
     try {
-      await api.advanceOverdue(this.record.id);
-      this.props.notify('info', '逾期推进提醒已发送');
+      const res = await api.advanceOverdue(this.record.id);
+      this._advanceResult = {
+        success: true,
+        message: res.message,
+        has_missing_evidence: res.has_missing_evidence,
+        missing_evidence: res.missing_evidence || [],
+        abnormal_reported: res.abnormal_reported,
+        abnormal_reason: res.abnormal_reason || '',
+      };
+      this.props.notify('info', '逾期推进提醒已发送' + (res.has_missing_evidence ? '（仍有缺失证据）' : ''));
       this.load();
-    } catch (e) { this.props.notify('error', e.message); }
+      if (this.props.loadStats) this.props.loadStats();
+    } catch (e) {
+      this._advanceResult = {
+        success: false,
+        message: e.message,
+      };
+      this.props.notify('error', `逾期推进失败：${e.message}`);
+    } finally { this.processing = false; }
   }
 
   static styles = css`
@@ -296,6 +318,21 @@ export class DetailView extends LitElement {
 
     .back { display: inline-block; padding: 4px 12px; color: #909399; font-size: 13px; cursor: pointer; margin-bottom: 12px; border-radius: 6px; }
     .back:hover { background: #fff; color: #409eff; }
+
+    .result-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 999; }
+    .result-box { background: #fff; border-radius: 12px; width: 560px; max-width: 92vw; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+    .result-head { padding: 16px 24px; border-bottom: 1px solid #ebeef5; display: flex; justify-content: space-between; align-items: center; }
+    .result-head h4 { margin: 0; font-size: 15px; }
+    .result-body { padding: 16px 24px; overflow: auto; }
+    .result-row { padding: 10px 14px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; line-height: 1.7; }
+    .result-row.ok { background: #f0f9eb; border: 1px solid #e1f3d8; }
+    .result-row.fail { background: #fef0f0; border: 1px solid #fde2e2; }
+    .result-row .rl { font-weight: 600; margin-bottom: 4px; }
+    .result-row.ok .rl { color: #529b2e; }
+    .result-row.fail .rl { color: #c45656; }
+    .result-row .rd { color: #606266; }
+    .result-row .rd b { color: #f56c6c; }
+    .close-btn { cursor: pointer; background: none; border: none; font-size: 20px; color: #909399; }
 
     .loader { padding: 60px 20px; text-align: center; color: #909399; }
   `;
@@ -546,9 +583,18 @@ export class DetailView extends LitElement {
   }
 
   _renderAuditPanel() {
+    const miss = this.record.missing_evidence || [];
     return html`
       <div class="audit-panel">
         <h4>✓ 审核办理（照护审核主管：${this.props.user.full_name}）</h4>
+        ${miss.length ? html`
+          <div class="abnormal-box" style="margin-bottom:12px;background:#fef0f0;border-left-color:#f56c6c">
+            <div class="t" style="color:#c45656">⚠ 缺证据拦截提示</div>
+            <div>当前缺失 <b>${miss.length}</b> 项必填证据：${miss.join('、')}</div>
+            <div style="margin-top:4px;font-size:12px;color:#909399">· 审核通过：需先退回补正让护理员补齐，否则批量审核通过时也会被拦截</div>
+            <div style="font-size:12px;color:#909399">· 审核退回：可将缺失证据标记后退回给护理员补正</div>
+          </div>
+        ` : ''}
         <div class="form-row">
           <label>审核意见</label>
           <textarea class="form" id="audit-remark" placeholder="请填写审核意见（退回必填）"></textarea>
@@ -556,9 +602,6 @@ export class DetailView extends LitElement {
         <div class="form-row">
           <label>异常原因补充（如有）</label>
           <textarea class="form" id="audit-abnormal" placeholder="异常相关说明"></textarea>
-        </div>
-        <div style="font-size:12px;color:#909399;margin-bottom:6px">
-          ⚠ 缺失证据将自动标记：${(this.record.missing_evidence || []).length ? html`<span style="color:#f56c6c">${this.record.missing_evidence.join('、')}</span>` : '无'}
         </div>
         <div class="audit-btns">
           <button class="btn success" ?disabled=${this.processing} @click=${() => this.auditRecord(true)}>审核通过 → 送复核</button>
@@ -683,6 +726,30 @@ export class DetailView extends LitElement {
           ${!this.editMode && this.canReview ? this._renderReviewPanel() : ''}
         </div>
       </div>
+
+      ${this._advanceResult ? html`
+        <div class="result-modal" @click=${e => { if (e.target === e.currentTarget) this._advanceResult = null; }}>
+          <div class="result-box">
+            <div class="result-head">
+              <h4>逾期推进结果</h4>
+              <button class="close-btn" @click=${() => this._advanceResult = null}>×</button>
+            </div>
+            <div class="result-body">
+              <div class="result-row ${this._advanceResult.success ? 'ok' : 'fail'}">
+                <div class="rl">${this._advanceResult.success ? '✓ 推进成功' : '✗ 推进失败'}</div>
+                <div class="rd">${this._advanceResult.message}</div>
+                ${this._advanceResult.success && this._advanceResult.has_missing_evidence ? html`
+                  <div class="rd" style="margin-top:6px"><b>⚠ 仍缺失证据：</b>${(this._advanceResult.missing_evidence || []).join('、')}</div>
+                  <div style="font-size:12px;color:#909399;margin-top:4px">该记录将继续留在待处理列表，需退回补正后方可归档</div>
+                ` : ''}
+                ${this._advanceResult.success && this._advanceResult.abnormal_reported ? html`
+                  <div class="rd" style="margin-top:6px"><b>⚠ 异常原因留痕：</b>${this._advanceResult.abnormal_reason}</div>
+                ` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+      ` : ''}
     `;
   }
 }

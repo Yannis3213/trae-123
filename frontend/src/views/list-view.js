@@ -14,6 +14,7 @@ export class ListView extends LitElement {
     selected: { type: Object },
     loading: { type: Boolean },
     _batchResult: { state: true, type: Object },
+    _overdueResult: { state: true, type: Object },
   };
 
   constructor() {
@@ -27,6 +28,7 @@ export class ListView extends LitElement {
     this.selected = {};
     this.loading = false;
     this._batchResult = null;
+    this._overdueResult = null;
   }
 
   connectedCallback() {
@@ -101,6 +103,11 @@ export class ListView extends LitElement {
       return;
     }
 
+    if (action === 'overdue_advance') {
+      await this.batchOverdueAdvance(items);
+      return;
+    }
+
     const role = this.props.user.role;
     const missingMap = {};
     const passedMap = {};
@@ -115,9 +122,11 @@ export class ListView extends LitElement {
     if (action === 'audit_reject') {
       confirmed = confirm(`确认退回这 ${items.length} 条记录到补正环节？`);
     } else if (action === 'review_sync') {
-      confirmed = confirm(`确认将 ${items.length} 条记录复核归档并同步？此操作不可撤销。`);
+      const hasMiss = items.some(r => r.missing_evidence?.length);
+      confirmed = confirm(`确认将 ${items.length} 条记录复核归档并同步？此操作不可撤销。${hasMiss ? '\n⚠ 注意：其中包含缺证据记录，将被后端拦截' : ''}`);
     } else if (action === 'audit_pass') {
-      confirmed = confirm(`确认批量审核通过 ${items.length} 条记录？`);
+      const hasMiss = items.some(r => r.missing_evidence?.length);
+      confirmed = confirm(`确认批量审核通过 ${items.length} 条记录？${hasMiss ? '\n⚠ 注意：其中包含缺证据记录，将被后端拦截' : ''}`);
     } else if (action === 'submit') {
       confirmed = confirm(`确认批量提交 ${items.length} 条记录？`);
     }
@@ -137,6 +146,36 @@ export class ListView extends LitElement {
       this._batchResult = res;
       this.props.notify(res.failed_count === 0 ? 'success' : 'info',
         `批量${action}完成：成功 ${res.success_count} 条，失败 ${res.failed_count} 条`);
+      this.selected = {};
+      this.load();
+      if (this.props.loadStats) this.props.loadStats();
+    } catch (e) {
+      this.props.notify('error', e.message);
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async batchOverdueAdvance(items) {
+    const overdueItems = items.filter(r => r.overdue);
+    if (overdueItems.length === 0) {
+      this.props.notify('error', '选中的记录中没有逾期记录');
+      return;
+    }
+    const hasMiss = overdueItems.some(r => r.missing_evidence?.length);
+    if (!confirm(`确认对 ${overdueItems.length} 条逾期记录进行批量推进？${hasMiss ? '\n⚠ 注意：其中包含缺证据记录，推进后仍需补正' : ''}`)) return;
+
+    this.loading = true;
+    try {
+      const versionMap = {};
+      overdueItems.forEach(r => { versionMap[r.id] = r.version; });
+      const res = await api.batchAdvanceOverdue({
+        ids: overdueItems.map(r => r.id),
+        version_map: versionMap,
+      });
+      this._overdueResult = res;
+      this.props.notify(res.failed_count === 0 ? 'success' : 'info',
+        `逾期批量推进完成：成功 ${res.success_count} 条，失败 ${res.failed_count} 条`);
       this.selected = {};
       this.load();
       if (this.props.loadStats) this.props.loadStats();
@@ -169,6 +208,9 @@ export class ListView extends LitElement {
     if (role === 'REVIEWER') {
       btns.push({ action: 'review_sync', label: '批量复核归档', cls: 'primary' });
     }
+    if (role === 'REVIEWER' || role === 'AUDITOR') {
+      btns.push({ action: 'overdue_advance', label: '逾期批量推进', cls: 'warning' });
+    }
     return btns;
   }
 
@@ -194,6 +236,8 @@ export class ListView extends LitElement {
     .btn.success:hover { background: #529b2e; border-color: #529b2e; color: #fff; }
     .btn.danger { background: #f56c6c; border-color: #f56c6c; color: #fff; }
     .btn.danger:hover { background: #c45656; border-color: #c45656; color: #fff; }
+    .btn.warning { background: #e6a23c; border-color: #e6a23c; color: #fff; }
+    .btn.warning:hover { background: #b88230; border-color: #b88230; color: #fff; }
     .btn + .btn { margin-left: 4px; }
 
     .batch-bar { background: #fff; border-radius: 12px; padding: 12px 20px; margin-bottom: 14px; border: 1px solid #e0e8f5; box-shadow: 0 1px 3px rgba(0,0,0,0.05); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: linear-gradient(90deg, #eff6ff, #fff); }
@@ -391,6 +435,28 @@ export class ListView extends LitElement {
                   <span style="font-family:monospace">${r.record_no}</span>
                   <span style="flex:1"></span>
                   <span>${r.error_message || '处理完成'}</span>
+                </div>
+              `)}
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
+      ${this._overdueResult ? html`
+        <div class="result-modal" @click=${e => { if (e.target === e.currentTarget) this._overdueResult = null; }}>
+          <div class="result-box">
+            <div class="result-head">
+              <h4>逾期批量推进结果（成功 ${this._overdueResult.success_count} / 失败 ${this._overdueResult.failed_count}）</h4>
+              <button class="close" @click=${() => this._overdueResult = null}>×</button>
+            </div>
+            <div class="result-body">
+              ${this._overdueResult.results.map(r => html`
+                <div class="result-item ${r.success ? 'ok' : 'fail'}">
+                  <span class="tag">${r.success ? '成功' : '失败'}</span>
+                  <span style="font-family:monospace">${r.record_no}</span>
+                  <span style="flex:1"></span>
+                  <span>${r.error_message || (r.has_missing_evidence ? `推进成功但缺证据: ${(r.missing_evidence || []).join('、')}` : '推进完成')}</span>
+                  ${r.abnormal_reported ? html`<span style="color:#e6a23c;margin-left:4px">异常: ${r.abnormal_reason || ''}</span>` : ''}
                 </div>
               `)}
             </div>
