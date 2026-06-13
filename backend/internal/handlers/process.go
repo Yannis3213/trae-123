@@ -341,6 +341,26 @@ func ProcessOrder(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"无效的证据类型"}`, http.StatusBadRequest)
 			return
 		}
+		if user.Role == models.RoleAreaManager {
+			recordInterception(tx, orderID, user, req.Action, "内嵌附件越权: 区域经理不能上传证据材料")
+			tx.Commit()
+			http.Error(w, `{"error":"区域经理不能上传证据材料"}`, http.StatusForbidden)
+			return
+		}
+		if user.Store != order.StoreName {
+			reason := fmt.Sprintf("内嵌附件门店越权: 用户门店%s，处理单门店%s", user.Store, order.StoreName)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
+			http.Error(w, `{"error":"非同门店，无法上传证据"}`, http.StatusForbidden)
+			return
+		}
+		if user.ID != order.CurrentHandler && user.ID != order.CreatedBy {
+			reason := fmt.Sprintf("内嵌附件越权: 处理人%s，创建人%s，操作人%s（虽同门店但非责任人）", order.CurrentHandler, order.CreatedBy, user.ID)
+			recordInterception(tx, orderID, user, req.Action, reason)
+			tx.Commit()
+			http.Error(w, `{"error":"非创建人或当前处理人，无法上传"}`, http.StatusForbidden)
+			return
+		}
 		if user.Role == models.RoleShopClerk && evType != models.EvidenceInspection {
 			recordInterception(tx, orderID, user, req.Action, "内嵌附件越权: 门店店员只能上传近效期巡检记录")
 			tx.Commit()
@@ -351,12 +371,6 @@ func ProcessOrder(w http.ResponseWriter, r *http.Request) {
 			recordInterception(tx, orderID, user, req.Action, "内嵌附件越权: 执业药师不能上传巡检记录")
 			tx.Commit()
 			http.Error(w, `{"error":"执业药师不能上传巡检记录，应由门店店员上传"}`, http.StatusForbidden)
-			return
-		}
-		if user.Role == models.RoleAreaManager {
-			recordInterception(tx, orderID, user, req.Action, "内嵌附件越权: 区域经理不能上传证据材料")
-			tx.Commit()
-			http.Error(w, `{"error":"区域经理不能上传证据材料"}`, http.StatusForbidden)
 			return
 		}
 	}

@@ -24,22 +24,26 @@ export default function EvidenceUploadPanel({ order, onUploaded }: Props) {
   const isSameStore = user.store === order.store_name;
   const isHandler = user.id === order.current_handler;
   const isCreator = user.id === order.created_by;
+  const isHandlerOrCreator = isHandler || isCreator;
 
   let canUploadAny = false;
   let allowedTypes: EvidenceType[] = [];
+  let denyReason = '';
 
-  if (!isClosed && user.role !== 'area_manager') {
-    if (user.role === 'shop_clerk') {
-      if (isSameStore && (isCreator || isHandler)) {
-        allowedTypes = ['inspection'];
-        canUploadAny = true;
-      }
-    } else if (user.role === 'pharmacist') {
-      if (isSameStore && (isHandler || isCreator)) {
-        allowedTypes = ['transfer', 'removal'];
-        canUploadAny = true;
-      }
-    }
+  if (isClosed) {
+    denyReason = '处理单已关闭，无法上传';
+  } else if (user.role === 'area_manager') {
+    denyReason = '区域经理无上传权限';
+  } else if (!isSameStore) {
+    denyReason = '非同门店，无法上传';
+  } else if (!isHandlerOrCreator) {
+    denyReason = '非创建人或当前处理人，无法上传（虽同门店但非责任人）';
+  } else if (user.role === 'shop_clerk') {
+    allowedTypes = ['inspection'];
+    canUploadAny = true;
+  } else if (user.role === 'pharmacist') {
+    allowedTypes = ['transfer', 'removal'];
+    canUploadAny = true;
   }
 
   const handleUpload = async (e: React.FormEvent) => {
@@ -67,12 +71,7 @@ export default function EvidenceUploadPanel({ order, onUploaded }: Props) {
   if (!canUploadAny) {
     return (
       <div className="pt-4 border-t border-gray-100">
-        <p className="text-xs text-gray-400">
-          {isClosed ? '处理单已关闭，无法上传' :
-            user.role === 'area_manager' ? '区域经理无上传权限' :
-            !isSameStore ? '非同门店，无法上传' :
-            '当前状态下无上传权限'}
-        </p>
+        <p className="text-xs text-gray-400">{denyReason || '当前状态下无上传权限'}</p>
       </div>
     );
   }
