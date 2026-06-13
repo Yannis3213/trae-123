@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit';
 import { api } from '../api.js';
-import { STATUS_MAP, ROLE_MAP, formatDate, formatShortDate, daysUntil } from '../utils.js';
+import { STATUS_MAP, ROLE_MAP, formatDate, formatShortDate, daysUntil, EVIDENCE_STATE_MAP } from '../utils.js';
 
 export class DetailView extends LitElement {
   static properties = {
@@ -682,6 +682,7 @@ export class DetailView extends LitElement {
             <div class="no">记录编号：${r.record_no} · 创建于 ${formatDate(r.created_at)}</div>
             <div class="meta-tags">
               <span class="tag status" style="color:${st.color};background:${st.bg}">${st.label}</span>
+              ${r.evidence_state ? html`<span class="tag" style="color:${EVIDENCE_STATE_MAP[r.evidence_state]?.color || '#999'};background:${EVIDENCE_STATE_MAP[r.evidence_state]?.bg || '#f4f4f5'}">${EVIDENCE_STATE_MAP[r.evidence_state]?.label || r.evidence_state}</span>` : ''}
               <span class="tag">${r.room_no} / ${r.bed_no}</span>
               <span class="tag">登记：${r.submitter_name}</span>
               ${r.auditor_name ? html`<span class="tag">审核：${r.auditor_name}</span>` : ''}

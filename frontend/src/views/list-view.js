@@ -1,20 +1,21 @@
 import { LitElement, css, html } from 'lit';
 import { api } from '../api.js';
-import { STATUS_MAP, ROLE_MAP, formatDate, formatShortDate, daysUntil } from '../utils.js';
+import { STATUS_MAP, ROLE_MAP, formatDate, formatShortDate, daysUntil, EVIDENCE_STATE_MAP } from '../utils.js';
 
-export class ListView extends LitElement {
+export default class ListView extends LitElement {
   static properties = {
     props: { type: Object },
     module: { type: String },
-    list: { type: Array },
-    total: { type: Number },
+    filters: { type: Object },
     page: { type: Number },
     pageSize: { type: Number },
-    filters: { type: Object },
+    list: { type: Array },
+    total: { type: Number },
     selected: { type: Object },
     loading: { type: Boolean },
     _batchResult: { state: true, type: Object },
     _overdueResult: { state: true, type: Object },
+    _validateResult: { state: true, type: Object },
   };
 
   constructor() {
@@ -29,6 +30,7 @@ export class ListView extends LitElement {
     this.loading = false;
     this._batchResult = null;
     this._overdueResult = null;
+    this._validateResult = null;
   }
 
   connectedCallback() {
@@ -108,11 +110,33 @@ export class ListView extends LitElement {
       return;
     }
 
+    const validateBody = {
+      ids: items.map(r => r.id),
+      action,
+    };
+    try {
+      const v = await api.batchValidate(validateBody);
+      if (v.invalid_count > 0) {
+        this._validateResult = v;
+        const proceed = confirm(`候选验证：${v.valid_count}条可操作，${v.invalid_count}条不符合条件。\n是否仅处理符合条件的${v.valid_count}条？`);
+        if (!proceed) return;
+        if (v.valid_count === 0) {
+          this.props.notify('error', '选中的记录全部不符合操作条件');
+          return;
+        }
+      }
+    } catch (e) {
+      this.props.notify('error', `验证失败: ${e.message}`);
+      return;
+    }
+
     const role = this.props.user.role;
     const missingMap = {};
     const passedMap = {};
     const versionMap = {};
-    items.forEach(r => {
+    const validIds = this._validateResult?.valid_ids || items.map(r => r.id);
+    const validItems = items.filter(r => validIds.includes(r.id));
+    validItems.forEach(r => {
       versionMap[r.id] = r.version;
       missingMap[r.id] = r.missing_evidence || [];
       passedMap[r.id] = true;
@@ -120,15 +144,15 @@ export class ListView extends LitElement {
 
     let confirmed = true;
     if (action === 'audit_reject') {
-      confirmed = confirm(`确认退回这 ${items.length} 条记录到补正环节？`);
+      confirmed = confirm(`确认退回这 ${validItems.length} 条记录到补正环节？`);
     } else if (action === 'review_sync') {
-      const hasMiss = items.some(r => r.missing_evidence?.length);
-      confirmed = confirm(`确认将 ${items.length} 条记录复核归档并同步？此操作不可撤销。${hasMiss ? '\n⚠ 注意：其中包含缺证据记录，将被后端拦截' : ''}`);
+      const hasMiss = validItems.some(r => r.missing_evidence?.length);
+      confirmed = confirm(`确认将 ${validItems.length} 条记录复核归档并同步？此操作不可撤销。${hasMiss ? '\n⚠ 注意：其中包含缺证据记录，将被后端拦截' : ''}`);
     } else if (action === 'audit_pass') {
-      const hasMiss = items.some(r => r.missing_evidence?.length);
-      confirmed = confirm(`确认批量审核通过 ${items.length} 条记录？${hasMiss ? '\n⚠ 注意：其中包含缺证据记录，将被后端拦截' : ''}`);
+      const hasMiss = validItems.some(r => r.missing_evidence?.length);
+      confirmed = confirm(`确认批量审核通过 ${validItems.length} 条记录？${hasMiss ? '\n⚠ 注意：其中包含缺证据记录，将被后端拦截' : ''}`);
     } else if (action === 'submit') {
-      confirmed = confirm(`确认批量提交 ${items.length} 条记录？`);
+      confirmed = confirm(`确认批量提交 ${validItems.length} 条记录？`);
     }
 
     if (!confirmed) return;
@@ -136,7 +160,7 @@ export class ListView extends LitElement {
     this.loading = true;
     try {
       const res = await api.batch({
-        ids: items.map(r => r.id),
+        ids: validItems.map(r => r.id),
         version_map: versionMap,
         action,
         remark: `批量${action} by ${this.props.user.full_name}`,
@@ -147,6 +171,7 @@ export class ListView extends LitElement {
       this.props.notify(res.failed_count === 0 ? 'success' : 'info',
         `批量${action}完成：成功 ${res.success_count} 条，失败 ${res.failed_count} 条`);
       this.selected = {};
+      this._validateResult = null;
       this.load();
       if (this.props.loadStats) this.props.loadStats();
     } catch (e) {
@@ -258,7 +283,8 @@ export class ListView extends LitElement {
     .warn-chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
     .warn-chip.over { background: #fef0f0; color: #f56c6c; }
     .warn-chip.near { background: #fdf6ec; color: #e6a23c; }
-    .miss-chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #fef0f0; color: #f56c6c; }
+    .miss-chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #fef0f0; color: #f56c6c; margin-right: 4px; }
+    .ev-chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
     .row-btn { padding: 5px 10px; background: #ecf5ff; color: #409eff; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; }
     .row-btn:hover { background: #d9ecff; }
     .empty { padding: 80px 20px; text-align: center; color: #909399; font-size: 14px; }
@@ -337,13 +363,16 @@ export class ListView extends LitElement {
           <option value="NO">无异常</option>
         </select>
         <select @change=${e => {
-          if (e.target.value) this.setFilter('missing_evidence', e.target.value === 'MISS' ? 'true' : 'false');
-          else { delete this.filters.missing_evidence; this.filters = { ...this.filters }; this.page = 1; this.load(); }
+          const val = e.target.value;
+          if (val) this.setFilter('evidence_state', val);
+          else { delete this.filters.evidence_state; this.filters = { ...this.filters }; this.page = 1; this.load(); }
           e.target.value = '';
         }}>
-          <option value="">证据</option>
-          <option value="MISS">有缺失</option>
-          <option value="NO">齐全</option>
+          <option value="">证据状态</option>
+          <option value="COMPLETE">证据齐全</option>
+          <option value="MISSING">有缺失</option>
+          <option value="OVERDUE_PENDING">逾期待处理</option>
+          <option value="ARCHIVED">已归档</option>
         </select>
         <div class="sp"></div>
         <button class="btn" @click=${() => { this.filters = {}; this.page = 1; this.load(); }}>重置</button>
@@ -397,7 +426,8 @@ export class ListView extends LitElement {
                       ${r.abnormal_reported ? html` <span class="warn-chip over" title="异常上报">⚠异常</span>` : ''}
                       ${warnText ? html` <span class="warn-chip ${warnCls}">${warnText}</span>` : ''}
                     </td>
-                    <td>${r.missing_evidence?.length ? html`<span class="miss-chip" title="${r.missing_evidence.join(', ')}">缺${r.missing_evidence.length}项</span>` : html`<span style="color:#67c23a;font-size:11px">✓齐全</span>`}</td>
+                    <td>${r.missing_evidence?.length ? html`<span class="miss-chip" title="${r.missing_evidence.join(', ')}">缺${r.missing_evidence.length}项</span>` : ''}
+                      ${r.evidence_state ? html`<span class="ev-chip" style="color:${EVIDENCE_STATE_MAP[r.evidence_state]?.color || '#999'};background:${EVIDENCE_STATE_MAP[r.evidence_state]?.bg || '#f4f4f5'}">${EVIDENCE_STATE_MAP[r.evidence_state]?.label || r.evidence_state}</span>` : ''}</td>
                     <td style="font-size:12px;color:#606266">${formatShortDate(r.due_date)}</td>
                     <td style="font-size:12px;color:#606266">
                       <div>登记: ${r.submitter_name}</div>
@@ -420,6 +450,27 @@ export class ListView extends LitElement {
           </div>
         ` : ''}
       </div>
+
+      ${this._validateResult && this._validateResult.invalid_count > 0 ? html`
+        <div class="result-modal" @click=${e => { if (e.target === e.currentTarget) this._validateResult = null; }}>
+          <div class="result-box">
+            <div class="result-head">
+              <h4>批量候选验证（可操作 ${this._validateResult.valid_count} / 不符合 ${this._validateResult.invalid_count}）</h4>
+              <button class="close" @click=${() => this._validateResult = null}>×</button>
+            </div>
+            <div class="result-body">
+              ${this._validateResult.invalid_items.map(item => html`
+                <div class="result-item fail">
+                  <span class="tag">不符合</span>
+                  <span style="font-family:monospace">${item.record_no || 'ID' + item.id}</span>
+                  <span style="flex:1"></span>
+                  <span>${item.error}</span>
+                </div>
+              `)}
+            </div>
+          </div>
+        </div>
+      ` : ''}
 
       ${this._batchResult ? html`
         <div class="result-modal" @click=${e => { if (e.target === e.currentTarget) this._batchResult = null; }}>

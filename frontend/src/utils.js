@@ -15,6 +15,13 @@ export const ROLE_MAP = {
   REVIEWER: { label: '养老护理院复核负责人', color: '#909399' },
 };
 
+export const EVIDENCE_STATE_MAP = {
+  COMPLETE: { label: '证据齐全', color: '#67c23a', bg: '#f0f9eb' },
+  MISSING: { label: '缺证据', color: '#f56c6c', bg: '#fef0f0' },
+  OVERDUE_PENDING: { label: '逾期待处理', color: '#e6a23c', bg: '#fdf6ec' },
+  ARCHIVED: { label: '已归档', color: '#909399', bg: '#f4f4f5' },
+};
+
 export function formatDate(d) {
   if (!d) return '-';
   const dt = new Date(d);

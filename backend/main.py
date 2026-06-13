@@ -15,7 +15,7 @@ from schemas import (
     CareRecordResponse, CareRecordListResponse, PaginatedResponse,
     BatchOperationRequest, BatchOperationResponse, BatchResultItem,
     BatchAdvanceOverdueRequest,
-    StatsResponse
+    StatsResponse, EvidenceState, EVIDENCE_STATE_DISPLAY, EVIDENCE_STATE_COLOR,
 )
 from auth import (
     ROLE_REGISTRAR, ROLE_AUDITOR, ROLE_REVIEWER,
@@ -105,6 +105,17 @@ def check_overdue_and_update(db: Session, record: CareRecord) -> CareRecord:
     if record.due_date and record.status not in [STATUS_SYNCED, STATUS_AUDITED_PASSED]:
         record.overdue = datetime.utcnow() > record.due_date
     return record
+
+
+def get_evidence_state(record: CareRecord) -> str:
+    if record.status == STATUS_SYNCED:
+        return EvidenceState.ARCHIVED
+    missing = list(record.missing_evidence or [])
+    if record.overdue and record.status in [STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW]:
+        return EvidenceState.OVERDUE_PENDING
+    if len(missing) > 0:
+        return EvidenceState.MISSING
+    return EvidenceState.COMPLETE
 
 
 def generate_record_no(db: Session) -> str:
@@ -223,6 +234,7 @@ def list_care_records(
     overdue: Optional[bool] = None,
     abnormal: Optional[bool] = None,
     missing_evidence: Optional[bool] = None,
+    evidence_state: Optional[str] = None,
     module: Optional[str] = None,
 ):
     q = db.query(CareRecord)
@@ -273,12 +285,40 @@ def list_care_records(
     if missing_evidence is not None:
         if missing_evidence:
             q = q.filter(CareRecord.missing_evidence != "[]")
+        else:
+            q = q.filter(CareRecord.missing_evidence == "[]")
+    if evidence_state:
+        states = evidence_state.split(",")
+        conditions = []
+        for s in states:
+            if s == EvidenceState.ARCHIVED:
+                conditions.append(CareRecord.status == STATUS_SYNCED)
+            elif s == EvidenceState.OVERDUE_PENDING:
+                conditions.append(and_(
+                    CareRecord.overdue == True,
+                    CareRecord.status.in_([STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW]),
+                ))
+            elif s == EvidenceState.MISSING:
+                conditions.append(and_(
+                    CareRecord.missing_evidence != "[]",
+                    CareRecord.status != STATUS_SYNCED,
+                    or_(CareRecord.overdue == False, CareRecord.status.notin_([STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW]))
+                ))
+            elif s == EvidenceState.COMPLETE:
+                conditions.append(and_(
+                    CareRecord.missing_evidence == "[]",
+                    CareRecord.status != STATUS_SYNCED,
+                    or_(CareRecord.overdue == False, CareRecord.status.notin_([STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW]))
+                ))
+        if conditions:
+            q = q.filter(or_(*conditions))
 
     total = q.count()
 
     records = q.order_by(CareRecord.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     for r in records:
         check_overdue_and_update(db, r)
+        r.evidence_state = get_evidence_state(r)
     db.commit()
 
     return PaginatedResponse(
@@ -344,6 +384,7 @@ def get_care_record(record_id: int,
         raise HTTPException(status_code=403, detail="无权查看此记录")
 
     check_overdue_and_update(db, record)
+    record.evidence_state = get_evidence_state(record)
     db.commit()
     db.refresh(record)
     return record
@@ -637,6 +678,21 @@ def batch_operation(body: BatchOperationRequest,
                     db: Session = Depends(get_db),
                     current_user: User = Depends(get_current_user)):
     results: List[BatchResultItem] = []
+    allowed_status_map = {
+        "submit": [STATUS_PENDING_SUBMIT, STATUS_RETURNED],
+        "audit_pass": [STATUS_PENDING_AUDIT],
+        "audit_reject": [STATUS_PENDING_AUDIT],
+        "review_sync": [STATUS_PENDING_REVIEW, STATUS_AUDITED_PASSED],
+    }
+    allowed_roles_map = {
+        "submit": [ROLE_REGISTRAR],
+        "audit_pass": [ROLE_AUDITOR],
+        "audit_reject": [ROLE_AUDITOR],
+        "review_sync": [ROLE_REVIEWER],
+    }
+    if body.action not in allowed_roles_map:
+        raise HTTPException(status_code=400, detail=f"未知操作: {body.action}")
+    require_role(current_user, allowed_roles_map[body.action])
 
     for rid in body.ids:
         record = db.query(CareRecord).filter(CareRecord.id == rid).first()
@@ -647,12 +703,19 @@ def batch_operation(body: BatchOperationRequest,
         version_expect = body.version_map.get(rid, record.version)
 
         try:
+            if record.status not in allowed_status_map[body.action]:
+                raise HTTPException(status_code=400, detail=f"状态「{STATUS_DISPLAY.get(record.status)}」不支持此批量操作")
+            if body.action == "submit" and record.submitter_id != current_user.id:
+                raise HTTPException(status_code=403, detail="非本人创建，不可批量提交")
+            if body.action in ["audit_pass", "audit_reject"] and record.auditor_id and record.auditor_id != current_user.id:
+                raise HTTPException(status_code=403, detail=f"该记录已分配给 {record.auditor_name}，您无权处理")
+            if body.action == "review_sync":
+                if not record.auditor_id:
+                    raise HTTPException(status_code=400, detail="护士长尚未处理")
+                if record.missing_evidence and len(record.missing_evidence) > 0:
+                    raise HTTPException(status_code=400, detail=f"仍缺证据: {', '.join(record.missing_evidence)}")
+
             if body.action == "submit":
-                require_role(current_user, [ROLE_REGISTRAR])
-                if record.status not in [STATUS_PENDING_SUBMIT, STATUS_RETURNED]:
-                    raise HTTPException(status_code=400, detail=f"当前状态「{STATUS_DISPLAY.get(record.status)}」不可提交")
-                if record.submitter_id != current_user.id:
-                    raise HTTPException(status_code=403, detail="非本人创建")
                 if record.version != version_expect:
                     raise HTTPException(status_code=409, detail=f"版本冲突（当前{record.version}）")
                 missing = [e for e in record.evidence_required if e not in (record.evidence_provided or [])]
@@ -665,9 +728,6 @@ def batch_operation(body: BatchOperationRequest,
                                    current_user, remark=f"批量提交 {body.remark or ''}", version_snapshot=record.version)
 
             elif body.action == "audit_pass":
-                require_role(current_user, [ROLE_AUDITOR])
-                if record.status != STATUS_PENDING_AUDIT:
-                    raise HTTPException(status_code=400, detail=f"当前状态「{STATUS_DISPLAY.get(record.status)}」不可审核")
                 if record.version != version_expect:
                     raise HTTPException(status_code=409, detail=f"版本冲突（当前{record.version}）")
                 current_missing = list(record.missing_evidence or [])
@@ -683,9 +743,6 @@ def batch_operation(body: BatchOperationRequest,
                                    current_user, remark=f"批量审核通过 {body.remark or ''}", version_snapshot=record.version)
 
             elif body.action == "audit_reject":
-                require_role(current_user, [ROLE_AUDITOR])
-                if record.status != STATUS_PENDING_AUDIT:
-                    raise HTTPException(status_code=400, detail=f"当前状态「{STATUS_DISPLAY.get(record.status)}」不可审核")
                 if record.version != version_expect:
                     raise HTTPException(status_code=409, detail=f"版本冲突（当前{record.version}）")
                 missing_ev = body.missing_evidence.get(rid, [])
@@ -703,15 +760,8 @@ def batch_operation(body: BatchOperationRequest,
                                    f"批量退回缺失证据: {', '.join(missing_ev)}", current_user)
 
             elif body.action == "review_sync":
-                require_role(current_user, [ROLE_REVIEWER])
-                if record.status not in [STATUS_PENDING_REVIEW, STATUS_AUDITED_PASSED]:
-                    raise HTTPException(status_code=400, detail=f"当前状态「{STATUS_DISPLAY.get(record.status)}」不可复核归档")
                 if record.version != version_expect:
                     raise HTTPException(status_code=409, detail=f"版本冲突（当前{record.version}）")
-                if not record.auditor_id:
-                    raise HTTPException(status_code=400, detail="护士长尚未处理")
-                if record.missing_evidence and len(record.missing_evidence) > 0:
-                    raise HTTPException(status_code=400, detail=f"仍缺证据: {', '.join(record.missing_evidence)}")
                 record.status = STATUS_SYNCED
                 record.sync_status = "SYNCED"
                 record.synced_at = datetime.utcnow()
@@ -728,15 +778,34 @@ def batch_operation(body: BatchOperationRequest,
             else:
                 raise HTTPException(status_code=400, detail=f"未知操作: {body.action}")
 
-            results.append(BatchResultItem(id=rid, record_no=record.record_no, success=True))
+            check_overdue_and_update(db, record)
+            ev_state = get_evidence_state(record)
+            results.append(BatchResultItem(
+                id=rid, record_no=record.record_no, success=True,
+                has_missing_evidence=len(list(record.missing_evidence or [])) > 0,
+                missing_evidence=list(record.missing_evidence or []),
+                abnormal_reported=record.abnormal_reported,
+                abnormal_reason=record.abnormal_reason or "",
+            ))
+            record.evidence_state = ev_state
 
         except HTTPException as e:
+            check_overdue_and_update(db, record)
+            ev_state = get_evidence_state(record)
             add_process_record(
                 db, record.id, f"BATCH_{body.action.upper()}_FAIL",
                 record.status, record.status, current_user,
-                result="fail", error_message=e.detail, version_snapshot=record.version,
+                result="fail", error_message=e.detail,
+                version_snapshot=record.version,
             )
-            results.append(BatchResultItem(id=rid, record_no=record.record_no, success=False, error_message=str(e.detail)))
+            results.append(BatchResultItem(
+                id=rid, record_no=record.record_no, success=False,
+                error_message=str(e.detail),
+                has_missing_evidence=len(list(record.missing_evidence or [])) > 0,
+                missing_evidence=list(record.missing_evidence or []),
+                abnormal_reported=record.abnormal_reported,
+                abnormal_reason=record.abnormal_reason or "",
+            ))
 
         except Exception as e:
             results.append(BatchResultItem(id=rid, record_no=record.record_no, success=False, error_message=str(e)))
@@ -892,11 +961,18 @@ def batch_advance_overdue(body: BatchAdvanceOverdueRequest,
             ))
 
         except HTTPException as e:
+            check_overdue_and_update(db, record)
             add_process_record(
                 db, record.id, "BATCH_OVERDUE_ADVANCE_FAIL", record.status, record.status, current_user,
                 result="fail", error_message=e.detail, version_snapshot=record.version,
             )
-            results.append(BatchResultItem(id=rid, record_no=record.record_no, success=False, error_message=str(e.detail)))
+            results.append(BatchResultItem(
+                id=rid, record_no=record.record_no, success=False, error_message=str(e.detail),
+                has_missing_evidence=len(list(record.missing_evidence or [])) > 0,
+                missing_evidence=list(record.missing_evidence or []),
+                abnormal_reported=record.abnormal_reported,
+                abnormal_reason=record.abnormal_reason or "",
+            ))
 
         except Exception as e:
             results.append(BatchResultItem(id=rid, record_no=record.record_no, success=False, error_message=str(e)))
@@ -908,6 +984,75 @@ def batch_advance_overdue(body: BatchAdvanceOverdueRequest,
         success_count=success_count,
         failed_count=len(results) - success_count,
     )
+
+
+@app.post("/api/care-records/batch-validate")
+def batch_validate_candidates(body: BatchOperationRequest,
+                              db: Session = Depends(get_db),
+                              current_user: User = Depends(get_current_user)):
+    """批量操作候选验证：检查选中的记录是否符合操作条件（角色、状态、处理人、证据）"""
+    action = body.action
+    allowed_status_map = {
+        "submit": [STATUS_PENDING_SUBMIT, STATUS_RETURNED],
+        "audit_pass": [STATUS_PENDING_AUDIT],
+        "audit_reject": [STATUS_PENDING_AUDIT],
+        "review_sync": [STATUS_PENDING_REVIEW, STATUS_AUDITED_PASSED],
+        "overdue_advance": [STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW],
+    }
+    allowed_roles_map = {
+        "submit": [ROLE_REGISTRAR],
+        "audit_pass": [ROLE_AUDITOR],
+        "audit_reject": [ROLE_AUDITOR],
+        "review_sync": [ROLE_REVIEWER],
+        "overdue_advance": [ROLE_AUDITOR, ROLE_REVIEWER],
+    }
+    if action not in allowed_roles_map:
+        raise HTTPException(status_code=400, detail=f"未知操作: {action}")
+    require_role(current_user, allowed_roles_map[action])
+
+    valid_ids = []
+    invalid_items = []
+
+    for rid in body.ids:
+        record = db.query(CareRecord).filter(CareRecord.id == rid).first()
+        if not record:
+            invalid_items.append({"id": rid, "error": "记录不存在"})
+            continue
+        check_overdue_and_update(db, record)
+
+        errors = []
+        if record.status not in allowed_status_map[action]:
+            errors.append(f"状态「{STATUS_DISPLAY.get(record.status)}」不支持此操作")
+        if action == "submit" and record.submitter_id != current_user.id:
+            errors.append("非本人创建")
+        if action in ["audit_pass", "audit_reject"] and record.auditor_id and record.auditor_id != current_user.id:
+            errors.append(f"已分配给 {record.auditor_name}")
+        if action == "review_sync":
+            if not record.auditor_id:
+                errors.append("护士长尚未处理")
+            if record.missing_evidence and len(record.missing_evidence) > 0:
+                errors.append(f"仍缺证据: {', '.join(record.missing_evidence)}")
+        if action == "audit_pass":
+            if record.missing_evidence and len(record.missing_evidence) > 0:
+                errors.append(f"仍缺证据: {', '.join(record.missing_evidence)}")
+        if action == "overdue_advance" and not record.overdue:
+            errors.append("未逾期")
+
+        if errors:
+            invalid_items.append({
+                "id": rid, "record_no": record.record_no,
+                "error": "、".join(errors),
+            })
+        else:
+            valid_ids.append(rid)
+
+    return {
+        "action": action,
+        "valid_ids": valid_ids,
+        "invalid_items": invalid_items,
+        "valid_count": len(valid_ids),
+        "invalid_count": len(invalid_items),
+    }
 
 
 if __name__ == "__main__":

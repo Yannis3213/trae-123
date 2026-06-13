@@ -544,23 +544,31 @@ def seed_database(db: Session):
             add_pr("MEDICATION_ISSUE", STATUS_PENDING_AUDIT, STATUS_PENDING_AUDIT, u_nurse1, "新增药品发放：硝苯地平、阿司匹林", vs=2)
             add_pr("AUDIT_PASS", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "审核通过，版本 3", vs=3)
             add_pr("REVIEW_SYNC", STATUS_PENDING_REVIEW, STATUS_SYNCED, u_director, "复核归档同步，版本 5", vs=5)
+            add_an("evidence_state", "证据状态：已归档（全部证据齐全，已完成复核归档同步）", u_director)
+            add_an("evidence_state", "证据齐全：护理记录表、用药签名单、生命体征表均已完整提供", u_head)
 
         elif tag == "normal_pending_audit":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse1, "创建照护记录", vs=1)
             add_pr("SUBMIT", STATUS_PENDING_SUBMIT, STATUS_PENDING_AUDIT, u_nurse1, "提交审核，版本 2", vs=2)
+            add_an("evidence_state", "证据状态：证据齐全（等待审核中）", u_nurse1)
+            add_an("evidence_state", "证据齐全：护理记录表、生命体征表均已提供，可正常审核", u_nurse1)
 
         elif tag == "normal_pending_review":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse2, "创建特护记录", vs=1)
             add_pr("SUBMIT", STATUS_PENDING_SUBMIT, STATUS_PENDING_AUDIT, u_nurse2, "提交审核", vs=2)
             add_pr("AUDIT_PASS", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "特护记录完整，皮肤状态良好，审核通过。", vs=3)
+            add_an("evidence_state", "证据状态：证据齐全（已通过审核，等待复核）", u_head)
+            add_an("evidence_state", "证据齐全：特护记录表、皮肤评估表、翻身记录单均已完整", u_head)
 
         elif tag == "missing_evidence":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse2, "创建照护记录", vs=1)
             add_pr("SUBMIT", STATUS_PENDING_SUBMIT, STATUS_PENDING_AUDIT, u_nurse2, "提交审核，版本 2", vs=2)
             add_pr("EVIDENCE_WARNING", STATUS_PENDING_AUDIT, STATUS_PENDING_AUDIT, u_nurse2, "缺失证据: 血糖监测记录, 家属知情同意书", vs=2)
             add_an("missing_evidence", "提交时缺失证据: 血糖监测记录, 家属知情同意书", u_nurse2)
+            add_an("evidence_state", "证据状态：有缺失（提交时缺失血糖监测记录、家属知情同意书）", u_nurse2)
             add_pr("BATCH_AUDIT_PASS_FAIL", STATUS_PENDING_AUDIT, STATUS_PENDING_AUDIT, u_head, "尝试批量审核通过，被缺证据拦截：血糖监测记录、家属知情同意书", result="failed", err="审核通过前需补齐证据: 血糖监测记录, 家属知情同意书，请先退回补正", vs=2)
             add_an("missing_evidence", "批量审核通过被拦截: 缺失血糖监测记录、家属知情同意书，已自动退回补正流程", u_head)
+            add_an("evidence_state", "证据状态：有缺失（被批量审核通过拦截，需先退回补正）", u_head)
 
         elif tag == "overdue_audit":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse2, "创建慢病护理记录", vs=1)
@@ -568,27 +576,33 @@ def seed_database(db: Session):
             add_pr("SUBMIT", STATUS_PENDING_SUBMIT, STATUS_PENDING_AUDIT, u_nurse2, "提交审核", vs=2)
             add_pr("ABNORMAL_REPORT", STATUS_PENDING_AUDIT, STATUS_PENDING_AUDIT, u_nurse2, "异常上报：血压持续偏高，已上报值班医生", vs=2)
             add_an("abnormal", "异常复核: 血压偏高，建议调整降压方案", u_nurse2)
+            add_an("evidence_state", "证据状态：逾期待处理（逾期4天仍未审核，且缺失用药签名单）", u_head)
             add_an("overdue", "记录已逾期，需尽快审核处理", u_head)
             add_pr("OVERDUE_ADVANCE", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "逾期推进：审核通过并送复核", vs=3)
             add_an("overdue_advance", "逾期记录审核推进成功，状态变更为待复核", u_head)
             add_an("abnormal", "逾期推进异常留痕: 血压持续偏高，收缩压超过160mmHg", u_head)
+            add_an("evidence_state", "证据状态：逾期待处理（已逾期推进至复核环节，但仍处于逾期状态）", u_head)
 
         elif tag == "overdue_review":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse1, "创建临终关怀记录", vs=1)
             add_pr("SUBMIT", STATUS_PENDING_SUBMIT, STATUS_PENDING_AUDIT, u_nurse1, "提交审核", vs=2)
             add_pr("AUDIT_PASS", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "关怀记录完整。", vs=3)
+            add_an("evidence_state", "证据状态：逾期待处理（逾期5天仍未复核归档，证据齐全）", u_director)
             add_an("overdue", "记录已逾期，需尽快复核归档", u_director)
             add_pr("OVERDUE_ADVANCE", STATUS_PENDING_REVIEW, STATUS_SYNCED, u_director, "逾期推进：复核归档同步完成", vs=4)
             add_an("overdue_advance", "逾期记录复核推进成功，已完成归档同步", u_director)
+            add_an("evidence_state", "证据状态：已归档（逾期推进成功，已完成复核归档同步）", u_director)
 
         elif tag == "returned_correction":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse1, "创建术后护理记录", vs=1)
             add_pr("SUBMIT", STATUS_PENDING_SUBMIT, STATUS_PENDING_AUDIT, u_nurse1, "首次提交", vs=2)
             add_pr("AUDIT_REJECT", STATUS_PENDING_AUDIT, STATUS_RETURNED, u_head, "审核退回：缺失伤口评估单、康复评估记录", vs=3)
             add_an("missing_evidence", "审核退回缺失证据: 伤口评估单, 康复评估记录, DVT预防记录", u_head)
+            add_an("evidence_state", "证据状态：有缺失（被退回补正，缺失伤口评估单、康复评估记录、DVT预防记录）", u_head)
             add_pr("OVERDUE_ADVANCE_FAIL", STATUS_RETURNED, STATUS_RETURNED, u_director, "逾期推进失败：记录处于退回状态且缺证据", result="failed", err="状态冲突：当前「已退回」不可逾期推进", vs=4)
             add_an("overdue_advance", "逾期推进被拦截: 记录处于退回补正状态，需护理员补正后重新提交", u_director)
             add_an("missing_evidence", "逾期推进仍缺失: 伤口评估单, 康复评估记录, DVT预防记录", u_director)
+            add_an("evidence_state", "证据状态：有缺失（逾期推进被拦截，仍需补正缺失证据）", u_director)
 
         elif tag == "state_conflict_case":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse2, "创建失智护理记录", vs=1)
@@ -598,20 +612,24 @@ def seed_database(db: Session):
             add_pr("CORRECT", STATUS_RETURNED, STATUS_PENDING_AUDIT, u_nurse2, "补正：添加了家属告知记录截图，但异常上报单未找到原件", vs=4)
             add_pr("AUDIT_REJECT", STATUS_PENDING_AUDIT, STATUS_RETURNED, u_head, "第二次退回：仍缺失异常上报单原件，请与医生确认后补录", vs=5)
             add_an("missing_evidence", "二次退回仍缺失: 异常上报单原件", u_head)
+            add_an("evidence_state", "证据状态：有缺失（二次退回仍缺失异常上报单原件）", u_head)
             add_an("abnormal", "躁动情况需密切观察，已建议夜间加派巡视频次", u_head)
             add_pr("STATUS_CONFLICT", STATUS_RETURNED, STATUS_RETURNED, u_head, "尝试在退回状态执行审核通过，状态冲突被拦截", result="failed", err="状态冲突：当前「已退回」不可审核通过", vs=5)
             add_an("status_conflict", "状态冲突留痕: 护士长尝试在退回状态下审核通过，被系统拦截。当前状态已退回，需护理员补正后重新提交", u_head)
             add_pr("VERSION_CONFLICT", STATUS_RETURNED, STATUS_RETURNED, u_director, "院区主任尝试复核，但版本号过旧被拦截", result="failed", err="版本冲突：当前 5 vs 提交 3", vs=5)
             add_an("status_conflict", "版本冲突留痕: 院区主任使用旧版本号尝试复核，被乐观锁拦截。当前版本5，提交版本3", u_director)
+            add_an("evidence_state", "证据状态：有缺失（状态冲突和版本冲突留痕记录，仍缺失异常上报单原件）", u_director)
 
         elif tag == "pending_submit_draft":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse1, "创建草稿记录，待完善用药记录", vs=1)
+            add_an("evidence_state", "证据状态：证据齐全（草稿状态，待提交后进入审核流程）", u_nurse1)
 
         elif tag == "near_due_review":
             add_pr("CREATE", "", STATUS_PENDING_SUBMIT, u_nurse1, "创建康复护理记录", vs=1)
             add_pr("SUBMIT", STATUS_PENDING_SUBMIT, STATUS_PENDING_AUDIT, u_nurse1, "提交审核", vs=2)
             add_pr("AUDIT_PASS", STATUS_PENDING_AUDIT, STATUS_PENDING_REVIEW, u_head, "康复记录完整，训练有效。", vs=3)
             add_an("due_warning", "记录即将到期（36小时内），请尽快复核归档", u_head)
+            add_an("evidence_state", "证据状态：证据齐全（临期待复核，证据全部齐全）", u_head)
 
         if spec["evidence_provided"]:
             for idx, ev in enumerate(spec["evidence_provided"]):

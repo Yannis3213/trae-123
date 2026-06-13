@@ -3,6 +3,27 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 
+class EvidenceState:
+    COMPLETE = "COMPLETE"
+    MISSING = "MISSING"
+    OVERDUE_PENDING = "OVERDUE_PENDING"
+    ARCHIVED = "ARCHIVED"
+
+EVIDENCE_STATE_DISPLAY = {
+    "COMPLETE": "证据齐全",
+    "MISSING": "缺证据",
+    "OVERDUE_PENDING": "逾期待处理",
+    "ARCHIVED": "已归档",
+}
+
+EVIDENCE_STATE_COLOR = {
+    "COMPLETE": {"color": "#67c23a", "bg": "#f0f9eb"},
+    "MISSING": {"color": "#f56c6c", "bg": "#fef0f0"},
+    "OVERDUE_PENDING": {"color": "#e6a23c", "bg": "#fdf6ec"},
+    "ARCHIVED": {"color": "#909399", "bg": "#f4f4f5"},
+}
+
+
 class UserBase(BaseModel):
     username: str
     full_name: str
@@ -199,6 +220,7 @@ class CareRecordResponse(BaseModel):
     attachments: List[AttachmentResponse] = Field(default_factory=list)
     process_records: List[ProcessRecordResponse] = Field(default_factory=list)
     audit_notes: List[AuditNoteResponse] = Field(default_factory=list)
+    evidence_state: str = ""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -222,6 +244,7 @@ class CareRecordListResponse(BaseModel):
     version: int
     abnormal_reported: bool
     missing_evidence: List[str] = Field(default_factory=list)
+    evidence_state: str = ""
 
     model_config = ConfigDict(from_attributes=True)
 
