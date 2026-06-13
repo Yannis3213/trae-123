@@ -16,7 +16,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDatepickerModule } from '@angular/material/datepicker';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { MatSort, MatSortModule } from '@angular/material/sort';
+import { MatSort, MatSortModule, Sort } from '@angular/material/sort';
 import { SelectionModel } from '@angular/cdk/collections';
 import { TopicService, AuthService } from '../services/api.service';
 import {
@@ -29,6 +29,18 @@ import {
   WARNING_LABEL,
   ApiError,
 } from '../models';
+
+const SORT_COLUMN_MAP: Record<string, string> = {
+  id: 'updated_at',
+  title: 'title',
+  category: 'category',
+  priority: 'priority',
+  status: 'status',
+  warning: 'submission_deadline',
+  handler: 'current_handler_name',
+  deadline: 'submission_deadline',
+  version: 'version',
+};
 
 const STATUSES: { value: string; label: string }[] = [
   { value: '', label: '全部状态' },
@@ -307,6 +319,8 @@ export class TopicListPageComponent implements OnInit, AfterViewInit {
   loading = false;
   user = this.auth.currentUser;
   selection = new SelectionModel<Topic>(true, []);
+  sortBy = 'updated_at';
+  sortDir = 'desc';
 
   @ViewChild('paginator', { static: false }) paginator!: MatPaginator;
   @ViewChild(MatSort, { static: false }) sort!: MatSort;
@@ -329,11 +343,19 @@ export class TopicListPageComponent implements OnInit, AfterViewInit {
 
   ngOnInit() {
     this.loadPage(1);
-    this.auth.user$.subscribe((u) => (this.user = u));
+    this.auth.user$.subscribe(() => {
+      this.selection.clear();
+      this.loadPage(1);
+    });
   }
 
   ngAfterViewInit() {
     this.dataSource.sort = this.sort;
+    this.sort.sortChange.subscribe((s: Sort) => {
+      this.sortBy = SORT_COLUMN_MAP[s.active] || 'updated_at';
+      this.sortDir = s.direction || 'desc';
+      this.loadPage(1);
+    });
   }
 
   shortId(id: string): string {
@@ -385,6 +407,8 @@ export class TopicListPageComponent implements OnInit, AfterViewInit {
         warning: v.warning,
         page: p,
         page_size: this.pageSize,
+        sort_by: this.sortBy,
+        sort_dir: this.sortDir,
       })
       .subscribe({
         next: (r: TopicListResponse) => {

@@ -174,7 +174,9 @@ import {
                 <th mat-header-cell *matHeaderCellDef>成功/失败原因</th>
                 <td mat-cell *matCellDef="let r">
                   <div *ngIf="r.success" style="color:#166534;font-size:12.5px;">
-                    处理完成，新状态：<b>{{ TOPIC_STATUS_LABEL[(r.new_status as any) || 'processing'] || r.new_status || '—' }}</b>
+                    <div>新状态：<b>{{ TOPIC_STATUS_LABEL[(r.new_status as any) || 'processing'] || r.new_status || '—' }}</b>　版本：v{{ r.new_version || '—' }}</div>
+                    <div *ngIf="r.audit_summary" style="margin-top:3px;font-size:11.5px;color:#6b7280;">📝 {{ r.audit_summary }}</div>
+                    <div *ngIf="r.record_id" style="font-size:10.5px;color:#9ca3af;font-family:monospace;margin-top:2px;">记录#{{ r.record_id.slice(0,8).toUpperCase() }}</div>
                   </div>
                   <div *ngIf="!r.success">
                     <div style="display:flex;align-items:flex-start;gap:6px;">

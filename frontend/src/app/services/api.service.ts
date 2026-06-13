@@ -121,6 +121,8 @@ export class TopicService {
     page?: number;
     page_size?: number;
     warning?: string;
+    sort_by?: string;
+    sort_dir?: string;
   } = {}): Observable<TopicListResponse> {
     let httpParams = new HttpParams();
     (Object.keys(params) as (keyof typeof params)[]).forEach((k) => {

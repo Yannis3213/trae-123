@@ -255,6 +255,9 @@ pub struct BatchResultItem {
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub new_status: Option<String>,
+    pub new_version: Option<i64>,
+    pub record_id: Option<String>,
+    pub audit_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,6 +277,8 @@ pub struct TopicListQuery {
     pub page: Option<u64>,
     pub page_size: Option<u64>,
     pub warning: Option<String>,
+    pub sort_by: Option<String>,
+    pub sort_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

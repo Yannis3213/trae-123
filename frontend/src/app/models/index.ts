@@ -166,6 +166,9 @@ export interface BatchResultItem {
   error_code?: string | null;
   error_message?: string | null;
   new_status?: string | null;
+  new_version?: number | null;
+  record_id?: string | null;
+  audit_summary?: string | null;
 }
 
 export interface BatchProcessResponse {

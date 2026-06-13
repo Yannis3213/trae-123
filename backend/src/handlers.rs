@@ -135,8 +135,30 @@ pub async fn list_topics(
         format!("WHERE {}", where_clauses.join(" AND "))
     };
 
+    let allowed_sort: std::collections::HashSet<&str> = [
+        "updated_at", "created_at", "title", "status", "priority",
+        "category", "current_handler_name", "interview_deadline",
+        "submission_deadline", "version",
+    ].into_iter().collect();
+    let sort_by_col = query.sort_by.as_deref()
+        .filter(|s| allowed_sort.contains(*s))
+        .unwrap_or("updated_at");
+    let sort_dir = query.sort_dir.as_deref()
+        .filter(|d| *d == "asc" || *d == "desc")
+        .unwrap_or("desc");
+    let dir_upper = if sort_dir == "asc" { "ASC" } else { "DESC" };
+    let nulls = if sort_dir == "asc" { "1" } else { "0" };
+    let order_expr = if sort_by_col == "priority" {
+        format!("CASE WHEN priority = 'low' THEN 1 WHEN priority = 'medium' THEN 2 WHEN priority = 'high' THEN 3 ELSE 4 END {}", dir_upper)
+    } else if sort_by_col == "status" {
+        format!("CASE WHEN status = 'pending_dispatch' THEN 1 WHEN status = 'processing' THEN 2 WHEN status = 'returned' THEN 3 WHEN status = 'closed' THEN 4 WHEN status = 'archived' THEN 5 ELSE 6 END {}", dir_upper)
+    } else {
+        format!("CASE WHEN {} IS NULL THEN {} ELSE 0 END, {} {}", sort_by_col, nulls, sort_by_col, dir_upper)
+    };
+    let order_clause = format!("ORDER BY {}", order_expr);
+
     let count_sql = format!("SELECT COUNT(*) FROM topics {}", sql_where);
-    let list_sql = format!("SELECT * FROM topics {} ORDER BY updated_at DESC LIMIT ? OFFSET ?", sql_where);
+    let list_sql = format!("SELECT * FROM topics {} {} LIMIT ? OFFSET ?", sql_where, order_clause);
 
     let total: i64 = {
         let mut q = sqlx::query_scalar(&count_sql);
@@ -423,6 +445,7 @@ pub async fn update_topic(
 pub struct ProcessActionResult {
     pub topic: Topic,
     pub action_performed: String,
+    pub record_id: String,
 }
 
 pub async fn process_topic(
@@ -462,7 +485,7 @@ pub async fn process_topic(
     let now = Utc::now();
     let new_version = topic.version + 1;
 
-    let (action_performed, new_status, new_handler_id, new_handler_name) =
+    let (action_performed, new_status, new_handler_id, new_handler_name, _rec_id) =
         do_process_action(pool, id.clone(), &topic, &claims, role.as_ref(), req, new_version, now).await?;
 
     if let Some(atts) = &req.attachments {
@@ -487,7 +510,7 @@ pub async fn process_topic(
         .bind(&id)
         .fetch_one(pool).await.map_err(|e| AppError::Internal(format!("DB: {}", e)))?;
 
-    Ok(ProcessActionResult { topic: result, action_performed })
+    Ok(ProcessActionResult { topic: result, action_performed, record_id: _rec_id })
 }
 
 async fn do_process_action(
@@ -499,7 +522,7 @@ async fn do_process_action(
     req: &ProcessTopicRequest,
     new_version: i64,
     now: chrono::DateTime<Utc>,
-) -> Result<(String, String, Option<String>, Option<String>), AppError> {
+) -> Result<(String, String, Option<String>, Option<String>, String), AppError> {
     let mut action_performed = String::new();
     let mut new_status = topic.status.clone();
     let mut new_handler_id = topic.current_handler_id.clone();
@@ -692,7 +715,7 @@ async fn do_process_action(
     .bind(&id).bind(req.version)
     .execute(pool).await.map_err(|e| AppError::Internal(format!("DB: {}", e)))?;
 
-    Ok((action_performed, new_status, new_handler_id, new_handler_name))
+    Ok((action_performed, new_status, new_handler_id, new_handler_name, rec_id))
 }
 
 pub async fn batch_process(
@@ -729,6 +752,9 @@ pub async fn batch_process(
                     error_code: Some("NOT_FOUND".to_string()),
                     error_message: Some(format!("选题单 {} 不存在", id)),
                     new_status: None,
+                    new_version: None,
+                    record_id: None,
+                    audit_summary: None,
                 });
                 continue;
             }
@@ -749,6 +775,9 @@ pub async fn batch_process(
                     overdue_reason.unwrap_or_else(|| "未知".into())
                 )),
                 new_status: None,
+                new_version: None,
+                record_id: None,
+                audit_summary: None,
             });
             continue;
         }
@@ -768,12 +797,14 @@ pub async fn batch_process(
                 let new_status_saved = r.topic.status.clone();
                 let from_status = topic.status.clone();
                 let ver_after = r.topic.version;
+                let rec_id = r.record_id.clone();
+                let audit_summary = format!("[批量] {} -> {}: {}", from_status, new_status_saved, req.opinion);
                 write_audit(
                     pool,
                     Some(id.clone()),
                     &claims,
                     &r.action_performed,
-                    &format!("[批量] {} -> {}: {}", from_status, new_status_saved, req.opinion),
+                    &audit_summary,
                     None,
                 ).await;
                 results.push(BatchResultItem {
@@ -783,6 +814,9 @@ pub async fn batch_process(
                     error_code: None,
                     error_message: None,
                     new_status: Some(new_status_saved.clone()),
+                    new_version: Some(ver_after),
+                    record_id: Some(rec_id),
+                    audit_summary: Some(audit_summary),
                 });
             }
             Err(e) => {
@@ -793,6 +827,9 @@ pub async fn batch_process(
                     error_code: Some(e.code().to_string()),
                     error_message: Some(e.to_string()),
                     new_status: None,
+                    new_version: None,
+                    record_id: None,
+                    audit_summary: None,
                 });
             }
         }
@@ -834,13 +871,13 @@ async fn do_process_action_wrap(
     let role = claims.role_enum();
     let now = Utc::now();
     let new_version = topic.version + 1;
-    let (action_performed, _ns, _nh, _nhn) =
+    let (action_performed, _ns, _nh, _nhn, rec_id) =
         do_process_action(pool, id.clone(), topic, claims, role.as_ref(), req, new_version, now).await?;
 
     let result: Topic = sqlx::query_as::<_, Topic>("SELECT * FROM topics WHERE id = ?")
         .bind(&id)
         .fetch_one(pool).await.map_err(|e| AppError::Internal(format!("DB: {}", e)))?;
-    Ok(ProcessActionResult { topic: result, action_performed })
+    Ok(ProcessActionResult { topic: result, action_performed, record_id: rec_id })
 }
 
 pub async fn topic_statistics(
@@ -1016,5 +1053,7 @@ pub fn parse_topic_list_query(params: &HashMap<String, String>) -> TopicListQuer
         page: params.get("page").and_then(|s| s.parse().ok()),
         page_size: params.get("page_size").and_then(|s| s.parse().ok()),
         warning: params.get("warning").cloned(),
+        sort_by: params.get("sort_by").cloned(),
+        sort_dir: params.get("sort_dir").cloned(),
     }
 }

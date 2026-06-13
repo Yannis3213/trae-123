@@ -82,6 +82,8 @@ struct TopicListParams {
     page: Option<u64>,
     page_size: Option<u64>,
     warning: Option<String>,
+    sort_by: Option<String>,
+    sort_dir: Option<String>,
 }
 
 #[handler]
@@ -98,6 +100,8 @@ async fn list_topics_handler(
         page: params.page,
         page_size: params.page_size,
         warning: params.warning,
+        sort_by: params.sort_by,
+        sort_dir: params.sort_dir,
     };
     match list_topics(&state.pool, &headers, &q).await {
         Ok(r) => Response::builder()
