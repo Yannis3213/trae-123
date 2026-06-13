@@ -253,7 +253,13 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
       audits: [
         { user_id: 1, action: 'edit', remark: '编辑补正：更新血压值为130/85', extra_data: { fields: ['blood_pressure'] } },
         { user_id: 1, action: 'submit', remark: '提交随访单', extra_data: { fromStatus: 'draft', toStatus: 'pending_submit' } },
+        { user_id: 1, action: 'edit', remark: '越权尝试编辑待提交状态的随访单，被拦截', extra_data: { status: 'pending_submit', action: 'edit' } },
+        { user_id: 3, action: 'process', remark: '越权尝试处理待提交状态的随访单，被拦截', extra_data: { user_role: 'medical_director', status: 'pending_submit', action: 'process' } },
         { user_id: 1, action: 'update_chronic_record', remark: '补正慢病档案：更新治疗史', extra_data: { followup_id: 1, changes: ['treatment_history'] } }
+      ],
+      exceptions: [
+        { type: 'invalid_status', reason: '当前状态不可编辑，仅草稿或已退回状态可编辑', operator_id: 1, extra: { current_status: 'pending_submit', action: 'edit' } },
+        { type: 'unauthorized_action', reason: '越权操作: 医务科主任无权处理待提交状态的随访单', operator_id: 3, extra: { user_role: 'medical_director', status: 'pending_submit', action: 'process' } }
       ]
     },
     {
@@ -356,6 +362,40 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
       ],
       exceptions: [
         { type: 'missing_evidence', reason: '主任完成前校验：缺少血糖监测报告(lab_report)', operator_id: 3, extra: { missing: ['lab_report'], action: 'complete' } }
+      ]
+    },
+    {
+      patient_name: '吴十', id_card: '110101198011118899', gender: '男', age: 45,
+      phone: '13800138008', address: '北京市大兴区',
+      chronic_type: '高血压、糖尿病', followup_type: '重点随访',
+      due_date: addDays(today, 3),
+      blood_pressure: '145/95', blood_sugar: '7.8', heart_rate: '85', weight: '80',
+      symptoms: '疲劳、偶有头晕', lifestyle: '经常熬夜', medication_compliance: '一般',
+      status: 'resubmitted', current_role: 'general_doctor',
+      current_handler_id: null, creator_id: 1,
+      submitted_at: addDays(today, -8),
+      returned_at: addDays(today, -5),
+      resubmitted_at: addDays(today, -1),
+      return_reason: '缺少生命体征和用药记录，已补正后重新提交',
+      attachments: [
+        { type: 'followup_form', name: '随访单_吴十.pdf', url: '/files/followup_8.pdf' },
+        { type: 'vital_signs', name: '生命体征_吴十.pdf', url: '/files/vital_8.pdf' },
+        { type: 'medication_record', name: '用药记录_吴十.pdf', url: '/files/med_8.pdf' }
+      ],
+      processing: [
+        { user_id: 2, role: 'general_doctor', opinion: '第一次退回：缺少生命体征和用药记录', status: 'returned' },
+        { user_id: 1, role: 'triage_nurse', opinion: '已补正相关附件，重新提交', status: 'resubmitted' }
+      ],
+      audits: [
+        { user_id: 1, action: 'submit', remark: '首次提交随访单', extra_data: { fromStatus: 'draft', toStatus: 'pending_submit' } },
+        { user_id: 2, action: 'return', remark: '退回：缺少生命体征和用药记录附件', extra_data: { fromStatus: 'pending_submit', toStatus: 'returned' } },
+        { user_id: 1, action: 'edit', remark: '编辑补正：上传生命体征和用药记录', extra_data: { fields: ['attachments'] } },
+        { user_id: 1, action: 'resubmit', remark: '重新提交：已补正所有缺失材料', extra_data: { fromStatus: 'returned', toStatus: 'resubmitted' } },
+        { user_id: 3, action: 'process', remark: '越权操作：主任无权处理重新提交状态的随访单', extra_data: { user_role: 'medical_director', status: 'resubmitted', action: 'process' } }
+      ],
+      exceptions: [
+        { type: 'missing_evidence', reason: '缺少必要证据: vital_signs, medication_record', operator_id: 2, extra: { missing: ['vital_signs', 'medication_record'], status: 'pending_submit' } },
+        { type: 'unauthorized_action', reason: '越权操作: 医务科主任无权处理重新提交状态的随访单', operator_id: 3, extra: { user_role: 'medical_director', status: 'resubmitted', action: 'process' } }
       ]
     },
     {

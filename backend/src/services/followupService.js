@@ -1,6 +1,23 @@
 import db from '../db.js'
-import { STATUS, REQUIRED_EVIDENCE, ROLE_STATUS_TRANSITIONS, WARNING_THRESHOLD_DAYS, OVERDUE_THRESHOLD_DAYS } from '../constants.js'
+import { STATUS, REQUIRED_EVIDENCE, ROLE_STATUS_TRANSITIONS, WARNING_THRESHOLD_DAYS, OVERDUE_THRESHOLD_DAYS, ACTION_MATRIX, ACTION_NAMES, ACTIONS } from '../constants.js'
 import dayjs from 'dayjs'
+
+export function getAvailableActions(status, userRole) {
+  const roleActions = ACTION_MATRIX[userRole]
+  if (!roleActions) return []
+  const actions = roleActions[status] || []
+  return actions.map(action => ({
+    key: action,
+    label: ACTION_NAMES[action]
+  }))
+}
+
+export function hasActionPermission(status, userRole, action) {
+  const roleActions = ACTION_MATRIX[userRole]
+  if (!roleActions) return false
+  const actions = roleActions[status] || []
+  return actions.includes(action)
+}
 
 export function validateStatusTransition(userRole, currentStatus, targetStatus) {
   const allowedTransitions = ROLE_STATUS_TRANSITIONS[userRole]

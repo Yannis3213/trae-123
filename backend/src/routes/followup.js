@@ -11,7 +11,9 @@ import {
   recordProcessing,
   recordException,
   recordInterception,
-  incrementVersion
+  incrementVersion,
+  getAvailableActions,
+  hasActionPermission
 } from '../services/followupService.js'
 import dayjs from 'dayjs'
 
@@ -68,12 +70,14 @@ followupRouter.get('/', async (c) => {
 
   const result = list.map(item => {
     const overdue = checkOverdue(item.due_date)
+    const availableActions = getAvailableActions(item.status, user.role)
     return {
       ...item,
       statusName: STATUS_NAMES[item.status],
       overdueLevel: overdue.level,
       overdueDays: overdue.days,
-      roleName: ROLE_NAMES[item.current_role]
+      roleName: ROLE_NAMES[item.current_role],
+      availableActions
     }
   })
 
@@ -192,26 +196,17 @@ followupRouter.get('/:id', async (c) => {
     roleName: ROLE_NAMES[processingRecords[0].role]
   } : null
 
+  const availableActions = getAvailableActions(form.status, user.role)
   const permissions = {
-    canEdit: [STATUS.DRAFT, STATUS.RETURNED].includes(form.status) && user.role === ROLES.TRIAGE_NURSE,
-    canSubmit: form.status === STATUS.DRAFT && user.role === ROLES.TRIAGE_NURSE,
-    canResubmit: form.status === STATUS.RETURNED && user.role === ROLES.TRIAGE_NURSE,
-    canProcess: [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED].includes(form.status) && user.role === ROLES.GENERAL_DOCTOR,
-    canReview: form.status === STATUS.DOCTOR_PROCESSING && user.role === ROLES.MEDICAL_DIRECTOR,
-    canReturn: [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED, STATUS.DOCTOR_PROCESSING, STATUS.DIRECTOR_REVIEW].includes(form.status),
-    canComplete: form.status === STATUS.DIRECTOR_REVIEW && user.role === ROLES.MEDICAL_DIRECTOR,
-    canArchive: form.status === STATUS.COMPLETED && user.role === ROLES.MEDICAL_DIRECTOR
+    canEdit: hasActionPermission(form.status, user.role, 'edit'),
+    canSubmit: hasActionPermission(form.status, user.role, 'submit'),
+    canResubmit: hasActionPermission(form.status, user.role, 'resubmit'),
+    canProcess: hasActionPermission(form.status, user.role, 'process'),
+    canReview: hasActionPermission(form.status, user.role, 'review'),
+    canReturn: hasActionPermission(form.status, user.role, 'return'),
+    canComplete: hasActionPermission(form.status, user.role, 'complete'),
+    canArchive: hasActionPermission(form.status, user.role, 'archive')
   }
-
-  const availableActions = []
-  if (permissions.canEdit) availableActions.push({ key: 'edit', label: '编辑' })
-  if (permissions.canSubmit) availableActions.push({ key: 'submit', label: '提交' })
-  if (permissions.canResubmit) availableActions.push({ key: 'resubmit', label: '重新提交' })
-  if (permissions.canProcess) availableActions.push({ key: 'process', label: '处理' })
-  if (permissions.canReview) availableActions.push({ key: 'review', label: '审核' })
-  if (permissions.canReturn) availableActions.push({ key: 'return', label: '退回' })
-  if (permissions.canComplete) availableActions.push({ key: 'complete', label: '完成' })
-  if (permissions.canArchive) availableActions.push({ key: 'archive', label: '归档' })
 
   const actionSummary = {
     currentStatus: form.status,

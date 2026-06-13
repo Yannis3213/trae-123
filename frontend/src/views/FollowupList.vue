@@ -44,13 +44,13 @@
         <div class="card-header">
           <span class="card-title">慢病随访单列表</span>
           <div class="header-actions">
-            <el-button v-if="canBatchProcess" type="primary" :disabled="selectedRows.length === 0" @click="handleBatchProcess">
+            <el-button v-if="canBatchProcess()" type="primary" :disabled="selectedRows.length === 0" @click="handleBatchProcess">
               批量处理
             </el-button>
-            <el-button v-if="canBatchComplete" type="success" :disabled="selectedRows.length === 0" @click="handleBatchComplete">
+            <el-button v-if="canBatchComplete()" type="success" :disabled="selectedRows.length === 0" @click="handleBatchComplete">
               批量完成
             </el-button>
-            <el-button v-if="canBatchReturn" type="warning" :disabled="selectedRows.length === 0" @click="handleBatchReturn">
+            <el-button v-if="canBatchReturn()" type="warning" :disabled="selectedRows.length === 0" @click="handleBatchReturn">
               批量退回
             </el-button>
             <el-button v-if="userStore.isTriageNurse" type="primary" @click="router.push('/followup/create')">
@@ -257,53 +257,53 @@ const batchDialog = reactive({
   }
 })
 
-const canBatchProcess = computed(() => 
-  userStore.isGeneralDoctor && 
-  selectedRows.value.some(r => [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED].includes(r.status))
-)
+function hasAction(row, actionKey) {
+  if (!row.availableActions) return false
+  return row.availableActions.some(a => a.key === actionKey)
+}
 
-const canBatchComplete = computed(() => 
-  userStore.isMedicalDirector && 
-  selectedRows.value.some(r => r.status === STATUS.DIRECTOR_REVIEW)
-)
+function canBatchProcess() {
+  return selectedRows.value.some(r => hasAction(r, 'process'))
+}
 
-const canBatchReturn = computed(() => 
-  (userStore.isGeneralDoctor || userStore.isMedicalDirector) &&
-  selectedRows.value.some(r => [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED, STATUS.DOCTOR_PROCESSING, STATUS.DIRECTOR_REVIEW].includes(r.status))
-)
+function canBatchReview() {
+  return selectedRows.value.some(r => hasAction(r, 'review'))
+}
+
+function canBatchComplete() {
+  return selectedRows.value.some(r => hasAction(r, 'complete'))
+}
+
+function canBatchReturn() {
+  return selectedRows.value.some(r => hasAction(r, 'return'))
+}
 
 function canEditRow(row) {
-  return userStore.isTriageNurse && [STATUS.DRAFT, STATUS.RETURNED].includes(row.status)
+  return hasAction(row, 'edit')
 }
 
 function canSubmitRow(row) {
-  return userStore.isTriageNurse && row.status === STATUS.DRAFT
+  return hasAction(row, 'submit')
 }
 
 function canResubmitRow(row) {
-  return userStore.isTriageNurse && row.status === STATUS.RETURNED
+  return hasAction(row, 'resubmit')
 }
 
 function canProcessRow(row) {
-  return userStore.isGeneralDoctor && [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED].includes(row.status)
+  return hasAction(row, 'process')
 }
 
 function canReviewRow(row) {
-  return userStore.isMedicalDirector && row.status === STATUS.DOCTOR_PROCESSING
+  return hasAction(row, 'review')
 }
 
 function canCompleteRow(row) {
-  return userStore.isMedicalDirector && row.status === STATUS.DIRECTOR_REVIEW
+  return hasAction(row, 'complete')
 }
 
 function canReturnRow(row) {
-  if (userStore.isGeneralDoctor) {
-    return [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED].includes(row.status)
-  }
-  if (userStore.isMedicalDirector) {
-    return [STATUS.DOCTOR_PROCESSING, STATUS.DIRECTOR_REVIEW].includes(row.status)
-  }
-  return false
+  return hasAction(row, 'return')
 }
 
 function handleEdit(row) {
