@@ -6,6 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatDividerModule } from '@angular/material/divider';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { TopicService, AuthService, UserService } from '../services/api.service';
 import { ApiError, Topic, TopicListResponse, ROLE_SHORT_LABEL, UserInfo, ProcessTopicRequest, CreateTopicRequest, BatchProcessRequest } from '../models';
 import { RouterModule, Router } from '@angular/router';
@@ -33,6 +34,7 @@ interface TestCase {
     MatSnackBarModule,
     MatExpansionModule,
     MatDividerModule,
+    MatProgressSpinnerModule,
   ],
   template: `
     <div>

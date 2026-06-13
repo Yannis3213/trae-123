@@ -449,11 +449,16 @@ pub async fn process_topic(
         return Err(AppError::ValidationFailed("处理意见不能为空".into()));
     }
 
-    if req.target_handler_id.is_some() && req.target_handler_id == Some(claims.user_id.clone()) {
-        return Err(AppError::ValidationFailed("不能将自己设为下一处理人".into()));
-    }
-
     let role = claims.role_enum();
+    if req.target_handler_id.is_some() && req.target_handler_id == Some(claims.user_id.clone()) {
+        let is_registrar_resubmit = matches!(role.as_ref(), Some(UserRole::Registrar))
+            && req.action == "dispatch";
+        if is_registrar_resubmit {
+            return Err(AppError::ValidationFailed(
+                "登记员重新提交不能将自己设为处理人，请指派责任编辑或总编室".into()
+            ));
+        }
+    }
     let now = Utc::now();
     let new_version = topic.version + 1;
 

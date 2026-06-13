@@ -15,6 +15,7 @@ import { MatChip, MatChipsModule } from '@angular/material/chips';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDatepickerModule } from '@angular/material/datepicker';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { SelectionModel } from '@angular/cdk/collections';
 import { TopicService, AuthService } from '../services/api.service';
 import {
@@ -64,6 +65,7 @@ const WARNINGS: { value: string; label: string }[] = [
     MatChipsModule,
     MatSnackBarModule,
     MatTooltipModule,
+    MatProgressSpinnerModule,
   ],
   template: `
     <div>

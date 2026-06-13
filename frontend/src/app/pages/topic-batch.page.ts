@@ -13,6 +13,7 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { TopicService, AuthService, UserService } from '../services/api.service';
 import {
   Topic,
@@ -47,6 +48,7 @@ import {
     MatTooltipModule,
     MatDividerModule,
     MatSnackBarModule,
+    MatButtonToggleModule,
   ],
   template: `
     <div>

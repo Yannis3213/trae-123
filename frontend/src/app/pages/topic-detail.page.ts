@@ -16,6 +16,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatStepperModule } from '@angular/material/stepper';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatDialog, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { TopicService, AuthService, UserService } from '../services/api.service';
 import {
   Topic,
@@ -69,6 +70,7 @@ interface ActionOption {
     MatStepperModule,
     MatSnackBarModule,
     MatDialogModule,
+    MatProgressSpinnerModule,
   ],
   template: `
     <div *ngIf="loading && !detail" style="padding:80px;text-align:center;">
@@ -180,7 +182,7 @@ interface ActionOption {
                   <div *ngIf="availableActions.length > 0">
                     <h4 style="font-size:14px;color:#374151;margin:0 0 14px;font-weight:600;">✅ 办理操作（按当前角色与状态可用）</h4>
                     <form [formGroup]="actionForm" style="padding:18px 20px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;">
-                      <div style="display:grid;grid-template-columns:repeat({{ Math.min(availableActions.length, 4) }},1fr);gap:10px;margin-bottom:14px;">
+                      <div style="display:grid;gap:10px;margin-bottom:14px;" [style.grid-template-columns]="'repeat(' + Math.min(availableActions.length, 4) + ', 1fr)'">
                         <div
                           *ngFor="let a of availableActions"
                           (click)="selectAction(a)"
