@@ -10,6 +10,7 @@ import {
   recordAuditLog,
   recordProcessing,
   recordException,
+  recordInterception,
   incrementVersion
 } from '../services/followupService.js'
 
@@ -40,33 +41,33 @@ batchRouter.post('/process', requireRole(ROLES.GENERAL_DOCTOR), async (c) => {
       const overdue = checkOverdue(form.due_date)
       if (overdue.level === 'overdue') {
         results.push({ id, success: false, reason: `已逾期${overdue.days}天，需逐单处理，不得批量推进` })
-        await recordException(id, 'batch_overdue', '逾期单据批量处理被拦截', user.id)
+        await recordInterception(id, user.id, 'batch_overdue', '逾期单据批量处理被拦截')
         continue
       }
 
       const versionCheck = await validateVersion(id, version)
       if (!versionCheck.valid) {
-        await recordException(id, 'version_conflict', versionCheck.message, user.id)
+        await recordInterception(id, user.id, 'version_conflict', versionCheck.message)
         results.push({ id, success: false, reason: versionCheck.message })
         continue
       }
 
       if (form.current_handler_id && form.current_handler_id !== user.id) {
-        await recordException(id, 'duplicate_processing', '该单据已被其他医生处理', user.id)
+        await recordInterception(id, user.id, 'duplicate_processing', '该单据已被其他医生处理')
         results.push({ id, success: false, reason: '该单据已被其他医生处理' })
         continue
       }
 
       const transitionCheck = validateStatusTransition(user.role, form.status, STATUS.DOCTOR_PROCESSING)
       if (!transitionCheck.valid) {
-        await recordException(id, 'status_transition', transitionCheck.message, user.id)
+        await recordInterception(id, user.id, 'status_transition', transitionCheck.message)
         results.push({ id, success: false, reason: transitionCheck.message })
         continue
       }
 
       const evidenceCheck = await validateEvidence(id, STATUS.DOCTOR_PROCESSING)
       if (!evidenceCheck.valid) {
-        await recordException(id, 'missing_evidence', evidenceCheck.message, user.id)
+        await recordInterception(id, user.id, 'missing_evidence', evidenceCheck.message)
         results.push({ id, success: false, reason: evidenceCheck.message })
         continue
       }
@@ -115,27 +116,27 @@ batchRouter.post('/complete', requireRole(ROLES.MEDICAL_DIRECTOR), async (c) => 
       const overdue = checkOverdue(form.due_date)
       if (overdue.level === 'overdue') {
         results.push({ id, success: false, reason: `已逾期${overdue.days}天，需逐单审核，不得批量完成` })
-        await recordException(id, 'batch_overdue', '逾期单据批量完成被拦截', user.id)
+        await recordInterception(id, user.id, 'batch_overdue', '逾期单据批量完成被拦截')
         continue
       }
 
       const versionCheck = await validateVersion(id, version)
       if (!versionCheck.valid) {
-        await recordException(id, 'version_conflict', versionCheck.message, user.id)
+        await recordInterception(id, user.id, 'version_conflict', versionCheck.message)
         results.push({ id, success: false, reason: versionCheck.message })
         continue
       }
 
       const transitionCheck = validateStatusTransition(user.role, form.status, STATUS.COMPLETED)
       if (!transitionCheck.valid) {
-        await recordException(id, 'status_transition', transitionCheck.message, user.id)
+        await recordInterception(id, user.id, 'status_transition', transitionCheck.message)
         results.push({ id, success: false, reason: transitionCheck.message })
         continue
       }
 
       const evidenceCheck = await validateEvidence(id, STATUS.COMPLETED)
       if (!evidenceCheck.valid) {
-        await recordException(id, 'missing_evidence', evidenceCheck.message, user.id)
+        await recordInterception(id, user.id, 'missing_evidence', evidenceCheck.message)
         results.push({ id, success: false, reason: evidenceCheck.message })
         continue
       }
@@ -182,14 +183,14 @@ batchRouter.post('/return', async (c) => {
 
       const versionCheck = await validateVersion(id, version)
       if (!versionCheck.valid) {
-        await recordException(id, 'version_conflict', versionCheck.message, user.id)
+        await recordInterception(id, user.id, 'version_conflict', versionCheck.message)
         results.push({ id, success: false, reason: versionCheck.message })
         continue
       }
 
       const transitionCheck = validateStatusTransition(user.role, form.status, STATUS.RETURNED)
       if (!transitionCheck.valid) {
-        await recordException(id, 'status_transition', transitionCheck.message, user.id)
+        await recordInterception(id, user.id, 'status_transition', transitionCheck.message)
         results.push({ id, success: false, reason: transitionCheck.message })
         continue
       }

@@ -120,9 +120,45 @@
             {{ formatDateTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link @click="goToDetail(row.id)">查看</el-button>
+            <el-button 
+              v-if="canEditRow(row)" 
+              type="primary" 
+              link 
+              @click="handleEdit(row)"
+            >编辑</el-button>
+            <el-button 
+              v-if="canSubmitRow(row)" 
+              type="success" 
+              link 
+              @click="handleSubmitRow(row)"
+            >提交</el-button>
+            <el-button 
+              v-if="canResubmitRow(row)" 
+              type="success" 
+              link 
+              @click="handleResubmitRow(row)"
+            >重新提交</el-button>
+            <el-button 
+              v-if="canProcessRow(row)" 
+              type="primary" 
+              link 
+              @click="handleProcessRow(row)"
+            >处理</el-button>
+            <el-button 
+              v-if="canReviewRow(row)" 
+              type="primary" 
+              link 
+              @click="handleReviewRow(row)"
+            >审核</el-button>
+            <el-button 
+              v-if="canReturnRow(row)" 
+              type="warning" 
+              link 
+              @click="handleReturnRow(row)"
+            >退回</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -174,7 +210,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import { useUserStore } from '../stores/user'
-import { getFollowupListApi, getFollowupStatsApi } from '../api/followup'
+import { getFollowupListApi, getFollowupStatsApi, submitFollowupApi, resubmitFollowupApi, processFollowupApi, reviewFollowupApi, returnFollowupApi, completeFollowupApi } from '../api/followup'
 import { batchProcessApi, batchCompleteApi, batchReturnApi } from '../api/batch'
 import { STATUS_NAMES, STATUS_COLORS, OVERDUE_COLORS, OVERDUE_NAMES, STATUS } from '../types'
 import ChronicRecordModule from '../components/ChronicRecordModule.vue'
@@ -229,6 +265,76 @@ const canBatchReturn = computed(() =>
   (userStore.isGeneralDoctor || userStore.isMedicalDirector) &&
   selectedRows.value.some(r => [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED, STATUS.DOCTOR_PROCESSING, STATUS.DIRECTOR_REVIEW].includes(r.status))
 )
+
+function canEditRow(row) {
+  return userStore.isTriageNurse && [STATUS.DRAFT, STATUS.RETURNED].includes(row.status)
+}
+
+function canSubmitRow(row) {
+  return userStore.isTriageNurse && row.status === STATUS.DRAFT
+}
+
+function canResubmitRow(row) {
+  return userStore.isTriageNurse && row.status === STATUS.RETURNED
+}
+
+function canProcessRow(row) {
+  return userStore.isGeneralDoctor && [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED].includes(row.status)
+}
+
+function canReviewRow(row) {
+  return userStore.isMedicalDirector && row.status === STATUS.DOCTOR_PROCESSING
+}
+
+function canReturnRow(row) {
+  if (userStore.isGeneralDoctor) {
+    return [STATUS.PENDING_SUBMIT, STATUS.RESUBMITTED].includes(row.status)
+  }
+  if (userStore.isMedicalDirector) {
+    return [STATUS.DOCTOR_PROCESSING, STATUS.DIRECTOR_REVIEW].includes(row.status)
+  }
+  return false
+}
+
+function handleEdit(row) {
+  router.push(`/followup/${row.id}?edit=1`)
+}
+
+async function handleSubmitRow(row) {
+  try {
+    await ElMessageBox.confirm('确定提交该随访单吗？', '提示', { type: 'warning' })
+    await submitFollowupApi(row.id, { version: row.version })
+    ElMessage.success('提交成功')
+    fetchList()
+    fetchStats()
+  } catch (err) {
+    if (err.message) ElMessage.error(err.message)
+  }
+}
+
+async function handleResubmitRow(row) {
+  try {
+    await ElMessageBox.confirm('确定重新提交该随访单吗？', '提示', { type: 'warning' })
+    await resubmitFollowupApi(row.id, { version: row.version })
+    ElMessage.success('重新提交成功')
+    fetchList()
+    fetchStats()
+  } catch (err) {
+    if (err.message) ElMessage.error(err.message)
+  }
+}
+
+function handleProcessRow(row) {
+  router.push(`/followup/${row.id}?action=process`)
+}
+
+function handleReviewRow(row) {
+  router.push(`/followup/${row.id}?action=review`)
+}
+
+function handleReturnRow(row) {
+  router.push(`/followup/${row.id}?action=return`)
+}
 
 async function fetchStats() {
   try {

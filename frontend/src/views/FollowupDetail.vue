@@ -711,7 +711,7 @@ async function saveChronic() {
   try {
     chronicForm.patient_name = detail.value.form.patient_name
     chronicForm.patient_id_card = detail.value.form.id_card
-    await createChronicRecordApi(chronicForm)
+    await createChronicRecordApi({ ...chronicForm, followup_id: id })
     ElMessage.success('保存成功')
     chronicDialog.visible = false
     fetchDetail()
@@ -727,7 +727,7 @@ async function saveMedication() {
   try {
     medicationForm.patient_name = detail.value.form.patient_name
     medicationForm.patient_id_card = detail.value.form.id_card
-    await createMedicationReminderApi(medicationForm)
+    await createMedicationReminderApi({ ...medicationForm, followup_id: id })
     ElMessage.success('保存成功')
     medicationDialog.visible = false
     fetchDetail()

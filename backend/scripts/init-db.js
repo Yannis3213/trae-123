@@ -264,6 +264,9 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
       attachments: [
         { type: 'followup_form', name: '随访单_李四.pdf', url: '/files/followup_2.pdf' },
         { type: 'vital_signs', name: '生命体征_李四.pdf', url: '/files/vital_2.pdf' }
+      ],
+      exceptions: [
+        { type: 'batch_overdue', reason: '已逾期5天，批量处理被拦截，需逐单处理', operator_id: 2, extra: { batch_size: 5, overdue_days: 5 } }
       ]
     },
     {
@@ -284,7 +287,11 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
         { type: 'vital_signs', name: '生命体征_王五.pdf', url: '/files/vital_3.pdf' },
         { type: 'medication_record', name: '用药记录_王五.pdf', url: '/files/med_3.pdf' }
       ],
-      processing: { user_id: 2, role: 'general_doctor', opinion: '血压控制不理想，建议主任审核' }
+      processing: { user_id: 2, role: 'general_doctor', opinion: '血压控制不理想，建议主任审核' },
+      exceptions: [
+        { type: 'batch_overdue', reason: '已逾期10天，批量审核被拦截，需逐单审核', operator_id: 3, extra: { batch_size: 3, overdue_days: 10 } },
+        { type: 'version_conflict', reason: '版本冲突: 当前版本1, 提交版本0', operator_id: 3, extra: { current_version: 1, submit_version: 0 } }
+      ]
     },
     {
       patient_name: '赵六', id_card: '110101197503153456', gender: '男', age: 49,
@@ -301,7 +308,10 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
       attachments: [
         { type: 'followup_form', name: '随访单_赵六.pdf', url: '/files/followup_4.pdf' }
       ],
-      processing: { user_id: 2, role: 'general_doctor', opinion: '缺少用药记录附件，请补充' }
+      processing: { user_id: 2, role: 'general_doctor', opinion: '缺少用药记录附件，请补充' },
+      exceptions: [
+        { type: 'missing_evidence', reason: '缺少必要证据: medication_record', operator_id: 2, extra: { missing: ['medication_record'], status: 'pending_submit' } }
+      ]
     },
     {
       patient_name: '孙七', id_card: '110101198808087890', gender: '女', age: 37,
@@ -339,7 +349,10 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
       symptoms: '', lifestyle: '', medication_compliance: '',
       status: 'draft', current_role: 'triage_nurse',
       current_handler_id: null, creator_id: 1,
-      attachments: []
+      attachments: [],
+      exceptions: [
+        { type: 'unauthorized_action', reason: '越权操作: 全科医生无权处理草稿状态的随访单', operator_id: 2, extra: { user_role: 'general_doctor', status: 'draft', action: 'process' } }
+      ]
     }
   ]
 
@@ -368,6 +381,11 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
   const insertAudit = prepare(`
     INSERT INTO audit_logs (followup_id, user_id, action, remark, extra_data)
     VALUES (?, ?, ?, ?, ?)
+  `)
+
+  const insertException = prepare(`
+    INSERT INTO exception_reasons (followup_id, type, reason, operator_id)
+    VALUES (?, ?, ?, ?)
   `)
 
   for (let i = 0; i < sampleForms.length; i++) {
@@ -402,6 +420,13 @@ CREATE INDEX idx_exception_followup ON exception_reasons(followup_id);
       for (const p of processList) {
         await insertProcessing.run(followupId, p.user_id, p.role, p.opinion, p.status || form.status)
         await insertAudit.run(followupId, p.user_id, 'process', p.opinion, JSON.stringify({ toStatus: p.status || form.status }))
+      }
+    }
+
+    if (form.exceptions) {
+      for (const e of form.exceptions) {
+        await insertException.run(followupId, e.type, e.reason, e.operator_id || form.creator_id)
+        await insertAudit.run(followupId, e.operator_id || form.creator_id, 'intercept', e.reason, JSON.stringify({ type: e.type, ...(e.extra || {}) }))
       }
     }
   }

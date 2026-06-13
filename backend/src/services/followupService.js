@@ -92,6 +92,11 @@ export async function recordException(followupId, type, reason, operatorId) {
   `, [followupId, type, reason, operatorId])
 }
 
+export async function recordInterception(followupId, userId, type, reason, extra = {}) {
+  await recordException(followupId, type, reason, userId)
+  await recordAuditLog(followupId, userId, 'intercept', reason, { type, ...extra })
+}
+
 export async function incrementVersion(followupId) {
   await db.run('UPDATE followup_forms SET version = version + 1 WHERE id = ?', [followupId])
 }

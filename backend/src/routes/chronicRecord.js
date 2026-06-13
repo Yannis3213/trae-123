@@ -16,6 +16,7 @@ chronicRecordRouter.get('/:idCard', async (c) => {
 chronicRecordRouter.post('/', async (c) => {
   const user = c.get('user')
   const data = await c.req.json()
+  const { followup_id } = data
 
   const existing = await db.get('SELECT id FROM chronic_records WHERE patient_id_card = ?', [data.patient_id_card])
   if (existing) {
@@ -30,8 +31,16 @@ chronicRecordRouter.post('/', async (c) => {
       data.severity, data.complications, data.treatment_history,
       data.patient_id_card
     ])
-    await recordAuditLog(0, user.id, 'update_chronic_record', `更新慢病档案: ${data.patient_name}`)
-    return c.json({ id: existing.id })
+    const record = await db.get('SELECT * FROM chronic_records WHERE id = ?', [existing.id])
+    if (followup_id) {
+      await recordAuditLog(followup_id, user.id, 'update_chronic_record', 
+        `补正慢病档案: ${data.patient_name}`, 
+        { chronic_type: data.chronic_type, severity: data.severity }
+      )
+    } else {
+      await recordAuditLog(0, user.id, 'update_chronic_record', `更新慢病档案: ${data.patient_name}`)
+    }
+    return c.json({ id: existing.id, ...record })
   }
 
   const result = await db.run(`
@@ -43,7 +52,14 @@ chronicRecordRouter.post('/', async (c) => {
     data.patient_name, data.patient_id_card, data.diagnosis_date, data.chronic_type,
     data.severity, data.complications, data.treatment_history, user.id
   ])
-  await recordAuditLog(0, user.id, 'create_chronic_record', `创建慢病档案: ${data.patient_name}`)
+  if (followup_id) {
+    await recordAuditLog(followup_id, user.id, 'create_chronic_record', 
+      `补正慢病档案: ${data.patient_name}`, 
+      { chronic_type: data.chronic_type, severity: data.severity, is_new: true }
+    )
+  } else {
+    await recordAuditLog(0, user.id, 'create_chronic_record', `创建慢病档案: ${data.patient_name}`)
+  }
   return c.json({ id: result.lastID })
 })
 
@@ -51,6 +67,7 @@ chronicRecordRouter.put('/:id', async (c) => {
   const { id } = c.req.param()
   const user = c.get('user')
   const data = await c.req.json()
+  const { followup_id } = data
 
   await db.run(`
     UPDATE chronic_records SET
@@ -62,8 +79,18 @@ chronicRecordRouter.put('/:id', async (c) => {
     data.patient_name, data.diagnosis_date, data.chronic_type,
     data.severity, data.complications, data.treatment_history, id
   ])
-  await recordAuditLog(0, user.id, 'update_chronic_record', `更新慢病档案 ID: ${id}`)
-  return c.json({ success: true })
+  
+  if (followup_id) {
+    await recordAuditLog(followup_id, user.id, 'update_chronic_record', 
+      `补正慢病档案 ID: ${id}`, 
+      { chronic_type: data.chronic_type, severity: data.severity }
+    )
+  } else {
+    await recordAuditLog(0, user.id, 'update_chronic_record', `更新慢病档案 ID: ${id}`)
+  }
+  
+  const record = await db.get('SELECT * FROM chronic_records WHERE id = ?', [id])
+  return c.json({ success: true, record })
 })
 
 export { chronicRecordRouter }
