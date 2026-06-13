@@ -129,7 +129,12 @@ export default function BatchProcessModal({ orderIds, versions, action, onClose,
                       result.success ? 'bg-green-50' : 'bg-red-50'
                     }`}
                   >
-                    <span className="font-mono text-gray-700">{result.order_no || result.order_id}</span>
+                    <div>
+                      <span className="font-mono text-gray-700">{result.order_no || result.order_id}</span>
+                      <span className="ml-2 text-xs text-gray-400">
+                        v{result.new_version}
+                      </span>
+                    </div>
                     <span className={result.success ? 'text-green-700' : 'text-red-700'}>
                       {result.success ? '✓ ' : '✗ '}{result.message}
                     </span>

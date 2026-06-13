@@ -149,7 +149,8 @@ func UploadAttachment(w http.ResponseWriter, r *http.Request) {
 	var orderStatus string
 	var currentHandler string
 	var createdBy string
-	err := database.DB.QueryRow("SELECT status, current_handler, created_by FROM near_expiry_orders WHERE id = ?", orderID).Scan(&orderStatus, &currentHandler, &createdBy)
+	var storeName string
+	err := database.DB.QueryRow("SELECT status, current_handler, created_by, store_name FROM near_expiry_orders WHERE id = ?", orderID).Scan(&orderStatus, &currentHandler, &createdBy, &storeName)
 	if err != nil {
 		http.Error(w, `{"error":"处理单不存在"}`, http.StatusNotFound)
 		return
@@ -158,6 +159,13 @@ func UploadAttachment(w http.ResponseWriter, r *http.Request) {
 	if orderStatus == string(models.StatusClosed) {
 		uploadRecordInterception(orderID, user, "upload_"+string(evType), "处理单已关闭，无法上传证据")
 		http.Error(w, `{"error":"处理单已关闭，无法上传"}`, http.StatusBadRequest)
+		return
+	}
+
+	if user.Store != "" && storeName != "" && user.Store != storeName {
+		reason := fmt.Sprintf("门店越权: 用户门店%s，处理单门店%s", user.Store, storeName)
+		uploadRecordInterception(orderID, user, "upload_"+string(evType), reason)
+		http.Error(w, `{"error":"非同门店，无法上传证据"}`, http.StatusForbidden)
 		return
 	}
 
@@ -179,8 +187,12 @@ func UploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.ID != currentHandler && user.ID != createdBy && user.Role != models.RoleShopClerk {
-		reason := fmt.Sprintf("越权: 处理人%s，创建人%s，操作人%s", currentHandler, createdBy, user.ID)
+	isHandlerOrCreator := user.ID == currentHandler || user.ID == createdBy
+	isSameStoreClerk := user.Role == models.RoleShopClerk && user.Store == storeName
+	isSameStorePharmacist := user.Role == models.RolePharmacist && user.Store == storeName
+
+	if !isHandlerOrCreator && !isSameStoreClerk && !isSameStorePharmacist {
+		reason := fmt.Sprintf("越权上传: 处理人%s，创建人%s，操作人%s", currentHandler, createdBy, user.ID)
 		uploadRecordInterception(orderID, user, "upload_"+string(evType), reason)
 		http.Error(w, `{"error":"不是当前处理人或创建人，无法上传"}`, http.StatusForbidden)
 		return

@@ -92,8 +92,10 @@ export interface OrderDetail extends NearExpiryOrder {
 
 export interface BatchResult {
   order_id: string;
+  order_no: string;
   success: boolean;
   message: string;
+  new_version: number;
 }
 
 export interface Stats {

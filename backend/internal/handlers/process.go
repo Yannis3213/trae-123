@@ -332,6 +332,35 @@ func ProcessOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
+
+	if req.EvidenceType != "" && req.FileName != "" {
+		evType := models.EvidenceType(req.EvidenceType)
+		if evType != models.EvidenceInspection && evType != models.EvidenceTransfer && evType != models.EvidenceRemoval {
+			recordInterception(tx, orderID, user, req.Action, "内嵌附件: 无效的证据类型")
+			tx.Commit()
+			http.Error(w, `{"error":"无效的证据类型"}`, http.StatusBadRequest)
+			return
+		}
+		if user.Role == models.RoleShopClerk && evType != models.EvidenceInspection {
+			recordInterception(tx, orderID, user, req.Action, "内嵌附件越权: 门店店员只能上传近效期巡检记录")
+			tx.Commit()
+			http.Error(w, `{"error":"门店店员只能上传近效期巡检记录"}`, http.StatusForbidden)
+			return
+		}
+		if user.Role == models.RolePharmacist && evType == models.EvidenceInspection {
+			recordInterception(tx, orderID, user, req.Action, "内嵌附件越权: 执业药师不能上传巡检记录")
+			tx.Commit()
+			http.Error(w, `{"error":"执业药师不能上传巡检记录，应由门店店员上传"}`, http.StatusForbidden)
+			return
+		}
+		if user.Role == models.RoleAreaManager {
+			recordInterception(tx, orderID, user, req.Action, "内嵌附件越权: 区域经理不能上传证据材料")
+			tx.Commit()
+			http.Error(w, `{"error":"区域经理不能上传证据材料"}`, http.StatusForbidden)
+			return
+		}
+	}
+
 	var updateSQL string
 	var args []interface{}
 
@@ -495,7 +524,7 @@ func processSingleOrder(user *models.User, orderID string, action string, remark
 		return models.BatchResult{OrderID: orderID, Success: false, Message: "查询失败"}
 	}
 
-	result := models.BatchResult{OrderID: orderID, OrderNo: order.OrderNo, Success: false}
+	result := models.BatchResult{OrderID: orderID, OrderNo: order.OrderNo, Success: false, NewVersion: currentVersion}
 
 	if reqVersion > 0 && reqVersion != currentVersion {
 		reason := fmt.Sprintf("版本冲突: 提交版本%d, 当前版本%d", reqVersion, currentVersion)

@@ -240,7 +240,7 @@ export default function OrderDetailPage() {
                     </div>
                   )}
 
-                  <EvidenceUploadPanel orderId={order.id} onUploaded={loadOrder} />
+                  <EvidenceUploadPanel order={order} onUploaded={loadOrder} />
                 </div>
               )}
 

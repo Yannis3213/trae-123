@@ -3,14 +3,14 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { evidenceTypeLabels, EvidenceType } from '@/lib/types';
+import { evidenceTypeLabels, EvidenceType, NearExpiryOrder } from '@/lib/types';
 
 interface Props {
-  orderId: string;
+  order: NearExpiryOrder;
   onUploaded: () => void;
 }
 
-export default function EvidenceUploadPanel({ orderId, onUploaded }: Props) {
+export default function EvidenceUploadPanel({ order, onUploaded }: Props) {
   const { user } = useAuth();
   const [evidenceType, setEvidenceType] = useState<EvidenceType>('inspection');
   const [fileName, setFileName] = useState('');
@@ -18,7 +18,29 @@ export default function EvidenceUploadPanel({ orderId, onUploaded }: Props) {
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  const canUpload = user && (user.role === 'shop_clerk' || user.role === 'pharmacist');
+  if (!user) return null;
+
+  const isClosed = order.status === 'closed';
+  const isSameStore = user.store === order.store_name;
+  const isHandler = user.id === order.current_handler;
+  const isCreator = user.id === order.created_by;
+
+  let canUploadAny = false;
+  let allowedTypes: EvidenceType[] = [];
+
+  if (!isClosed && user.role !== 'area_manager') {
+    if (user.role === 'shop_clerk') {
+      if (isSameStore && (isCreator || isHandler)) {
+        allowedTypes = ['inspection'];
+        canUploadAny = true;
+      }
+    } else if (user.role === 'pharmacist') {
+      if (isSameStore && (isHandler || isCreator)) {
+        allowedTypes = ['transfer', 'removal'];
+        canUploadAny = true;
+      }
+    }
+  }
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,7 +48,7 @@ export default function EvidenceUploadPanel({ orderId, onUploaded }: Props) {
 
     setLoading(true);
     try {
-      await api.uploadAttachment(orderId, {
+      await api.uploadAttachment(order.id, {
         evidence_type: evidenceType,
         file_name: fileName,
         remark: remark || undefined,
@@ -42,15 +64,27 @@ export default function EvidenceUploadPanel({ orderId, onUploaded }: Props) {
     }
   };
 
-  if (!canUpload) {
-    return null;
+  if (!canUploadAny) {
+    return (
+      <div className="pt-4 border-t border-gray-100">
+        <p className="text-xs text-gray-400">
+          {isClosed ? '处理单已关闭，无法上传' :
+            user.role === 'area_manager' ? '区域经理无上传权限' :
+            !isSameStore ? '非同门店，无法上传' :
+            '当前状态下无上传权限'}
+        </p>
+      </div>
+    );
   }
 
   return (
     <div className="pt-4 border-t border-gray-100">
       {!showForm ? (
         <button
-          onClick={() => setShowForm(true)}
+          onClick={() => {
+            setEvidenceType(allowedTypes[0]);
+            setShowForm(true);
+          }}
           className="text-sm text-blue-600 hover:text-blue-800"
         >
           + 上传证据材料
@@ -75,9 +109,9 @@ export default function EvidenceUploadPanel({ orderId, onUploaded }: Props) {
               onChange={(e) => setEvidenceType(e.target.value as EvidenceType)}
               className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
             >
-              <option value="inspection">{evidenceTypeLabels.inspection}</option>
-              <option value="transfer">{evidenceTypeLabels.transfer}</option>
-              <option value="removal">{evidenceTypeLabels.removal}</option>
+              {allowedTypes.map(t => (
+                <option key={t} value={t}>{evidenceTypeLabels[t]}</option>
+              ))}
             </select>
           </div>
 
